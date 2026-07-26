@@ -1,6 +1,6 @@
 apply plugin: "java"
 
-version = "0.0.0"
+version = "1.0.0"
 sourceSets{
     main.java.srcDirs = ["src"]
     test.java.srcDirs = ["test"]
@@ -30,9 +30,17 @@ tasks.withType(JavaCompile).configureEach{
 }
 
 jar{
-    archiveFileName = "LogicSugar-dev.jar"
+    archiveFileName = "LogicSugar-v${version}.jar"
     from(projectDir){ include "mod.json" }
     from("assets/"){ include "**" }
+}
+
+tasks.register("releaseZip", Zip){
+    dependsOn jar
+    archiveFileName = "LogicSugar-v${version}.zip"
+    from(jar)
+    from("README.md")
+    from("assets/sample.png"){ into("assets") }
 }
 
 tasks.register("selfTest", JavaExec){
