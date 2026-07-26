@@ -1,0 +1,32 @@
+apply plugin: "java"
+
+version = "0.0.0"
+sourceSets.main.java.srcDirs = ["src"]
+
+repositories{
+    mavenCentral()
+}
+
+java{
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+ext{
+    mindustryVersion = "v155.4"
+}
+
+dependencies{
+    compileOnly files("../Mindustry-master/desktop/build/libs/Mindustry.jar")
+}
+
+tasks.withType(JavaCompile).configureEach{
+    options.encoding = "UTF-8"
+    options.release = 17
+}
+
+jar{
+    archiveFileName = "LogicSugar-dev.jar"
+    from(projectDir){ include "mod.json" }
+    from("assets/"){ include "**" }
+}
