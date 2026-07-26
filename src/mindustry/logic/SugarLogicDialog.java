@@ -9,6 +9,7 @@ import arc.scene.ui.Dialog;
 import arc.scene.ui.TextButton;
 import arc.scene.ui.layout.Table;
 import arc.struct.Seq;
+import arc.util.Time;
 import mindustry.Vars;
 import mindustry.gen.Building;
 import mindustry.gen.Icon;
@@ -24,6 +25,7 @@ public class SugarLogicDialog extends LogicDialog{
     private static final Field consumerField = field(LogicDialog.class, "consumer");
     private final Map<Object, String> drafts = new IdentityHashMap<>();
     private Element editButton;
+    private float menuScanTimer;
 
     public SugarLogicDialog(){
         super();
@@ -32,7 +34,14 @@ public class SugarLogicDialog extends LogicDialog{
         add(canvas).grow().name("canvas");
         row();
         add(buttons).growX().name("buttons");
-        update(this::installEditHook);
+        update(() -> {
+            installEditHook();
+            menuScanTimer += Time.delta;
+            if(menuScanTimer >= 6f){
+                menuScanTimer = 0f;
+                installCompiledCopy();
+            }
+        });
     }
 
     private void installEditHook(){
@@ -43,12 +52,12 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     private void installCompiledCopy(){
-        Dialog dialog = Core.scene.getDialog();
-        if(dialog == null) return;
-        if(dialog.find(compiledCopyName) != null) return;
-
-        TextButton copy = findCopyButton(dialog);
+        TextButton copy = findCopyButton(Core.scene.root);
         if(copy == null || !(copy.parent instanceof Table menu)) return;
+        if(menu.find(compiledCopyName) != null) return;
+
+        Dialog dialog = parentDialog(copy);
+        if(dialog == null) return;
 
         menu.row();
         menu.button("@logicsugar.copy.compiled", Icon.copy, Styles.flatt, () -> {
@@ -62,6 +71,12 @@ public class SugarLogicDialog extends LogicDialog{
             }
         }).size(280f, 60f).left().marginLeft(12f).get().name = compiledCopyName;
         menu.invalidateHierarchy();
+    }
+
+    private Dialog parentDialog(Element element){
+        Element current = element;
+        while(current != null && !(current instanceof Dialog)) current = current.parent;
+        return (Dialog)current;
     }
 
     private TextButton findCopyButton(Element element){
