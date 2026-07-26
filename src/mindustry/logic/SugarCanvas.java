@@ -216,6 +216,7 @@ public class SugarCanvas extends LCanvas{
     final class StructureController{
         final Seq<Pair> pairs = new Seq<>();
         final IdentityHashMap<StatementElem, Integer> indices = new IdentityHashMap<>();
+        boolean[] compilerInvalid = {};
         private int signature;
 
         void refresh(){
@@ -322,6 +323,9 @@ public class SugarCanvas extends LCanvas{
             refreshIndices();
             pairs.clear();
             IdentityHashMap<StatementElem, Pair> claimed = new IdentityHashMap<>();
+            Seq<LStatement> source = new Seq<>(children.size);
+            for(Element child : children) source.add(((StatementElem)child).st);
+            compilerInvalid = SugarCompiler.invalidStatements(source);
 
             for(int i = 0; i < children.size; i++){
                 StatementElem elem = (StatementElem)children.get(i);
@@ -339,7 +343,8 @@ public class SugarCanvas extends LCanvas{
 
             for(Element child : children){
                 SugarStatementElem elem = (SugarStatementElem)child;
-                elem.applyStructure(0, false, elem.st instanceof BlockEndStatement && !claimed.containsKey(elem));
+                int index = children.indexOf(child, true);
+                elem.applyStructure(0, false, compilerInvalid[index] || elem.st instanceof BlockEndStatement && !claimed.containsKey(elem));
             }
             assignRange(0, children.size, 0, false, children);
             statements.invalidateHierarchy();
@@ -353,13 +358,13 @@ public class SugarCanvas extends LCanvas{
                 Pair pair = pairAt(i);
 
                 if(switchBody && elem.st instanceof CaseStatement){
-                    elem.applyStructure(depth, false, false);
+                    elem.applyStructure(depth, false, compilerInvalid[i]);
                     currentDepth = depth + 1;
                     continue;
                 }
 
                 if(pair != null && pair.valid && pair.endIndex < to){
-                    elem.applyStructure(currentDepth, false, false);
+                    elem.applyStructure(currentDepth, false, compilerInvalid[i]);
                     SugarStatementElem end = (SugarStatementElem)children.get(pair.endIndex);
                     if(pair.begin.collapsed){
                         for(int at = i + 1; at < pair.endIndex; at++){
@@ -368,12 +373,12 @@ public class SugarCanvas extends LCanvas{
                     }else{
                         assignRange(i + 1, pair.endIndex, currentDepth + 1, pair.begin instanceof SwitchBeginStatement, children);
                     }
-                    end.applyStructure(currentDepth, false, false);
+                    end.applyStructure(currentDepth, false, compilerInvalid[pair.endIndex]);
                     i = pair.endIndex;
                     continue;
                 }
 
-                boolean invalid = elem.st instanceof BeginStatement || (elem.st instanceof BlockEndStatement && !isClaimed(elem));
+                boolean invalid = compilerInvalid[i] || elem.st instanceof BeginStatement || (elem.st instanceof BlockEndStatement && !isClaimed(elem));
                 elem.applyStructure(currentDepth, false, invalid);
             }
         }

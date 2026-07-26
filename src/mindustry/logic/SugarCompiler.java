@@ -110,6 +110,44 @@ public final class SugarCompiler{
         return out.toString();
     }
 
+    public static boolean[] invalidStatements(Seq<LStatement> statements){
+        boolean[] invalid = new boolean[statements.size];
+        boolean[] claimed = new boolean[statements.size];
+
+        for(int i = 0; i < statements.size; i++){
+            if(!(statements.get(i) instanceof BeginStatement begin)) continue;
+            int destination = begin.destIndex;
+            if(destination <= i || destination >= statements.size || !(statements.get(destination) instanceof BlockEndStatement)){
+                invalid[i] = true;
+            }else if(claimed[destination]){
+                invalid[i] = true;
+            }else{
+                claimed[destination] = true;
+            }
+        }
+
+        for(int i = 0; i < statements.size; i++){
+            if(statements.get(i) instanceof BlockEndStatement && !claimed[i]) invalid[i] = true;
+        }
+
+        Deque<Integer> ends = new ArrayDeque<>();
+        for(int i = 0; i < statements.size; i++){
+            while(!ends.isEmpty() && ends.peek() < i) ends.pop();
+            if(statements.get(i) instanceof BeginStatement begin && begin.destIndex > i && begin.destIndex < statements.size){
+                if(!ends.isEmpty() && begin.destIndex > ends.peek()) invalid[i] = true;
+                ends.push(begin.destIndex);
+            }
+        }
+
+        int[] switchOwner = switchOwners(statements);
+        for(int i = 0; i < statements.size; i++){
+            if((statements.get(i) instanceof CaseStatement || statements.get(i) instanceof BreakStatement) && switchOwner[i] < 0){
+                invalid[i] = true;
+            }
+        }
+        return invalid;
+    }
+
     private static boolean containsSugar(Seq<LStatement> statements){
         for(LStatement statement : statements){
             if(statement.getClass().getEnclosingClass() == SugarStatements.class) return true;

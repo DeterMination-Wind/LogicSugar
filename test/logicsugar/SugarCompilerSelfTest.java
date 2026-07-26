@@ -14,6 +14,7 @@ public class SugarCompilerSelfTest{
         nestedProgramRoundTrips();
         legacyEndsMigrate();
         malformedStructuresFail();
+        semanticErrorsAreLocated();
         vanillaCodePassesThrough();
         System.out.println("LogicSugar compiler self-test passed.");
     }
@@ -61,6 +62,15 @@ public class SugarCompilerSelfTest{
     private static void vanillaCodePassesThrough(){
         String vanilla = "set x 1\nprint x\n";
         check(SugarCompiler.compile(vanilla).equals(vanilla), "vanilla code was modified");
+    }
+
+    private static void semanticErrorsAreLocated(){
+        Seq<LStatement> statements = LAssembler.read("case 1\nbreak\n", true);
+        boolean[] invalid = SugarCompiler.invalidStatements(statements);
+        check(invalid[0], "bare case was not marked invalid");
+        check(invalid[1], "bare break was not marked invalid");
+        expectFailure("case 1\n", "bare case");
+        expectFailure("break\n", "bare break");
     }
 
     private static void expectFailure(String source, String scenario){

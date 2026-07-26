@@ -6,5 +6,6 @@
   "description": "Adds structured for, while, and switch blocks to the logic editor while storing vanilla-compatible mlog.",
   "version": "0.0.0",
   "minGameVersion": "155",
+  "hidden": true,
   "java": true
 }
