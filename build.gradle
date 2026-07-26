@@ -1,7 +1,10 @@
 apply plugin: "java"
 
 version = "0.0.0"
-sourceSets.main.java.srcDirs = ["src"]
+sourceSets{
+    main.java.srcDirs = ["src"]
+    test.java.srcDirs = ["test"]
+}
 
 repositories{
     mavenCentral()
@@ -18,6 +21,7 @@ ext{
 
 dependencies{
     compileOnly files("../Mindustry-master/desktop/build/libs/Mindustry.jar")
+    testImplementation files("../Mindustry-master/desktop/build/libs/Mindustry.jar")
 }
 
 tasks.withType(JavaCompile).configureEach{
@@ -30,3 +34,12 @@ jar{
     from(projectDir){ include "mod.json" }
     from("assets/"){ include "**" }
 }
+
+tasks.register("selfTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.SugarCompilerSelfTest"
+}
+
+test.enabled = false
+check.dependsOn selfTest

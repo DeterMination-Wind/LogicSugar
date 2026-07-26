@@ -1,0 +1,438 @@
+package mindustry.logic;
+
+import arc.Core;
+import arc.graphics.Color;
+import arc.graphics.g2d.Draw;
+import arc.graphics.g2d.Lines;
+import arc.math.geom.Vec2;
+import arc.scene.Element;
+import arc.scene.Group;
+import arc.scene.event.Touchable;
+import arc.scene.style.BaseDrawable;
+import arc.scene.style.Drawable;
+import arc.scene.ui.layout.Scl;
+import arc.struct.Seq;
+import arc.struct.SnapshotSeq;
+import arc.util.Tmp;
+import mindustry.Vars;
+import mindustry.gen.Tex;
+import mindustry.logic.LStatements.JumpStatement;
+import mindustry.logic.SugarStatements.BeginStatement;
+import mindustry.logic.SugarStatements.BlockEndStatement;
+import mindustry.logic.SugarStatements.CaseStatement;
+import mindustry.logic.SugarStatements.SwitchBeginStatement;
+
+import java.util.IdentityHashMap;
+import java.lang.reflect.Field;
+
+public class SugarCanvas extends LCanvas{
+    private static final Color[] guideColors = {
+        Color.valueOf("66c2ff"), Color.valueOf("ffb45c"), Color.valueOf("79d98b"),
+        Color.valueOf("d58cff"), Color.valueOf("ffe066"), Color.valueOf("ff7f91")
+    };
+
+    final StructureController structure = new StructureController();
+    private StructureGuideLayer guideLayer;
+    private static final Field draggingField = field(LCanvas.class, "dragging");
+    private static final Field spaceField = field(LCanvas.DragLayout.class, "space");
+
+    public SugarCanvas(){
+        super();
+        setLayoutSpace();
+        update(() -> {
+            structure.normalizeElements();
+            if(isDragging()) structure.expandAll();
+            structure.refresh();
+        });
+    }
+
+    @Override
+    public void rebuild(){
+        super.rebuild();
+        setLayoutSpace();
+        installGuideLayer();
+    }
+
+    private void setLayoutSpace(){
+        if(statements == null) return;
+        try{
+            spaceField.setFloat(statements, 0f);
+        }catch(IllegalAccessException exception){
+            throw new RuntimeException("Unable to configure Logic Sugar layout", exception);
+        }
+    }
+
+    private boolean isDragging(){
+        try{
+            return draggingField.get(this) != null;
+        }catch(IllegalAccessException exception){
+            return false;
+        }
+    }
+
+    private static Field field(Class<?> type, String name){
+        try{
+            Field result = type.getDeclaredField(name);
+            result.setAccessible(true);
+            return result;
+        }catch(ReflectiveOperationException exception){
+            throw new ExceptionInInitializerError(exception);
+        }
+    }
+
+    private void installGuideLayer(){
+        if(statements == null || statements.jumps == null) return;
+        guideLayer = new StructureGuideLayer();
+        guideLayer.touchable = Touchable.disabled;
+        guideLayer.fillParent = true;
+        guideLayer.cullable = false;
+        statements.jumps.addChildAt(0, guideLayer);
+    }
+
+    @Override
+    public void add(LStatement statement){
+        statements.addChild(new SugarStatementElem(statement));
+    }
+
+    @Override
+    public void addAt(int at, LStatement statement){
+        SugarStatementElem added = new SugarStatementElem(statement);
+        statements.addChildAt(at, added);
+
+        if(statement instanceof BeginStatement begin && begin.destIndex < 0){
+            SugarStatementElem end = new SugarStatementElem(new BlockEndStatement());
+            statements.addChildAt(at + 1, end);
+            begin.dest = end;
+            statements.updateJumpHeights = true;
+        }
+        structure.refresh();
+    }
+
+    public static void refreshCurrent(){
+        SugarCanvas canvas = current();
+        if(canvas != null) canvas.structure.refresh();
+    }
+
+    public static boolean canLink(BeginStatement begin, StatementElem target){
+        SugarCanvas canvas = current();
+        return canvas != null && canvas.structure.canLink(begin, target);
+    }
+
+    public static boolean isValidLink(BeginStatement begin, StatementElem target){
+        SugarCanvas canvas = current();
+        return canvas != null && canvas.structure.isValid(begin, target);
+    }
+
+    private static SugarCanvas current(){
+        if(Vars.ui != null && Vars.ui.logic != null && Vars.ui.logic.canvas instanceof SugarCanvas canvas) return canvas;
+        return null;
+    }
+
+    public class SugarStatementElem extends StatementElem{
+        int structureDepth = -1;
+        boolean foldedHidden;
+        boolean structureInvalid;
+        float inset;
+
+        SugarStatementElem(LStatement statement){
+            super(statement);
+            background(new InsetDrawable(this, Tex.whitePane));
+            update(this::refreshInset);
+            if(statement instanceof BlockEndStatement && getCells().size > 1){
+                getCells().peek().height(0f).minHeight(0f).pad(0f);
+                getChildren().peek().visible = false;
+            }
+        }
+
+        void applyStructure(int depth, boolean hidden, boolean invalid){
+            if(structureDepth != depth || foldedHidden != hidden || structureInvalid != invalid){
+                structureDepth = depth;
+                foldedHidden = hidden;
+                structureInvalid = invalid;
+                visible = !hidden;
+                setColor(invalid ? mindustry.graphics.Pal.remove : st.category().color);
+                invalidateHierarchy();
+            }
+            refreshInset();
+        }
+
+        private void refreshInset(){
+            float unit = Scl.scl(Core.graphics.isPortrait() ? 17f : 24f);
+            float minWidth = Scl.scl(Core.graphics.isPortrait() ? 285f : 360f);
+            float maxInset = Math.max(0f, getWidth() - minWidth);
+            float nextInset = Math.min(Math.max(0, structureDepth) * unit, maxInset);
+            if(Math.abs(inset - nextInset) > 0.1f){
+                inset = nextInset;
+                marginLeft(inset);
+                marginBottom(7f);
+                invalidateHierarchy();
+            }
+        }
+
+        @Override
+        public float getPrefHeight(){
+            return foldedHidden ? 0f : super.getPrefHeight();
+        }
+
+        @Override
+        public void copy(){
+            st.saveUI();
+            LStatement copied = st.copy();
+            if(copied == null) return;
+
+            if(copied instanceof JumpStatement jump && jump.destIndex != -1){
+                int index = statements.getChildren().indexOf(this);
+                if(index != -1 && index < jump.destIndex) jump.destIndex++;
+            }
+
+            int index = statements.getChildren().indexOf(this);
+            SugarCanvas.this.addAt(index + 1, copied);
+            copied.setupUI();
+            statements.updateJumpHeights = true;
+        }
+    }
+
+    private static class InsetDrawable extends BaseDrawable{
+        private final SugarStatementElem owner;
+        private final Drawable source;
+
+        InsetDrawable(SugarStatementElem owner, Drawable source){
+            super(source);
+            this.owner = owner;
+            this.source = source;
+        }
+
+        @Override
+        public void draw(float x, float y, float width, float height){
+            source.draw(x + owner.inset, y, Math.max(0f, width - owner.inset), height);
+        }
+
+        @Override
+        public void draw(float x, float y, float originX, float originY, float width, float height, float scaleX, float scaleY, float rotation){
+            source.draw(x + owner.inset, y, originX, originY, Math.max(0f, width - owner.inset), height, scaleX, scaleY, rotation);
+        }
+    }
+
+    final class StructureController{
+        final Seq<Pair> pairs = new Seq<>();
+        final IdentityHashMap<StatementElem, Integer> indices = new IdentityHashMap<>();
+        private int signature;
+
+        void refresh(){
+            if(statements == null) return;
+            normalizeElements();
+            SnapshotSeq<Element> children = statements.getChildren();
+            int nextSignature = 31 * children.size + Math.round(getWidth()) + Math.round(statements.getWidth()) + (Core.graphics.isPortrait() ? 1 : 0);
+            for(int i = 0; i < children.size; i++){
+                StatementElem elem = (StatementElem)children.get(i);
+                nextSignature = 31 * nextSignature + System.identityHashCode(elem);
+                nextSignature = 31 * nextSignature + Math.round(elem.getWidth());
+                if(elem.st instanceof BeginStatement begin){
+                    nextSignature = 31 * nextSignature + System.identityHashCode(begin.dest);
+                    nextSignature = 31 * nextSignature + (begin.collapsed ? 1 : 0);
+                }
+            }
+            if(nextSignature == signature) return;
+            signature = nextSignature;
+            rebuildStructure(children);
+        }
+
+        void normalizeElements(){
+            if(statements == null) return;
+            SnapshotSeq<Element> current = statements.getChildren();
+            boolean needsNormalization = false;
+            for(Element child : current){
+                if(!(child instanceof SugarStatementElem)){
+                    needsNormalization = true;
+                    break;
+                }
+            }
+            if(!needsNormalization) return;
+
+            // Preserve index-based links before replacing elements created by an external LCanvas path.
+            for(Element child : current){
+                ((StatementElem)child).st.saveUI();
+            }
+
+            for(int i = 0; i < statements.getChildren().size; i++){
+                Element child = statements.getChildren().get(i);
+                if(child instanceof SugarStatementElem) continue;
+
+                StatementElem old = (StatementElem)child;
+                LStatement statement = old.st;
+                SugarStatementElem replacement = new SugarStatementElem(statement);
+                statements.addChildAt(i, replacement);
+                old.remove();
+            }
+
+            for(Element child : statements.getChildren()){
+                ((StatementElem)child).st.setupUI();
+            }
+            signature = 0;
+        }
+
+        void expandAll(){
+            boolean changed = false;
+            for(Element child : statements.getChildren()){
+                if(((StatementElem)child).st instanceof BeginStatement begin && begin.collapsed){
+                    begin.collapsed = false;
+                    changed = true;
+                }
+            }
+            if(changed) signature = 0;
+        }
+
+        boolean canLink(BeginStatement begin, StatementElem target){
+            if(target == null) return true;
+            if(!(target.st instanceof BlockEndStatement) || begin.elem == null) return false;
+            refreshIndices();
+            Integer from = indices.get(begin.elem), to = indices.get(target);
+            if(from == null || to == null || to <= from) return false;
+            for(Element child : statements.getChildren()){
+                LStatement statement = ((StatementElem)child).st;
+                if(statement instanceof BeginStatement other && other != begin && other.dest == target) return false;
+            }
+            return !crossesExisting(begin, from, to);
+        }
+
+        boolean isValid(BeginStatement begin, StatementElem target){
+            if(target == null || !(target.st instanceof BlockEndStatement) || begin.elem == null) return false;
+            refreshIndices();
+            Integer from = indices.get(begin.elem), to = indices.get(target);
+            if(from == null || to == null || to <= from) return false;
+            for(Element child : statements.getChildren()){
+                LStatement statement = ((StatementElem)child).st;
+                if(statement instanceof BeginStatement other && other != begin && other.dest == target) return false;
+            }
+            return !crossesExisting(begin, from, to);
+        }
+
+        private boolean crossesExisting(BeginStatement begin, int from, int to){
+            for(Element child : statements.getChildren()){
+                LStatement statement = ((StatementElem)child).st;
+                if(!(statement instanceof BeginStatement other) || other == begin || other.elem == null || other.dest == null) continue;
+                Integer otherFrom = indices.get(other.elem), otherTo = indices.get(other.dest);
+                if(otherFrom == null || otherTo == null || otherTo <= otherFrom) continue;
+                if((from < otherFrom && otherFrom < to && to < otherTo) || (otherFrom < from && from < otherTo && otherTo < to)) return true;
+            }
+            return false;
+        }
+
+        private void rebuildStructure(SnapshotSeq<Element> children){
+            refreshIndices();
+            pairs.clear();
+            IdentityHashMap<StatementElem, Pair> claimed = new IdentityHashMap<>();
+
+            for(int i = 0; i < children.size; i++){
+                StatementElem elem = (StatementElem)children.get(i);
+                if(elem.st instanceof BeginStatement begin){
+                    Integer end = begin.dest == null ? null : indices.get(begin.dest);
+                    Pair pair = new Pair(begin, elem, begin.dest, i, end == null ? -1 : end);
+                    pair.valid = end != null && end > i && begin.dest.st instanceof BlockEndStatement && !claimed.containsKey(begin.dest);
+                    if(pair.valid){
+                        pair.valid = !crossesExisting(begin, i, end);
+                        if(pair.valid) claimed.put(begin.dest, pair);
+                    }
+                    pairs.add(pair);
+                }
+            }
+
+            for(Element child : children){
+                SugarStatementElem elem = (SugarStatementElem)child;
+                elem.applyStructure(0, false, elem.st instanceof BlockEndStatement && !claimed.containsKey(elem));
+            }
+            assignRange(0, children.size, 0, false, children);
+            statements.invalidateHierarchy();
+            statements.updateJumpHeights = true;
+        }
+
+        private void assignRange(int from, int to, int depth, boolean switchBody, SnapshotSeq<Element> children){
+            int currentDepth = depth;
+            for(int i = from; i < to; i++){
+                SugarStatementElem elem = (SugarStatementElem)children.get(i);
+                Pair pair = pairAt(i);
+
+                if(switchBody && elem.st instanceof CaseStatement){
+                    elem.applyStructure(depth, false, false);
+                    currentDepth = depth + 1;
+                    continue;
+                }
+
+                if(pair != null && pair.valid && pair.endIndex < to){
+                    elem.applyStructure(currentDepth, false, false);
+                    SugarStatementElem end = (SugarStatementElem)children.get(pair.endIndex);
+                    if(pair.begin.collapsed){
+                        for(int at = i + 1; at < pair.endIndex; at++){
+                            ((SugarStatementElem)children.get(at)).applyStructure(currentDepth + 1, true, false);
+                        }
+                    }else{
+                        assignRange(i + 1, pair.endIndex, currentDepth + 1, pair.begin instanceof SwitchBeginStatement, children);
+                    }
+                    end.applyStructure(currentDepth, false, false);
+                    i = pair.endIndex;
+                    continue;
+                }
+
+                boolean invalid = elem.st instanceof BeginStatement || (elem.st instanceof BlockEndStatement && !isClaimed(elem));
+                elem.applyStructure(currentDepth, false, invalid);
+            }
+        }
+
+        private Pair pairAt(int beginIndex){
+            for(Pair pair : pairs) if(pair.beginIndex == beginIndex) return pair;
+            return null;
+        }
+
+        private boolean isClaimed(StatementElem end){
+            for(Pair pair : pairs) if(pair.valid && pair.end == end) return true;
+            return false;
+        }
+
+        private void refreshIndices(){
+            indices.clear();
+            SnapshotSeq<Element> children = statements.getChildren();
+            for(int i = 0; i < children.size; i++) indices.put((StatementElem)children.get(i), i);
+        }
+    }
+
+    final class StructureGuideLayer extends Element{
+        @Override
+        public void draw(){
+            Group common = parent.parent;
+            for(Pair pair : structure.pairs){
+                if(!pair.valid || pair.beginElem.foldedHidden || pair.end == null || !pair.end.visible) continue;
+                SugarStatementElem begin = (SugarStatementElem)pair.beginElem;
+                SugarStatementElem end = (SugarStatementElem)pair.end;
+                Color color = guideColors[Math.floorMod(begin.structureDepth, guideColors.length)];
+
+                Vec2 top = Tmp.v1.set(begin.inset + Scl.scl(12f), 4f);
+                Vec2 bottom = Tmp.v2.set(end.inset + Scl.scl(12f), end.getHeight() - 4f);
+                begin.localToAscendantCoordinates(common, top);
+                end.localToAscendantCoordinates(common, bottom);
+
+                Draw.color(color, parentAlpha);
+                Lines.stroke(Scl.scl(2.2f));
+                Lines.line(top.x, top.y, top.x, bottom.y);
+                Lines.line(top.x, top.y, top.x + Scl.scl(10f), top.y);
+                Lines.line(bottom.x, bottom.y, bottom.x + Scl.scl(10f), bottom.y);
+            }
+            Draw.reset();
+        }
+    }
+
+    static final class Pair{
+        final BeginStatement begin;
+        final SugarStatementElem beginElem;
+        final StatementElem end;
+        final int beginIndex, endIndex;
+        boolean valid;
+
+        Pair(BeginStatement begin, StatementElem beginElem, StatementElem end, int beginIndex, int endIndex){
+            this.begin = begin;
+            this.beginElem = (SugarStatementElem)beginElem;
+            this.end = end;
+            this.beginIndex = beginIndex;
+            this.endIndex = endIndex;
+        }
+    }
+}

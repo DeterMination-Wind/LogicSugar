@@ -3,13 +3,12 @@ package mindustry.logic;
 import arc.struct.Seq;
 import mindustry.logic.LStatements.JumpStatement;
 import mindustry.logic.SugarStatements.BreakStatement;
+import mindustry.logic.SugarStatements.BeginStatement;
+import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.CaseStatement;
 import mindustry.logic.SugarStatements.ForBeginStatement;
-import mindustry.logic.SugarStatements.ForEndStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
-import mindustry.logic.SugarStatements.SwitchEndStatement;
 import mindustry.logic.SugarStatements.WhileBeginStatement;
-import mindustry.logic.SugarStatements.WhileEndStatement;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -61,18 +60,10 @@ public final class SugarCompiler{
                 out.append("set __ls_for_init_").append(id).append(" 0\n");
                 out.append("jump ").append(statementLabel(begin.destIndex + 1)).append(" always x false\n");
                 out.append("__ls_for_body_").append(id).append(":\n");
-            }else if(statement instanceof ForEndStatement){
-                int beginIndex = findOwner(statements, i, ForBeginStatement.class);
-                ForBeginStatement begin = (ForBeginStatement)statements.get(beginIndex);
-                if(!begin.step.isEmpty()) out.append("op add ").append(begin.variable).append(' ').append(begin.variable).append(' ').append(begin.step).append('\n');
-                out.append("jump __ls_for_check_").append(beginIndex).append(" always x false\n");
             }else if(statement instanceof WhileBeginStatement begin){
                 out.append("jump __ls_while_body_").append(i).append(" notEqual ").append(begin.condition).append(" false\n");
                 out.append("jump ").append(statementLabel(begin.destIndex + 1)).append(" always x false\n");
                 out.append("__ls_while_body_").append(i).append(":\n");
-            }else if(statement instanceof WhileEndStatement){
-                int beginIndex = findOwner(statements, i, WhileBeginStatement.class);
-                out.append("jump ").append(statementLabel(beginIndex)).append(" always x false\n");
             }else if(statement instanceof SwitchBeginStatement begin){
                 out.append("set __ls_switch_").append(i).append(' ').append(begin.value).append('\n');
                 for(int at = i + 1; at < begin.destIndex; at++){
@@ -88,8 +79,15 @@ public final class SugarCompiler{
                 if(switchOwner[i] < 0) throw error("break", i, "is outside a switch");
                 SwitchBeginStatement owner = (SwitchBeginStatement)statements.get(switchOwner[i]);
                 out.append("jump ").append(statementLabel(owner.destIndex + 1)).append(" always x false\n");
-            }else if(statement instanceof SwitchEndStatement){
-                // The next source label is the switch exit.
+            }else if(statement instanceof BlockEndStatement){
+                int beginIndex = findOwner(statements, i);
+                LStatement owner = statements.get(beginIndex);
+                if(owner instanceof ForBeginStatement begin){
+                    if(!begin.step.isEmpty()) out.append("op add ").append(begin.variable).append(' ').append(begin.variable).append(' ').append(begin.step).append('\n');
+                    out.append("jump __ls_for_check_").append(beginIndex).append(" always x false\n");
+                }else if(owner instanceof WhileBeginStatement){
+                    out.append("jump ").append(statementLabel(beginIndex)).append(" always x false\n");
+                }
             }else if(statement instanceof JumpStatement jump){
                 if(jump.destIndex < 0 || jump.destIndex > statements.size){
                     throw error("jump", i, "has no valid destination");
@@ -123,23 +121,30 @@ public final class SugarCompiler{
         boolean[] claimed = new boolean[statements.size];
         for(int i = 0; i < statements.size; i++){
             LStatement statement = statements.get(i);
-            int destination = -1;
-            Class<?> expected = null;
-            if(statement instanceof ForBeginStatement begin){ destination = begin.destIndex; expected = ForEndStatement.class; }
-            if(statement instanceof WhileBeginStatement begin){ destination = begin.destIndex; expected = WhileEndStatement.class; }
-            if(statement instanceof SwitchBeginStatement begin){ destination = begin.destIndex; expected = SwitchEndStatement.class; }
-            if(expected == null) continue;
-            if(destination <= i || destination >= statements.size || !expected.isInstance(statements.get(destination))){
-                throw error(statement.name(), i, "must point to a matching end block below it");
+            if(!(statement instanceof BeginStatement begin)) continue;
+            int destination = begin.destIndex;
+            if(destination <= i || destination >= statements.size || !(statements.get(destination) instanceof BlockEndStatement)){
+                throw error(statement.typeName(), i, "must point to a block end below it");
             }
-            if(claimed[destination]) throw error(statement.name(), i, "shares an end block with another begin block");
+            if(claimed[destination]) throw error(statement.typeName(), i, "shares an end block with another begin block");
             claimed[destination] = true;
         }
 
         for(int i = 0; i < statements.size; i++){
             LStatement statement = statements.get(i);
-            if((statement instanceof ForEndStatement || statement instanceof WhileEndStatement || statement instanceof SwitchEndStatement) && !claimed[i]){
-                throw error(statement.name(), i, "has no matching begin block");
+            if(statement instanceof BlockEndStatement && !claimed[i]){
+                throw error(statement.typeName(), i, "has no matching begin block");
+            }
+        }
+
+        Deque<Integer> ends = new ArrayDeque<>();
+        for(int i = 0; i < statements.size; i++){
+            while(!ends.isEmpty() && ends.peek() < i) ends.pop();
+            if(statements.get(i) instanceof BeginStatement begin){
+                if(!ends.isEmpty() && begin.destIndex > ends.peek()){
+                    throw error(begin.typeName(), i, "crosses another structured block");
+                }
+                ends.push(begin.destIndex);
             }
         }
     }
@@ -156,11 +161,10 @@ public final class SugarCompiler{
         return result;
     }
 
-    private static int findOwner(Seq<LStatement> statements, int end, Class<?> beginType){
+    private static int findOwner(Seq<LStatement> statements, int end){
         for(int i = end - 1; i >= 0; i--){
             LStatement statement = statements.get(i);
-            if(beginType == ForBeginStatement.class && statement instanceof ForBeginStatement begin && begin.destIndex == end) return i;
-            if(beginType == WhileBeginStatement.class && statement instanceof WhileBeginStatement begin && begin.destIndex == end) return i;
+            if(statement instanceof BeginStatement begin && begin.destIndex == end) return i;
         }
         throw error("end", end, "has no matching begin block");
     }

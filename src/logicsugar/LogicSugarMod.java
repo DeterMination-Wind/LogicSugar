@@ -29,21 +29,25 @@ public class LogicSugarMod extends Mod{
         registered = true;
 
         LogicIO.allStatements.add(SugarStatements.ForBeginStatement::new);
-        LogicIO.allStatements.add(SugarStatements.ForEndStatement::new);
         LogicIO.allStatements.add(SugarStatements.WhileBeginStatement::new);
-        LogicIO.allStatements.add(SugarStatements.WhileEndStatement::new);
         LogicIO.allStatements.add(SugarStatements.SwitchBeginStatement::new);
         LogicIO.allStatements.add(SugarStatements.CaseStatement::new);
         LogicIO.allStatements.add(SugarStatements.BreakStatement::new);
-        LogicIO.allStatements.add(SugarStatements.SwitchEndStatement::new);
+        LogicIO.allStatements.add(SugarStatements.BlockEndStatement::new);
 
         LAssembler.customParsers.put("forbegin", SugarStatements::parseForBegin);
-        LAssembler.customParsers.put("forend", tokens -> new SugarStatements.ForEndStatement());
+        LAssembler.customParsers.put("forbeginc", tokens -> SugarStatements.parseForBegin(tokens, true));
         LAssembler.customParsers.put("whilebegin", SugarStatements::parseWhileBegin);
-        LAssembler.customParsers.put("whileend", tokens -> new SugarStatements.WhileEndStatement());
+        LAssembler.customParsers.put("whilebeginc", tokens -> SugarStatements.parseWhileBegin(tokens, true));
         LAssembler.customParsers.put("switchbegin", SugarStatements::parseSwitchBegin);
+        LAssembler.customParsers.put("switchbeginc", tokens -> SugarStatements.parseSwitchBegin(tokens, true));
         LAssembler.customParsers.put("case", SugarStatements::parseCase);
         LAssembler.customParsers.put("break", tokens -> new SugarStatements.BreakStatement());
-        LAssembler.customParsers.put("switchend", tokens -> new SugarStatements.SwitchEndStatement());
+        LAssembler.customParsers.put("blockend", tokens -> new SugarStatements.BlockEndStatement());
+
+        // Read-only compatibility for markers produced by the first development version.
+        LAssembler.customParsers.put("forend", tokens -> new SugarStatements.BlockEndStatement());
+        LAssembler.customParsers.put("whileend", tokens -> new SugarStatements.BlockEndStatement());
+        LAssembler.customParsers.put("switchend", tokens -> new SugarStatements.BlockEndStatement());
     }
 }

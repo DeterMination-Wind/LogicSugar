@@ -5,6 +5,7 @@ import arc.graphics.Color;
 import arc.scene.ui.layout.Table;
 import mindustry.graphics.Pal;
 import mindustry.logic.LCanvas.JumpButton;
+import mindustry.logic.LCanvas.JumpCurve;
 import mindustry.logic.LCanvas.StatementElem;
 import mindustry.logic.LExecutor.LInstruction;
 import mindustry.logic.LExecutor.NoopI;
@@ -25,7 +26,7 @@ public final class SugarStatements{
         return Core.bundle.get("logicsugar." + key, fallback);
     }
 
-    private abstract static class SugarStatement extends LStatement{
+    public abstract static class SugarStatement extends LStatement{
         @Override
         public LInstruction build(LAssembler builder){
             return new NoopI();
@@ -37,24 +38,31 @@ public final class SugarStatements{
         }
     }
 
-    private abstract static class BeginStatement extends SugarStatement{
+    public abstract static class BeginStatement extends SugarStatement{
         public transient StatementElem dest;
         public int destIndex = -1;
+        public boolean collapsed;
 
-        protected abstract Class<? extends LStatement> endType();
+        protected void linkControl(Table table){
+            table.add(new TypedJumpButton(this, () -> dest, target -> {
+                dest = SugarCanvas.canLink(this, target) ? target : null;
+                SugarCanvas.refreshCurrent();
+            }, elem)).size(30f).padRight(4f);
+        }
 
-        protected void arrow(Table table){
-            table.add().growX();
-            table.add(new TypedJumpButton(() -> dest, target -> {
-                dest = target != null && endType().isInstance(target.st) ? target : null;
-            }, elem)).size(30f).right().padLeft(-8f);
+        protected void foldControl(Table table){
+            var fold = table.button(collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen, mindustry.ui.Styles.logici, () -> {
+                collapsed = !collapsed;
+                SugarCanvas.refreshCurrent();
+            }).size(30f).padRight(2f).tooltip(text("fold", "Fold block")).get();
+            fold.update(() -> fold.getStyle().imageUp = collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen);
         }
 
         @Override
         public void setupUI(){
             if(elem != null && destIndex >= 0 && destIndex < elem.parent.getChildren().size){
                 StatementElem candidate = (StatementElem)elem.parent.getChildren().get(destIndex);
-                dest = endType().isInstance(candidate.st) ? candidate : null;
+                dest = candidate.st instanceof BlockEndStatement ? candidate : null;
             }
         }
 
@@ -74,13 +82,43 @@ public final class SugarStatements{
     }
 
     private static class TypedJumpButton extends JumpButton{
-        TypedJumpButton(arc.func.Prov<StatementElem> getter, arc.func.Cons<StatementElem> setter, StatementElem elem){
+        private final BeginStatement begin;
+
+        TypedJumpButton(BeginStatement begin, arc.func.Prov<StatementElem> getter, arc.func.Cons<StatementElem> setter, StatementElem elem){
             super(getter, setter, elem);
+            this.begin = begin;
+            curve = new StructureJumpCurve(this, getter);
             update(() -> {
-                Color color = getter.get() == null ? Pal.remove : Color.white;
+                Color color = SugarCanvas.isValidLink(begin, getter.get()) ? Color.white : Pal.remove;
                 setColor(color);
                 getStyle().imageUpColor = color;
             });
+        }
+    }
+
+    private static class StructureJumpCurve extends JumpCurve{
+        private final arc.func.Prov<StatementElem> target;
+
+        StructureJumpCurve(JumpButton button, arc.func.Prov<StatementElem> target){
+            super(button);
+            this.target = target;
+        }
+
+        @Override
+        public void draw(){
+            if(target.get() == null) super.draw();
+        }
+
+        @Override
+        public void prepareHeight(){
+            if(target.get() == null){
+                super.prepareHeight();
+            }else{
+                markedDone = true;
+                predHeight = 0;
+                flipped = false;
+                jumpUIBegin = jumpUIEnd = Integer.MAX_VALUE;
+            }
         }
     }
 
@@ -90,43 +128,41 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
+            linkControl(table);
             table.add(text("for.variable", "for"));
-            field(table, variable, value -> variable = value).width(85f);
+            field(table, variable, value -> variable = value).width(60f);
             table.add(text("for.from", "from"));
-            field(table, initial, value -> initial = value).width(70f);
+            field(table, initial, value -> initial = value).width(60f);
             table.add(text("for.step", "step"));
-            field(table, step, value -> step = value).width(70f);
-            row(table);
+            field(table, step, value -> step = value).width(60f);
             table.add(text("condition", "while"));
-            Table condition = table.table(t -> rebuildCondition(t)).get();
-            arrow(table);
+            table.table(this::rebuildCondition);
+            foldControl(table);
         }
 
         private void rebuildCondition(Table table){
             table.clearChildren();
             table.setColor(elem == null ? Pal.logicControl : elem.color);
-            JumpStatement.addOp(this, table, op, value -> {
-                op = value;
-                rebuildCondition(table);
-            }, variable, value -> variable = value, compare, value -> compare = value);
+            float width = 60f;
+            field(table, variable, value -> variable = value).width(width);
+            table.button(button -> {
+                button.add(op.symbol);
+                button.clicked(() -> showSelect(button, ConditionOp.all, op, value -> {
+                    op = value;
+                    rebuildCondition(table);
+                }));
+            }, mindustry.ui.Styles.logict, () -> {}).size(op == ConditionOp.always ? 80f : 48f, 40f).pad(4f).color(table.color);
+            field(table, compare, value -> compare = value).width(width);
         }
 
-        @Override protected Class<? extends LStatement> endType(){ return ForEndStatement.class; }
         @Override public String name(){ return text("for.begin", "For Begin"); }
         @Override public String typeName(){ return "ForBegin"; }
 
         @Override
         public void write(StringBuilder out){
-            out.append("forbegin ").append(variable).append(' ').append(optional(initial)).append(' ').append(optional(step)).append(' ')
+            out.append(collapsed ? "forbeginc " : "forbegin ").append(variable).append(' ').append(optional(initial)).append(' ').append(optional(step)).append(' ')
                 .append(op.name()).append(' ').append(compare).append(' ').append(destIndex);
         }
-    }
-
-    public static class ForEndStatement extends SugarStatement{
-        @Override public void build(Table table){}
-        @Override public String name(){ return text("for.end", "For End"); }
-        @Override public String typeName(){ return "ForEnd"; }
-        @Override public void write(StringBuilder out){ out.append("forend"); }
     }
 
     public static class WhileBeginStatement extends BeginStatement{
@@ -134,22 +170,15 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
+            linkControl(table);
             table.add(text("condition", "condition"));
             field(table, condition, value -> condition = value);
-            arrow(table);
+            foldControl(table);
         }
 
-        @Override protected Class<? extends LStatement> endType(){ return WhileEndStatement.class; }
         @Override public String name(){ return text("while.begin", "While Begin"); }
         @Override public String typeName(){ return "WhileBegin"; }
-        @Override public void write(StringBuilder out){ out.append("whilebegin ").append(condition).append(' ').append(destIndex); }
-    }
-
-    public static class WhileEndStatement extends SugarStatement{
-        @Override public void build(Table table){}
-        @Override public String name(){ return text("while.end", "While End"); }
-        @Override public String typeName(){ return "WhileEnd"; }
-        @Override public void write(StringBuilder out){ out.append("whileend"); }
+        @Override public void write(StringBuilder out){ out.append(collapsed ? "whilebeginc " : "whilebegin ").append(condition).append(' ').append(destIndex); }
     }
 
     public static class SwitchBeginStatement extends BeginStatement{
@@ -157,15 +186,15 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
+            linkControl(table);
             table.add(text("switch.value", "switch"));
             field(table, value, result -> value = result);
-            arrow(table);
+            foldControl(table);
         }
 
-        @Override protected Class<? extends LStatement> endType(){ return SwitchEndStatement.class; }
         @Override public String name(){ return text("switch.begin", "Switch Start"); }
         @Override public String typeName(){ return "SwitchBegin"; }
-        @Override public void write(StringBuilder out){ out.append("switchbegin ").append(value).append(' ').append(destIndex); }
+        @Override public void write(StringBuilder out){ out.append(collapsed ? "switchbeginc " : "switchbegin ").append(value).append(' ').append(destIndex); }
     }
 
     public static class CaseStatement extends SugarStatement{
@@ -183,14 +212,18 @@ public final class SugarStatements{
         @Override public void write(StringBuilder out){ out.append("break"); }
     }
 
-    public static class SwitchEndStatement extends SugarStatement{
+    public static class BlockEndStatement extends SugarStatement{
         @Override public void build(Table table){}
-        @Override public String name(){ return text("switch.end", "Switch End"); }
-        @Override public String typeName(){ return "SwitchEnd"; }
-        @Override public void write(StringBuilder out){ out.append("switchend"); }
+        @Override public String name(){ return "}"; }
+        @Override public String typeName(){ return "BlockEnd"; }
+        @Override public void write(StringBuilder out){ out.append("blockend"); }
     }
 
     public static LStatement parseForBegin(String[] tokens){
+        return parseForBegin(tokens, false);
+    }
+
+    public static LStatement parseForBegin(String[] tokens, boolean collapsed){
         ForBeginStatement result = new ForBeginStatement();
         result.variable = tokens[1];
         result.initial = optionalValue(tokens[2]);
@@ -198,20 +231,31 @@ public final class SugarStatements{
         result.op = ConditionOp.valueOf(tokens[4]);
         result.compare = tokens[5];
         result.destIndex = Integer.parseInt(tokens[6]);
+        result.collapsed = collapsed;
         return result;
     }
 
     public static LStatement parseWhileBegin(String[] tokens){
+        return parseWhileBegin(tokens, false);
+    }
+
+    public static LStatement parseWhileBegin(String[] tokens, boolean collapsed){
         WhileBeginStatement result = new WhileBeginStatement();
         result.condition = tokens[1];
         result.destIndex = Integer.parseInt(tokens[2]);
+        result.collapsed = collapsed;
         return result;
     }
 
     public static LStatement parseSwitchBegin(String[] tokens){
+        return parseSwitchBegin(tokens, false);
+    }
+
+    public static LStatement parseSwitchBegin(String[] tokens, boolean collapsed){
         SwitchBeginStatement result = new SwitchBeginStatement();
         result.value = tokens[1];
         result.destIndex = Integer.parseInt(tokens[2]);
+        result.collapsed = collapsed;
         return result;
     }
 

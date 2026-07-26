@@ -5,6 +5,15 @@ import mindustry.Vars;
 import mindustry.logic.LExecutor;
 
 public class SugarLogicDialog extends LogicDialog{
+    public SugarLogicDialog(){
+        super();
+        clearChildren();
+        canvas = new SugarCanvas();
+        add(canvas).grow().name("canvas");
+        row();
+        add(buttons).growX().name("buttons");
+    }
+
     @Override
     public void show(String code, LExecutor executor, boolean privileged, Cons<String> modified){
         String editable = SugarCompiler.restore(code);
