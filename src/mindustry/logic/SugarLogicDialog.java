@@ -24,6 +24,7 @@ public class SugarLogicDialog extends LogicDialog{
     private static final String compiledCopyName = "logicsugar-copy-compiled";
     private static final Field consumerField = field(LogicDialog.class, "consumer");
     private final Map<Object, String> drafts = new IdentityHashMap<>();
+    public LExecutor executor;
     private Element editButton;
     private float menuScanTimer;
 
@@ -95,6 +96,7 @@ public class SugarLogicDialog extends LogicDialog{
 
     @Override
     public void show(String code, LExecutor executor, boolean privileged, Cons<String> modified){
+        this.executor = executor;
         Object key = draftKey(executor);
         String editable = drafts.containsKey(key) ? drafts.get(key) : SugarCompiler.restore(code);
         Cons<String> submit = sugar -> submit(sugar, executor, modified, key, false);

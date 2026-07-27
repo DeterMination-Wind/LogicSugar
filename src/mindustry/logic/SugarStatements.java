@@ -128,7 +128,6 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            linkControl(table);
             table.add(text("for.variable", "for"));
             field(table, variable, value -> variable = value).width(60f);
             table.add(text("for.from", "from"));
@@ -170,7 +169,6 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            linkControl(table);
             table.add(text("condition", "condition"));
             field(table, condition, value -> condition = value);
             foldControl(table);
@@ -186,7 +184,6 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            linkControl(table);
             table.add(text("switch.value", "switch"));
             field(table, value, result -> value = result);
             foldControl(table);

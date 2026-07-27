@@ -121,7 +121,7 @@ public class BoxSelect{
     // 复制用剪贴板（用 copy() 保持 ExprStatement 折叠状态，不经过 write+read）
     private static List<LStatement> clipboardCopies = null;
     private static int clipboardSize = 0;
-    private static int[] clipboardSelectedIndices = null;
+    private static List<StatementElem> clipboardSources = null;
 
     // UI 元素
     private static Element overlay;
@@ -566,42 +566,33 @@ public class BoxSelect{
         int lastIdx = children.indexOf(sorted.get(sorted.size() - 1), true);
         int insertPos = lastIdx + 1;
 
-        int[] selectedIndices = new int[sorted.size()];
         Seq<LStatement> copies = new Seq<>();
+        List<StatementElem> copySources = new ArrayList<>();
         for(int i = 0; i < sorted.size(); i++){
-            selectedIndices[i] = children.indexOf(sorted.get(i), true);
             sorted.get(i).st.saveUI();
             LStatement copy = sorted.get(i).st.copy();
             Log.debug("[LogicAssist] duplicateSelectedBelow: st=@ copy=@", sorted.get(i).st.getClass().getSimpleName(), copy == null ? "null" : copy.getClass().getSimpleName());
-            if(copy != null) copies.add(copy);
+            if(copy != null){
+                copies.add(copy);
+                copySources.add(sorted.get(i));
+            }
         }
         int copySize = copies.size;
 
-        if(children.size + copySize > LExecutor.maxInstructions){
+        if(children.size + copySize + copiedBlockEndCount(copySources) > LExecutor.maxInstructions){
             Log.debug("[LogicAssist] Duplicate aborted: would exceed maxInstructions");
             return;
         }
 
         if(copies.isEmpty()) return;
 
-        adjustJumpDestIndices(copies, selectedIndices, insertPos, copySize);
-
-        for(int i = 0; i < copies.size; i++){
-            canvas.addAt(insertPos + i, copies.get(i));
-        }
-        for(LStatement st : copies){
-            st.setupUI();
-        }
+        insertCopiedStatements(canvas, insertPos, copies, copySources);
 
         finalizeLayout(canvas);
-        // MI2 模式：layout 后调用 setupUI() 解析副本中 JumpStatement 的 dest
-        // JumpStatement.setupUI() 会从 destIndex 查找 elem.parent.getChildren() 解析 dest
-        for(LStatement st : copies){
-            if(st instanceof JumpStatement) st.setupUI();
-        }
         // 更新所有 Jump 的 destIndex（反映插入后的新位置）并刷新跳转线
         saveAllJumpUI(canvas);
         canvas.statements.jumps.act(0f);
+        refreshStructureLayout(canvas);
         // 先恢复所有积木的按钮图标（旧选中积木的 Icon.move 改回 Icon.copy）
         restoreButtonIcons(canvas);
         selected.clear();
@@ -670,7 +661,7 @@ public class BoxSelect{
         dragBaseYs = null;
         clipboardCopies = null;
         clipboardSize = 0;
-        clipboardSelectedIndices = null;
+        clipboardSources = null;
     }
 
     // ===== 拖动 =====
@@ -1281,6 +1272,7 @@ public class BoxSelect{
         saveAllJumpUI(canvas);
         // saveAllJumpUI 改变了 destIndex，需再次 act 让 JumpCurve 重新连接目标
         canvas.statements.jumps.act(0f);
+        refreshStructureLayout(canvas);
         reselectRange(canvas, actualInsert, count);
         enterSelectedState(canvas);
         Log.debug("[LogicAssist] Drag-moved " + count + " blocks to position " + actualInsert);
@@ -1292,18 +1284,17 @@ public class BoxSelect{
         List<StatementElem> sorted = getSortedSelected(canvas);
         Seq<Element> children = canvas.statements.getChildren();
 
-        clipboardSelectedIndices = new int[sorted.size()];
-        for(int i = 0; i < sorted.size(); i++){
-            clipboardSelectedIndices[i] = children.indexOf(sorted.get(i), true);
-        }
-
         // 用 copy() 保持 ExprStatement 折叠状态（write+read 会展开表达式为 op 链）
         clipboardCopies = new ArrayList<>();
+        clipboardSources = new ArrayList<>();
         for(StatementElem elem : sorted){
             elem.st.saveUI();
             LStatement copy = elem.st.copy();
             Log.debug("[LogicAssist] prepareCopyData: st=@ copy=@", elem.st.getClass().getSimpleName(), copy == null ? "null" : copy.getClass().getSimpleName());
-            if(copy != null) clipboardCopies.add(copy);
+            if(copy != null){
+                clipboardCopies.add(copy);
+                clipboardSources.add(elem);
+            }
         }
         clipboardSize = clipboardCopies.size();
     }
@@ -1320,7 +1311,7 @@ public class BoxSelect{
         }
 
         int currentSize = canvas.statements.getChildren().size;
-        if(currentSize + clipboardSize > LExecutor.maxInstructions){
+        if(currentSize + clipboardSize + copiedBlockEndCount(clipboardSources) > LExecutor.maxInstructions){
             Log.debug("[LogicAssist] Copy aborted: would exceed maxInstructions");
             enterSelectedState(canvas);
             return;
@@ -1340,29 +1331,18 @@ public class BoxSelect{
 
         int actualInsert = Math.max(0, Math.min(insertPos, canvas.statements.getChildren().size));
 
-        adjustJumpDestIndices(copies, clipboardSelectedIndices, actualInsert, copies.size);
-        // 先全部插入，再统一 setupUI
-        for(int i = 0; i < copies.size; i++){
-            canvas.addAt(actualInsert + i, copies.get(i));
-        }
-        for(LStatement st : copies){
-            st.setupUI();
-        }
+        insertCopiedStatements(canvas, actualInsert, copies, clipboardSources);
 
         finalizeLayout(canvas);
-        // MI2 模式：layout 后调用 setupUI() 解析副本中 JumpStatement 的 dest
-        // JumpStatement.setupUI() 会从 destIndex 查找 elem.parent.getChildren() 解析 dest
-        for(LStatement st : copies){
-            if(st instanceof JumpStatement) st.setupUI();
-        }
         // 更新所有 Jump 的 destIndex（反映插入后的新位置）并刷新跳转线
         saveAllJumpUI(canvas);
         canvas.statements.jumps.act(0f);
+        refreshStructureLayout(canvas);
         reselectRange(canvas, actualInsert, copies.size);
 
         clipboardCopies = null;
         clipboardSize = 0;
-        clipboardSelectedIndices = null;
+        clipboardSources = null;
 
         enterSelectedState(canvas);
         Log.debug("[LogicAssist] Drag-copied " + copies.size + " blocks to position " + insertPos);
@@ -1375,7 +1355,7 @@ public class BoxSelect{
         dragBaseYs = null;
         clipboardCopies = null;
         clipboardSize = 0;
-        clipboardSelectedIndices = null;
+        clipboardSources = null;
         dragInsertPos = -1;
         state = State.SELECTED;
         Log.debug("[LogicAssist] Drag cancelled.");
@@ -1396,6 +1376,7 @@ public class BoxSelect{
 
         saveAllJumpUI(canvas);
         finalizeLayout(canvas);
+        refreshStructureLayout(canvas);
 
         selected.clear();
         state = State.IDLE;
@@ -1432,25 +1413,69 @@ public class BoxSelect{
         }
     }
 
-    /** 调整副本中 JumpStatement 的 destIndex（executeDragCopy 和 duplicateSelectedBelow 共用） */
-    private static void adjustJumpDestIndices(Seq<LStatement> copies, int[] selectedIndices, int insertPos, int copySize){
-        for(LStatement st : copies){
-            if(st instanceof JumpStatement js && js.destIndex != -1){
-                int oldDest = js.destIndex;
-                int selectedPos = -1;
-                if(selectedIndices != null){
-                    for(int i = 0; i < selectedIndices.length; i++){
-                        if(selectedIndices[i] == oldDest){
-                            selectedPos = i;
-                            break;
-                        }
-                    }
-                }
-                if(selectedPos >= 0){
-                    js.destIndex = insertPos + selectedPos;
-                }else if(oldDest >= insertPos){
-                    js.destIndex = oldDest + copySize;
-                }
+    /** Number of generated ends needed when a copied selection omits a structure's matching end. */
+    private static int copiedBlockEndCount(List<StatementElem> sources){
+        if(sources == null) return 0;
+        IdentityHashMap<StatementElem, Boolean> included = new IdentityHashMap<>();
+        for(StatementElem source : sources) included.put(source, true);
+
+        int result = 0;
+        for(StatementElem source : sources){
+            if(source.st instanceof SugarStatements.BeginStatement begin && !included.containsKey(begin.dest)){
+                result++;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Inserts a copied selection as one stable batch. SugarCanvas.addAt() creates an end immediately
+     * for a Begin block, but later insertions shift that end and invalidate its stored index.
+     */
+    private static void insertCopiedStatements(LCanvas canvas, int insertPos, Seq<LStatement> copies, List<StatementElem> sources){
+        if(!(canvas instanceof SugarCanvas) || sources == null || sources.size() != copies.size){
+            for(int i = 0; i < copies.size; i++){
+                canvas.addAt(insertPos + i, copies.get(i));
+                copies.get(i).setupUI();
+            }
+            return;
+        }
+
+        IdentityHashMap<StatementElem, Integer> sourcePositions = new IdentityHashMap<>();
+        for(int i = 0; i < sources.size(); i++) sourcePositions.put(sources.get(i), i);
+
+        for(int i = 0; i < copies.size; i++){
+            canvas.statements.addChildAt(insertPos + i, canvas.new StatementElem(copies.get(i)));
+        }
+
+        List<SugarStatements.BeginStatement> unpairedBegins = new ArrayList<>();
+        for(int i = 0; i < copies.size; i++){
+            if(!(copies.get(i) instanceof SugarStatements.BeginStatement copyBegin)
+                || !(sources.get(i).st instanceof SugarStatements.BeginStatement sourceBegin)) continue;
+
+            Integer target = sourcePositions.get(sourceBegin.dest);
+            if(target != null && copies.get(target) instanceof SugarStatements.BlockEndStatement){
+                copyBegin.dest = copies.get(target).elem;
+            }else{
+                unpairedBegins.add(copyBegin);
+            }
+        }
+
+        // Close unmatched copied blocks after the batch, from inner to outer.
+        int endAt = insertPos + copies.size;
+        for(int i = unpairedBegins.size() - 1; i >= 0; i--){
+            SugarStatements.BlockEndStatement end = new SugarStatements.BlockEndStatement();
+            canvas.statements.addChildAt(endAt++, canvas.new StatementElem(end));
+            unpairedBegins.get(i).dest = end.elem;
+        }
+
+        for(int i = 0; i < copies.size; i++){
+            LStatement copy = copies.get(i);
+            if(copy instanceof JumpStatement copyJump && sources.get(i).st instanceof JumpStatement sourceJump){
+                Integer target = sourcePositions.get(sourceJump.dest);
+                copyJump.dest = target == null ? sourceJump.dest : copies.get(target).elem;
+            }else if(!(copy instanceof SugarStatements.BeginStatement)){
+                copy.setupUI();
             }
         }
     }
@@ -1479,6 +1504,13 @@ public class BoxSelect{
         canvas.statements.validate();
         // 更新跳转线位置（基于最终布局）
         canvas.statements.jumps.act(0f);
+    }
+
+    /** Keep Logic Sugar's structural indentation and guide layer in sync with the reordered child list. */
+    private static void refreshStructureLayout(LCanvas canvas){
+        if(canvas instanceof SugarCanvas sugarCanvas){
+            sugarCanvas.refreshStructureLayout();
+        }
     }
 
     /** 更新所有积木的 JumpStatement destIndex（移动/删除后调用） */

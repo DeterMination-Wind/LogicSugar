@@ -22,6 +22,9 @@ public class SugarCompilerSelfTest{
         legacyEndsMigrate();
         malformedStructuresFail();
         semanticErrorsAreLocated();
+        jumpsMayTargetStructureBoundaries();
+        breaksLeaveNearestStructure();
+        generatedCodeIsOptimized();
         vanillaCodePassesThrough();
         expressionOpsRoundTrip();
         structuredTargetsFollowExpressionResize();
@@ -49,7 +52,7 @@ public class SugarCompilerSelfTest{
         check(compiled.contains("# @logic-sugar-line forbeginc"), "collapsed state was not persisted");
 
         Seq<LStatement> lowered = LAssembler.read(compiled, true);
-        check(lowered.size == 19, "unexpected lowered instruction count: " + lowered.size);
+        check(lowered.size == 18, "unexpected lowered instruction count: " + lowered.size);
         for(LStatement statement : lowered){
             check(statement.getClass().getEnclosingClass() != SugarStatements.class, "compiled program contains a sugar statement");
         }
@@ -80,6 +83,86 @@ public class SugarCompilerSelfTest{
         check(invalid[1], "bare break was not marked invalid");
         expectFailure("case 1\n", "bare case");
         expectFailure("break\n", "bare break");
+    }
+
+    private static void jumpsMayTargetStructureBoundaries(){
+        String forContinue = """
+            forbegin i 0 1 lessThanEq 3 2
+            jump 2 always x false
+            blockend
+            """;
+        String compiledFor = SugarCompiler.compile(forContinue);
+        check(compiledFor.contains("jump __ls_stmt_2 always x false"),
+            "jump to a block end did not preserve the continue target");
+
+        String beginTarget = """
+            whilebegin true 2
+            jump 0 always x false
+            blockend
+            """;
+        String compiledWhile = SugarCompiler.compile(beginTarget);
+        check(compiledWhile.contains("jump __ls_stmt_0 always x false"),
+            "jump to a structured begin was rejected or retargeted");
+    }
+
+    private static void breaksLeaveNearestStructure(){
+        String forBreak = """
+            forbegin i 0 1 lessThanEq 3 2
+            break
+            blockend
+            """;
+        check(SugarCompiler.compile(forBreak).contains("jump __ls_stmt_3 always x false"),
+            "break inside a for did not leave the loop");
+
+        String whileBreak = """
+            whilebegin true 2
+            break
+            blockend
+            """;
+        check(SugarCompiler.compile(whileBreak).contains("jump __ls_stmt_3 always x false"),
+            "break inside a while did not leave the loop");
+
+        String nested = """
+            whilebegin true 5
+            switchbegin x 3
+            break
+            blockend
+            print after-switch
+            blockend
+            """;
+        check(SugarCompiler.compile(nested).contains("jump __ls_stmt_4 always x false"),
+            "break did not choose the nearest enclosing switch");
+    }
+
+    private static void generatedCodeIsOptimized(){
+        String sugar = """
+            whilebegin true 6
+            op div _0 4 5
+            op div _1 5 4
+            op mul _0 _0 _1
+            op add _0 i _0
+            op sqrt x _0 0
+            blockend
+            """;
+        String compiled = SugarCompiler.compile(sugar);
+        String lowered = loweredCode(compiled);
+        check(lowered.contains("op add _0 i 1"), "constant expression was not folded");
+        check(!lowered.contains("op div _0 4 5"), "unused constant division remained in output");
+        check(!lowered.contains("__ls_stmt_1:"), "unreferenced statement label was emitted");
+
+        String switchCode = loweredCode(SugarCompiler.compile("""
+            switchbegin x 3
+            case 1
+            print one
+            blockend
+            """));
+        check(switchCode.contains("jump __ls_case_1 equal x 1"), "switch did not compare its source value directly");
+        check(!switchCode.contains("__ls_switch_"), "switch temporary variable was emitted");
+    }
+
+    private static String loweredCode(String compiled){
+        int marker = compiled.indexOf("# @logic-sugar-v1 begin");
+        return marker < 0 ? compiled : compiled.substring(0, marker);
     }
 
     private static void expressionOpsRoundTrip(){

@@ -4,6 +4,7 @@ import arc.Core;
 import arc.graphics.Color;
 import arc.graphics.g2d.Draw;
 import arc.graphics.g2d.Lines;
+import arc.math.geom.Rect;
 import arc.math.geom.Vec2;
 import arc.scene.Element;
 import arc.scene.Group;
@@ -31,6 +32,8 @@ import logicsugar.assist.expr.ExprStatement;
 
 import java.util.IdentityHashMap;
 import java.lang.reflect.Field;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 public class SugarCanvas extends LCanvas{
     private static final Color[] guideColors = {
@@ -63,6 +66,7 @@ public class SugarCanvas extends LCanvas{
 
     @Override
     public String save(){
+        structure.refresh();
         ExprHook.unfoldAll(this);
         String result = super.save();
         ExprHook.foldAll(this);
@@ -197,7 +201,17 @@ public class SugarCanvas extends LCanvas{
 
     public static void refreshCurrent(){
         SugarCanvas canvas = current();
-        if(canvas != null) canvas.structure.refresh();
+        if(canvas != null) canvas.refreshStructureLayout();
+    }
+
+    /** Rebuild structure-dependent presentation immediately after an external statement reorder. */
+    public void refreshStructureLayout(){
+        if(statements == null) return;
+        structure.refresh();
+        statements.updateJumpHeights = true;
+        statements.invalidate();
+        statements.validate();
+        statements.jumps.act(0f);
     }
 
     public static boolean canLink(BeginStatement begin, StatementElem target){
@@ -310,6 +324,7 @@ public class SugarCanvas extends LCanvas{
             if(statements == null) return;
             normalizeElements();
             SnapshotSeq<Element> children = statements.getChildren();
+            syncStatementIndices(children);
             int nextSignature = 31 * children.size + Math.round(getWidth()) + Math.round(statements.getWidth()) + (Core.graphics.isPortrait() ? 1 : 0);
             for(int i = 0; i < children.size; i++){
                 StatementElem elem = (StatementElem)children.get(i);
@@ -408,7 +423,6 @@ public class SugarCanvas extends LCanvas{
 
         private void rebuildStructure(SnapshotSeq<Element> children){
             refreshIndices();
-            syncStatementIndices(children);
             pairs.clear();
             IdentityHashMap<StatementElem, Pair> claimed = new IdentityHashMap<>();
             Seq<LStatement> source = new Seq<>(children.size);
@@ -439,12 +453,24 @@ public class SugarCanvas extends LCanvas{
             statements.updateJumpHeights = true;
         }
 
-        /**
-         * Structure links are held as element references while editing, but
-         * validation consumes their serialized indices. Recalculate before
-         * validating so insertion, moving, and Expr compaction stay valid.
-         */
+        /** Match each closing block with the nearest still-open structured block. */
         private void syncStatementIndices(SnapshotSeq<Element> children){
+            Deque<BeginStatement> opens = new ArrayDeque<>();
+            for(Element child : children){
+                StatementElem elem = (StatementElem)child;
+                if(elem.st instanceof BeginStatement begin){
+                    opens.push(begin);
+                }else if(elem.st instanceof BlockEndStatement && !opens.isEmpty()){
+                    BeginStatement begin = opens.pop();
+                    begin.dest = elem;
+                    begin.destIndex = children.indexOf(elem, true);
+                }
+            }
+            while(!opens.isEmpty()){
+                BeginStatement begin = opens.pop();
+                begin.dest = null;
+                begin.destIndex = -1;
+            }
             for(Element child : children){
                 ((StatementElem)child).st.saveUI();
             }
@@ -502,23 +528,44 @@ public class SugarCanvas extends LCanvas{
     final class StructureGuideLayer extends Element{
         @Override
         public void draw(){
+            // statements and jumps are sibling overlays; use their common parent so scrolling
+            // moves the structure cards and this guide by the same transform.
+            if(parent == null || parent.parent == null) return;
             Group common = parent.parent;
+            Rect cullingArea = parent.getCullingArea();
+            float visibleBottom = Float.NEGATIVE_INFINITY;
+            float visibleTop = Float.POSITIVE_INFINITY;
+            if(cullingArea != null){
+                Vec2 cullBottom = Tmp.v3.set(0f, cullingArea.y);
+                Vec2 cullTop = Tmp.v4.set(0f, cullingArea.y + cullingArea.height);
+                localToAscendantCoordinates(common, cullBottom);
+                localToAscendantCoordinates(common, cullTop);
+                visibleBottom = Math.min(cullBottom.y, cullTop.y);
+                visibleTop = Math.max(cullBottom.y, cullTop.y);
+            }
+
             for(Pair pair : structure.pairs){
                 if(!pair.valid || pair.beginElem.foldedHidden || pair.end == null || !pair.end.visible) continue;
                 SugarStatementElem begin = (SugarStatementElem)pair.beginElem;
                 SugarStatementElem end = (SugarStatementElem)pair.end;
                 Color color = guideColors[Math.floorMod(begin.structureDepth, guideColors.length)];
 
-                Vec2 top = Tmp.v1.set(begin.inset + Scl.scl(12f), 4f);
-                Vec2 bottom = Tmp.v2.set(end.inset + Scl.scl(12f), end.getHeight() - 4f);
-                begin.localToAscendantCoordinates(common, top);
-                end.localToAscendantCoordinates(common, bottom);
+                float guideX = begin.inset + Scl.scl(6f);
+                Vec2 beginBottom = Tmp.v1.set(guideX, 0f);
+                Vec2 endTop = Tmp.v2.set(guideX, end.getHeight());
+                begin.localToAscendantCoordinates(common, beginBottom);
+                end.localToAscendantCoordinates(common, endTop);
+                // Non-transform groups carry the scroll offset in this layer's live draw position.
+                localToAscendantCoordinates(common, beginBottom);
+                localToAscendantCoordinates(common, endTop);
+
+                float lineBottom = Math.max(Math.min(beginBottom.y, endTop.y), visibleBottom);
+                float lineTop = Math.min(Math.max(beginBottom.y, endTop.y), visibleTop);
+                if(lineTop <= lineBottom) continue;
 
                 Draw.color(color, parentAlpha);
                 Lines.stroke(Scl.scl(2.2f));
-                Lines.line(top.x, top.y, top.x, bottom.y);
-                Lines.line(top.x, top.y, top.x + Scl.scl(10f), top.y);
-                Lines.line(bottom.x, bottom.y, bottom.x + Scl.scl(10f), bottom.y);
+                Lines.line(beginBottom.x, lineBottom, beginBottom.x, lineTop);
             }
             Draw.reset();
         }

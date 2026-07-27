@@ -113,9 +113,6 @@ public class ExprHook{
 
                     canvas.addAt(i, exprStmt);
 
-                    // Keep every index-based control link aligned with the collapsed chain.
-                    adjustStatementIndices(canvas, i + chainLen - 1, -(chainLen - 1));
-
                     changed = true;
                 }else{
                     // rebuild 失败（如链不完整），跳过整条链，
@@ -128,6 +125,9 @@ public class ExprHook{
         }
 
         if(changed){
+            // Element references survive the remove/insert operations. Recalculate their
+            // serialized indices here; shifting the old values again corrupts nested blocks.
+            saveUIAll(canvas);
             setupUIAll(canvas);
             // 行号由 LogicDragLayout.layout() 自动更新，无需手动调用
             canvas.statements.updateJumpHeights = true;
@@ -177,13 +177,13 @@ public class ExprHook{
                 canvas.addAt(i + k, opStmt);
             }
 
-            adjustStatementIndices(canvas, i, chainLen - 1);
-
             changed = true;
             i += chainLen - 1;
         }
 
         if(changed){
+            // See foldAll(): the destination elements have already moved with the layout.
+            saveUIAll(canvas);
             setupUIAll(canvas);
             canvas.statements.updateJumpHeights = true;
             Log.debug("[LogicAssist] Expression statements unfolded");
