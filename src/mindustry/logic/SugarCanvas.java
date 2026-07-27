@@ -10,7 +10,9 @@ import arc.scene.Group;
 import arc.scene.event.Touchable;
 import arc.scene.style.BaseDrawable;
 import arc.scene.style.Drawable;
+import arc.scene.ui.Label;
 import arc.scene.ui.layout.Scl;
+import arc.scene.ui.layout.WidgetGroup;
 import arc.struct.Seq;
 import arc.struct.SnapshotSeq;
 import arc.util.Tmp;
@@ -21,6 +23,11 @@ import mindustry.logic.SugarStatements.BeginStatement;
 import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.CaseStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
+import logicsugar.assist.BoxSelect;
+import logicsugar.assist.JumpLineColor;
+import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ExprHook;
+import logicsugar.assist.expr.ExprStatement;
 
 import java.util.IdentityHashMap;
 import java.lang.reflect.Field;
@@ -35,6 +42,8 @@ public class SugarCanvas extends LCanvas{
     private StructureGuideLayer guideLayer;
     private static final Field draggingField = field(LCanvas.class, "dragging");
     private static final Field spaceField = field(LCanvas.DragLayout.class, "space");
+    private static final Field addressLabelField = field(LCanvas.StatementElem.class, "addressLabel");
+    private static final Field needsLayoutField = field(WidgetGroup.class, "needsLayout");
 
     public SugarCanvas(){
         super();
@@ -44,6 +53,83 @@ public class SugarCanvas extends LCanvas{
             if(isDragging()) structure.expandAll();
             structure.refresh();
         });
+    }
+
+    @Override
+    public void load(String asm){
+        super.load(asm);
+        ExprHook.foldAll(this);
+    }
+
+    @Override
+    public String save(){
+        ExprHook.unfoldAll(this);
+        String result = super.save();
+        ExprHook.foldAll(this);
+        return result;
+    }
+
+    @Override
+    public void act(float delta){
+        super.act(delta);
+        updateMlogAddresses();
+    }
+
+    @Override
+    public void draw(){
+        if(BoxSelect.isDragging()) BoxSelect.drawInsertIndicatorUnder(this);
+        super.draw();
+        JumpLineColor.patchAllCurves(this);
+        if(!BoxSelect.isSelecting() && !BoxSelect.isDragging()){
+            arc.math.Mat oldTrans = new arc.math.Mat().set(Draw.trans());
+            Draw.trans().idt();
+            BoxSelect.drawHighlights(this);
+            BoxSelect.drawColorScrollbar(this);
+            Draw.trans(oldTrans);
+        }
+    }
+
+    private void updateMlogAddresses(){
+        if(statements == null) return;
+        Seq<Element> children = statements.getChildren();
+        if(children.isEmpty()) return;
+
+        statements.invalidate();
+        statements.validate();
+
+        boolean changed = false;
+        int mlogLine = 0;
+        for(Element child : children){
+            if(!(child instanceof LCanvas.StatementElem elem)) continue;
+
+            int lineCount = 1;
+            if(elem.st instanceof ExprStatement expression){
+                if(expression.lastOps == null){
+                    try{
+                        expression.lastOps = ExprCompiler.compile(expression.dest, expression.expr);
+                    }catch(Exception ignored){}
+                }
+                if(expression.lastOps != null) lineCount = expression.lastOps.size();
+            }
+
+            String text = lineCount > 1
+                ? mlogLine + "->" + (mlogLine + lineCount - 1)
+                : Integer.toString(mlogLine);
+            try{
+                Label label = (Label)addressLabelField.get(elem);
+                if(label != null && !label.getText().toString().equals(text)){
+                    label.setText(text);
+                    changed = true;
+                }
+            }catch(IllegalAccessException ignored){}
+            mlogLine += lineCount;
+        }
+
+        if(changed){
+            try{
+                needsLayoutField.setBoolean(statements, false);
+            }catch(IllegalAccessException ignored){}
+        }
     }
 
     @Override
@@ -103,6 +189,7 @@ public class SugarCanvas extends LCanvas{
             SugarStatementElem end = new SugarStatementElem(new BlockEndStatement());
             statements.addChildAt(at + 1, end);
             begin.dest = end;
+            begin.destIndex = at + 1;
             statements.updateJumpHeights = true;
         }
         structure.refresh();
@@ -321,6 +408,7 @@ public class SugarCanvas extends LCanvas{
 
         private void rebuildStructure(SnapshotSeq<Element> children){
             refreshIndices();
+            syncStatementIndices(children);
             pairs.clear();
             IdentityHashMap<StatementElem, Pair> claimed = new IdentityHashMap<>();
             Seq<LStatement> source = new Seq<>(children.size);
@@ -349,6 +437,17 @@ public class SugarCanvas extends LCanvas{
             assignRange(0, children.size, 0, false, children);
             statements.invalidateHierarchy();
             statements.updateJumpHeights = true;
+        }
+
+        /**
+         * Structure links are held as element references while editing, but
+         * validation consumes their serialized indices. Recalculate before
+         * validating so insertion, moving, and Expr compaction stay valid.
+         */
+        private void syncStatementIndices(SnapshotSeq<Element> children){
+            for(Element child : children){
+                ((StatementElem)child).st.saveUI();
+            }
         }
 
         private void assignRange(int from, int to, int depth, boolean switchBody, SnapshotSeq<Element> children){

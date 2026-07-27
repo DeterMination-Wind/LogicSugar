@@ -21,5 +21,16 @@ The same release works on Windows and Linux. Install it like any other Mindustry
 - `switch` 分支：支持 `case` 和 `break`
 - 自动缩进、折叠和结构辅助线
 - 错误保留在编辑器中，方便修复
+- 跳转线着色：按目标或积木类别区分分支
+- 框选批处理：批量移动、复制、删除逻辑积木
+- `Expr` 表达式积木：编辑时使用表达式，保存时自动转为原版兼容的 `op` 指令
+
+## 致谢
+
+- [logic-assist](https://github.com/nosbhghggg/logic-assist) 提供了跳转线着色、框选批处理和表达式编辑功能的实现基础。
 
 Enjoy clearer logic, faster iteration, and code that remains easy to share.
+
+## License
+
+Logic Sugar is released under the GNU General Public License version 3. See [LICENSE](LICENSE).

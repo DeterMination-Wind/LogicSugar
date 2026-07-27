@@ -8,6 +8,9 @@ import mindustry.logic.LAssembler;
 import mindustry.logic.SugarLogicDialog;
 import mindustry.logic.SugarStatements;
 import mindustry.mod.Mod;
+import logicsugar.assist.BoxSelect;
+import logicsugar.assist.JumpLineColor;
+import logicsugar.assist.expr.ExprHook;
 
 import static arc.Events.on;
 
@@ -20,6 +23,12 @@ public class LogicSugarMod extends Mod{
         on(ClientLoadEvent.class, event -> Core.app.post(() -> {
             if(Vars.ui != null && !(Vars.ui.logic instanceof SugarLogicDialog)){
                 Vars.ui.logic = new SugarLogicDialog();
+            }
+            if(Vars.ui != null && Vars.ui.logic != null){
+                JumpLineColor.setupSettings();
+                Vars.ui.logic.hidden(JumpLineColor::clearCache);
+                BoxSelect.init();
+                ExprHook.init();
             }
         }));
     }
