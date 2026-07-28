@@ -32,6 +32,7 @@ tasks.withType(JavaCompile).configureEach{
 jar{
     archiveFileName = "LogicSugar-v${version}.jar"
     from(projectDir){ include "mod.json" }
+    from(projectDir){ include "icon.png" }
     from("assets/"){ include "**" }
 }
 
