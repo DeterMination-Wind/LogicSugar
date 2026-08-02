@@ -179,7 +179,7 @@ public class JumpLineColor{
      */
     public static void patchAllCurves(LCanvas canvas){
         if(canvas == null || canvas.statements == null) return;
-        Group jumps = canvas.statements.jumps;
+        Group jumps = SugarCanvas.getJumpLayer(canvas);
         if(jumps == null) return;
 
         for(Element child : jumps.getChildren()){

@@ -32,6 +32,7 @@ import logicsugar.assist.expr.ExprStatement;
 
 import java.util.IdentityHashMap;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
@@ -43,8 +44,13 @@ public class SugarCanvas extends LCanvas{
 
     final StructureController structure = new StructureController();
     private StructureGuideLayer guideLayer;
+    private Group jumpLayer;
     private static final Field draggingField = field(LCanvas.class, "dragging");
     private static final Field spaceField = field(LCanvas.DragLayout.class, "space");
+    private static final Field layoutJumpsField = optionalField(LCanvas.DragLayout.class, "jumps");
+    private static final Field canvasJumpsField = optionalField(LCanvas.class, "jumps");
+    private static final Field updateJumpHeightsField = optionalField(LCanvas.DragLayout.class, "updateJumpHeights");
+    private static final Method recalculateMethod = optionalMethod(LCanvas.class, "recalculate");
     private static final Field addressLabelField = field(LCanvas.StatementElem.class, "addressLabel");
     private static final Field needsLayoutField = field(WidgetGroup.class, "needsLayout");
 
@@ -170,13 +176,88 @@ public class SugarCanvas extends LCanvas{
         }
     }
 
+    private static Field optionalField(Class<?> type, String name){
+        try{
+            Field result = type.getDeclaredField(name);
+            result.setAccessible(true);
+            return result;
+        }catch(ReflectiveOperationException exception){
+            return null;
+        }
+    }
+
+    private static Method optionalMethod(Class<?> type, String name, Class<?>... parameterTypes){
+        try{
+            Method result = type.getDeclaredMethod(name, parameterTypes);
+            result.setAccessible(true);
+            return result;
+        }catch(ReflectiveOperationException exception){
+            return null;
+        }
+    }
+
     private void installGuideLayer(){
-        if(statements == null || statements.jumps == null) return;
+        jumpLayer = resolveJumpLayer(this);
+        if(jumpLayer == null) return;
         guideLayer = new StructureGuideLayer();
         guideLayer.touchable = Touchable.disabled;
         guideLayer.fillParent = true;
         guideLayer.cullable = false;
-        statements.jumps.addChildAt(0, guideLayer);
+        jumpLayer.addChildAt(0, guideLayer);
+    }
+
+    /** Returns the jump overlay for both modern and legacy LCanvas layouts. */
+    public static Group getJumpLayer(LCanvas canvas){
+        if(canvas instanceof SugarCanvas sugar && sugar.jumpLayer != null){
+            return sugar.jumpLayer;
+        }
+        return resolveJumpLayer(canvas);
+    }
+
+    private static Group resolveJumpLayer(LCanvas canvas){
+        if(canvas == null || canvas.statements == null) return null;
+
+        Field field = layoutJumpsField;
+        Object owner = canvas.statements;
+        if(field == null){
+            field = canvasJumpsField;
+            owner = canvas;
+        }
+        if(field == null) return null;
+
+        try{
+            return (Group)field.get(owner);
+        }catch(IllegalAccessException | ClassCastException exception){
+            return null;
+        }
+    }
+
+    /** Marks jump heights dirty on modern clients and recalculates them on legacy clients. */
+    public static void markJumpHeightsDirty(LCanvas canvas){
+        if(canvas == null || canvas.statements == null) return;
+
+        if(updateJumpHeightsField != null){
+            try{
+                updateJumpHeightsField.setBoolean(canvas.statements, true);
+                return;
+            }catch(IllegalAccessException ignored){}
+        }
+
+        recalculateLegacyJumps(canvas);
+    }
+
+    /** Refreshes legacy jump metrics and updates the jump overlay after a layout change. */
+    public static void refreshJumpLayer(LCanvas canvas){
+        recalculateLegacyJumps(canvas);
+        Group jumps = getJumpLayer(canvas);
+        if(jumps != null) jumps.act(0f);
+    }
+
+    private static void recalculateLegacyJumps(LCanvas canvas){
+        if(updateJumpHeightsField != null || recalculateMethod == null) return;
+        try{
+            recalculateMethod.invoke(canvas);
+        }catch(ReflectiveOperationException ignored){}
     }
 
     @Override
@@ -194,7 +275,7 @@ public class SugarCanvas extends LCanvas{
             statements.addChildAt(at + 1, end);
             begin.dest = end;
             begin.destIndex = at + 1;
-            statements.updateJumpHeights = true;
+            markJumpHeightsDirty(this);
         }
         structure.refresh();
     }
@@ -208,10 +289,10 @@ public class SugarCanvas extends LCanvas{
     public void refreshStructureLayout(){
         if(statements == null) return;
         structure.refresh();
-        statements.updateJumpHeights = true;
+        markJumpHeightsDirty(this);
         statements.invalidate();
         statements.validate();
-        statements.jumps.act(0f);
+        refreshJumpLayer(this);
     }
 
     public static boolean canLink(BeginStatement begin, StatementElem target){
@@ -289,7 +370,7 @@ public class SugarCanvas extends LCanvas{
             int index = statements.getChildren().indexOf(this);
             SugarCanvas.this.addAt(index + 1, copied);
             copied.setupUI();
-            statements.updateJumpHeights = true;
+            markJumpHeightsDirty(SugarCanvas.this);
         }
     }
 
@@ -450,7 +531,7 @@ public class SugarCanvas extends LCanvas{
             }
             assignRange(0, children.size, 0, false, children);
             statements.invalidateHierarchy();
-            statements.updateJumpHeights = true;
+            markJumpHeightsDirty(SugarCanvas.this);
         }
 
         /** Match each closing block with the nearest still-open structured block. */

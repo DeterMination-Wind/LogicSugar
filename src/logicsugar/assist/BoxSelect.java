@@ -591,7 +591,7 @@ public class BoxSelect{
         finalizeLayout(canvas);
         // 更新所有 Jump 的 destIndex（反映插入后的新位置）并刷新跳转线
         saveAllJumpUI(canvas);
-        canvas.statements.jumps.act(0f);
+        SugarCanvas.refreshJumpLayer(canvas);
         refreshStructureLayout(canvas);
         // 先恢复所有积木的按钮图标（旧选中积木的 Icon.move 改回 Icon.copy）
         restoreButtonIcons(canvas);
@@ -746,7 +746,7 @@ public class BoxSelect{
         applyInsertShift(canvas);
 
         // 腾位后更新跳转线位置——此时 translation 已反映腾位，JumpCurve 能正确定位
-        canvas.statements.jumps.act(0f);
+        SugarCanvas.refreshJumpLayer(canvas);
         updateIndicatorGeometry(canvas);
 
         if(Core.input.keyTap(KeyCode.mouseRight) || Core.input.keyTap(KeyCode.escape)){
@@ -1271,7 +1271,7 @@ public class BoxSelect{
         finalizeLayout(canvas);
         saveAllJumpUI(canvas);
         // saveAllJumpUI 改变了 destIndex，需再次 act 让 JumpCurve 重新连接目标
-        canvas.statements.jumps.act(0f);
+        SugarCanvas.refreshJumpLayer(canvas);
         refreshStructureLayout(canvas);
         reselectRange(canvas, actualInsert, count);
         enterSelectedState(canvas);
@@ -1336,7 +1336,7 @@ public class BoxSelect{
         finalizeLayout(canvas);
         // 更新所有 Jump 的 destIndex（反映插入后的新位置）并刷新跳转线
         saveAllJumpUI(canvas);
-        canvas.statements.jumps.act(0f);
+        SugarCanvas.refreshJumpLayer(canvas);
         refreshStructureLayout(canvas);
         reselectRange(canvas, actualInsert, copies.size);
 
@@ -1495,7 +1495,7 @@ public class BoxSelect{
 
     /** 双重 invalidate + validate，处理高度变化后的布局稳定 */
     private static void finalizeLayout(LCanvas canvas){
-        canvas.statements.updateJumpHeights = true;
+        SugarCanvas.markJumpHeightsDirty(canvas);
         canvas.statements.invalidate();
         canvas.statements.validate();
         // layout() 发现 height 变化后调用 invalidateHierarchy() 标记父节点，
@@ -1503,7 +1503,7 @@ public class BoxSelect{
         canvas.statements.invalidate();
         canvas.statements.validate();
         // 更新跳转线位置（基于最终布局）
-        canvas.statements.jumps.act(0f);
+        SugarCanvas.refreshJumpLayer(canvas);
     }
 
     /** Keep Logic Sugar's structural indentation and guide layer in sync with the reordered child list. */

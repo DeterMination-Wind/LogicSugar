@@ -21,7 +21,7 @@ import java.util.*;
  * - save() 由 LogicCanvas.save() 调用：unfoldAll → super.save → foldAll
  * - 行号由 LogicCanvas.act() 更新
  * - LogicIO.allStatements 是 public static 字段，直接访问无需反射
- * - updateJumpHeights 是 DragLayout 的 public 字段，直接访问
+ * - 跳转高度刷新通过 SugarCanvas 的兼容入口处理
  *
  * ------------------------------------------------------------
  * 致谢 / Acknowledgements
@@ -130,7 +130,7 @@ public class ExprHook{
             saveUIAll(canvas);
             setupUIAll(canvas);
             // 行号由 LogicDragLayout.layout() 自动更新，无需手动调用
-            canvas.statements.updateJumpHeights = true;
+            SugarCanvas.markJumpHeightsDirty(canvas);
             Log.debug("[LogicAssist] Expression chains folded");
         }
     }
@@ -185,7 +185,7 @@ public class ExprHook{
             // See foldAll(): the destination elements have already moved with the layout.
             saveUIAll(canvas);
             setupUIAll(canvas);
-            canvas.statements.updateJumpHeights = true;
+            SugarCanvas.markJumpHeightsDirty(canvas);
             Log.debug("[LogicAssist] Expression statements unfolded");
         }
     }
