@@ -8,6 +8,7 @@ import mindustry.logic.LAssembler;
 import mindustry.logic.SugarLogicDialog;
 import mindustry.logic.SugarStatements;
 import mindustry.mod.Mod;
+import mindustry.ui.dialogs.SettingsMenuDialog;
 import logicsugar.assist.BoxSelect;
 import logicsugar.assist.JumpLineColor;
 import logicsugar.assist.expr.ExprHook;
@@ -15,6 +16,8 @@ import logicsugar.assist.expr.ExprHook;
 import static arc.Events.on;
 
 public class LogicSugarMod extends Mod{
+    public static boolean bekBundled = false;
+
     private static boolean registered;
 
     @Override
@@ -25,7 +28,7 @@ public class LogicSugarMod extends Mod{
                 Vars.ui.logic = new SugarLogicDialog();
             }
             if(Vars.ui != null && Vars.ui.logic != null){
-                JumpLineColor.setupSettings();
+                if(!bekBundled) JumpLineColor.setupSettings();
                 Vars.ui.logic.hidden(JumpLineColor::clearCache);
                 BoxSelect.init();
                 ExprHook.init();
@@ -58,5 +61,9 @@ public class LogicSugarMod extends Mod{
         LAssembler.customParsers.put("forend", tokens -> new SugarStatements.BlockEndStatement());
         LAssembler.customParsers.put("whileend", tokens -> new SugarStatements.BlockEndStatement());
         LAssembler.customParsers.put("switchend", tokens -> new SugarStatements.BlockEndStatement());
+    }
+
+    public void bekBuildSettings(SettingsMenuDialog.SettingsTable table){
+        JumpLineColor.buildSettings(table);
     }
 }

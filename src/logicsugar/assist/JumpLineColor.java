@@ -191,6 +191,11 @@ public class JumpLineColor{
 
     // ===== Settings =====
 
+    public static void buildSettings(SettingsMenuDialog.SettingsTable table){
+        table.checkPref(SETTING_ENABLED, true, b -> {});
+        table.checkPref(SETTING_BLOCKCOLOR, false, b -> {});
+    }
+
     /**
      * 在主设置菜单中添加 "Logic Assist" 分类。
      * 包含跳转线着色的两个开关。
@@ -208,10 +213,7 @@ public class JumpLineColor{
                 if(cat.name.equals("@la.settings")) return;
             }
 
-            sd.addCategory("@la.settings", Icon.edit, table -> {
-                table.checkPref(SETTING_ENABLED, true, b -> {});
-                table.checkPref(SETTING_BLOCKCOLOR, false, b -> {});
-            });
+            sd.addCategory("@la.settings", Icon.edit, JumpLineColor::buildSettings);
         }catch(Exception e){
             Log.warn("[LogicAssist] Failed to setup settings: " + e);
         }
