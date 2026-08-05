@@ -1519,6 +1519,7 @@ public class BoxSelect{
             if(child instanceof StatementElem se && se.st instanceof JumpStatement js){
                 // dest 可能指向已删除的积木（dest.parent == null），需要安全检查
                 if(js.dest == null || js.dest.parent == null){
+                    js.dest = null;
                     js.destIndex = -1;
                 }else{
                     js.saveUI();

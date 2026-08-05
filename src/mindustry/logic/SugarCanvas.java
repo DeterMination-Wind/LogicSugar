@@ -553,7 +553,12 @@ public class SugarCanvas extends LCanvas{
                 begin.destIndex = -1;
             }
             for(Element child : children){
-                ((StatementElem)child).st.saveUI();
+                LStatement statement = ((StatementElem)child).st;
+                if(statement instanceof JumpStatement jump && (jump.dest == null || jump.dest.parent == null)){
+                    jump.dest = null;
+                    jump.destIndex = -1;
+                }
+                statement.saveUI();
             }
         }
 
