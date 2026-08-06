@@ -1,10 +1,14 @@
 package logicsugar;
 
 import arc.Core;
+import arc.scene.Element;
+import arc.struct.Seq;
+import arc.util.Log;
 import mindustry.Vars;
 import mindustry.game.EventType.ClientLoadEvent;
 import mindustry.gen.LogicIO;
 import mindustry.logic.LAssembler;
+import mindustry.logic.LogicDialog;
 import mindustry.logic.SugarLogicDialog;
 import mindustry.logic.SugarStatements;
 import mindustry.mod.Mod;
@@ -25,7 +29,10 @@ public class LogicSugarMod extends Mod{
         registerStatements();
         on(ClientLoadEvent.class, event -> Core.app.post(() -> {
             if(Vars.ui != null && !(Vars.ui.logic instanceof SugarLogicDialog)){
-                Vars.ui.logic = new SugarLogicDialog();
+                LogicDialog old = Vars.ui.logic;
+                SugarLogicDialog sugar = new SugarLogicDialog();
+                transferOverlayPanels(old, sugar);
+                Vars.ui.logic = sugar;
             }
             if(Vars.ui != null && Vars.ui.logic != null){
                 if(!bekBundled) JumpLineColor.setupSettings();
@@ -34,6 +41,24 @@ public class LogicSugarMod extends Mod{
                 ExprHook.init();
             }
         }));
+    }
+
+    /** Transfers foreign overlay panels (e.g. MindustryX logic support) from the old dialog onto the new one.
+     * Only children other than the canvas/buttons are moved, preserving their z-order above both. */
+    private static void transferOverlayPanels(LogicDialog old, SugarLogicDialog sugar){
+        if(old == null) return;
+        int transferred = 0;
+        Seq<Element> children = old.getChildren().copy();
+        for(Element child : children){
+            if(child == old.canvas || child == old.buttons) continue;
+            child.remove();
+            sugar.addChild(child);
+            transferred++;
+        }
+        if(transferred > 0){
+            sugar.invalidateHierarchy();
+            Log.info("LogicSugar: transferred @ overlay panel(s)", transferred);
+        }
     }
 
     private static void registerStatements(){
