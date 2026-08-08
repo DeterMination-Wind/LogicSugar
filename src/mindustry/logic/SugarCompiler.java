@@ -74,7 +74,7 @@ public final class SugarCompiler{
             SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null);
             for(SugarFunctions.Function function : functions.hoistOrder()){
                 out.append(function.entryName()).append(":\n");
-                SugarFunctions.lower(function.body, "__ls_func_" + function.name + "_", functions, mode, out, ids, function.name);
+                SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name);
                 out.append(function.exitName()).append(":\n");
                 out.append("set @counter ").append(function.retName()).append('\n');
             }

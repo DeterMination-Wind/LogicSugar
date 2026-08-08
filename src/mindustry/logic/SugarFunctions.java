@@ -816,7 +816,7 @@ public final class SugarFunctions{
                 }
             }else if(statement instanceof JumpStatement jump){
                 if(jump.destIndex == exitTarget){
-                    out.append("jump ").append(prefix).append("exit").append(' ').append(jump.op.name()).append(' ')
+                    out.append("jump __ls_").append(prefix).append("exit").append(' ').append(jump.op.name()).append(' ')
                         .append(jump.value).append(' ').append(jump.compare).append('\n');
                 }else if(jump.destIndex < 0 || jump.destIndex > statements.size){
                     throw error("jump", i, "has no valid destination");
@@ -850,7 +850,7 @@ public final class SugarFunctions{
         }
         if(mode == FuncMode.inline){
             // value returns jump to the ret label (result copy runs), void returns jump past it
-            out.append("jump ").append(prefix).append(ret.expr.isEmpty() ? "exit" : "ret").append(" always x false\n");
+            out.append("jump __ls_").append(prefix).append(ret.expr.isEmpty() ? "exit" : "ret").append(" always x false\n");
         }else{
             out.append("set @counter __ls_func_").append(funcName).append("_ret\n");
         }
@@ -865,18 +865,18 @@ public final class SugarFunctions{
         List<String> args = splitArgs(call.args);
         if(mode == FuncMode.inline){
             int id = ids.next();
-            String prefix = "__ls_i_" + id + "_";
+            String prefix = "i_" + id + "_";
             for(int k = 0; k < args.size(); k++){
                 emitArg(out, args.get(k), target.bindingName(k));
             }
             lower(target.body, prefix, functions, mode, out, ids, target.name);
             // Value returns jump here so the caller-side result copy still runs;
             // void returns and jumps to the function end skip it via the exit label.
-            out.append(prefix).append("ret:\n");
+            out.append("__ls_").append(prefix).append("ret:\n");
             if(!call.result.isEmpty()){
                 out.append("set ").append(call.result).append(' ').append(target.resultName()).append('\n');
             }
-            out.append(prefix).append("exit:\n");
+            out.append("__ls_").append(prefix).append("exit:\n");
         }else{
             for(int k = 0; k < args.size(); k++){
                 emitArg(out, args.get(k), target.bindingName(k));

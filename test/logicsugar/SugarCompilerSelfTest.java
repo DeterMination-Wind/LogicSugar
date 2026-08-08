@@ -544,6 +544,9 @@ public class SugarCompilerSelfTest{
 
     private static void functionProgramsExecute(){
         Vars.logicVars = new GlobalVars();
+        // minimal stub: register the boolean constants the loop lowering relies on
+        Vars.logicVars.putEntry("false", 0);
+        Vars.logicVars.putEntry("true", 1);
 
         // nested calls with parameters and return values
         String nested = """
@@ -604,6 +607,42 @@ public class SugarCompilerSelfTest{
             """;
         for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
             check(execute(loopCall, mode, "sum") == 6.0, mode + ": call inside a loop is wrong");
+        }
+
+        // switch with value returns inside a function body
+        String switchBody = """
+            funcdef grade s 8
+            switchbegin s 6
+            case 1
+            return "10"
+            case 2
+            return "20"
+            blockend
+            return "0"
+            blockend
+            funccall grade "2" out
+            end
+            """;
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            check(execute(switchBody, mode, "out") == 20.0, mode + ": switch inside a function body is wrong");
+        }
+
+        // while with break and a continue jump inside a function body
+        String loopBody = """
+            funcdef f ~ 7
+            set i 0
+            whilebegin true 6
+            op add i i 1
+            jump 6 lessThan i 5
+            break
+            blockend
+            blockend
+            funccall f "" ~
+            set out i
+            end
+            """;
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            check(execute(loopBody, mode, "out") == 5.0, mode + ": while/break inside a function body is wrong");
         }
     }
 

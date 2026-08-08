@@ -94,6 +94,39 @@ op add x _0 x
 | Bitwise | `&` `<<` `>>` `>>>` |
 | Arithmetic | `+` `-` `*` `/` `//` `%` `%%` `^` |
 
+### Functions (`Func Def` / `Func Call` / `Return` blocks)
+
+Wrap logic into functions with parameters (full expressions), optional return values, void functions, early `return`, and mutual calls (no recursion). Functions can be defined inside a processor (**local functions**) or in a global **function library** shared by every processor.
+
+```
+funcdef f a,b          # define f with parameters a, b
+  op add s a b
+  return "s * 2"
+blockend
+set x 3
+funccall f "x, 4" out  # call: out = (3+4)*2
+```
+
+- **Parameters** are full expressions (e.g. `funccall f "cos(x) * 2"`), evaluated at the call site and bound to the parameters; the argument count must match
+- **Return values**: `return "<expression>"` produces a value received by the `=` field of the call block; requesting a result from a function that never returns a value is a compile error
+- **Early return**: `return` (void) or `return "<expression>"` exits the function from anywhere
+- **Mutual calls**: functions may call other functions (including library ones); direct or indirect recursion is a compile error that names the cycle
+- **Jump limits**: `jump` may not cross a function boundary — jumps inside a body must stay inside it (a jump to the function's own `blockend` is an early exit); `break` only applies to loops/switches inside the body
+
+**Compile mode** (Settings → Logic Sugar → Function Mode):
+
+- `normal` (default): each function compiles to one shared subroutine; call sites save the return address via `@counter`. Cost ≈ body + 2~3 instructions per call; cheaper than inline once a function is called 2~3 times
+- `inline`: every call site gets its own copy of the body (labels namespaced per call site). Cost ≈ N × body; many calls can hit the 1000-instruction limit (the error suggests switching to normal)
+
+**Function library** (global functions):
+
+- Stored at `<game data>/mods/config/LogicSugar/functions.txt`, edited from Settings → Logic Sugar → Open Function Library (reuses the visual block canvas, validated on save)
+- Library functions **cannot modify caller variables**: every name the body writes is mangled to `__ls_func_<name>_<original>`; read-only names stay untouched (the caller's globals remain readable); `@` system variables and `cell1`/`bank1`/`memory1` storage devices are exempt
+- Library functions can only call other library functions; processor calls resolve local functions first, then the library (a local function shadows a library one)
+- Undefined calls and damaged library files produce clear compile errors; unreachable function bodies emit zero instructions
+
+**Reserved prefixes**: `__ls_`, `__ls_func_`, `__ls_f_`, `__ls_i_` are reserved for the compiler — do not use them for function names, parameter names, or variables.
+
 ### Scrollbar Enhancement
 
 Colored scrollbar (each segment tinted by its block's category color), click-to-jump, and hover-jump preview.
