@@ -305,15 +305,7 @@ public class SugarCanvas extends LCanvas{
         return canvas != null && canvas.structure.isValid(begin, target);
     }
 
-    private static SugarCanvas activeOverride;
-
-    /** Routes structure refresh/canLink calls to a dialog canvas while one is open. */
-    public static void setActiveOverride(SugarCanvas canvas){
-        activeOverride = canvas;
-    }
-
     private static SugarCanvas current(){
-        if(activeOverride != null) return activeOverride;
         if(Vars.ui != null && Vars.ui.logic != null && Vars.ui.logic.canvas instanceof SugarCanvas canvas) return canvas;
         return null;
     }

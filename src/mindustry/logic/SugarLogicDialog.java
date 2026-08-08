@@ -26,6 +26,10 @@ public class SugarLogicDialog extends LogicDialog{
     private static final Field consumerField = field(LogicDialog.class, "consumer");
     private final Map<Object, String> drafts = new IdentityHashMap<>();
     public LExecutor executor;
+    /** When true, a failed compile during a close is passed back to the caller as raw sugar
+     *  instead of being dropped. Used by the function library editing session (executor == null),
+     *  so processor edits are never affected. */
+    public boolean passThroughSugarOnError;
     private Element editButton;
     private float menuScanTimer;
 
@@ -121,6 +125,12 @@ public class SugarLogicDialog extends LogicDialog{
             modified.get(compiled);
         }catch(IllegalArgumentException exception){
             if(closing && key != null) drafts.put(key, sugar);
+            if(closing && executor == null && passThroughSugarOnError){
+                // Function library session: hand the raw sugar back so the caller can keep
+                // the user's work and reopen the editor instead of dropping it.
+                modified.get(sugar);
+                return;
+            }
             Core.app.post(() -> showCompileError(exception, closing));
         }
     }
