@@ -12,6 +12,7 @@ import mindustry.logic.LExecutor.LInstruction;
 import mindustry.logic.LExecutor.NoopI;
 import mindustry.logic.LStatements.JumpStatement;
 import mindustry.ui.Styles;
+import logicsugar.assist.expr.ExpressionEditor;
 
 public final class SugarStatements{
     private SugarStatements(){}
@@ -212,8 +213,9 @@ public final class SugarStatements{
         public void build(Table table){
             table.add(text("func.def", "func"));
             field(table, name, value -> name = value).width(90f);
-            table.add(text("func.params", "("));
-            field(table, params, value -> params = value).width(120f);
+            table.add("(");
+            TextField paramsField = field(table, params, value -> params = value).width(130f).get();
+            paramsField.setMessageText(text("func.params.hint", "a,b"));
             table.add(")");
             foldControl(table);
         }
@@ -239,14 +241,9 @@ public final class SugarStatements{
             table.add(text("func.call", "call"));
             field(table, name, value -> name = value).width(90f);
             table.add("(");
-            // Custom field: argument expressions may contain spaces and operators, so the
-            // LStatement.field() sanitizer (which replaces spaces) must not be used.
-            TextField argsField = new TextField(args);
-            argsField.setStyle(Styles.nodeField);
-            argsField.setFilter((f, c) -> true);
-            argsField.setMaxLength(0);
-            argsField.changed(() -> args = argsField.getText());
-            table.add(argsField).width(170f).height(40f).pad(2f);
+            // 实参：完整表达式，高亮显示，点击进入编辑
+            table.add(new ExpressionEditor(args, text("func.args.hint", "a, b+1"), value -> args = value))
+                .growX().padLeft(4f).padRight(2f);
             table.add(")");
             table.add("=");
             field(table, result, value -> result = value).width(70f).padLeft(4f);
@@ -270,12 +267,9 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("func.return", "return"));
-            TextField exprField = new TextField(expr);
-            exprField.setStyle(Styles.nodeField);
-            exprField.setFilter((f, c) -> true);
-            exprField.setMaxLength(0);
-            exprField.changed(() -> expr = exprField.getText());
-            table.add(exprField).width(170f).height(40f).pad(2f);
+            // 返回值：完整表达式，高亮显示，点击进入编辑
+            table.add(new ExpressionEditor(expr, text("func.return.hint", "value"), value -> expr = value))
+                .growX().padLeft(4f);
         }
 
         @Override public String name(){ return text("func.return", "Return"); }

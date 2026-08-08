@@ -15,6 +15,7 @@ import mindustry.gen.Building;
 import mindustry.gen.Icon;
 import mindustry.logic.LExecutor;
 import mindustry.ui.Styles;
+import logicsugar.FunctionLibraryDialog;
 
 import java.lang.reflect.Field;
 import java.util.IdentityHashMap;
@@ -35,6 +36,8 @@ public class SugarLogicDialog extends LogicDialog{
         add(canvas).grow().name("canvas");
         row();
         add(buttons).growX().name("buttons");
+        // direct entry to the global function library, next to the other editor actions
+        buttons.button("@logicsugar.funclib.open", Icon.book, () -> new FunctionLibraryDialog().show()).name("funclib");
         update(() -> {
             installEditHook();
             menuScanTimer += Time.delta;

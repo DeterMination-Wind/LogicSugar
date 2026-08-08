@@ -120,7 +120,7 @@ public class ExprStatement extends LStatement{
                 exprLabel.setColor(Color.white);
                 errorLabel.visible = false;
             }
-            exprLabel.setText(highlightExpr(expr));
+            exprLabel.setText(ExprStatement.highlight(expr));
         };
         updateLabel.run();
 
@@ -212,7 +212,7 @@ public class ExprStatement extends LStatement{
      *  - 函数名：珊瑚色（后跟左括号）
      *  - 变量名：白色
      *  - 运算符/括号/逗号：浅灰 */
-    private String highlightExpr(String expr){
+    public static String highlight(String expr){
         if(expr == null || expr.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
         try{

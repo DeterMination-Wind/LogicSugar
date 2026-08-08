@@ -37,11 +37,12 @@ public class LogicSugarMod extends Mod{
                 Vars.ui.logic = sugar;
             }
             if(Vars.ui != null && Vars.ui.logic != null){
-                if(!bekBundled) JumpLineColor.setupSettings();
                 Vars.ui.logic.hidden(JumpLineColor::clearCache);
                 BoxSelect.init();
                 ExprHook.init();
-                LogicSugarSettings.setup();
+                // one settings category: functions + jump line coloring (the latter is
+                // bundled by Neon when bekBundled, so it is skipped there)
+                LogicSugarSettings.setup(!bekBundled);
             }
         }));
     }

@@ -10,8 +10,11 @@ import mindustry.ui.Styles;
 import mindustry.ui.dialogs.SettingsMenuDialog;
 
 /**
- * Logic Sugar settings: function expansion mode (normal/inline) and the function library
- * editor entry.
+ * Logic Sugar settings: function expansion mode (normal/inline), the function library
+ * editor entry, and (when not bundled elsewhere) jump line coloring.
+ *
+ * <p>Everything is added through the {@link SettingsTable} list API so the "reset" button
+ * and category rebuilds cannot drop entries.
  */
 public final class LogicSugarSettings{
     public static final String settingFuncMode = "logicsugar.funcMode";
@@ -19,24 +22,25 @@ public final class LogicSugarSettings{
     private LogicSugarSettings(){}
 
     /** Adds the Logic Sugar settings category (idempotent). */
-    public static void setup(){
+    public static void setup(boolean includeJumpLines){
         try{
             SettingsMenuDialog dialog = Vars.ui.settings;
             if(dialog == null) return;
             for(SettingsMenuDialog.SettingsCategory category : dialog.getCategories()){
                 if(category.name.equals("@logicsugar.settings")) return;
             }
-            dialog.addCategory("@logicsugar.settings", Icon.edit, LogicSugarSettings::build);
+            dialog.addCategory("@logicsugar.settings", Icon.edit, table -> build(table, includeJumpLines));
         }catch(Exception e){
             Log.warn("LogicSugar: failed to setup settings: @", e);
         }
     }
 
-    private static void build(SettingsMenuDialog.SettingsTable table){
+    private static void build(SettingsMenuDialog.SettingsTable table, boolean includeJumpLines){
         table.pref(new FuncModeSetting(settingFuncMode, "normal"));
-        table.button("@logicsugar.funclib.open", Icon.book, () -> new FunctionLibraryDialog().show())
-            .size(300f, 56f).pad(8f).left().marginLeft(12f);
-        table.row();
+        table.pref(new LibraryButtonSetting("logicsugar.funclib"));
+        if(includeJumpLines){
+            logicsugar.assist.JumpLineColor.buildSettings(table);
+        }
     }
 
     /** Click-to-cycle picker for the function expansion mode. */
@@ -68,6 +72,23 @@ public final class LogicSugarSettings{
 
         private String label(){
             return Core.bundle.get("logicsugar.settings.funcmode." + current, current);
+        }
+    }
+
+    /** Button entry to the function library editor; part of the settings list so rebuilds keep it. */
+    public static class LibraryButtonSetting extends SettingsMenuDialog.SettingsTable.Setting{
+        public LibraryButtonSetting(String name){
+            super(name);
+        }
+
+        @Override
+        public void add(SettingsMenuDialog.SettingsTable table){
+            table.left();
+            table.add(title).padRight(12f).padLeft(4f);
+            Button button = table.button("@logicsugar.funclib.open", Icon.book, () -> new FunctionLibraryDialog().show())
+                .size(220f, 46f).get();
+            addDesc(button);
+            table.row();
         }
     }
 }
