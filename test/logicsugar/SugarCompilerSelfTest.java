@@ -8,6 +8,9 @@ import mindustry.logic.SugarStatements;
 import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.BreakStatement;
 import mindustry.logic.SugarStatements.ForBeginStatement;
+import mindustry.logic.SugarStatements.FuncCallStatement;
+import mindustry.logic.SugarStatements.FuncDefStatement;
+import mindustry.logic.SugarStatements.ReturnStatement;
 import mindustry.logic.SugarStatements.WhileBeginStatement;
 import mindustry.logic.LStatements.JumpStatement;
 import logicsugar.assist.expr.ExprCompiler;
@@ -28,6 +31,7 @@ public class SugarCompilerSelfTest{
         vanillaCodePassesThrough();
         expressionOpsRoundTrip();
         structuredTargetsFollowExpressionResize();
+        functionStatementsRoundTrip();
         System.out.println("LogicSugar compiler self-test passed.");
     }
 
@@ -210,6 +214,32 @@ public class SugarCompilerSelfTest{
         check(jump.destIndex == 8, "jump target was not restored after Expr expansion");
     }
 
+    private static void functionStatementsRoundTrip(){
+        String sugar = """
+            funcdef f a,b 3
+            set x 1
+            blockend
+            funccall f "a + 1, b*2" out
+            return "x + 1"
+            return ""
+            """;
+
+        Seq<LStatement> parsed = LAssembler.read(sugar, true);
+        check(parsed.size == 6, "unexpected statement count: " + parsed.size);
+        FuncDefStatement def = (FuncDefStatement)parsed.get(0);
+        check(def.name.equals("f") && def.params.equals("a,b") && def.destIndex == 3, "funcdef fields lost in round-trip");
+        FuncCallStatement call = (FuncCallStatement)parsed.get(3);
+        check(call.name.equals("f") && call.args.equals("a + 1, b*2") && call.result.equals("out"), "funccall fields lost in round-trip");
+        ReturnStatement valueReturn = (ReturnStatement)parsed.get(4);
+        check(valueReturn.expr.equals("x + 1"), "return value lost in round-trip");
+        check(((ReturnStatement)parsed.get(5)).expr.isEmpty(), "void return lost in round-trip");
+        check(LAssembler.write(parsed).equals(sugar), "function statements did not round-trip verbatim");
+
+        // Empty params / no result / void return serialize with the optional markers.
+        String sparse = LAssembler.write(LAssembler.read("funcdef g ~ 1\nblockend\nfunccall g \"\" ~\nreturn \"\"\n", true));
+        check(sparse.contains("funcdef g ~ 1") && sparse.contains("funccall g \"\" ~") && sparse.contains("return \"\"\n"), "optional fields did not round-trip");
+    }
+
     private static void expectFailure(String source, String scenario){
         try{
             SugarCompiler.compile(source);
@@ -233,6 +263,10 @@ public class SugarCompilerSelfTest{
         LAssembler.customParsers.put("case", SugarStatements::parseCase);
         LAssembler.customParsers.put("break", tokens -> new BreakStatement());
         LAssembler.customParsers.put("blockend", tokens -> new BlockEndStatement());
+        LAssembler.customParsers.put("funcdef", SugarStatements::parseFuncDef);
+        LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));
+        LAssembler.customParsers.put("funccall", SugarStatements::parseFuncCall);
+        LAssembler.customParsers.put("return", SugarStatements::parseReturn);
         LAssembler.customParsers.put("forend", tokens -> new BlockEndStatement());
         LAssembler.customParsers.put("whileend", tokens -> new BlockEndStatement());
         LAssembler.customParsers.put("switchend", tokens -> new BlockEndStatement());

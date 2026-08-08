@@ -2,6 +2,7 @@ package mindustry.logic;
 
 import arc.Core;
 import arc.graphics.Color;
+import arc.scene.ui.TextField;
 import arc.scene.ui.layout.Table;
 import mindustry.graphics.Pal;
 import mindustry.logic.LCanvas.JumpButton;
@@ -10,6 +11,7 @@ import mindustry.logic.LCanvas.StatementElem;
 import mindustry.logic.LExecutor.LInstruction;
 import mindustry.logic.LExecutor.NoopI;
 import mindustry.logic.LStatements.JumpStatement;
+import mindustry.ui.Styles;
 
 public final class SugarStatements{
     private SugarStatements(){}
@@ -202,6 +204,91 @@ public final class SugarStatements{
         @Override public void write(StringBuilder out){ out.append("case ").append(value); }
     }
 
+    public static class FuncDefStatement extends BeginStatement{
+        public String name = "func";
+        public String params = "";
+
+        @Override
+        public void build(Table table){
+            table.add(text("func.def", "func"));
+            field(table, name, value -> name = value).width(90f);
+            table.add(text("func.params", "("));
+            field(table, params, value -> params = value).width(120f);
+            table.add(")");
+            foldControl(table);
+        }
+
+        @Override public String name(){ return text("func.def", "Func Def"); }
+        @Override public String typeName(){ return "FuncDef"; }
+
+        @Override
+        public void write(StringBuilder out){
+            out.append(collapsed ? "funcdefc " : "funcdef ").append(name).append(' ').append(optional(params)).append(' ').append(destIndex);
+        }
+    }
+
+    public static class FuncCallStatement extends SugarStatement{
+        public String name = "func";
+        /** Comma-separated argument expressions. */
+        public String args = "";
+        /** Optional result variable. */
+        public String result = "";
+
+        @Override
+        public void build(Table table){
+            table.add(text("func.call", "call"));
+            field(table, name, value -> name = value).width(90f);
+            table.add("(");
+            // Custom field: argument expressions may contain spaces and operators, so the
+            // LStatement.field() sanitizer (which replaces spaces) must not be used.
+            TextField argsField = new TextField(args);
+            argsField.setStyle(Styles.nodeField);
+            argsField.setFilter((f, c) -> true);
+            argsField.setMaxLength(0);
+            argsField.changed(() -> args = argsField.getText());
+            table.add(argsField).width(170f).height(40f).pad(2f);
+            table.add(")");
+            table.add("=");
+            field(table, result, value -> result = value).width(70f).padLeft(4f);
+        }
+
+        @Override public String name(){ return text("func.call", "Func Call"); }
+        @Override public String typeName(){ return "FuncCall"; }
+
+        @Override
+        public void write(StringBuilder out){
+            // The result slot is always written ("~" when absent): LParser reuses a static
+            // token array, so an omitted trailing token cannot be told apart from a stale one.
+            out.append("funccall ").append(name).append(" \"").append(args).append("\" ").append(optional(result));
+        }
+    }
+
+    public static class ReturnStatement extends SugarStatement{
+        /** Return expression; empty means a void (no value) return. */
+        public String expr = "";
+
+        @Override
+        public void build(Table table){
+            table.add(text("func.return", "return"));
+            TextField exprField = new TextField(expr);
+            exprField.setStyle(Styles.nodeField);
+            exprField.setFilter((f, c) -> true);
+            exprField.setMaxLength(0);
+            exprField.changed(() -> expr = exprField.getText());
+            table.add(exprField).width(170f).height(40f).pad(2f);
+        }
+
+        @Override public String name(){ return text("func.return", "Return"); }
+        @Override public String typeName(){ return "Return"; }
+
+        @Override
+        public void write(StringBuilder out){
+            // Always quoted so the void form is unambiguous: LParser reuses a static token
+            // array, so a bare "return" line cannot be told apart from a stale token.
+            out.append("return \"").append(expr).append('"');
+        }
+    }
+
     public static class BreakStatement extends SugarStatement{
         @Override public void build(Table table){}
         @Override public String name(){ return text("break", "Break"); }
@@ -260,5 +347,40 @@ public final class SugarStatements{
         CaseStatement result = new CaseStatement();
         result.value = tokens[1];
         return result;
+    }
+
+    public static LStatement parseFuncDef(String[] tokens){
+        return parseFuncDef(tokens, false);
+    }
+
+    public static LStatement parseFuncDef(String[] tokens, boolean collapsed){
+        FuncDefStatement result = new FuncDefStatement();
+        result.name = tokens[1];
+        result.params = optionalValue(tokens[2]);
+        result.destIndex = Integer.parseInt(tokens[3]);
+        result.collapsed = collapsed;
+        return result;
+    }
+
+    public static LStatement parseFuncCall(String[] tokens){
+        FuncCallStatement result = new FuncCallStatement();
+        result.name = tokens[1];
+        result.args = stripQuotes(tokens[2]);
+        result.result = optionalValue(tokens[3]);
+        return result;
+    }
+
+    public static LStatement parseReturn(String[] tokens){
+        ReturnStatement result = new ReturnStatement();
+        result.expr = stripQuotes(tokens[1]);
+        return result;
+    }
+
+    /** Removes the surrounding quotes that LParser keeps on string tokens. */
+    private static String stripQuotes(String value){
+        if(value.length() >= 2 && value.charAt(0) == '"' && value.charAt(value.length() - 1) == '"'){
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 }

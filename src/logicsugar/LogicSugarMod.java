@@ -71,6 +71,9 @@ public class LogicSugarMod extends Mod{
         LogicIO.allStatements.add(SugarStatements.CaseStatement::new);
         LogicIO.allStatements.add(SugarStatements.BreakStatement::new);
         LogicIO.allStatements.add(SugarStatements.BlockEndStatement::new);
+        LogicIO.allStatements.add(SugarStatements.FuncDefStatement::new);
+        LogicIO.allStatements.add(SugarStatements.FuncCallStatement::new);
+        LogicIO.allStatements.add(SugarStatements.ReturnStatement::new);
 
         LAssembler.customParsers.put("forbegin", SugarStatements::parseForBegin);
         LAssembler.customParsers.put("forbeginc", tokens -> SugarStatements.parseForBegin(tokens, true));
@@ -81,6 +84,10 @@ public class LogicSugarMod extends Mod{
         LAssembler.customParsers.put("case", SugarStatements::parseCase);
         LAssembler.customParsers.put("break", tokens -> new SugarStatements.BreakStatement());
         LAssembler.customParsers.put("blockend", tokens -> new SugarStatements.BlockEndStatement());
+        LAssembler.customParsers.put("funcdef", SugarStatements::parseFuncDef);
+        LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));
+        LAssembler.customParsers.put("funccall", SugarStatements::parseFuncCall);
+        LAssembler.customParsers.put("return", SugarStatements::parseReturn);
 
         // Read-only compatibility for markers produced by the first development version.
         LAssembler.customParsers.put("forend", tokens -> new SugarStatements.BlockEndStatement());
