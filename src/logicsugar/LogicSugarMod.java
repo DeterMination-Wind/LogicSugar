@@ -99,7 +99,10 @@ public class LogicSugarMod extends Mod{
         LAssembler.customParsers.put("switchend", tokens -> new SugarStatements.BlockEndStatement());
     }
 
+    /** Host (Neon) settings aggregation: function mode, library entry and jump line coloring. */
     public void bekBuildSettings(SettingsMenuDialog.SettingsTable table){
+        table.pref(new LogicSugarSettings.FuncModeSetting(LogicSugarSettings.settingFuncMode, "normal"));
+        table.pref(new LogicSugarSettings.LibraryButtonSetting("logicsugar.funclib"));
         JumpLineColor.buildSettings(table);
     }
 }
