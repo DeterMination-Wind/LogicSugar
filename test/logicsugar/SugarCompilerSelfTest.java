@@ -1,8 +1,12 @@
 package logicsugar;
 
 import arc.struct.Seq;
+import mindustry.Vars;
+import mindustry.logic.GlobalVars;
 import mindustry.logic.LAssembler;
+import mindustry.logic.LExecutor;
 import mindustry.logic.LStatement;
+import mindustry.logic.LVar;
 import mindustry.logic.SugarCompiler;
 import mindustry.logic.SugarStatements;
 import mindustry.logic.SugarStatements.BlockEndStatement;
@@ -32,6 +36,22 @@ public class SugarCompilerSelfTest{
         expressionOpsRoundTrip();
         structuredTargetsFollowExpressionResize();
         functionStatementsRoundTrip();
+        functionParamBindingInline();
+        functionParamBindingNormal();
+        functionVoidAndEarlyReturn();
+        functionReturnValue();
+        functionNestedCalls();
+        functionCallBeforeDefinition();
+        functionCallInLoop();
+        functionCallerTempSurvives();
+        functionBodyTempIsNamespaced();
+        functionJumpToOwnEndIsExit();
+        functionJumpBoundariesRejected();
+        functionValidationRejected();
+        functionRecursionRejected();
+        functionUnreachableCostsNothing();
+        functionInstructionLimitHint();
+        functionProgramsExecute();
         System.out.println("LogicSugar compiler self-test passed.");
     }
 
@@ -238,6 +258,349 @@ public class SugarCompilerSelfTest{
         // Empty params / no result / void return serialize with the optional markers.
         String sparse = LAssembler.write(LAssembler.read("funcdef g ~ 1\nblockend\nfunccall g \"\" ~\nreturn \"\"\n", true));
         check(sparse.contains("funcdef g ~ 1") && sparse.contains("funccall g \"\" ~") && sparse.contains("return \"\"\n"), "optional fields did not round-trip");
+    }
+
+    private static void functionParamBindingInline(){
+        String compiled = loweredCode(SugarCompiler.compile("""
+            funcdef f a 2
+            print a
+            blockend
+            funccall f "5" ~
+            """, SugarCompiler.FuncMode.inline));
+        check(compiled.contains("set a 5"), "inline call did not bind the argument");
+        check(compiled.contains("\nprint a\n"), "inline call did not copy the body");
+
+        // argument expressions compile to caller-side temp chains before binding
+        String expr = loweredCode(SugarCompiler.compile("""
+            funcdef f a 2
+            print a
+            blockend
+            funccall f "cos(x) * 2" ~
+            """, SugarCompiler.FuncMode.inline));
+        check(expr.contains("op cos _0 x 0") && expr.contains("set a _0"), "argument expression was not compiled and bound");
+    }
+
+    private static void functionParamBindingNormal(){
+        String compiled = loweredCode(SugarCompiler.compile("""
+            funcdef f a 2
+            print a
+            blockend
+            funccall f "5" ~
+            """, SugarCompiler.FuncMode.normal));
+        check(compiled.contains("set a 5"), "normal call did not bind the argument");
+        check(compiled.contains("set __ls_func_f_ret @counter"), "normal call did not save the return address");
+        check(compiled.contains("op add __ls_func_f_ret __ls_func_f_ret 2"), "normal call did not compute the return offset");
+        check(compiled.contains("jump __ls_func_f_entry always x false"), "normal call did not jump to the entry");
+        check(compiled.contains("__ls_func_f_entry:\nprint a\n"), "function body was not hoisted");
+        check(compiled.contains("set @counter __ls_func_f_ret"), "function body does not return through the saved address");
+    }
+
+    private static void functionVoidAndEarlyReturn(){
+        String compiled = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 4
+            print hi
+            return ""
+            print bye
+            blockend
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.inline));
+        check(compiled.contains("jump __ls_i_0_exit always x false"), "void return did not leave the inline copy");
+        check(compiled.contains("\n__ls_i_0_exit:\n"), "inline copy has no exit label");
+        check(compiled.contains("print bye"), "statements after an early return were dropped");
+
+        // two call sites get distinct copy prefixes
+        String twice = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 2
+            print hi
+            blockend
+            funccall f "" ~
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.inline));
+        check(twice.contains("__ls_i_0_exit:") && twice.contains("__ls_i_1_exit:"), "inline copies share an exit label");
+    }
+
+    private static void functionReturnValue(){
+        String inline = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 2
+            return "x * 2"
+            blockend
+            funccall f "" out
+            """, SugarCompiler.FuncMode.inline));
+        check(inline.contains("op mul __ls_func_f_result x 2"), "return value was not computed into the result slot");
+        check(inline.contains("set out __ls_func_f_result"), "caller result was not copied from the result slot");
+
+        String normal = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 2
+            return "x * 2"
+            blockend
+            funccall f "" out
+            """, SugarCompiler.FuncMode.normal));
+        check(normal.contains("op mul __ls_func_f_result x 2"), "normal mode did not compute the return value");
+        check(normal.contains("set out __ls_func_f_result"), "normal mode did not copy the result at the call site");
+
+        // a value-returning function may also be called without a result slot
+        String ignored = SugarCompiler.compile("""
+            funcdef f ~ 2
+            return "x"
+            blockend
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.normal);
+        check(ignored.contains("set @counter"), "value-returning function called as void did not compile");
+    }
+
+    private static void functionNestedCalls(){
+        String inline = loweredCode(SugarCompiler.compile("""
+            funcdef g a 2
+            op add r a 1
+            blockend
+            funcdef f ~ 5
+            funccall g "2" ~
+            blockend
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.inline));
+        check(inline.contains("set a 2"), "nested inline call did not bind its argument");
+        check(inline.contains("op add r a 1"), "nested inline call did not copy the callee body");
+
+        String normal = loweredCode(SugarCompiler.compile("""
+            funcdef g a 2
+            op add r a 1
+            blockend
+            funcdef f ~ 5
+            funccall g "2" ~
+            blockend
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.normal));
+        check(normal.contains("__ls_func_g_entry:") && normal.contains("__ls_func_f_entry:"), "nested functions were not hoisted");
+        check(normal.contains("set __ls_func_g_ret @counter"), "call inside a function body did not use the callee return slot");
+    }
+
+    private static void functionCallBeforeDefinition(){
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            String compiled = loweredCode(SugarCompiler.compile("""
+                funccall f "1" ~
+                funcdef f a 3
+                print a
+                blockend
+                """, mode));
+            check(compiled.contains("set a 1"), "call before definition failed in mode " + mode);
+        }
+    }
+
+    private static void functionCallInLoop(){
+        String compiled = loweredCode(SugarCompiler.compile("""
+            forbegin i 0 1 lessThanEq 5 2
+            funccall f "i" ~
+            blockend
+            funcdef f x 5
+            print x
+            blockend
+            """, SugarCompiler.FuncMode.inline));
+        check(compiled.contains("set x i"), "call inside a loop did not bind the loop variable");
+        check(compiled.contains("jump __ls_for_check_0"), "loop structure was lost around the inline copy");
+    }
+
+    private static void functionCallerTempSurvives(){
+        String compiled = loweredCode(SugarCompiler.compile("""
+            set _0 7
+            funcdef f ~ 3
+            op mul _0 _0 2
+            blockend
+            funccall f "" ~
+            set x _0
+            """, SugarCompiler.FuncMode.inline));
+        check(compiled.contains("set _0 7") && compiled.contains("set x _0"), "caller temporary was renamed");
+        check(compiled.contains("op mul __ls_f_f_0 __ls_f_f_0 2"), "function body temporary was not namespaced");
+        check(!compiled.contains("op mul _0 _0 2"), "function body temporary clobbers the caller temporary");
+    }
+
+    private static void functionBodyTempIsNamespaced(){
+        // temps inside nested bodies stay per-function even in normal mode
+        String compiled = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 2
+            op add _0 _0 1
+            blockend
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.normal));
+        check(compiled.contains("op add __ls_f_f_0 __ls_f_f_0 1"), "normal mode body temp was not namespaced");
+    }
+
+    private static void functionJumpToOwnEndIsExit(){
+        String inline = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 3
+            set x 1
+            jump 3 always x false
+            blockend
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.inline));
+        check(inline.contains("jump __ls_i_0_exit always x false"), "jump to the function end did not become an exit");
+
+        String normal = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 3
+            set x 1
+            jump 3 always x false
+            blockend
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.normal));
+        check(normal.contains("jump __ls_func_f_exit always x false"), "normal mode did not route the end jump through the exit label");
+    }
+
+    private static void functionJumpBoundariesRejected(){
+        expectFailure("funcdef f ~ 2\nset x 1\nblockend\njump 1 always x false\n", "jump into a function body");
+        expectFailure("funcdef f ~ 3\nset x 1\njump 0 always x false\nblockend\n", "jump out of a function body");
+        expectFailure("funcdef f ~ 2\nset x 1\nblockend\njump 0 always x false\n", "jump to a function boundary from outside");
+        expectFailure("funcdef f ~ 1\nblockend\njump 0 always x false\n", "jump to a function definition from outside");
+    }
+
+    private static void functionValidationRejected(){
+        expectFailure("funccall nope \"\" ~\n", "call to an undefined function");
+        expectFailure("funcdef f ~ 1\nblockend\nfuncdef f ~ 3\nblockend\n", "duplicate function names");
+        expectFailure("funcdef f ~ 3\nfuncdef g ~ 2\nblockend\nblockend\n", "nested function definition");
+        expectFailure("forbegin i 0 1 lessThanEq 3 3\nfuncdef f ~ 2\nblockend\nblockend\n", "function inside a loop");
+        expectFailure("return \"\"\n", "return outside a function");
+        expectFailure("funcdef f a,b 2\nprint a\nblockend\nfunccall f \"1\" ~\n", "argument count mismatch");
+        expectFailure("funcdef f ~ 2\nset x 1\nblockend\nfunccall f \"\" out\n", "result requested from a void function");
+        expectFailure("funcdef 9bad ~ 1\nblockend\n", "invalid function name");
+        expectFailure("funcdef f a,a 2\nprint a\nblockend\n", "duplicate parameter names");
+        expectFailure("funcdef __ls_x ~ 1\nblockend\n", "reserved function name prefix");
+    }
+
+    private static void functionRecursionRejected(){
+        String direct = """
+            funcdef f ~ 2
+            funccall f "" ~
+            blockend
+            funccall f "" ~
+            """;
+        try{
+            SugarCompiler.compile(direct, SugarCompiler.FuncMode.inline);
+            throw new AssertionError("direct recursion was not rejected");
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("recursion"), "recursion error has no explanation");
+        }
+
+        String indirect = """
+            funcdef a ~ 2
+            funccall b "" ~
+            blockend
+            funcdef b ~ 5
+            funccall a "" ~
+            blockend
+            funccall a "" ~
+            """;
+        try{
+            SugarCompiler.compile(indirect, SugarCompiler.FuncMode.normal);
+            throw new AssertionError("indirect recursion was not rejected");
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("a -> b -> a"), "recursion error does not show the cycle path");
+        }
+    }
+
+    private static void functionUnreachableCostsNothing(){
+        String compiled = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 2
+            print hi
+            blockend
+            print main
+            """, SugarCompiler.FuncMode.normal));
+        check(!compiled.contains("__ls_func_f_entry"), "unreachable function body was hoisted");
+        check(compiled.equals("print main\n"), "unreachable function changed the main program");
+    }
+
+    private static void functionInstructionLimitHint(){
+        StringBuilder body = new StringBuilder();
+        for(int i = 0; i < 40; i++) body.append("set v").append(i).append(' ').append(i).append('\n');
+        StringBuilder calls = new StringBuilder();
+        for(int i = 0; i < 30; i++) calls.append("funccall f \"\" ~\n");
+        String sugar = "funcdef f ~ " + (40 + 1) + "\n" + body + "blockend\n" + calls;
+
+        try{
+            SugarCompiler.compile(sugar, SugarCompiler.FuncMode.inline);
+            throw new AssertionError("inline blowup did not hit the instruction limit");
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("maximum is"), "instruction limit error missing");
+            check(expected.getMessage().contains("normal mode"), "inline over-limit error has no mode hint");
+        }
+
+        // the same program in normal mode shares the body and fits
+        String normal = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal);
+        check(normal.contains("__ls_func_f_entry:"), "normal mode did not share the function body");
+    }
+
+    /** Runs a compiled program headless and returns the value of a variable after it ends. */
+    private static double execute(String sugar, SugarCompiler.FuncMode mode, String variable){
+        String code = SugarCompiler.compile(sugar, mode);
+        LExecutor executor = new LExecutor();
+        executor.load(LAssembler.assemble(code, true));
+        for(int i = 0; i < 20000 && executor.counter.numval >= 0 && executor.counter.numval < executor.instructions.length; i++){
+            executor.runOnce();
+        }
+        LVar result = executor.optionalVar(variable);
+        return result == null ? Double.NaN : result.numval;
+    }
+
+    private static void functionProgramsExecute(){
+        Vars.logicVars = new GlobalVars();
+
+        // nested calls with parameters and return values
+        String nested = """
+            funcdef g a 2
+            return "a * 2"
+            blockend
+            funcdef f x 6
+            funccall g "x + 1" mid
+            return "mid + 1"
+            blockend
+            set base 5
+            funccall f "base" out
+            end
+            """;
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            check(execute(nested, mode, "out") == 13.0, mode + ": nested call result is wrong");
+            check(execute(nested, mode, "mid") == 12.0, mode + ": nested intermediate result is wrong");
+        }
+
+        // early return with value skips the rest of the body
+        String early = """
+            funcdef f a 3
+            return "a * 10"
+            set x 999
+            blockend
+            funccall f "3" out
+            end
+            """;
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            check(execute(early, mode, "out") == 30.0, mode + ": early value return is wrong");
+            check(execute(early, mode, "x") == 0.0, mode + ": dead code after return executed");
+        }
+
+        // void early return still runs the side effects before it
+        String voidReturn = """
+            funcdef f ~ 4
+            set flag 1
+            return ""
+            set flag 999
+            blockend
+            funccall f "" ~
+            end
+            """;
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            check(execute(voidReturn, mode, "flag") == 1.0, mode + ": void early return skipped preceding code");
+        }
+
+        // function called inside a loop accumulates into a caller variable
+        String loopCall = """
+            set sum 0
+            funcdef f a 3
+            op add sum sum a
+            blockend
+            forbegin i 1 1 lessThanEq 3 6
+            funccall f "i" ~
+            blockend
+            end
+            """;
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            check(execute(loopCall, mode, "sum") == 6.0, mode + ": call inside a loop is wrong");
+        }
     }
 
     private static void expectFailure(String source, String scenario){
