@@ -443,6 +443,63 @@ public final class SugarFunctions{
         return index;
     }
 
+    /**
+     * Extracts the definitions of the requested functions from a library text into a
+     * self-contained library text (functions in their original order). Used to embed the
+     * used subset of the library into compiled processor code so other machines can
+     * recompile the program without the local library file.
+     *
+     * <p>Statement indices are remapped from the full-text space into the extracted-slice
+     * space: every begin/jump target inside the slice shifts by the slice start, so the
+     * funcdef keeps pointing at its own blockend. When the extracted text is re-validated
+     * with {@link #buildLibrary}, {@link #buildFunction} converts a jump to the blockend
+     * into {@link #exitTarget} as usual, and body targets become body-relative.
+     */
+    public static String extractLibrarySource(String libraryText, Set<String> usedNames){
+        Seq<LStatement> statements = LAssembler.read(libraryText, true);
+        int n = statements.size;
+        int[] endOf = new int[n];
+        Arrays.fill(endOf, -1);
+        for(int i = 0; i < n; i++){
+            if(statements.get(i) instanceof FuncDefStatement def && usedNames.contains(def.name)){
+                int end = ((BeginStatement)statements.get(i)).destIndex;
+                if(end > i && end < n) endOf[i] = end;
+            }
+        }
+        StringBuilder out = new StringBuilder();
+        int appended = 0;
+        for(int i = 0; i < n; i++){
+            int e = endOf[i];
+            if(e < 0) continue;
+            // consecutive slices are concatenated, so targets shift by the slice start
+            // relative to the full text AND by the statements already appended
+            int base = appended;
+            for(int k = i; k <= e; k++){
+                LStatement statement = statements.get(k);
+                // BeginStatement.copy() resets destIndex, so capture the original first.
+                int dest = -1;
+                if(statement instanceof BeginStatement begin){
+                    dest = begin.destIndex;
+                }else if(statement instanceof JumpStatement jump){
+                    dest = jump.destIndex;
+                }
+                LStatement copy = statement.copy();
+                if(copy == null){
+                    throw new IllegalArgumentException("internal error: failed to copy a library statement");
+                }
+                if(copy instanceof BeginStatement begin){
+                    begin.destIndex = dest - i + base;
+                }else if(copy instanceof JumpStatement jump){
+                    jump.destIndex = dest - i + base;
+                }
+                copy.write(out);
+                out.append('\n');
+                appended++;
+            }
+        }
+        return out.toString();
+    }
+
     /** Extracts one function definition and remaps its body into body-relative space. */
     private static Function buildFunction(Seq<LStatement> statements, int s, int e, boolean library){
         FuncDefStatement def = (FuncDefStatement)statements.get(s);

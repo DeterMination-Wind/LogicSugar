@@ -2,6 +2,7 @@ package mindustry.logic;
 
 import arc.Core;
 import arc.struct.Seq;
+import arc.util.serialization.Base64Coder;
 import mindustry.logic.LExecutor;
 import mindustry.logic.SugarStatements.BeginStatement;
 import mindustry.logic.SugarStatements.BlockEndStatement;
@@ -13,6 +14,7 @@ import mindustry.logic.SugarStatements.FuncDefStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
 import mindustry.logic.SugarStatements.WhileBeginStatement;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
@@ -22,6 +24,15 @@ public final class SugarCompiler{
     private static final String markerBegin = "# @logic-sugar-v1 begin";
     private static final String markerLine = "# @logic-sugar-line ";
     private static final String markerEnd = "# @logic-sugar-v1 end";
+
+    /** Persistence carrier prefixes: real "set" statements that survive the vanilla
+     *  parse/save round trip (comment markers are dropped by it). The sugar carrier holds
+     *  the sugar source; the library carrier holds the used subset of the function library. */
+    private static final String carrierSugarPrefix = "set __ls_sugar \"";
+    private static final String carrierLibPrefix = "set __ls_lib \"";
+    /** LParser rejects string tokens longer than 65535 UTF bytes; staying well below that
+     *  keeps a stored program from ever making a vanilla client fail to open the editor. */
+    private static final int carrierMaxChars = 60000;
 
     /** Function expansion mode. normal = shared @counter subroutine; inline = per-call copy. */
     public enum FuncMode{
@@ -35,8 +46,24 @@ public final class SugarCompiler{
 
     private SugarCompiler(){}
 
+    /** Extracts the sugar source from stored code. The persistence carrier is authoritative;
+     *  without one (v2.0.0 legacy programs) the comment marker block is used. */
     public static String restore(String code){
-        String[] lines = code.replace("\r\n", "\n").split("\n", -1);
+        String normalized = code.replace("\r\n", "\n");
+        String[] lines = normalized.split("\n", -1);
+        // Scan from the end: genuine carriers are always the last sugar-carrying lines, so a
+        // user statement that happens to look like a carrier loses the race only in its favor.
+        for(int i = lines.length - 1; i >= 0; i--){
+            String line = lines[i];
+            if(line.startsWith(carrierSugarPrefix) && line.endsWith("\"")){
+                try{
+                    return decode(line.substring(carrierSugarPrefix.length(), line.length() - 1));
+                }catch(Exception ignored){
+                    // damaged carrier: fall back to the marker block below
+                }
+            }
+        }
+
         int begin = -1, end = -1;
         for(int i = 0; i < lines.length; i++){
             if(lines[i].equals(markerBegin)) begin = i;
@@ -52,6 +79,81 @@ public final class SugarCompiler{
         return result.toString();
     }
 
+    /** Returns the library source embedded in stored code (the used subset the program was
+     *  compiled with), or null when the code carries no embedded library. */
+    public static String libraryFromCode(String code){
+        String normalized = code.replace("\r\n", "\n");
+        String[] lines = normalized.split("\n", -1);
+        for(int i = lines.length - 1; i >= 0; i--){
+            String line = lines[i];
+            if(line.startsWith(carrierLibPrefix) && line.endsWith("\"")){
+                try{
+                    return decode(line.substring(carrierLibPrefix.length(), line.length() - 1));
+                }catch(Exception ignored){
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Removes the comment marker block (the redundant sugar source) from compiled code.
+     *  The persistence carriers are kept, so restore() still works afterwards. */
+    public static String stripMarkers(String code){
+        String normalized = code.replace("\r\n", "\n");
+        int begin = normalized.indexOf(markerBegin);
+        if(begin < 0) return code;
+        int end = normalized.indexOf(markerEnd, begin);
+        if(end < 0) return code;
+        int after = end + markerEnd.length();
+        if(after < normalized.length() && normalized.charAt(after) == '\n') after++;
+        return normalized.substring(0, begin) + normalized.substring(after);
+    }
+
+    /**
+     * Checks that the restored sugar really compiles to the stored code. Legacy v2.0.0
+     * programs carry no carrier and are trusted as-is. Otherwise the sugar is recompiled
+     * against the embedded library in both function modes and normalized (vanilla
+     * read/write round trip, which also folds label jumps back into numeric indices); any
+     * matching mode passes. A mismatch means the stored code was edited outside Logic Sugar.
+     */
+    public static boolean verifyRestore(String code, String restored){
+        if(!containsCarrier(code, carrierSugarPrefix)) return true;
+        String libText = libraryFromCode(code);
+        SugarFunctions.LibraryIndex embedded = null;
+        if(libText != null && !libText.trim().isEmpty()){
+            try{
+                embedded = SugarFunctions.buildLibrary(LAssembler.read(libText, true));
+            }catch(RuntimeException e){
+                return false;
+            }
+        }
+        String storedNormalized;
+        try{
+            storedNormalized = LAssembler.write(LAssembler.read(code, true));
+        }catch(RuntimeException e){
+            return false;
+        }
+        for(FuncMode mode : FuncMode.values()){
+            try{
+                String recompiled = compile(restored, mode, embedded, libText);
+                if(LAssembler.write(LAssembler.read(recompiled, true)).equals(storedNormalized)) return true;
+            }catch(RuntimeException ignored){
+                // one mode may legitimately fail (e.g. inline blowup); the other may match
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Stale-close protection: do not submit when the canvas was left untouched while the
+     * stored code changed underneath it (another client saved). Edited canvases always
+     * submit (last writer wins, same as vanilla).
+     */
+    public static boolean shouldSubmit(String canvasText, String editable, String openedCode, String currentCode){
+        return !(canvasText.equals(editable) && !currentCode.equals(openedCode));
+    }
+
     /** Compiles with the user-selected function mode (normal when settings are unavailable). */
     public static String compile(String sugar){
         return compile(sugar, currentMode());
@@ -62,6 +164,13 @@ public final class SugarCompiler{
     }
 
     public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library){
+        return compile(sugar, mode, library, null);
+    }
+
+    /** Compiles against an explicit library and its text. The library text is used to embed
+     *  the used subset into the output ({@code set __ls_lib "..."}), so other machines can
+     *  recompile the program without the local library file. */
+    public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText){
         Seq<LStatement> statements = LAssembler.read(sugar, true);
         if(!containsSugar(statements)) return sugar;
 
@@ -82,16 +191,112 @@ public final class SugarCompiler{
             SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null);
         }
 
+        // Persistence carriers: real "set" statements appended after the marker block. They
+        // survive the vanilla parse/save round trip that drops the comment markers, and are
+        // placed after them so lowered-code consumers (and the test helper) see the lowered
+        // program untouched. They execute harmlessly every tick and count toward the limit.
+        StringBuilder carriers = new StringBuilder();
+        Set<String> usedLibrary = new HashSet<>();
+        for(SugarFunctions.Function function : functions.hoistOrder()){
+            if(function.library) usedLibrary.add(function.name);
+        }
+        if(libraryText != null && !libraryText.trim().isEmpty() && !usedLibrary.isEmpty()){
+            String extracted = SugarFunctions.extractLibrarySource(libraryText, usedLibrary);
+            if(!extracted.isEmpty()) appendCarrier(carriers, carrierLibPrefix, extracted);
+        }
+        appendCarrier(carriers, carrierSugarPrefix, sugar.replace("\r\n", "\n"));
+
         // LAssembler.read silently truncates at LExecutor.maxInstructions lines, so the count
         // must be computed from the emitted text itself (one instruction per non-label line).
-        int instructionCount = countInstructions(out);
+        int instructionCount = countInstructions(out) + countInstructions(carriers);
         if(instructionCount > LExecutor.maxInstructions){
             String hint = mode == FuncMode.inline ? " Switch to normal mode to share function bodies." : "";
             throw new IllegalArgumentException("Compiled program has " + instructionCount + " instructions; maximum is " + LExecutor.maxInstructions + "." + hint);
         }
 
         appendMarker(out, sugar);
+        out.append(carriers);
         return out.toString();
+    }
+
+    /** The merged library for editing a stored program: embedded functions first, then
+     *  local functions the embedded ones do not shadow. The text mirrors the index, so the
+     *  compiler can re-extract the used subset from it when saving (self-correcting). */
+    public static EffectiveLibrary effectiveLibrary(String code, SugarFunctions.LibraryIndex local, String localText){
+        String embeddedText = libraryFromCode(code);
+        String embedded = embeddedText == null ? "" : embeddedText.trim();
+        Set<String> embeddedNames = new HashSet<>();
+        if(!embedded.isEmpty()){
+            try{
+                for(String name : SugarFunctions.buildLibrary(LAssembler.read(embedded, true)).functions.keySet()){
+                    embeddedNames.add(name);
+                }
+            }catch(RuntimeException ignored){
+                embedded = "";
+            }
+        }
+        StringBuilder text = new StringBuilder(embedded);
+        if(local != null && localText != null && !localText.trim().isEmpty()){
+            Set<String> extras = new HashSet<>(local.functions.keySet());
+            extras.removeAll(embeddedNames);
+            if(!extras.isEmpty()){
+                try{
+                    String extracted = SugarFunctions.extractLibrarySource(localText, extras);
+                    if(!extracted.isEmpty()){
+                        if(text.length() > 0) text.append('\n');
+                        text.append(extracted);
+                    }
+                }catch(RuntimeException ignored){
+                    // damaged local library: embedded functions still work
+                }
+            }
+        }
+        String effectiveText = text.toString();
+        SugarFunctions.LibraryIndex effective = null;
+        if(!effectiveText.trim().isEmpty()){
+            try{
+                effective = SugarFunctions.buildLibrary(LAssembler.read(effectiveText, true));
+            }catch(RuntimeException ignored){
+                // both sources unusable: behaves like an empty library
+            }
+        }
+        return new EffectiveLibrary(effective, effectiveText);
+    }
+
+    /** Parsed library index plus the text it was built from. */
+    public static final class EffectiveLibrary{
+        public final SugarFunctions.LibraryIndex index;
+        public final String text;
+
+        public EffectiveLibrary(SugarFunctions.LibraryIndex index, String text){
+            this.index = index;
+            this.text = text;
+        }
+    }
+
+    private static void appendCarrier(StringBuilder out, String prefix, String text){
+        String encoded = encode(text);
+        if(encoded.length() <= carrierMaxChars){
+            out.append(prefix).append(encoded).append("\"\n");
+        }
+    }
+
+    private static boolean containsCarrier(String code, String prefix){
+        String normalized = code.replace("\r\n", "\n");
+        String[] lines = normalized.split("\n", -1);
+        for(int i = lines.length - 1; i >= 0; i--){
+            if(lines[i].startsWith(prefix) && lines[i].endsWith("\"")) return true;
+        }
+        return false;
+    }
+
+    /** UTF-8 base64 via arc's coder (minSdk 21 forbids java.util.Base64). */
+    private static String encode(String text){
+        return new String(Base64Coder.encode(text.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String decode(String text){
+        return new String(Base64Coder.decode(text), StandardCharsets.UTF_8);
     }
 
     public static boolean[] invalidStatements(Seq<LStatement> statements){
@@ -149,7 +354,7 @@ public final class SugarCompiler{
         return invalid;
     }
 
-    private static FuncMode currentMode(){
+    public static FuncMode currentMode(){
         try{
             if(Core.settings != null){
                 return FuncMode.parse(Core.settings.getString("logicsugar.funcMode", "normal"));

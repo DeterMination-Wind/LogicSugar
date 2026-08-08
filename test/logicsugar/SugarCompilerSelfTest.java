@@ -20,8 +20,12 @@ import mindustry.logic.SugarStatements.WhileBeginStatement;
 import mindustry.logic.LStatements.JumpStatement;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprHook;
+import mindustry.world.blocks.logic.LogicBlock;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
+import java.util.Set;
 
 public class SugarCompilerSelfTest{
     public static void main(String[] args){
@@ -56,6 +60,12 @@ public class SugarCompilerSelfTest{
         libraryFunctions();
         libraryValidationRejected();
         functionCallsMarkedInvalid();
+        libraryExtractionIsSelfContained();
+        carrierSurvivesVanillaRoundTrip();
+        restorePrefersCarrier();
+        libraryEmbeddingRoundTrip();
+        verificationDetectsExternalEdits();
+        oversizeStripsComments();
         System.out.println("LogicSugar compiler self-test passed.");
     }
 
@@ -80,7 +90,7 @@ public class SugarCompilerSelfTest{
         check(compiled.contains("# @logic-sugar-line forbeginc"), "collapsed state was not persisted");
 
         Seq<LStatement> lowered = LAssembler.read(compiled, true);
-        check(lowered.size == 18, "unexpected lowered instruction count: " + lowered.size);
+        check(lowered.size == 19, "unexpected lowered instruction count: " + lowered.size + " (18 lowered + 1 persistence carrier)");
         for(LStatement statement : lowered){
             check(statement.getClass().getEnclosingClass() != SugarStatements.class, "compiled program contains a sugar statement");
         }
@@ -729,6 +739,167 @@ public class SugarCompilerSelfTest{
         expectLibraryBuildFailure("funcdef f ~ 3\nfuncdef g ~ 2\nblockend\nblockend\n", "nested library definition");
         expectLibraryBuildFailure("funcdef f a,a 2\nprint a\nblockend\n", "duplicate library parameter");
         expectLibraryBuildFailure("funcdef f ~ 3\nfunccall f \"\" ~\nblockend\n" + "funcdef f ~ 6\nblockend\n", "duplicate library function");
+    }
+
+    /** Extracted function subsets must re-validate and compile identically to the original. */
+    private static void libraryExtractionIsSelfContained(){
+        String libraryText = """
+            funcdef add a,b 3
+            op add s a b
+            return "s * 2"
+            blockend
+            funcdef outer x 7
+            funccall inner "x" mid
+            return "mid * 10"
+            blockend
+            funcdef inner a 10
+            return "a + 1"
+            blockend
+            funcdef unused x 13
+            print x
+            blockend
+            """;
+        Set<String> used = new HashSet<>(List.of("outer", "inner"));
+        String extracted = SugarFunctions.extractLibrarySource(libraryText, used);
+        SugarFunctions.LibraryIndex index = SugarFunctions.buildLibrary(LAssembler.read(extracted, true));
+        check(index.functions.containsKey("outer") && index.functions.containsKey("inner"), "extracted library misses functions");
+        check(!index.functions.containsKey("add") && !index.functions.containsKey("unused"), "extracted library has extra functions");
+
+        // outer is defined before inner in the text but calls it; the extracted subset must
+        // compile to exactly the same program as the original library
+        String sugar = "funccall outer \"2\" out\nend\n";
+        String viaOriginal = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal,
+            SugarFunctions.buildLibrary(LAssembler.read(libraryText, true)), libraryText);
+        String viaExtracted = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, index, extracted);
+        check(normalize(viaOriginal).equals(normalize(viaExtracted)), "extracted library compiles differently from the original");
+
+        // the extraction is idempotent: re-extracting the used subset from itself is a no-op
+        check(SugarFunctions.extractLibrarySource(extracted, used).equals(extracted), "extraction is not idempotent");
+    }
+
+    /** The carrier must survive a vanilla parse/save round trip (markers are dropped by it). */
+    private static void carrierSurvivesVanillaRoundTrip(){
+        String sugar = """
+            whilebegin true 2
+            set x 1
+            blockend
+            """;
+        String compiled = SugarCompiler.compile(sugar);
+        check(SugarCompiler.restore(compiled).equals(sugar), "carrier round-trip changed sugar source");
+
+        // a vanilla save drops the comment markers but keeps the carrier set statement;
+        // a no-mod player parses with privileged=false, so use that for realism
+        String vanillaSaved = LAssembler.write(LAssembler.read(compiled, false));
+        check(!vanillaSaved.contains("# @logic-sugar"), "vanilla save kept the comment marker");
+        check(SugarCompiler.restore(vanillaSaved).equals(sugar), "sugar was lost across a vanilla save");
+
+        // stripping the marker block (the 16KB fallback) must not lose the sugar either
+        String stripped = SugarCompiler.stripMarkers(compiled);
+        check(!stripped.contains("# @logic-sugar"), "marker block was not stripped");
+        check(SugarCompiler.restore(stripped).equals(sugar), "sugar was lost after marker stripping");
+    }
+
+    /** The carrier is authoritative: tampering with the marker block must not matter. */
+    private static void restorePrefersCarrier(){
+        String sugar = "whilebegin true 2\nset x 1\nblockend\n";
+        String compiled = SugarCompiler.compile(sugar);
+        String tampered = compiled.replace("# @logic-sugar-line set x 1", "# @logic-sugar-line set x 999");
+        check(!tampered.equals(compiled), "test setup: tampering changed nothing");
+        check(SugarCompiler.restore(tampered).equals(sugar), "carrier did not take priority over the markers");
+    }
+
+    /** The embedded library subset must reproduce the compiled program on any machine. */
+    private static void libraryEmbeddingRoundTrip(){
+        String libraryText = """
+            funcdef add a,b 3
+            op add s a b
+            return "s * 2"
+            blockend
+            funcdef unused x 6
+            print x
+            blockend
+            """;
+        SugarFunctions.LibraryIndex library = SugarFunctions.buildLibrary(LAssembler.read(libraryText, true));
+        String sugar = "set x 3\nfunccall add \"x, 4\" out\nend\n";
+        String compiled = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, library, libraryText);
+        String embedded = SugarCompiler.libraryFromCode(compiled);
+        check(embedded != null, "library was not embedded into the compiled code");
+        check(embedded.contains("funcdef add") && !embedded.contains("unused"), "embedded library has the wrong function subset");
+
+        // recompiling with only the embedded library reproduces the stored program exactly
+        SugarFunctions.LibraryIndex embeddedIndex = SugarFunctions.buildLibrary(LAssembler.read(embedded, true));
+        String restored = SugarCompiler.restore(compiled);
+        String recompiled = SugarCompiler.compile(restored, SugarCompiler.FuncMode.normal, embeddedIndex, embedded);
+        check(normalize(compiled).equals(normalize(recompiled)), "recompiling with the embedded library changed the output");
+
+        // an empty local library must still compile through the embedded one (the effective
+        // library merge the dialog performs on open)
+        SugarCompiler.EffectiveLibrary effective = SugarCompiler.effectiveLibrary(compiled,
+            SugarFunctions.buildLibrary(LAssembler.read("", true)), "");
+        check(effective.index != null && effective.index.functions.containsKey("add"), "embedded library was not merged over an empty local library");
+        String noLocal = SugarCompiler.compile(restored, SugarCompiler.FuncMode.normal, effective.index, effective.text);
+        check(normalize(noLocal).equals(normalize(compiled)), "compiling without the local library changed the output");
+    }
+
+    /** External edits to the compiled code must be detected; innocent round trips must pass. */
+    private static void verificationDetectsExternalEdits(){
+        String sugar = "whilebegin true 3\nset x 1\nset y 2\nblockend\n";
+        String compiled = SugarCompiler.compile(sugar);
+        check(SugarCompiler.verifyRestore(compiled, SugarCompiler.restore(compiled)), "pristine code failed verification");
+
+        // external edit: change a value inside the compiled code
+        String edited = compiled.replace("set y 2", "set y 999");
+        check(!SugarCompiler.verifyRestore(edited, SugarCompiler.restore(edited)), "external edit was not detected");
+
+        // a vanilla save round trip (markers stripped, carrier kept) still verifies
+        String vanillaSaved = LAssembler.write(LAssembler.read(compiled, true));
+        check(SugarCompiler.verifyRestore(vanillaSaved, SugarCompiler.restore(vanillaSaved)), "vanilla round trip failed verification");
+
+        // both function modes are tried during verification
+        String inline = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.inline);
+        check(SugarCompiler.verifyRestore(inline, SugarCompiler.restore(inline)), "inline compilation failed verification");
+    }
+
+    /** Marker stripping is the 16KB fallback; restore must still work after it. */
+    private static void oversizeStripsComments(){
+        // random values make the program incompressible, so the stored form can exceed the
+        // 16KB compressed limit while the marker-stripped form still fits
+        boolean exercised = false;
+        for(int lines : new int[]{100, 110, 115, 120, 125, 130, 140, 160, 180, 220, 260, 300}){
+            Random random = new Random(0x5eed);
+            StringBuilder sugar = new StringBuilder("whilebegin true " + (lines + 1) + "\n");
+            for(int i = 0; i < lines; i++){
+                sugar.append("set v").append(i).append(" \"");
+                for(int j = 0; j < 56; j++){
+                    sugar.append("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".charAt(random.nextInt(62)));
+                }
+                sugar.append("\"\n");
+            }
+            sugar.append("blockend\n");
+            String compiled = SugarCompiler.compile(sugar.toString());
+            check(SugarCompiler.restore(compiled).equals(sugar.toString()), "large program failed carrier round-trip");
+
+            byte[] withMarkers = LogicBlock.compress(compiled, new Seq<>());
+            String stripped = SugarCompiler.stripMarkers(compiled);
+            byte[] withoutMarkers = LogicBlock.compress(stripped, new Seq<>());
+            check(!stripped.contains("# @logic-sugar"), "marker block was not stripped");
+            check(SugarCompiler.restore(stripped).equals(sugar.toString()), "sugar was lost after marker stripping");
+            if(withMarkers.length > 16000){
+                check(withoutMarkers.length <= 16000,
+                    "marker-stripped form still exceeds the storage limit: " + withoutMarkers.length);
+                exercised = true;
+                break;
+            }
+        }
+        if(!exercised){
+            System.out.println("note: could not exceed the 16KB compressed limit with generated content; "
+                + "the oversize path was not exercised (strip/restore chain still verified)");
+        }
+    }
+
+    /** Vanilla-compatible normalization: comments dropped, label jumps folded into indices. */
+    private static String normalize(String code){
+        return LAssembler.write(LAssembler.read(code, true));
     }
 
     private static void functionCallsMarkedInvalid(){

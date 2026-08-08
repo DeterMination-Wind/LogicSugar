@@ -15,6 +15,8 @@ import mindustry.gen.Building;
 import mindustry.gen.Icon;
 import mindustry.logic.LExecutor;
 import mindustry.ui.Styles;
+import mindustry.world.blocks.logic.LogicBlock;
+import logicsugar.FunctionLibrary;
 import logicsugar.FunctionLibraryDialog;
 
 import java.lang.reflect.Field;
@@ -24,12 +26,20 @@ import java.util.Map;
 public class SugarLogicDialog extends LogicDialog{
     private static final String compiledCopyName = "logicsugar-copy-compiled";
     private static final Field consumerField = field(LogicDialog.class, "consumer");
+    /** Mirrors LogicBlock.maxCompressedLen (private upstream); the compressed code must fit. */
+    private static final int maxCompressedBytes = 16_000;
     private final Map<Object, String> drafts = new IdentityHashMap<>();
     public LExecutor executor;
     /** When true, a failed compile during a close is passed back to the caller as raw sugar
      *  instead of being dropped. Used by the function library editing session (executor == null),
      *  so processor edits are never affected. */
     public boolean passThroughSugarOnError;
+    /** The stored code as it was when the dialog opened (stale-close protection). */
+    private String openedCode = "";
+    /** The sugar (or compiled fallback) the canvas was loaded with. */
+    private String editable = "";
+    /** Embedded plus local library snapshot for this editing session. */
+    private SugarCompiler.EffectiveLibrary effectiveLibrary = SugarCompiler.effectiveLibrary("", null, "");
     private Element editButton;
     private float menuScanTimer;
 
@@ -70,7 +80,9 @@ public class SugarLogicDialog extends LogicDialog{
         menu.row();
         menu.button("@logicsugar.copy.compiled", Icon.copy, Styles.flatt, () -> {
             try{
-                Core.app.setClipboardText(SugarCompiler.compile(canvas.save()));
+                // copy with the session's effective library, so the embedded functions survive
+                Core.app.setClipboardText(SugarCompiler.compile(canvas.save(), SugarCompiler.currentMode(),
+                    effectiveLibrary.index, effectiveLibrary.text));
                 dialog.hide();
                 Vars.ui.showInfoFade("@logicsugar.copy.compiled.done");
             }catch(IllegalArgumentException exception){
@@ -104,8 +116,30 @@ public class SugarLogicDialog extends LogicDialog{
     @Override
     public void show(String code, LExecutor executor, boolean privileged, Cons<String> modified){
         this.executor = executor;
+        this.openedCode = code;
         Object key = draftKey(executor);
-        String editable = drafts.containsKey(key) ? drafts.get(key) : SugarCompiler.restore(code);
+        if(drafts.containsKey(key)){
+            // a failed compile kept the user's work; trust it over any stored code
+            editable = drafts.get(key);
+        }else{
+            String restored = SugarCompiler.restore(code);
+            boolean verified;
+            try{
+                verified = SugarCompiler.verifyRestore(code, restored);
+            }catch(Throwable t){
+                // stored code cannot even be parsed (e.g. written by a newer mod version);
+                // trust the carrier's sugar and let the next save regenerate clean code
+                verified = true;
+            }
+            if(verified){
+                editable = restored;
+            }else{
+                // the stored code was changed outside Logic Sugar: show it as-is
+                editable = code;
+                Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.external.edit"));
+            }
+        }
+        effectiveLibrary = SugarCompiler.effectiveLibrary(code, SugarFunctions.library(), FunctionLibrary.loadText());
         Cons<String> submit = sugar -> submit(sugar, executor, modified, key, false);
         super.show(editable, executor, privileged, submit);
 
@@ -115,11 +149,19 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     private void submit(String sugar, LExecutor executor, Cons<String> modified, Object key, boolean closing){
+        // Stale-close protection: an untouched canvas must not clobber a save that happened
+        // while the dialog was open; an edited canvas always submits (last writer wins).
+        if(executor != null && !SugarCompiler.shouldSubmit(sugar, editable, openedCode, currentCode(executor))){
+            return;
+        }
         try{
-            String compiled = SugarCompiler.compile(sugar);
+            String compiled = SugarCompiler.compile(sugar, SugarCompiler.currentMode(), effectiveLibrary.index, effectiveLibrary.text);
             if(executor != null && executor.build != null && !executor.build.isValid()){
                 drafts.remove(key);
                 return;
+            }
+            if(executor != null && executor.build != null){
+                compiled = enforceStorageLimit(compiled, executor);
             }
             drafts.remove(key);
             modified.get(compiled);
@@ -133,6 +175,29 @@ public class SugarLogicDialog extends LogicDialog{
             }
             Core.app.post(() -> showCompileError(exception, closing));
         }
+    }
+
+    /** The stored code as of right now (the build may have been reconfigured while open). */
+    private String currentCode(LExecutor executor){
+        return executor.build != null ? executor.build.code : openedCode;
+    }
+
+    /**
+     * Pre-checks the 16KB compressed storage limit before the block's own consumer does.
+     * Over the limit, the comment marker (redundant sugar source) is stripped and the
+     * carrier-based restore is kept; still over, the compile fails loudly so the draft
+     * retention path keeps the user's work instead of vanilla's silent drop.
+     */
+    private String enforceStorageLimit(String compiled, LExecutor executor){
+        LogicBlock.LogicBuild build = (LogicBlock.LogicBuild)executor.build;
+        Seq<LogicBlock.LogicLink> links = build.relativeConnections();
+        byte[] bytes = LogicBlock.compress(compiled, links);
+        if(bytes.length <= maxCompressedBytes) return compiled;
+        String stripped = SugarCompiler.stripMarkers(compiled);
+        byte[] retry = LogicBlock.compress(stripped, links);
+        if(retry.length <= maxCompressedBytes) return stripped;
+        throw new IllegalArgumentException("Compiled program is too large to store: " + retry.length
+            + " compressed bytes (limit " + maxCompressedBytes + "), even without the comment marker.");
     }
 
     private Object draftKey(LExecutor executor){
