@@ -77,31 +77,22 @@ public final class SugarFunctions{
 
     /** Where library statements come from. Installed by the mod; tests install their own. */
     public interface LibrarySource{
-        /** @return parsed library statements, or null when the library is missing/empty. */
-        Seq<LStatement> load();
+        /** @return the parsed and validated library index, or null when unavailable. */
+        LibraryIndex load();
     }
 
     private static LibrarySource librarySource;
-    private static LibraryIndex draftLibrary;
 
     /** Installs the library file source (called by the mod). */
     public static void setLibrarySource(LibrarySource source){
         librarySource = source;
     }
 
-    /** Overrides the visible library while the library dialog is open (draft validation). */
-    public static void setDraftLibrary(LibraryIndex draft){
-        draftLibrary = draft;
-    }
-
     /** Returns the current library index, or null when none is available. */
     public static LibraryIndex library(){
-        if(draftLibrary != null) return draftLibrary;
         if(librarySource == null) return null;
         try{
-            Seq<LStatement> statements = librarySource.load();
-            if(statements == null || statements.isEmpty()) return null;
-            return buildLibrary(statements);
+            return librarySource.load();
         }catch(IllegalArgumentException e){
             // Damaged library files behave like an empty library; processors that call a
             // missing function report a clear error at compile time.
@@ -164,15 +155,16 @@ public final class SugarFunctions{
             return local != null ? local : library != null ? library.functions.get(name) : null;
         }
 
-        /** Reachable functions in definition order (local functions first, then library). */
+        /** Reachable functions in definition order (local functions first, then library).
+         *  A shadowed library function is skipped: its name resolves to the local one. */
         public List<Function> hoistOrder(){
             List<Function> result = new ArrayList<>();
             for(Function function : functions.values()){
-                if(reachable.contains(function.name)) result.add(function);
+                if(reachable.contains(function.name) && resolve(function.name) == function) result.add(function);
             }
             if(library != null){
                 for(Function function : library.functions.values()){
-                    if(reachable.contains(function.name)) result.add(function);
+                    if(reachable.contains(function.name) && resolve(function.name) == function) result.add(function);
                 }
             }
             return result;
@@ -355,7 +347,7 @@ public final class SugarFunctions{
                 endOf[i] = begin.destIndex;
                 beginOf[begin.destIndex] = i;
                 for(int k = i + 1; k < begin.destIndex; k++) ownerBody[k] = i;
-            }else if(!(statement instanceof BlockEndStatement) && beginOf[i] < 0){
+            }else if(ownerBody[i] < 0 && beginOf[i] < 0){
                 throw error(statement.typeName(), i, "is not allowed in the function library; only function definitions may appear at the top level");
             }
             if(statement instanceof BeginStatement begin){

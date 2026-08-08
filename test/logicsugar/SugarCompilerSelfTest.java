@@ -8,6 +8,7 @@ import mindustry.logic.LExecutor;
 import mindustry.logic.LStatement;
 import mindustry.logic.LVar;
 import mindustry.logic.SugarCompiler;
+import mindustry.logic.SugarFunctions;
 import mindustry.logic.SugarStatements;
 import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.BreakStatement;
@@ -52,6 +53,9 @@ public class SugarCompilerSelfTest{
         functionUnreachableCostsNothing();
         functionInstructionLimitHint();
         functionProgramsExecute();
+        libraryFunctions();
+        libraryValidationRejected();
+        functionCallsMarkedInvalid();
         System.out.println("LogicSugar compiler self-test passed.");
     }
 
@@ -600,6 +604,132 @@ public class SugarCompilerSelfTest{
             """;
         for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
             check(execute(loopCall, mode, "sum") == 6.0, mode + ": call inside a loop is wrong");
+        }
+    }
+
+    /** Runs a compiled program that resolves calls against a library index. */
+    private static double executeLibrary(String sugar, SugarCompiler.FuncMode mode, SugarFunctions.LibraryIndex library, String variable){
+        String code = SugarCompiler.compile(sugar, mode, library);
+        LExecutor executor = new LExecutor();
+        executor.load(LAssembler.assemble(code, true));
+        for(int i = 0; i < 20000 && executor.counter.numval >= 0 && executor.counter.numval < executor.instructions.length; i++){
+            executor.runOnce();
+        }
+        LVar result = executor.optionalVar(variable);
+        return result == null ? Double.NaN : result.numval;
+    }
+
+    private static void libraryFunctions(){
+        Seq<LStatement> libraryStatements = LAssembler.read("""
+            funcdef add a,b 3
+            op add s a b
+            return "s * 2"
+            blockend
+            funcdef inner a 6
+            return "a + 1"
+            blockend
+            funcdef outer x 10
+            funccall inner "x" mid
+            return "mid * 10"
+            blockend
+            """, true);
+        SugarFunctions.LibraryIndex library = SugarFunctions.buildLibrary(libraryStatements);
+
+        // mangling: body writes are local, reads see caller globals; both expansion modes
+        String processor = """
+            set x 3
+            set s 999
+            funccall add "x, 4" out
+            end
+            """;
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            String compiled = loweredCode(SugarCompiler.compile(processor, mode, library));
+            check(compiled.contains("set __ls_func_add_a x"), mode + ": library parameter was not bound through the mangled name");
+            check(compiled.contains("op add __ls_func_add_s __ls_func_add_a __ls_func_add_b"), mode + ": library body write was not mangled");
+            check(compiled.contains("set s 999"), mode + ": caller variable disappeared");
+            check(executeLibrary(processor, mode, library, "out") == 14.0, mode + ": library call result is wrong");
+            check(executeLibrary(processor, mode, library, "s") == 999.0, mode + ": library function modified a caller variable");
+        }
+
+        // library functions call other library functions, mangled end to end
+        String outer = "funccall outer \"2\" out\nend\n";
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            String compiled = loweredCode(SugarCompiler.compile(outer, mode, library));
+            check(compiled.contains("set __ls_func_inner_a __ls_func_outer_x"), mode + ": nested library call did not mangle the argument expression");
+            check(executeLibrary(outer, mode, library, "out") == 30.0, mode + ": nested library call result is wrong");
+        }
+
+        // local functions shadow library functions with the same name
+        String shadow = """
+            funcdef add a 2
+            return "a + 100"
+            blockend
+            funccall add "1" out
+            end
+            """;
+        check(executeLibrary(shadow, SugarCompiler.FuncMode.normal, library, "out") == 101.0, "local function did not shadow the library function");
+
+        // a call that only the library can resolve fails without the library
+        expectLibraryFailure("funccall nope \"1, 2\" out\n", library, "missing library function");
+
+        // quoted strings survive the mangling rewrite untouched
+        String quoted = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 2
+            print "hi there"
+            blockend
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.inline));
+        check(quoted.contains("print \"hi there\""), "quoted strings were damaged by the mangling rewrite");
+    }
+
+    private static void libraryValidationRejected(){
+        expectLibraryBuildFailure("funcdef f ~ 2\nfunccall f \"\" ~\nblockend\n", "library recursion");
+        expectLibraryBuildFailure("funcdef f ~ 2\nfunccall nope \"\" ~\nblockend\n", "library function calls an undefined function");
+        expectLibraryBuildFailure("set x 1\n", "stray statement in the library");
+        expectLibraryBuildFailure("funcdef f ~ 2\nbreak\nblockend\n", "bare break inside a library function");
+        expectLibraryBuildFailure("funcdef f ~ 3\nfuncdef g ~ 2\nblockend\nblockend\n", "nested library definition");
+        expectLibraryBuildFailure("funcdef f a,a 2\nprint a\nblockend\n", "duplicate library parameter");
+        expectLibraryBuildFailure("funcdef f ~ 3\nfunccall f \"\" ~\nblockend\n" + "funcdef f ~ 6\nblockend\n", "duplicate library function");
+    }
+
+    private static void functionCallsMarkedInvalid(){
+        SugarFunctions.setLibrarySource(null);
+        try{
+            Seq<LStatement> unresolved = LAssembler.read("funccall nope \"\" ~\n", true);
+            check(SugarCompiler.invalidStatements(unresolved)[0], "unresolved function call was not marked invalid");
+
+            Seq<LStatement> local = LAssembler.read("funcdef f ~ 2\nset x 1\nblockend\nfunccall f \"\" ~\n", true);
+            boolean[] localInvalid = SugarCompiler.invalidStatements(local);
+            check(!localInvalid[0] && !localInvalid[3], "resolved local function call was marked invalid");
+
+            // library-provided functions resolve lazily
+            SugarFunctions.setLibrarySource(() -> SugarFunctions.buildLibrary(LAssembler.read("funcdef g ~ 2\nset x 1\nblockend\n", true)));
+            try{
+                Seq<LStatement> libraryCall = LAssembler.read("funccall g \"\" ~\n", true);
+                check(!SugarCompiler.invalidStatements(libraryCall)[0], "library function call was marked invalid");
+            }finally{
+                SugarFunctions.setLibrarySource(null);
+            }
+        }finally{
+            SugarFunctions.setLibrarySource(null);
+        }
+    }
+
+    private static void expectLibraryFailure(String source, SugarFunctions.LibraryIndex library, String scenario){
+        try{
+            SugarCompiler.compile(source, SugarCompiler.FuncMode.normal, library);
+            throw new AssertionError("Expected failure for " + scenario);
+        }catch(IllegalArgumentException expected){
+            // Expected validation failure.
+        }
+    }
+
+    private static void expectLibraryBuildFailure(String source, String scenario){
+        try{
+            SugarFunctions.buildLibrary(LAssembler.read(source, true));
+            throw new AssertionError("Expected library build failure for " + scenario);
+        }catch(IllegalArgumentException expected){
+            // Expected validation failure.
         }
     }
 

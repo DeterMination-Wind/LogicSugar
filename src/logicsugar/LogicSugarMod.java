@@ -9,6 +9,7 @@ import mindustry.game.EventType.ClientLoadEvent;
 import mindustry.gen.LogicIO;
 import mindustry.logic.LAssembler;
 import mindustry.logic.LogicDialog;
+import mindustry.logic.SugarFunctions;
 import mindustry.logic.SugarLogicDialog;
 import mindustry.logic.SugarStatements;
 import mindustry.mod.Mod;
@@ -27,6 +28,7 @@ public class LogicSugarMod extends Mod{
     @Override
     public void init(){
         registerStatements();
+        SugarFunctions.setLibrarySource(FunctionLibrary::index);
         on(ClientLoadEvent.class, event -> Core.app.post(() -> {
             if(Vars.ui != null && !(Vars.ui.logic instanceof SugarLogicDialog)){
                 LogicDialog old = Vars.ui.logic;
@@ -39,6 +41,7 @@ public class LogicSugarMod extends Mod{
                 Vars.ui.logic.hidden(JumpLineColor::clearCache);
                 BoxSelect.init();
                 ExprHook.init();
+                LogicSugarSettings.setup();
             }
         }));
     }
