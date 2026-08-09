@@ -36,15 +36,16 @@ public class ExprCompiler{
     public static final String TMP = "_";
 
     /** 一元运算符（Mindustry LogicOp.unary=true），op 格式：op <name> <dest> <a> 0 */
-    static final Set<String> UNARY_OPS = Set.of(
+    // Java 8-compatible set: Set.of is a Java 9 API that is missing on Android < 11.
+    static final Set<String> UNARY_OPS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
         "not", "abs", "sign", "log", "log10", "floor", "ceil", "round",
         "sqrt", "rand", "sin", "cos", "tan", "asin", "acos", "atan"
-    );
+    )));
 
     /** 函数型二元运算符（LogicOp.func=true），表达式使用 func(a, b) 语法 */
-    static final Set<String> FUNC_BINARY_OPS = Set.of(
+    static final Set<String> FUNC_BINARY_OPS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
         "max", "min", "angle", "angleDiff", "len", "noise", "logn"
-    );
+    )));
 
     /** 已知的函数名（一元 + 二元） */
     static final Set<String> KNOWN_FUNCS = new HashSet<>();

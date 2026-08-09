@@ -1,6 +1,6 @@
 apply plugin: "java"
 
-version = "2.1.0"
+version = "2.1.1"
 sourceSets{
     main.java.srcDirs = ["src"]
     test.java.srcDirs = ["test"]
@@ -17,6 +17,7 @@ java{
 
 ext{
     mindustryVersion = "v155.4"
+    isWindows = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows")
 }
 
 dependencies{
@@ -30,16 +31,16 @@ tasks.withType(JavaCompile).configureEach{
 }
 
 jar{
-    archiveFileName = "LogicSugar-v${version}.jar"
+    archiveFileName = "LogicSugar-v${version}-desktop.jar"
     from(projectDir){ include "mod.json" }
     from(projectDir){ include "icon.png" }
     from("assets/"){ include "**" }
 }
 
 tasks.register("releaseZip", Zip){
-    dependsOn jar
+    dependsOn deploy
     archiveFileName = "LogicSugar-v${version}.zip"
-    from(jar)
+    from(deploy)
     from("README.md")
     from("LICENSE")
     from("assets/sample.png"){ into("assets") }
@@ -53,3 +54,126 @@ tasks.register("selfTest", JavaExec){
 
 test.enabled = false
 check.dependsOn selfTest
+
+// ===== Android packaging (D8) =====
+// The plain `jar` task only works on desktop: it contains .class bytecode, which
+// Android's DexClassLoader cannot read (ART has no on-device dexing). Mindustry
+// Android loads java mods from a `classes.dex` entry inside the jar
+// (Mods.loadMod + AndroidLauncher.loadJar), so the mod must be dexed with D8.
+// See MindustryJavaModTemplate's jarAndroid/deploy for the upstream pattern.
+
+def findD8 = {
+    def explicit = System.getenv("D8_PATH")
+    if(explicit){
+        def f = new File(explicit)
+        if(f.exists()) return f
+    }
+
+    def sdkRoot = System.getenv("ANDROID_SDK_ROOT") ?: System.getenv("ANDROID_HOME")
+    if(sdkRoot){
+        def buildToolsDir = new File(sdkRoot, "build-tools")
+        if(buildToolsDir.isDirectory()){
+            def toolName = isWindows ? "d8.bat" : "d8"
+            def candidates = (buildToolsDir.listFiles() ?: [])
+                .findAll{ it.isDirectory() }
+                .sort{ a, b -> b.name <=> a.name }
+
+            for(def dir : candidates){
+                def exe = new File(dir, toolName)
+                if(exe.exists()) return exe
+            }
+        }
+    }
+
+    return null
+}
+
+def androidDexOutDir = layout.buildDirectory.dir("d8").get().asFile
+
+tasks.register("d8InputJar", Jar){
+    group = "build"
+    description = "Builds a jar used only as input for D8 (no dist side effects)."
+    dependsOn tasks.named("classes")
+    archiveFileName = "${project.name}-d8-input.jar"
+    destinationDirectory = layout.buildDirectory.dir("d8-input")
+    from(sourceSets.main.output)
+}
+
+tasks.register("dexAndroid", Exec){
+    group = "build"
+    description = "Compiles Java bytecode into classes.dex for Mindustry Android mod loading."
+    dependsOn tasks.named("d8InputJar")
+
+    doFirst{
+        def d8 = findD8()
+        if(d8 == null){
+            throw new GradleException("D8 not found. Set ANDROID_SDK_ROOT/ANDROID_HOME or D8_PATH.")
+        }
+        delete(androidDexOutDir)
+        androidDexOutDir.mkdirs()
+
+        def programZip = tasks.named("d8InputJar").get().archiveFile.get().asFile
+
+        // Locate android.jar next to the d8 executable: <sdk>/platforms/<api>/android.jar.
+        def platformsDir = new File(d8.parentFile.parentFile.parentFile, "platforms")
+        def androidJar = (platformsDir.listFiles() ?: [])
+            .findAll{ it.isDirectory() && new File(it, "android.jar").exists() }
+            .sort{ a, b -> b.name <=> a.name }
+            .collect{ new File(it, "android.jar") }
+            .head()
+
+        if(androidJar == null){
+            throw new GradleException("No android.jar found under " + platformsDir + ". Install an Android platform via sdkmanager.")
+        }
+
+        commandLine d8.absolutePath
+        args "--min-api", "21", "--release", "--lib", androidJar.absolutePath
+        // Provide the game's classes so interface/default-method desugaring can resolve them.
+        (configurations.compileClasspath.asList() + configurations.runtimeClasspath.asList()).unique().each{ args += ["--classpath", it.absolutePath] }
+        args "--output", androidDexOutDir.absolutePath
+        args programZip.absolutePath
+    }
+}
+
+tasks.register("jarAndroid", Jar){
+    group = "build"
+    description = "Packages LogicSugar as an Android .jar (classes.dex) for Mindustry."
+    archiveFileName = "LogicSugar-v${version}-android.jar"
+    dependsOn tasks.named("dexAndroid")
+    from(androidDexOutDir){ include "classes.dex" }
+    from(projectDir){ include "mod.json" }
+    from(projectDir){ include "icon.png" }
+    from("assets/"){ include "**" }
+}
+
+// Merged release jar: desktop .class files + Android classes.dex, so one file
+// works on both platforms (this is the release artifact).
+tasks.register("deploy", Jar){
+    group = "build"
+    description = "Merges the desktop jar with classes.dex into the cross-platform release jar."
+    archiveFileName = "LogicSugar-v${version}.jar"
+    dependsOn tasks.named("jar"), tasks.named("jarAndroid")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(zipTree(tasks.named("jar").flatMap{ it.archiveFile }))
+    from(zipTree(tasks.named("jarAndroid").flatMap{ it.archiveFile }))
+}
+
+// `build` now also produces the Android jar and the merged release jar.
+tasks.named("build").configure{
+    dependsOn tasks.named("deploy")
+}
+
+// Convenience copy into workspace 构建/LogicSugar (local dev artifact).
+def buildOutDir = new File(rootDir.parentFile, "构建/LogicSugar")
+
+tasks.register("copyAndroidJar", Copy){
+    doNotTrackState("Copies into build output folder for convenience.")
+    dependsOn tasks.named("deploy")
+    from(tasks.named("deploy").flatMap{ it.archiveFile })
+    into(buildOutDir)
+    rename{ _ -> "LogicSugar-dev.jar" }
+}
+
+tasks.named("deploy").configure{
+    finalizedBy tasks.named("copyAndroidJar")
+}
