@@ -82,6 +82,7 @@ op add x _0 x
 - **Save**: expressions unfold to standard `op` instructions — vanilla-compatible
 - **Syntax highlighting**: numbers (gold), functions (coral), variables (white), operators (light gray)
 - **Error reporting**: syntax errors shown in red beneath the expression with the specific reason
+- **Dynamic hints**: empty fields show live placeholder text — a `Func Call` block's argument field lists the called function's parameters (local functions first, library fallback), updating as the function name or parameters change
 
 **Supported operators**
 
@@ -125,7 +126,19 @@ funccall f "x, 4" out  # call: out = (3+4)*2
 - Library functions can only call other library functions; processor calls resolve local functions first, then the library (a local function shadows a library one)
 - Undefined calls and damaged library files produce clear compile errors; unreachable function bodies emit zero instructions
 
-**Reserved prefixes**: `__ls_`, `__ls_func_`, `__ls_f_`, `__ls_i_` are reserved for the compiler — do not use them for function names, parameter names, or variables.
+**Reserved prefixes**: `__ls_`, `__ls_func_`, `__ls_f_`, `__ls_i_` are reserved for the compiler — do not use them for function names, parameter names, or variables. (`__ls_sugar` and `__ls_lib` are the persistence carriers appended to every saved program, see below.)
+
+### Persistence & Multi-Client Collaboration
+
+**Carrier persistence (v2.1+)**. Saving appends two real `set` statements after the marker block — `set __ls_sugar "<sugar source>"` and `set __ls_lib "<used library functions>"`. Unlike comment markers, which the vanilla parse/save round trip silently drops, these carriers survive it: the sugar source stays alive even when a player *without* the mod opens and closes the editor. Restore prefers the carrier and falls back to the legacy comment-marker block (v2.0.0 programs). Carriers execute harmlessly every tick and count toward the 1000-instruction limit.
+
+**External-edit detection**. On open, the restored sugar is recompiled in both function modes against the embedded library, normalized through a vanilla round trip, and compared with the stored code. A mismatch means the program was edited outside Logic Sugar (e.g. by a vanilla client): the compiled code is shown as-is with a notification, and edits are saved as-is.
+
+**Multi-client collaboration**:
+- The used library subset is embedded in the stored program (`set __ls_lib`), so any machine can recompile identically without its local library file. When editing, the effective library merges the embedded functions with local ones they do not shadow
+- **Stale-close protection**: an untouched canvas never overwrites a save made by another client while the editor was open; an edited canvas always saves (last writer wins)
+- **Draft retention**: a failed compile while closing keeps a per-processor local draft instead of dropping your work; reopening trusts the draft
+- A 16KB compressed-storage pre-check strips the redundant comment marker when needed and reports loudly if the program is still too large to store
 
 ### Scrollbar Enhancement
 
@@ -137,7 +150,9 @@ Colored scrollbar (each segment tinted by its block's category color), click-to-
 gradlew deploy
 ```
 
-Output: `build/libs/LogicSugar.jar` (universal JAR for both desktop and Android). Drop into Mindustry's `mods/` folder.
+Output: `build/libs/LogicSugar-v2.1.2.jar` — a universal JAR containing both desktop bytecode and the Android `classes.dex`, so one file works on both platforms. Drop it into Mindustry's `mods/` folder.
+
+`deploy` requires the Android SDK: D8 from `build-tools` (set `ANDROID_SDK_ROOT` or `ANDROID_HOME`, or point `D8_PATH` at `d8`/`d8.bat`) plus an `android.jar` from `platforms`; without them the dexing step fails. Other artifacts: `jar` → desktop-only `LogicSugar-v2.1.2-desktop.jar`, `jarAndroid` → `LogicSugar-v2.1.2-android.jar`, `releaseZip` → `LogicSugar-v2.1.2.zip` (release jar + README + LICENSE).
 
 ## Acknowledgements
 
