@@ -305,7 +305,7 @@ public class SugarCanvas extends LCanvas{
         return canvas != null && canvas.structure.isValid(begin, target);
     }
 
-    private static SugarCanvas current(){
+    public static SugarCanvas current(){
         if(Vars.ui != null && Vars.ui.logic != null && Vars.ui.logic.canvas instanceof SugarCanvas canvas) return canvas;
         return null;
     }

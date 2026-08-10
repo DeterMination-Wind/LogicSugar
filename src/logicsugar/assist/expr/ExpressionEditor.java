@@ -11,21 +11,37 @@ import arc.scene.ui.Label;
 import arc.scene.ui.TextField;
 import arc.scene.ui.layout.Stack;
 import arc.util.Align;
+import arc.func.Cons;
+import arc.func.Prov;
 import mindustry.ui.Styles;
 
 /**
  * 表达式输入框：以高亮 Label 显示表达式（数字金色 / 函数珊瑚色 / 变量白色 / 运算符浅灰），
  * 点击 Label 切换为 TextField 编辑，失焦后恢复高亮显示。交互与 ExprStatement 的表达式字段一致。
  *
- * <p>空值时显示灰色占位提示文本（hint），帮助用户理解该字段的填写格式。
+ * <p>空值时显示灰色占位提示文本（hint），帮助用户理解该字段的填写格式。提示文本可以由
+ * 提供者动态给出：空值时每帧重新求值，仅在提示串变化时重绘（Label + TextField message），
+ * 因此提示可以跟随其它字段（如被调函数名）实时变化。
  */
 public class ExpressionEditor extends Stack{
     private String value;
-    private final arc.func.Cons<String> setter;
+    private final Cons<String> setter;
+    private final Prov<String> hintProvider;
+    private String lastHint;
 
-    public ExpressionEditor(String initial, String hint, arc.func.Cons<String> setter){
+    /** Static-hint constructor; the hint never changes. */
+    public ExpressionEditor(String initial, String hint, Cons<String> setter){
+        this(initial, () -> hint, setter);
+    }
+
+    /**
+     * Dynamic-hint constructor. {@code hint} is re-evaluated while the value is empty;
+     * a null or empty provider result hides the placeholder.
+     */
+    public ExpressionEditor(String initial, Prov<String> hint, Cons<String> setter){
         this.value = initial;
         this.setter = setter;
+        this.hintProvider = hint;
 
         Label exprLabel = new Label("");
         Label.LabelStyle labelStyle = new Label.LabelStyle(exprLabel.getStyle());
@@ -39,7 +55,7 @@ public class ExpressionEditor extends Stack{
 
         Runnable updateLabel = () -> {
             if(value == null || value.isEmpty()){
-                exprLabel.setText("[#8b8b8b]" + hint + "[]");
+                exprLabel.setText("[#8b8b8b]" + effectiveHint() + "[]");
             }else{
                 exprLabel.setColor(Color.white);
                 exprLabel.setText(ExprStatement.highlight(value));
@@ -49,7 +65,7 @@ public class ExpressionEditor extends Stack{
 
         TextField exprField = new TextField(initial);
         exprField.setStyle(Styles.nodeField);
-        exprField.setMessageText(hint);
+        exprField.setMessageText(effectiveHint());
         exprField.setFilter((f, c) -> true);
         exprField.setMaxLength(0);
         exprField.changed(() -> {
@@ -108,6 +124,24 @@ public class ExpressionEditor extends Stack{
             }
             wasFocused[0] = focused;
         });
+
+        // 空值时的动态提示：每帧重新求值，仅当提示串变化时才重绘（廉价字段赋值）
+        lastHint = effectiveHint();
+        update(() -> {
+            if(value == null || value.isEmpty()){
+                String effective = effectiveHint();
+                if(!effective.equals(lastHint)){
+                    lastHint = effective;
+                    updateLabel.run();
+                    exprField.setMessageText(effective);
+                }
+            }
+        });
+    }
+
+    private String effectiveHint(){
+        String hint = hintProvider.get();
+        return hint == null ? "" : hint;
     }
 
     @Override

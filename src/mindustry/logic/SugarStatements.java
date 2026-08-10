@@ -2,8 +2,10 @@ package mindustry.logic;
 
 import arc.Core;
 import arc.graphics.Color;
+import arc.scene.Element;
 import arc.scene.ui.TextField;
 import arc.scene.ui.layout.Table;
+import arc.struct.Seq;
 import mindustry.graphics.Pal;
 import mindustry.logic.LCanvas.JumpButton;
 import mindustry.logic.LCanvas.JumpCurve;
@@ -13,6 +15,8 @@ import mindustry.logic.LExecutor.NoopI;
 import mindustry.logic.LStatements.JumpStatement;
 import mindustry.ui.Styles;
 import logicsugar.assist.expr.ExpressionEditor;
+
+import java.util.List;
 
 public final class SugarStatements{
     private SugarStatements(){}
@@ -241,12 +245,26 @@ public final class SugarStatements{
             table.add(text("func.call", "call"));
             field(table, name, value -> name = value).width(90f);
             table.add("(");
-            // 实参：完整表达式，高亮显示，点击进入编辑
-            table.add(new ExpressionEditor(args, text("func.args.hint", "a, b+1"), value -> args = value))
+            // 实参：完整表达式，高亮显示，点击进入编辑；
+            // 空值时提示被调函数的参数列表（动态跟随函数名/参数变化），找不到或函数无参数时退回通用提示
+            table.add(new ExpressionEditor(args, this::argsHint, value -> args = value))
                 .growX().padLeft(4f).padRight(2f);
             table.add(")");
             table.add("=");
             field(table, result, value -> result = value).width(70f).padLeft(4f);
+        }
+
+        /** 动态占位提示：被调函数（本地优先，库函数兜底）的参数列表，找不到或函数无参数时退回通用提示。 */
+        private String argsHint(){
+            SugarCanvas canvas = SugarCanvas.current();
+            String fallback = text("func.args.hint", "a, b+1");
+            if(canvas == null || canvas.statements == null) return fallback;
+            Seq<LStatement> statements = new Seq<>();
+            for(Element child : canvas.statements.getChildren()){
+                if(child instanceof StatementElem elem) statements.add(elem.st);
+            }
+            List<String> params = SugarFunctions.paramsOf(name, statements);
+            return params == null ? fallback : String.join(", ", params);
         }
 
         @Override public String name(){ return text("func.call", "Func Call"); }

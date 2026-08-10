@@ -500,14 +500,47 @@ public final class SugarFunctions{
         return out.toString();
     }
 
+    /** Splits a comma-separated parameter declaration list; empty entries are dropped. */
+    static List<String> parseParams(String raw){
+        List<String> result = new ArrayList<>();
+        if(raw == null || raw.isEmpty()) return result;
+        for(String part : raw.split(",", -1)){
+            String param = part.trim();
+            if(!param.isEmpty()) result.add(param);
+        }
+        return result;
+    }
+
+    /**
+     * Looks up the parameter names of a function by name: local {@code func} definitions
+     * shadow the library (same resolution order as {@link #analyze}). Returns {@code null}
+     * when the function is not found or takes no parameters.
+     */
+    public static List<String> paramsOf(String name, Seq<LStatement> localStatements){
+        if(localStatements != null){
+            for(LStatement statement : localStatements){
+                if(statement instanceof FuncDefStatement def && def.name.equals(name)){
+                    List<String> params = parseParams(def.params);
+                    return params.isEmpty() ? null : params;
+                }
+            }
+        }
+        LibraryIndex library = library();
+        if(library != null){
+            Function function = library.functions.get(name);
+            if(function != null){
+                return function.params.isEmpty() ? null : function.params;
+            }
+        }
+        return null;
+    }
+
     /** Extracts one function definition and remaps its body into body-relative space. */
     private static Function buildFunction(Seq<LStatement> statements, int s, int e, boolean library){
         FuncDefStatement def = (FuncDefStatement)statements.get(s);
         Function function = new Function(def.name, library);
         validateName(def.name, "function");
-        for(String part : def.params.split(",", -1)){
-            String param = part.trim();
-            if(param.isEmpty()) continue;
+        for(String param : parseParams(def.params)){
             validateName(param, "parameter");
             if(function.params.contains(param)){
                 throw error("funcdef", s, "duplicate parameter '" + param + "' in function '" + def.name + "'");
