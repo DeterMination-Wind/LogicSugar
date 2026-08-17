@@ -121,11 +121,12 @@ public final class SugarCompiler{
         if(!containsCarrier(code, carrierSugarPrefix)) return true;
         String libText = libraryFromCode(code);
         SugarFunctions.LibraryIndex embedded = null;
+        String embeddedSource = null;
         if(libText != null && !libText.trim().isEmpty()){
-            try{
-                embedded = SugarFunctions.buildLibrary(LAssembler.read(libText, true));
-            }catch(RuntimeException e){
-                return false;
+            SugarFunctions.SanitizedLibrary sanitized = SugarFunctions.sanitizedLibrary(libText);
+            if(!sanitized.index.functions.isEmpty()){
+                embedded = sanitized.index;
+                embeddedSource = sanitized.text;
             }
         }
         String storedNormalized;
@@ -136,7 +137,7 @@ public final class SugarCompiler{
         }
         for(FuncMode mode : FuncMode.values()){
             try{
-                String recompiled = compile(restored, mode, embedded, libText);
+                String recompiled = compile(restored, mode, embedded, embeddedSource);
                 if(LAssembler.write(LAssembler.read(recompiled, true)).equals(storedNormalized)) return true;
             }catch(RuntimeException ignored){
                 // one mode may legitimately fail (e.g. inline blowup); the other may match
@@ -220,44 +221,58 @@ public final class SugarCompiler{
     }
 
     /** The merged library for editing a stored program: embedded functions first, then
-     *  local functions the embedded ones do not shadow. The text mirrors the index, so the
-     *  compiler can re-extract the used subset from it when saving (self-correcting). */
+     *  local functions the embedded ones do not shadow. Both sources are salvaged through
+     *  {@link SugarFunctions#sanitizedLibrary} before merging, so a damaged local file yields
+     *  an index with the recoverable functions instead of silently null. The text mirrors the
+     *  index, so the compiler can re-extract the used subset from it when saving
+     *  (self-correcting). */
     public static EffectiveLibrary effectiveLibrary(String code, SugarFunctions.LibraryIndex local, String localText){
+        // the caller-provided local index is advisory; the sanitized local text is authoritative
         String embeddedText = libraryFromCode(code);
         String embedded = embeddedText == null ? "" : embeddedText.trim();
         Set<String> embeddedNames = new HashSet<>();
+        String embeddedSource = "";
+        SugarFunctions.SanitizedLibrary sanitizedEmbedded = null;
         if(!embedded.isEmpty()){
-            try{
-                for(String name : SugarFunctions.buildLibrary(LAssembler.read(embedded, true)).functions.keySet()){
-                    embeddedNames.add(name);
-                }
-            }catch(RuntimeException ignored){
-                embedded = "";
-            }
+            sanitizedEmbedded = SugarFunctions.sanitizedLibrary(embedded);
+            embeddedSource = sanitizedEmbedded.text;
+            for(String name : sanitizedEmbedded.index.functions.keySet()) embeddedNames.add(name);
         }
-        StringBuilder text = new StringBuilder(embedded);
-        if(local != null && localText != null && !localText.trim().isEmpty()){
-            Set<String> extras = new HashSet<>(local.functions.keySet());
+        StringBuilder text = new StringBuilder(embeddedSource);
+        SugarFunctions.SanitizedLibrary sanitizedLocal = null;
+        if(localText != null && !localText.trim().isEmpty()){
+            sanitizedLocal = SugarFunctions.sanitizedLibrary(localText);
+            Set<String> extras = new HashSet<>(sanitizedLocal.index.functions.keySet());
             extras.removeAll(embeddedNames);
             if(!extras.isEmpty()){
-                try{
-                    String extracted = SugarFunctions.extractLibrarySource(localText, extras);
-                    if(!extracted.isEmpty()){
-                        if(text.length() > 0) text.append('\n');
-                        text.append(extracted);
-                    }
-                }catch(RuntimeException ignored){
-                    // damaged local library: embedded functions still work
+                // extract from the sanitized text: raw slices could copy damaged duplicates
+                String extracted = SugarFunctions.extractLibrarySource(sanitizedLocal.text, extras);
+                if(!extracted.isEmpty()){
+                    if(text.length() > 0) text.append('\n');
+                    text.append(extracted);
                 }
             }
         }
         String effectiveText = text.toString();
+        // nothing to merge (no embedded carrier and no local file) behaves like an unavailable
+        // library; otherwise the sanitized merge is always valid, but keeps the sources' damage
+        // state so unresolved calls can point the user at the repair path
         SugarFunctions.LibraryIndex effective = null;
         if(!effectiveText.trim().isEmpty()){
-            try{
-                effective = SugarFunctions.buildLibrary(LAssembler.read(effectiveText, true));
-            }catch(RuntimeException ignored){
-                // both sources unusable: behaves like an empty library
+            effective = SugarFunctions.sanitizedLibrary(effectiveText).index;
+            boolean damaged = (sanitizedEmbedded != null && sanitizedEmbedded.damaged)
+                || (sanitizedLocal != null && sanitizedLocal.damaged);
+            if(damaged){
+                effective.damaged = true;
+                if(effective.warnings.isEmpty()){
+                    effective.warnings = new java.util.ArrayList<>();
+                    if(sanitizedEmbedded != null && !sanitizedEmbedded.warnings.isEmpty()){
+                        effective.warnings.addAll(sanitizedEmbedded.warnings);
+                    }
+                    if(sanitizedLocal != null && !sanitizedLocal.warnings.isEmpty()){
+                        effective.warnings.addAll(sanitizedLocal.warnings);
+                    }
+                }
             }
         }
         return new EffectiveLibrary(effective, effectiveText);

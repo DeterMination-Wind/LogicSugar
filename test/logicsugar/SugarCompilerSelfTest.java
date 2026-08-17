@@ -1069,8 +1069,27 @@ public class SugarCompilerSelfTest{
                     System.out.println("R5 end-to-end undefined: NOT REPRODUCED (compiled anyway)");
                 }catch(IllegalArgumentException e){
                     System.out.println("R5 end-to-end undefined: reproduced -> " + e.getMessage());
-                    check(e.getMessage().equals("funccall at statement 1 calls undefined function 'spawnUnits'."),
-                        "R5: exact reported error text changed");
+                    check(e.getMessage().startsWith("funccall at statement 1 calls undefined function 'spawnUnits'."),
+                        "R5: reported error prefix changed");
+                    check(e.getMessage().contains("library is unavailable; check Settings -> Function Library"),
+                        "R5: library cause is not explained");
+                }
+                // a function that truly does not exist against a valid library keeps the plain text
+                if(q1Index != null){
+                    String plain = errorText("funccall nope \"1\" ~\nend\n", q1Index);
+                    System.out.println("R5 normal missing: " + plain);
+                    check(plain != null && plain.equals("funccall at statement 0 calls undefined function 'nope'."),
+                        "R5: normal missing-function text changed");
+                }
+                // a salvaged (damaged) library explains the failure through its repair warning
+                if(q1Index != null){
+                    String dupText = q1 + "funcdef spawn a 9\nblockend\nfuncdef spawn a 11\nblockend\nfuncdef spawn a 13\nblockend\n";
+                    SugarFunctions.LibraryIndex damaged = SugarFunctions.sanitizedLibrary(dupText).index;
+                    check(damaged.damaged, "R5: salvaged library should be flagged damaged");
+                    String damagedError = errorText("funccall nope \"1\" ~\nend\n", damaged);
+                    System.out.println("R5 damaged hint: " + damagedError);
+                    check(damagedError != null && damagedError.contains("Note: the function library has errors (duplicate function name 'spawn'"),
+                        "R5: damaged library repair hint missing");
                 }
             }finally{
                 SugarFunctions.setLibrarySource(null);
@@ -1105,6 +1124,11 @@ public class SugarCompilerSelfTest{
         }catch(IllegalArgumentException expected){
             return expected.getMessage();
         }
+    }
+
+    /** Public entry for probe classes: installs the sugar statement parsers. */
+    public static void registerParsersPublic(){
+        registerParsers();
     }
 
     private static void registerParsers(){

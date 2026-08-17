@@ -665,6 +665,8 @@ public final class SugarFunctions{
         if(index.functions.isEmpty() && !warnings.isEmpty()){
             warnings.add("no usable functions could be recovered from the damaged library");
         }
+        index.damaged = true;
+        index.warnings = new ArrayList<>(warnings);
         return new SanitizedLibrary(output, index, warnings, true);
     }
 
@@ -824,11 +826,12 @@ public final class SugarFunctions{
     private static void resolveCall(FuncCallStatement call, Function owner, FunctionSet set, int index){
         Function target = set.resolve(call.name);
         if(target == null){
+            String hint = libraryProblemHint(set.library);
             if(owner != null && owner.library){
                 throw error("funccall", index, "in library function '" + owner.name
-                    + "' calls undefined library function '" + call.name + "' (library functions can only call other library functions)");
+                    + "' calls undefined library function '" + call.name + "' (library functions can only call other library functions)" + hint);
             }
-            throw error("funccall", index, "calls undefined function '" + call.name + "'");
+            throw error("funccall", index, "calls undefined function '" + call.name + "'" + hint);
         }
         if(owner != null && owner.library && !target.library){
             throw error("funccall", index, "in library function '" + owner.name
@@ -844,6 +847,20 @@ public final class SugarFunctions{
                 + "' but its body never returns a value");
         }
         (owner == null ? set.mainCalls : owner.callees).add(call.name);
+    }
+
+    /** Localizes an "undefined function" error when the library state explains the miss.
+     *  An otherwise-valid library keeps the plain message (a function really does not
+     *  exist); a missing or damaged library points the user at the repair path. */
+    private static String libraryProblemHint(LibraryIndex library){
+        if(library == null){
+            return ". The global function library is unavailable; check Settings -> Function Library";
+        }
+        if(library.damaged){
+            String first = library.warnings.isEmpty() ? "the file needs repair" : library.warnings.get(0);
+            return ". Note: the function library has errors (" + first + "); fix it in Settings -> Function Library";
+        }
+        return "";
     }
 
     private static void validateName(String name, String kind){
