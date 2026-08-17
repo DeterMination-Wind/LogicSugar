@@ -4,7 +4,6 @@ import arc.Core;
 import arc.scene.ui.Dialog;
 import mindustry.Vars;
 import mindustry.gen.Icon;
-import mindustry.logic.LAssembler;
 import mindustry.logic.SugarCompiler;
 import mindustry.logic.SugarFunctions;
 import mindustry.logic.SugarLogicDialog;
@@ -31,12 +30,14 @@ public class FunctionLibraryDialog extends Dialog{
         hide();
         String text = FunctionLibrary.loadText();
         if(!text.trim().isEmpty()){
-            try{
-                // 提前校验；损坏时仍加载进编辑器让用户修复，保存时再次校验
-                SugarFunctions.buildLibrary(LAssembler.read(text, true));
-            }catch(IllegalArgumentException e){
-                Vars.ui.showInfoFade(Core.bundle.format("logicsugar.funclib.damaged", e.getMessage()));
+            // salvage damaged files before they reach the editor: duplicates are deduplicated
+            // (last definition wins), broken definitions are skipped, stray junk is dropped;
+            // the loaded content is already the healed version, so a plain save self-heals
+            SugarFunctions.SanitizedLibrary sanitized = SugarFunctions.sanitizedLibrary(text);
+            if(sanitized.damaged){
+                Vars.ui.showInfoFade(Core.bundle.format("logicsugar.funclib.damaged", String.join("\n", sanitized.warnings)));
             }
+            text = sanitized.text;
         }
         openEditor(text);
     }
@@ -60,8 +61,14 @@ public class FunctionLibraryDialog extends Dialog{
             FunctionLibrary.save(sugar);
             Vars.ui.showInfoFade("@logicsugar.funclib.saved");
         }catch(IllegalArgumentException e){
-            Vars.ui.showErrorMessage(Core.bundle.format("logicsugar.funclib.error", e.getMessage()));
-            // 重新打开编辑器并保留内容，让用户修正后再次保存
+            // list the strict save error plus every problem the sanitizer would repair
+            StringBuilder message = new StringBuilder(Core.bundle.format("logicsugar.funclib.error", e.getMessage()));
+            SugarFunctions.SanitizedLibrary salvaged = SugarFunctions.sanitizedLibrary(sugar);
+            if(!salvaged.warnings.isEmpty()){
+                message.append("\n").append(String.join("\n", salvaged.warnings));
+            }
+            Vars.ui.showErrorMessage(message.toString());
+            // 重新打开编辑器并保留内容，让用户修正后再次保存（或点"放弃更改"直接退出）
             Core.app.post(() -> openEditor(sugar));
         }
     }

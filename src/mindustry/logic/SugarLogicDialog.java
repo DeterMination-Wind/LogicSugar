@@ -43,6 +43,8 @@ public class SugarLogicDialog extends LogicDialog{
     /** Content hash of the library file when the dialog opened; used to refresh the stale
      *  session snapshot when the library is edited while the processor editor stays open. */
     private int libraryHashAtOpen;
+    /** Shown only during library-file editing sessions: closes without saving. */
+    private Button discardButton;
     private Element editButton;
     private float menuScanTimer;
 
@@ -55,6 +57,11 @@ public class SugarLogicDialog extends LogicDialog{
         add(buttons).growX().name("buttons");
         // direct entry to the global function library, next to the other editor actions
         buttons.button("@logicsugar.funclib.open", Icon.book, () -> new FunctionLibraryDialog().show()).name("funclib");
+        // library-file editing sessions (executor == null) offer a discard escape so a user
+        // who cannot or does not want to fix the library is not trapped in the reopen loop
+        discardButton = buttons.button("@logicsugar.funclib.discard", Icon.cancel, this::discardLibraryChanges).get();
+        discardButton.name = "funclib-discard";
+        discardButton.visible = false;
         update(() -> {
             installEditHook();
             menuScanTimer += Time.delta;
@@ -119,6 +126,7 @@ public class SugarLogicDialog extends LogicDialog{
     @Override
     public void show(String code, LExecutor executor, boolean privileged, Cons<String> modified){
         this.executor = executor;
+        discardButton.visible = executor == null;
         this.openedCode = code;
         Object key = draftKey(executor);
         if(drafts.containsKey(key)){
@@ -193,6 +201,16 @@ public class SugarLogicDialog extends LogicDialog{
     /** The stored code as of right now (the build may have been reconfigured while open). */
     private String currentCode(LExecutor executor){
         return executor.build != null ? executor.build.code : openedCode;
+    }
+
+    /** Library-file editing sessions only: close the editor without saving, so a user who
+     *  cannot (or does not want to) fix the library can leave instead of being forced to
+     *  reopen until the content validates. The library file keeps its last saved content. */
+    private void discardLibraryChanges(){
+        if(executor != null) return; // processor sessions keep their normal close semantics
+        passThroughSugarOnError = false;
+        drafts.clear();
+        hide();
     }
 
     /**
