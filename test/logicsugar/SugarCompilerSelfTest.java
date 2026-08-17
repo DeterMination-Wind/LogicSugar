@@ -1112,6 +1112,33 @@ public class SugarCompilerSelfTest{
             System.out.println("R6 extraction: FAIL -> " + t.getMessage());
         }
 
+        // R7: session snapshot refresh - a program opened against the old library must pick
+        // up a function added to the library file before submitting
+        {
+            String oldLib = "funcdef add a,b 3\nop add s a b\nreturn \"s * 1\"\nblockend\n";
+            String newLib = oldLib + "funcdef sub a,b 7\nop sub s a b\nreturn \"s * 1\"\nblockend\n";
+            SugarFunctions.LibraryIndex oldIndex = SugarFunctions.buildLibrary(LAssembler.read(oldLib, true));
+            SugarFunctions.LibraryIndex newIndex = SugarFunctions.buildLibrary(LAssembler.read(newLib, true));
+            // open-time snapshot vs. submit-time refresh (what SugarLogicDialog.submit does)
+            SugarCompiler.EffectiveLibrary stale = SugarCompiler.effectiveLibrary("", oldIndex, oldLib);
+            SugarCompiler.EffectiveLibrary fresh = SugarCompiler.effectiveLibrary("", newIndex, newLib);
+            String program = "funccall sub \"3, 2\" out\nend\n";
+            try{
+                SugarCompiler.compile(program, SugarCompiler.FuncMode.normal, stale.index, stale.text);
+                ok = false;
+                System.out.println("R7 stale snapshot: NOT REPRODUCED (stale snapshot resolved the new function)");
+            }catch(IllegalArgumentException e){
+                System.out.println("R7 stale snapshot: stale snapshot fails -> " + e.getMessage());
+            }
+            try{
+                SugarCompiler.compile(program, SugarCompiler.FuncMode.normal, fresh.index, fresh.text);
+                System.out.println("R7 refreshed snapshot: compiles ok");
+            }catch(Throwable t){
+                ok = false;
+                System.out.println("R7 refreshed snapshot: FAIL -> " + t.getMessage());
+            }
+        }
+
         check(ok, "library damage harness found a broken baseline expectation (see output above)");
         System.out.println("== harness complete ==");
     }

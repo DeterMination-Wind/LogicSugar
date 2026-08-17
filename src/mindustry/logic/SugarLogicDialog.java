@@ -40,6 +40,9 @@ public class SugarLogicDialog extends LogicDialog{
     private String editable = "";
     /** Embedded plus local library snapshot for this editing session. */
     private SugarCompiler.EffectiveLibrary effectiveLibrary = SugarCompiler.effectiveLibrary("", null, "");
+    /** Content hash of the library file when the dialog opened; used to refresh the stale
+     *  session snapshot when the library is edited while the processor editor stays open. */
+    private int libraryHashAtOpen;
     private Element editButton;
     private float menuScanTimer;
 
@@ -140,6 +143,7 @@ public class SugarLogicDialog extends LogicDialog{
             }
         }
         effectiveLibrary = SugarCompiler.effectiveLibrary(code, SugarFunctions.library(), FunctionLibrary.loadText());
+        libraryHashAtOpen = FunctionLibrary.hash();
         Cons<String> submit = sugar -> submit(sugar, executor, modified, key, false);
         super.show(editable, executor, privileged, submit);
 
@@ -153,6 +157,15 @@ public class SugarLogicDialog extends LogicDialog{
         // while the dialog was open; an edited canvas always submits (last writer wins).
         if(executor != null && !SugarCompiler.shouldSubmit(sugar, editable, openedCode, currentCode(executor))){
             return;
+        }
+        if(executor != null){
+            // the library file may have been edited while the processor editor stayed open;
+            // refresh the session snapshot so calls resolve against the current library
+            int hash = FunctionLibrary.hash();
+            if(hash != libraryHashAtOpen){
+                libraryHashAtOpen = hash;
+                effectiveLibrary = SugarCompiler.effectiveLibrary(openedCode, SugarFunctions.library(), FunctionLibrary.loadText());
+            }
         }
         try{
             String compiled = SugarCompiler.compile(sugar, SugarCompiler.currentMode(), effectiveLibrary.index, effectiveLibrary.text);
