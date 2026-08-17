@@ -387,12 +387,14 @@ public class SugarCanvas extends LCanvas{
          * (identical signature): the original serializes via the generated {@code LogicIO.write},
          * which only knows {@code @RegisterStatement} statements and silently emits nothing for
          * Neon's custom-parser statements, dropping their code. This uses {@code LStatement.write},
-         * which every statement (including Neon's) implements, so the round trip preserves them.
+         * which every statement (including Neon's) implements, and a lossless single-token encoding
+         * ({@link SugarStatements#encodeStatementText}/{@link SugarStatements#decodeStatementText})
+         * so identifiers containing {@code _} and other special characters round-trip unchanged.
          */
         public void toggleComment(){
             StatementElem newElem;
             if(st instanceof PrintStatement pst && !pst.value.isEmpty()){ //print -> block
-                String code = pst.value.replace("_", " ");
+                String code = SugarStatements.decodeStatementText(pst.value);
                 LStatement stNew;
                 try{
                     stNew = LAssembler.read(code, isPrivileged()).first();
@@ -410,7 +412,7 @@ public class SugarCanvas extends LCanvas{
                 StringBuilder thisText = new StringBuilder();
                 st.write(thisText);
                 PrintStatement stNew = new PrintStatement();
-                stNew.value = thisText.toString().replace(' ', '_');
+                stNew.value = SugarStatements.encodeStatementText(thisText.toString());
                 newElem = new SugarStatementElem(stNew);
             }
 

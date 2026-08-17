@@ -409,13 +409,13 @@ public final class SugarStatements{
             result.value = tokens[1];
             result.op = parsedOp;
             result.compare = tokens[3];
-            result.destIndex = Integer.parseInt(tokens[4]);
+            result.destIndex = parseDestIndex(tokens[4]);
         }else{
             // legacy single-value condition: "whilebegin <cond> <destIndex>"
             result.value = tokens[1];
             result.op = ConditionOp.notEqual;
             result.compare = "false";
-            result.destIndex = Integer.parseInt(tokens[2]);
+            result.destIndex = parseDestIndex(tokens[2]);
         }
         result.collapsed = collapsed;
         return result;
@@ -445,36 +445,23 @@ public final class SugarStatements{
 
     public static LStatement parseIfBegin(String[] tokens, boolean collapsed){
         IfBeginStatement result = new IfBeginStatement();
-        ConditionOp parsedOp = parseConditionOp(tokens[2]);
-        if(parsedOp != null){
-            result.value = tokens[1];
-            result.op = parsedOp;
-            result.compare = tokens[3];
-            result.destIndex = Integer.parseInt(tokens[4]);
-        }else{
-            // legacy single-value condition: "ifbegin <cond> <destIndex>"
-            result.value = tokens[1];
-            result.op = ConditionOp.notEqual;
-            result.compare = "false";
-            result.destIndex = Integer.parseInt(tokens[2]);
-        }
+        result.value = tokens[1];
+        ConditionOp op = parseConditionOp(tokens[2]);
+        if(op == null) throw new IllegalArgumentException("Invalid ifbegin condition operator: '" + tokens[2] + "'");
+        result.op = op;
+        result.compare = tokens[3];
+        result.destIndex = parseDestIndex(tokens[4]);
         result.collapsed = collapsed;
         return result;
     }
 
     public static LStatement parseElseIf(String[] tokens){
         ElseIfStatement result = new ElseIfStatement();
-        ConditionOp parsedOp = parseConditionOp(tokens[2]);
-        if(parsedOp != null){
-            result.value = tokens[1];
-            result.op = parsedOp;
-            result.compare = tokens[3];
-        }else{
-            // legacy single-value condition: "elif <cond>"
-            result.value = tokens[1];
-            result.op = ConditionOp.notEqual;
-            result.compare = "false";
-        }
+        ConditionOp op = parseConditionOp(tokens[2]);
+        if(op == null) throw new IllegalArgumentException("Invalid elif condition operator: '" + tokens[2] + "'");
+        result.value = tokens[1];
+        result.op = op;
+        result.compare = tokens[3];
         return result;
     }
 
@@ -527,5 +514,68 @@ public final class SugarStatements{
         }catch(IllegalArgumentException e){
             return null;
         }
+    }
+
+    /** Parses a destination index token, throwing a clean error instead of a bare
+     *  NumberFormatException when the token is missing or malformed (LParser reuses a static
+     *  token array, so a short line leaves stale or empty trailing tokens). */
+    private static int parseDestIndex(String token){
+        try{
+            return Integer.parseInt(token);
+        }catch(NumberFormatException e){
+            throw new IllegalArgumentException("Invalid statement destination index: '" + token + "'");
+        }
+    }
+
+    /**
+     * Encodes a single statement's serialized text (its {@code write()} output) into one
+     * mlog token so it can ride inside a {@code print} statement and survive the round trip
+     * losslessly. An unquoted mlog token cannot contain a space (the separator), so:
+     * <ul>
+     *   <li>{@code ~} (the escape char) becomes {@code ~~}</li>
+     *   <li>{@code ' '} becomes {@code ~_}</li>
+     * </ul>
+     * Every other character — including {@code _} (identifiers like {@code my_var}, {@code __ls_*}),
+     * {@code "} and {@code @} — is kept literal. This is a proper prefix-free code: in the output
+     * every {@code ~} is always followed by {@code ~} or {@code _}, so {@link #decodeStatementText}
+     * is unambiguous.
+     */
+    public static String encodeStatementText(String text){
+        StringBuilder out = new StringBuilder(text.length() + 8);
+        for(int i = 0; i < text.length(); i++){
+            char c = text.charAt(i);
+            if(c == '~'){
+                out.append("~~");
+            }else if(c == ' '){
+                out.append("~_");
+            }else{
+                out.append(c);
+            }
+        }
+        return out.toString();
+    }
+
+    /** Inverts {@link #encodeStatementText}. A {@code ~} not followed by {@code ~} or {@code _}
+     *  (possible only in hand-edited print text) is kept as a literal {@code ~}. */
+    public static String decodeStatementText(String text){
+        StringBuilder out = new StringBuilder(text.length());
+        for(int i = 0; i < text.length(); i++){
+            char c = text.charAt(i);
+            if(c == '~' && i + 1 < text.length()){
+                char next = text.charAt(i + 1);
+                if(next == '~'){
+                    out.append('~');
+                    i++;
+                }else if(next == '_'){
+                    out.append(' ');
+                    i++;
+                }else{
+                    out.append(c);
+                }
+            }else{
+                out.append(c);
+            }
+        }
+        return out.toString();
     }
 }

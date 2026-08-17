@@ -354,20 +354,11 @@ public final class SugarCompiler{
             }
         }
 
-        // an if chain may have at most one else, and no elif may follow it
+        // an if chain may have at most one else, and no elif may follow it (shared rule,
+        // also enforced by the compile path and the library builder)
+        boolean[] ifBad = SugarFunctions.ifChainViolations(statements, ifOwner);
         for(int i = 0; i < statements.size; i++){
-            if(!(statements.get(i) instanceof IfBeginStatement begin)) continue;
-            boolean seenElse = false;
-            for(int at = i + 1; at < begin.destIndex; at++){
-                LStatement statement = statements.get(at);
-                if(ifOwner[at] != i) continue;
-                if(statement instanceof ElseIfStatement){
-                    if(seenElse) invalid[at] = true;
-                }else if(statement instanceof ElseStatement){
-                    if(seenElse) invalid[at] = true;
-                    seenElse = true;
-                }
-            }
+            if(ifBad[i]) invalid[i] = true;
         }
 
         // function calls whose name resolves nowhere are marked invalid (library is loaded lazily)

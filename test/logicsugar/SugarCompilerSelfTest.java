@@ -38,6 +38,7 @@ public class SugarCompilerSelfTest{
         jumpsMayTargetStructureBoundaries();
         breaksLeaveNearestStructure();
         ifElseChain();
+        commentTextRoundTrip();
         generatedCodeIsOptimized();
         vanillaCodePassesThrough();
         expressionOpsRoundTrip();
@@ -92,7 +93,7 @@ public class SugarCompilerSelfTest{
         check(compiled.contains("# @logic-sugar-line forbeginc"), "collapsed state was not persisted");
 
         Seq<LStatement> lowered = LAssembler.read(compiled, true);
-        check(lowered.size == 19, "unexpected lowered instruction count: " + lowered.size + " (18 lowered + 1 persistence carrier)");
+        check(lowered.size == 16, "unexpected lowered instruction count: " + lowered.size + " (15 lowered + 1 persistence carrier)");
         for(LStatement statement : lowered){
             check(statement.getClass().getEnclosingClass() != SugarStatements.class, "compiled program contains a sugar statement");
         }
@@ -203,6 +204,32 @@ public class SugarCompilerSelfTest{
         // elif/else outside an if are rejected
         expectFailure("elif a equal 0\n", "elif outside an if");
         expectFailure("else\n", "else outside an if");
+
+        // strictEqual has no strict-not-equal op, so negation falls back to notEqual
+        String strict = loweredCode(SugarCompiler.compile("ifbegin a strictEqual b 2\nset x 1\nblockend\n"));
+        check(strict.contains("jump __ls_stmt_3 notEqual a b"), "strictEqual did not negate to notEqual");
+
+        // an if chain may have at most one else, and no elif may follow it (compile path)
+        expectFailure("ifbegin a equal 0 5\nelse\nset x 1\nelif b equal 0\nset x 2\nblockend\n", "elif after else");
+        expectFailure("ifbegin a equal 0 5\nelse\nset x 1\nelse\nset x 2\nblockend\n", "duplicate else");
+
+        // nested if: the else binds to the inner if (its nearest still-open if), not the outer
+        String nested = loweredCode(SugarCompiler.compile(
+            "ifbegin a equal 0 7\nset x 1\nifbegin b equal 0 6\nset y 1\nelse\nset y 2\nblockend\nblockend\n"));
+        check(nested.contains("jump __ls_if_branch_4 notEqual b 0"), "inner if else jump is wrong");
+        check(nested.contains("jump __ls_stmt_8 notEqual a 0"), "outer if exit jump is wrong");
+    }
+
+    /** The block <-> print-text toggle must round-trip losslessly, including underscores. */
+    private static void commentTextRoundTrip(){
+        check(SugarStatements.decodeStatementText(SugarStatements.encodeStatementText("set my_var 1")).equals("set my_var 1"),
+            "underscore identifier was not preserved by the print-text encoding");
+        check(SugarStatements.decodeStatementText(SugarStatements.encodeStatementText("set x \"hello world\"")).equals("set x \"hello world\""),
+            "quoted string was not preserved by the print-text encoding");
+        check(SugarStatements.decodeStatementText(SugarStatements.encodeStatementText("funccall f \"a, b\" ~")).equals("funccall f \"a, b\" ~"),
+            "funccall with tilde and spaces was not preserved");
+        check(SugarStatements.decodeStatementText(SugarStatements.encodeStatementText("ifbegin my_var greaterThan 5 3")).equals("ifbegin my_var greaterThan 5 3"),
+            "three-part condition with underscore was not preserved");
     }
 
     private static void generatedCodeIsOptimized(){
@@ -772,6 +799,7 @@ public class SugarCompilerSelfTest{
         expectLibraryBuildFailure("funcdef f ~ 3\nfuncdef g ~ 2\nblockend\nblockend\n", "nested library definition");
         expectLibraryBuildFailure("funcdef f a,a 2\nprint a\nblockend\n", "duplicate library parameter");
         expectLibraryBuildFailure("funcdef f ~ 3\nfunccall f \"\" ~\nblockend\n" + "funcdef f ~ 6\nblockend\n", "duplicate library function");
+        expectLibraryBuildFailure("funcdef f ~ 5\nifbegin a equal 0 5\nelse\nset x 1\nelif b equal 0\nset x 2\nblockend\nblockend\n", "elif after else inside a library function");
     }
 
     /** Extracted function subsets must re-validate and compile identically to the original. */

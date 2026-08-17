@@ -409,6 +409,7 @@ public final class SugarFunctions{
             int[] switchOwner = switchOwners(function.body);
             int[] breakOwner = breakOwners(function.body);
             int[] ifOwner = ifOwners(function.body);
+            boolean[] ifBad = ifChainViolations(function.body, ifOwner);
             for(int i = 0; i < function.body.size; i++){
                 LStatement statement = function.body.get(i);
                 if(statement instanceof CaseStatement && switchOwner[i] < 0){
@@ -422,6 +423,10 @@ public final class SugarFunctions{
                 }
                 if(statement instanceof ElseStatement && ifOwner[i] < 0){
                     throw error("else", i, "in library function '" + function.name + "' is outside an if");
+                }
+                if(ifBad[i]){
+                    throw error(statement instanceof ElseStatement ? "else" : "elif", i,
+                        "in library function '" + function.name + "' appears after else (or is a duplicate else) in the same if chain");
                 }
                 if(statement instanceof FuncCallStatement call){
                     Function target = index.functions.get(call.name);
@@ -873,6 +878,15 @@ public final class SugarFunctions{
         boolean[] statementLabels = statementLabels(statements, breakOwner);
         String[] optimizedOperations = optimizeOperations(statements, statementLabels);
 
+        boolean[] ifBad = ifChainViolations(statements, ifOwner);
+        for(int i = 0; i < statements.size; i++){
+            if(ifBad[i]){
+                LStatement statement = statements.get(i);
+                throw error(statement instanceof ElseStatement ? "else" : "elif", i,
+                    "appears after else (or is a duplicate else) in the same if chain");
+            }
+        }
+
         for(int i = 0; i < statements.size; i++){
             if(statementLabels[i]) out.append(label(prefix, "stmt_", i)).append(":\n");
             if(optimizedOperations[i] != null){
@@ -1078,6 +1092,31 @@ public final class SugarFunctions{
         return result;
     }
 
+    /** Marks each elif/else that violates the chain rule: an if chain may have at most one
+     *  {@code else}, and no {@code elif} may follow it (it would be silently dead code).
+     *  This is the single source of truth for the rule, shared by canvas highlighting
+     *  (SugarCompiler.invalidStatements), the compile path ({@link #lower}) and the library
+     *  builder ({@link #buildLibrary}), so text-sourced and library programs are rejected the
+     *  same way as the canvas. */
+    static boolean[] ifChainViolations(Seq<LStatement> statements, int[] ifOwner){
+        boolean[] bad = new boolean[statements.size];
+        for(int i = 0; i < statements.size; i++){
+            if(!(statements.get(i) instanceof IfBeginStatement begin)) continue;
+            boolean seenElse = false;
+            for(int at = i + 1; at < begin.destIndex; at++){
+                if(ifOwner[at] != i) continue;
+                LStatement statement = statements.get(at);
+                if(statement instanceof ElseIfStatement){
+                    if(seenElse) bad[at] = true;
+                }else if(statement instanceof ElseStatement){
+                    if(seenElse) bad[at] = true;
+                    seenElse = true;
+                }
+            }
+        }
+        return bad;
+    }
+
     /** For each if-begin and elif, the index of the next elif/else in the same chain, or -1. */
     private static int[] nextBranch(Seq<LStatement> statements, int[] ifOwner){
         int[] next = new int[statements.size];
@@ -1106,7 +1145,13 @@ public final class SugarFunctions{
             case lessThanEq: return ConditionOp.greaterThan;
             case greaterThan: return ConditionOp.lessThanEq;
             case greaterThanEq: return ConditionOp.lessThan;
-            case strictEqual: return ConditionOp.notEqual;
+            case strictEqual:
+                // Mindustry has no strict-not-equal op, so negating strictEqual falls back to
+                // notEqual. This is exact for same-typed operands but only approximate for
+                // cross-type comparisons (e.g. "a" strictEqual 1 is false, so its negation should
+                // be true, whereas "a" notEqual 1 is also true in mlog — coincidentally matching;
+                // the divergence is confined to values that coercion makes equal, such as 1 vs "1").
+                return ConditionOp.notEqual;
             default: return null; // always
         }
     }
