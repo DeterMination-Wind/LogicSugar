@@ -801,7 +801,7 @@ public class SugarCompilerSelfTest{
         expectLibraryBuildFailure("funcdef f ~ 3\nfuncdef g ~ 2\nblockend\nblockend\n", "nested library definition");
         expectLibraryBuildFailure("funcdef f a,a 2\nprint a\nblockend\n", "duplicate library parameter");
         expectLibraryBuildFailure("funcdef f ~ 3\nfunccall f \"\" ~\nblockend\n" + "funcdef f ~ 6\nblockend\n", "duplicate library function");
-        expectLibraryBuildFailure("funcdef f ~ 5\nifbegin a equal 0 5\nelse\nset x 1\nelif b equal 0\nset x 2\nblockend\nblockend\n", "elif after else inside a library function");
+        expectLibraryBuildFailure("funcdef f ~ 7\nifbegin a equal 0 6\nelse\nset x 1\nelif b equal 0\nset x 2\nblockend\nblockend\n", "elif after else inside a library function");
     }
 
     /** Extracted function subsets must re-validate and compile identically to the original. */
