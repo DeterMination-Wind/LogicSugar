@@ -66,6 +66,7 @@ public class SugarCompilerSelfTest{
         libraryEmbeddingRoundTrip();
         verificationDetectsExternalEdits();
         oversizeStripsComments();
+        libraryDamageHarness();
         System.out.println("LogicSugar compiler self-test passed.");
     }
 
@@ -954,6 +955,156 @@ public class SugarCompilerSelfTest{
 
     private static void check(boolean condition, String message){
         if(!condition) throw new AssertionError(message);
+    }
+
+    // ===== library damage harness (Q1 witness regression) ================================
+    //
+    // Q1 is the library file from the v2.1.2 bug report: a `spawnUnits` function built from
+    // vanilla world statements plus an EMPTY second function `func`. The report's failure
+    // chain: the file later gained duplicate function definitions -> the library became
+    // invalid -> every processor that called a library function failed to compile/save with
+    // a misleading "calls undefined function" error.
+    //
+    // R1: Q1 builds through buildLibrary and contains spawnUnits + func.
+    // R2: a processor that calls spawnUnits (both modes) and the empty func (2 args, no
+    //     result variable) compiles.
+    // R3: calls to the empty func with 1 arg / with a result variable record the current
+    //     error texts (arity / "requests a result").
+    // R4: Q1 with 3x duplicate `spawn` definitions makes buildLibrary throw
+    //     "duplicate function name 'spawn'" (the exact trigger of the report).
+    // R5: end-to-end: a valid snapshot works, then the file turns bad -> library()==null
+    //     -> effectiveLibrary merge -> the compile fails with the EXACT reported error.
+    // R6: extractLibrarySource on the Q1 slices (used = {spawnUnits, func}) is idempotent
+    //     and the merged text re-validates.
+    private static void libraryDamageHarness(){
+        System.out.println("== library damage harness R1-R6 ==");
+        String q1 = """
+            funcdef spawnUnits count,team,unit,x,y 5
+            forbegin i 0 1 lessThan count 4
+            spawn unit x y 0 team r false
+            explosion @crux x y 10 1000 true true true false
+            blockend
+            blockend
+            funcdef func a,b 7
+            blockend
+            """;
+        String wprocSpawnUnits = "set x 1\nfunccall spawnUnits \"1, 1, 1, 1, 1\" ~\nend\n";
+        String wprocFunc = "funccall func \"1, 2\" ~\nend\n";
+
+        boolean ok = true;
+
+        // R1: valid Q1 builds
+        SugarFunctions.LibraryIndex q1Index = null;
+        try{
+            q1Index = SugarFunctions.buildLibrary(LAssembler.read(q1, true));
+            System.out.println("R1 buildLibrary(Q1): ok, functions=" + q1Index.functions.keySet());
+        }catch(Throwable t){
+            ok = false;
+            System.out.println("R1 buildLibrary(Q1): FAIL -> " + t.getMessage());
+        }
+        if(q1Index != null){
+            check(q1Index.functions.containsKey("spawnUnits"), "R1: spawnUnits missing from Q1 index");
+            check(q1Index.functions.containsKey("func"), "R1: func missing from Q1 index");
+        }
+
+        // R2: processor calls compile against the valid Q1 index
+        if(q1Index != null){
+            for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+                try{
+                    SugarCompiler.compile(wprocSpawnUnits, mode, q1Index);
+                    System.out.println("R2 call spawnUnits " + mode + ": ok");
+                }catch(Throwable t){
+                    ok = false;
+                    System.out.println("R2 call spawnUnits " + mode + ": FAIL -> " + t.getMessage());
+                }
+            }
+            try{
+                SugarCompiler.compile(wprocFunc, SugarCompiler.FuncMode.normal, q1Index);
+                System.out.println("R2 call empty func (2 args, no result): ok");
+            }catch(Throwable t){
+                ok = false;
+                System.out.println("R2 call empty func (2 args, no result): FAIL -> " + t.getMessage());
+            }
+        }
+
+        // R3: record the current error texts (asserted verbatim by T3 after the fix)
+        String arityText = errorText("funccall func \"1\" ~\nend\n", q1Index);
+        String resultText = errorText("funccall func \"1, 2\" out\nend\n", q1Index);
+        System.out.println("R3 arity error: " + arityText);
+        System.out.println("R3 result error: " + resultText);
+        check(arityText != null && arityText.contains("argument"), "R3: no arity error text recorded");
+        check(resultText != null && resultText.contains("requests a result"), "R3: no result error text recorded");
+
+        // R4: duplicate definitions injected -> buildLibrary throws duplicate function name
+        String q1Duplicated = q1 + "funcdef spawn a 9\nblockend\nfuncdef spawn a 11\nblockend\nfuncdef spawn a 13\nblockend\n";
+        try{
+            SugarFunctions.buildLibrary(LAssembler.read(q1Duplicated, true));
+            ok = false;
+            System.out.println("R4 duplicate names: NOT REPRODUCED (no throw)");
+        }catch(IllegalArgumentException expected){
+            System.out.println("R4 duplicate names: reproduced -> " + expected.getMessage());
+            check(expected.getMessage().contains("duplicate function name 'spawn'"), "R4: wrong duplicate error text");
+        }catch(Throwable t){
+            ok = false;
+            System.out.println("R4 duplicate names: FAIL -> " + t.getMessage());
+        }
+
+        // R5: end-to-end failure chain (legacy processor without an embedded library carrier)
+        if(q1Index != null){
+            // valid snapshot compiles fine while the file is good (passes the text so the
+            // used subset gets embedded into the stored code, like a real save does)
+            String stored = SugarCompiler.compile(wprocSpawnUnits, SugarCompiler.FuncMode.normal, q1Index, q1);
+            check(SugarCompiler.libraryFromCode(stored) != null, "R5 setup: stored code should carry the embedded library");
+
+            // the file turns bad: the library source now fails to load
+            SugarFunctions.setLibrarySource(() -> null);
+            try{
+                SugarFunctions.LibraryIndex local = SugarFunctions.library();
+                String code = "set x 1\nfunccall spawnUnits \"1, 1, 1, 1, 1\" ~\nend\n"; // legacy, no carrier
+                SugarCompiler.EffectiveLibrary effective = SugarCompiler.effectiveLibrary(code, local, "");
+                try{
+                    SugarCompiler.compile("set x 1\nfunccall spawnUnits \"1, 1, 1, 1, 1\" ~\nend\n",
+                        SugarCompiler.FuncMode.normal, effective.index, effective.text);
+                    ok = false;
+                    System.out.println("R5 end-to-end undefined: NOT REPRODUCED (compiled anyway)");
+                }catch(IllegalArgumentException e){
+                    System.out.println("R5 end-to-end undefined: reproduced -> " + e.getMessage());
+                    check(e.getMessage().equals("funccall at statement 1 calls undefined function 'spawnUnits'."),
+                        "R5: exact reported error text changed");
+                }
+            }finally{
+                SugarFunctions.setLibrarySource(null);
+            }
+        }else{
+            System.out.println("R5 skipped (Q1 did not build)");
+        }
+
+        // R6: extraction of the used subset is idempotent and re-validates
+        try{
+            Set<String> used = new HashSet<>(List.of("spawnUnits", "func"));
+            String extracted = SugarFunctions.extractLibrarySource(q1, used);
+            String again = SugarFunctions.extractLibrarySource(extracted, used);
+            check(extracted.equals(again), "R6: extraction is not idempotent");
+            SugarFunctions.LibraryIndex revalidated = SugarFunctions.buildLibrary(LAssembler.read(extracted, true));
+            check(revalidated.functions.size() == 2, "R6: re-validated extracted library has " + revalidated.functions.size() + " functions");
+            System.out.println("R6 extraction idempotent + re-validates: ok");
+        }catch(Throwable t){
+            ok = false;
+            System.out.println("R6 extraction: FAIL -> " + t.getMessage());
+        }
+
+        check(ok, "library damage harness found a broken baseline expectation (see output above)");
+        System.out.println("== harness complete ==");
+    }
+
+    /** Returns the compile error text for a processor against a library, or null when it compiles. */
+    private static String errorText(String source, SugarFunctions.LibraryIndex library){
+        try{
+            SugarCompiler.compile(source, SugarCompiler.FuncMode.normal, library);
+            return null;
+        }catch(IllegalArgumentException expected){
+            return expected.getMessage();
+        }
     }
 
     private static void registerParsers(){
