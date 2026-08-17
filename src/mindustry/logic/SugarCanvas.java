@@ -19,10 +19,15 @@ import arc.struct.SnapshotSeq;
 import arc.util.Tmp;
 import mindustry.Vars;
 import mindustry.gen.Tex;
+import mindustry.logic.LStatements.InvalidStatement;
 import mindustry.logic.LStatements.JumpStatement;
+import mindustry.logic.LStatements.PrintStatement;
 import mindustry.logic.SugarStatements.BeginStatement;
 import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.CaseStatement;
+import mindustry.logic.SugarStatements.ElseIfStatement;
+import mindustry.logic.SugarStatements.ElseStatement;
+import mindustry.logic.SugarStatements.IfBeginStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
 import logicsugar.assist.BoxSelect;
 import logicsugar.assist.JumpLineColor;
@@ -46,6 +51,7 @@ public class SugarCanvas extends LCanvas{
     private StructureGuideLayer guideLayer;
     private Group jumpLayer;
     private static final Field draggingField = field(LCanvas.class, "dragging");
+    private static final Field privilegedField = field(LCanvas.class, "privileged");
     private static final Field spaceField = field(LCanvas.DragLayout.class, "space");
     private static final Field layoutJumpsField = optionalField(LCanvas.DragLayout.class, "jumps");
     private static final Field canvasJumpsField = optionalField(LCanvas.class, "jumps");
@@ -339,9 +345,11 @@ public class SugarCanvas extends LCanvas{
         }
 
         private void refreshInset(){
-            float unit = Scl.scl(Core.graphics.isPortrait() ? 17f : 24f);
-            float minWidth = Scl.scl(Core.graphics.isPortrait() ? 285f : 360f);
-            float maxInset = Math.max(0f, getWidth() - minWidth);
+            // marginLeft() applies Scl.scl() itself, so inset must stay in design units here;
+            // pre-scaling it would double-scale (visible at 200% UI scale).
+            float unit = Core.graphics.isPortrait() ? 17f : 24f;
+            float minWidth = Core.graphics.isPortrait() ? 285f : 360f;
+            float maxInset = Math.max(0f, getWidth() / Scl.scl(1f) - minWidth);
             float nextInset = Math.min(Math.max(0, structureDepth) * unit, maxInset);
             if(Math.abs(inset - nextInset) > 0.1f){
                 inset = nextInset;
@@ -372,6 +380,75 @@ public class SugarCanvas extends LCanvas{
             copied.setupUI();
             markJumpHeightsDirty(SugarCanvas.this);
         }
+
+        /**
+         * Toggles this statement between its block form and a raw-text {@code print} form.
+         * This is a runtime override of MindustryX's {@code StatementElem#toggleComment}
+         * (identical signature): the original serializes via the generated {@code LogicIO.write},
+         * which only knows {@code @RegisterStatement} statements and silently emits nothing for
+         * Neon's custom-parser statements, dropping their code. This uses {@code LStatement.write},
+         * which every statement (including Neon's) implements, and a lossless single-token encoding
+         * ({@link SugarStatements#encodeStatementText}/{@link SugarStatements#decodeStatementText})
+         * so identifiers containing {@code _} and other special characters round-trip unchanged.
+         */
+        public void toggleComment(){
+            StatementElem newElem;
+            if(st instanceof PrintStatement pst && !pst.value.isEmpty()){ //print -> block
+                String code = SugarStatements.decodeStatementText(pst.value);
+                LStatement stNew;
+                try{
+                    stNew = LAssembler.read(code, isPrivileged()).first();
+                }catch(Exception e){
+                    showConvertError();
+                    return;
+                }
+                if(stNew instanceof InvalidStatement){
+                    showConvertError();
+                    return;
+                }
+                newElem = new SugarStatementElem(stNew);
+            }else{ //block -> print
+                st.saveUI();
+                StringBuilder thisText = new StringBuilder();
+                st.write(thisText);
+                PrintStatement stNew = new PrintStatement();
+                stNew.value = SugarStatements.encodeStatementText(thisText.toString());
+                newElem = new SugarStatementElem(stNew);
+            }
+
+            //preserve jump destinations that referenced this element
+            for(Element c : statements.getChildren()){
+                if(c instanceof StatementElem ste && ste.st instanceof JumpStatement jst && (jst.dest == null || jst.dest == st.elem)){
+                    if(jst.destIndex < 0 || jst.destIndex >= statements.getChildren().size) continue;
+                    jst.saveUI();
+                }
+            }
+            statements.addChildBefore(this, newElem);
+            remove();
+            for(Element c : statements.getChildren()){
+                if(c instanceof StatementElem ste && ste.st instanceof JumpStatement jst && (jst.dest == null || jst.dest == st.elem)){
+                    if(jst.destIndex < 0 || jst.destIndex >= statements.getChildren().size) continue;
+                    jst.setupUI();
+                }
+            }
+            newElem.st.setupUI();
+            structure.refresh();
+            markJumpHeightsDirty(SugarCanvas.this);
+        }
+
+        private void showConvertError(){
+            Vars.ui.showInfoFade(Core.bundle.get("logicsugar.textEdit.convertError", "Cannot convert this statement to/from text."));
+        }
+
+        /** Reads LCanvas.privileged via reflection: it is package-private and the mod class
+         *  loader cannot access it directly (IllegalAccessError) even though the package names match. */
+        private boolean isPrivileged(){
+            try{
+                return privilegedField.getBoolean(SugarCanvas.this);
+            }catch(IllegalAccessException e){
+                return false;
+            }
+        }
     }
 
     private static class InsetDrawable extends BaseDrawable{
@@ -386,12 +463,14 @@ public class SugarCanvas extends LCanvas{
 
         @Override
         public void draw(float x, float y, float width, float height){
-            source.draw(x + owner.inset, y, Math.max(0f, width - owner.inset), height);
+            float offset = Scl.scl(owner.inset);
+            source.draw(x + offset, y, Math.max(0f, width - offset), height);
         }
 
         @Override
         public void draw(float x, float y, float originX, float originY, float width, float height, float scaleX, float scaleY, float rotation){
-            source.draw(x + owner.inset, y, originX, originY, Math.max(0f, width - owner.inset), height, scaleX, scaleY, rotation);
+            float offset = Scl.scl(owner.inset);
+            source.draw(x + offset, y, originX, originY, Math.max(0f, width - offset), height, scaleX, scaleY, rotation);
         }
     }
 
@@ -529,7 +608,7 @@ public class SugarCanvas extends LCanvas{
                 int index = children.indexOf(child, true);
                 elem.applyStructure(0, false, compilerInvalid[index] || elem.st instanceof BlockEndStatement && !claimed.containsKey(elem));
             }
-            assignRange(0, children.size, 0, false, children);
+            assignRange(0, children.size, 0, false, false, children);
             statements.invalidateHierarchy();
             markJumpHeightsDirty(SugarCanvas.this);
         }
@@ -562,7 +641,7 @@ public class SugarCanvas extends LCanvas{
             }
         }
 
-        private void assignRange(int from, int to, int depth, boolean switchBody, SnapshotSeq<Element> children){
+        private void assignRange(int from, int to, int depth, boolean switchBody, boolean ifBody, SnapshotSeq<Element> children){
             int currentDepth = depth;
             for(int i = from; i < to; i++){
                 SugarStatementElem elem = (SugarStatementElem)children.get(i);
@@ -574,6 +653,13 @@ public class SugarCanvas extends LCanvas{
                     continue;
                 }
 
+                if(ifBody && (elem.st instanceof ElseIfStatement || elem.st instanceof ElseStatement)){
+                    //elif/else are siblings of the if-begin, not nested under it: keep them at the if's depth
+                    elem.applyStructure(depth - 1, false, compilerInvalid[i]);
+                    currentDepth = depth;
+                    continue;
+                }
+
                 if(pair != null && pair.valid && pair.endIndex < to){
                     elem.applyStructure(currentDepth, false, compilerInvalid[i]);
                     SugarStatementElem end = (SugarStatementElem)children.get(pair.endIndex);
@@ -582,7 +668,7 @@ public class SugarCanvas extends LCanvas{
                             ((SugarStatementElem)children.get(at)).applyStructure(currentDepth + 1, true, false);
                         }
                     }else{
-                        assignRange(i + 1, pair.endIndex, currentDepth + 1, pair.begin instanceof SwitchBeginStatement, children);
+                        assignRange(i + 1, pair.endIndex, currentDepth + 1, pair.begin instanceof SwitchBeginStatement, pair.begin instanceof IfBeginStatement, children);
                     }
                     end.applyStructure(currentDepth, false, compilerInvalid[pair.endIndex]);
                     i = pair.endIndex;
@@ -636,7 +722,7 @@ public class SugarCanvas extends LCanvas{
                 SugarStatementElem end = (SugarStatementElem)pair.end;
                 Color color = guideColors[Math.floorMod(begin.structureDepth, guideColors.length)];
 
-                float guideX = begin.inset + Scl.scl(6f);
+                float guideX = Scl.scl(begin.inset + 6f);
                 Vec2 beginBottom = Tmp.v1.set(guideX, 0f);
                 Vec2 endTop = Tmp.v2.set(guideX, end.getHeight());
                 begin.localToAscendantCoordinates(common, beginBottom);

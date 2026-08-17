@@ -7,10 +7,14 @@ import mindustry.logic.LExecutor;
 import mindustry.logic.SugarStatements.BeginStatement;
 import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.BreakStatement;
+import mindustry.logic.SugarStatements.ContinueStatement;
 import mindustry.logic.SugarStatements.CaseStatement;
+import mindustry.logic.SugarStatements.ElseIfStatement;
+import mindustry.logic.SugarStatements.ElseStatement;
 import mindustry.logic.SugarStatements.ForBeginStatement;
 import mindustry.logic.SugarStatements.FuncCallStatement;
 import mindustry.logic.SugarStatements.FuncDefStatement;
+import mindustry.logic.SugarStatements.IfBeginStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
 import mindustry.logic.SugarStatements.WhileBeginStatement;
 
@@ -345,6 +349,8 @@ public final class SugarCompiler{
 
         int[] switchOwner = switchOwners(statements);
         int[] breakOwner = breakOwners(statements);
+        int[] continueOwner = continueOwners(statements);
+        int[] ifOwner = ifOwners(statements);
         for(int i = 0; i < statements.size; i++){
             if(statements.get(i) instanceof CaseStatement && switchOwner[i] < 0){
                 invalid[i] = true;
@@ -352,6 +358,22 @@ public final class SugarCompiler{
             if(statements.get(i) instanceof BreakStatement && breakOwner[i] < 0){
                 invalid[i] = true;
             }
+            if(statements.get(i) instanceof ContinueStatement && continueOwner[i] < 0){
+                invalid[i] = true;
+            }
+            if(statements.get(i) instanceof ElseIfStatement && ifOwner[i] < 0){
+                invalid[i] = true;
+            }
+            if(statements.get(i) instanceof ElseStatement && ifOwner[i] < 0){
+                invalid[i] = true;
+            }
+        }
+
+        // an if chain may have at most one else, and no elif may follow it (shared rule,
+        // also enforced by the compile path and the library builder)
+        boolean[] ifBad = SugarFunctions.ifChainViolations(statements, ifOwner);
+        for(int i = 0; i < statements.size; i++){
+            if(ifBad[i]) invalid[i] = true;
         }
 
         // function calls whose name resolves nowhere are marked invalid (library is loaded lazily)
@@ -431,6 +453,19 @@ public final class SugarCompiler{
         return result;
     }
 
+    /** Returns the innermost enclosing if block index for each statement. */
+    private static int[] ifOwners(Seq<LStatement> statements){
+        int[] result = new int[statements.size];
+        java.util.Arrays.fill(result, -1);
+        Deque<Integer> stack = new ArrayDeque<>();
+        for(int i = 0; i < statements.size; i++){
+            while(!stack.isEmpty() && ((IfBeginStatement)statements.get(stack.peek())).destIndex < i) stack.pop();
+            if(!stack.isEmpty()) result[i] = stack.peek();
+            if(statements.get(i) instanceof IfBeginStatement) stack.push(i);
+        }
+        return result;
+    }
+
     /** Returns the innermost enclosing structure that accepts a break statement. */
     private static int[] breakOwners(Seq<LStatement> statements){
         int[] result = new int[statements.size];
@@ -441,6 +476,19 @@ public final class SugarCompiler{
             if(!stack.isEmpty()) result[i] = stack.peek();
             if(statements.get(i) instanceof WhileBeginStatement || statements.get(i) instanceof SwitchBeginStatement
                 || statements.get(i) instanceof ForBeginStatement) stack.push(i);
+        }
+        return result;
+    }
+    
+    /** Returns the innermost enclosing loop that accepts a continue statement. */
+    private static int[] continueOwners(Seq<LStatement> statements){
+        int[] result = new int[statements.size];
+        java.util.Arrays.fill(result, -1);
+        Deque<Integer> stack = new ArrayDeque<>();
+        for(int i = 0; i < statements.size; i++){
+            while(!stack.isEmpty() && ((BeginStatement)statements.get(stack.peek())).destIndex < i) stack.pop();
+            if(!stack.isEmpty()) result[i] = stack.peek();
+            if(statements.get(i) instanceof WhileBeginStatement || statements.get(i) instanceof ForBeginStatement) stack.push(i);
         }
         return result;
     }

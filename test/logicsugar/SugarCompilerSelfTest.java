@@ -12,6 +12,7 @@ import mindustry.logic.SugarFunctions;
 import mindustry.logic.SugarStatements;
 import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.BreakStatement;
+import mindustry.logic.SugarStatements.ContinueStatement;
 import mindustry.logic.SugarStatements.ForBeginStatement;
 import mindustry.logic.SugarStatements.FuncCallStatement;
 import mindustry.logic.SugarStatements.FuncDefStatement;
@@ -36,6 +37,8 @@ public class SugarCompilerSelfTest{
         semanticErrorsAreLocated();
         jumpsMayTargetStructureBoundaries();
         breaksLeaveNearestStructure();
+        ifElseChain();
+        commentTextRoundTrip();
         generatedCodeIsOptimized();
         vanillaCodePassesThrough();
         expressionOpsRoundTrip();
@@ -92,7 +95,7 @@ public class SugarCompilerSelfTest{
         check(compiled.contains("# @logic-sugar-line forbeginc"), "collapsed state was not persisted");
 
         Seq<LStatement> lowered = LAssembler.read(compiled, true);
-        check(lowered.size == 19, "unexpected lowered instruction count: " + lowered.size + " (18 lowered + 1 persistence carrier)");
+        check(lowered.size == 16, "unexpected lowered instruction count: " + lowered.size + " (15 lowered + 1 persistence carrier)");
         for(LStatement statement : lowered){
             check(statement.getClass().getEnclosingClass() != SugarStatements.class, "compiled program contains a sugar statement");
         }
@@ -172,6 +175,63 @@ public class SugarCompilerSelfTest{
             """;
         check(SugarCompiler.compile(nested).contains("jump __ls_stmt_4 always x false"),
             "break did not choose the nearest enclosing switch");
+    }
+
+    private static void ifElseChain(){
+        // if a > 5 { x=1 } elif b <= 3 { x=2 } else { x=3 }
+        String chain = """
+            ifbegin a greaterThan 5 6
+            set x 1
+            elif b lessThanEq 3
+            set x 2
+            else
+            set x 3
+            blockend
+            """;
+        String compiled = loweredCode(SugarCompiler.compile(chain));
+        check(compiled.contains("jump __ls_if_branch_2 lessThanEq a 5"), "if false-branch jump is wrong");
+        check(compiled.contains("jump __ls_if_branch_4 greaterThan b 3"), "elif false-branch jump is wrong");
+        check(compiled.contains("__ls_if_branch_2:") && compiled.contains("__ls_if_branch_4:"), "if/elif branch labels missing");
+        check(compiled.contains("set x 1") && compiled.contains("set x 2") && compiled.contains("set x 3"), "if/elif/else bodies missing");
+
+        // simple if with no elif/else
+        String simple = loweredCode(SugarCompiler.compile("ifbegin a equal 0 2\nset x 1\nblockend\n"));
+        check(simple.contains("jump __ls_stmt_3 notEqual a 0"), "simple if negated jump is wrong");
+        check(!simple.contains("__ls_if_branch_"), "simple if has unexpected branch labels");
+
+        // legacy single-value while still maps to "!= false"
+        String legacy = loweredCode(SugarCompiler.compile("whilebegin a 2\nset y 1\nblockend\n"));
+        check(legacy.contains("jump __ls_while_body_0 notEqual a false"), "legacy while condition not mapped");
+
+        // elif/else outside an if are rejected
+        expectFailure("elif a equal 0\n", "elif outside an if");
+        expectFailure("else\n", "else outside an if");
+
+        // strictEqual has no strict-not-equal op, so negation falls back to notEqual
+        String strict = loweredCode(SugarCompiler.compile("ifbegin a strictEqual b 2\nset x 1\nblockend\n"));
+        check(strict.contains("jump __ls_stmt_3 notEqual a b"), "strictEqual did not negate to notEqual");
+
+        // an if chain may have at most one else, and no elif may follow it (compile path)
+        expectFailure("ifbegin a equal 0 5\nelse\nset x 1\nelif b equal 0\nset x 2\nblockend\n", "elif after else");
+        expectFailure("ifbegin a equal 0 5\nelse\nset x 1\nelse\nset x 2\nblockend\n", "duplicate else");
+
+        // nested if: the else binds to the inner if (its nearest still-open if), not the outer
+        String nested = loweredCode(SugarCompiler.compile(
+            "ifbegin a equal 0 7\nset x 1\nifbegin b equal 0 6\nset y 1\nelse\nset y 2\nblockend\nblockend\n"));
+        check(nested.contains("jump __ls_if_branch_4 notEqual b 0"), "inner if else jump is wrong");
+        check(nested.contains("jump __ls_stmt_8 notEqual a 0"), "outer if exit jump is wrong");
+    }
+
+    /** The block <-> print-text toggle must round-trip losslessly, including underscores. */
+    private static void commentTextRoundTrip(){
+        check(SugarStatements.decodeStatementText(SugarStatements.encodeStatementText("set my_var 1")).equals("set my_var 1"),
+            "underscore identifier was not preserved by the print-text encoding");
+        check(SugarStatements.decodeStatementText(SugarStatements.encodeStatementText("set x \"hello world\"")).equals("set x \"hello world\""),
+            "quoted string was not preserved by the print-text encoding");
+        check(SugarStatements.decodeStatementText(SugarStatements.encodeStatementText("funccall f \"a, b\" ~")).equals("funccall f \"a, b\" ~"),
+            "funccall with tilde and spaces was not preserved");
+        check(SugarStatements.decodeStatementText(SugarStatements.encodeStatementText("ifbegin my_var greaterThan 5 3")).equals("ifbegin my_var greaterThan 5 3"),
+            "three-part condition with underscore was not preserved");
     }
 
     private static void generatedCodeIsOptimized(){
@@ -741,6 +801,7 @@ public class SugarCompilerSelfTest{
         expectLibraryBuildFailure("funcdef f ~ 3\nfuncdef g ~ 2\nblockend\nblockend\n", "nested library definition");
         expectLibraryBuildFailure("funcdef f a,a 2\nprint a\nblockend\n", "duplicate library parameter");
         expectLibraryBuildFailure("funcdef f ~ 3\nfunccall f \"\" ~\nblockend\n" + "funcdef f ~ 6\nblockend\n", "duplicate library function");
+        expectLibraryBuildFailure("funcdef f ~ 5\nifbegin a equal 0 5\nelse\nset x 1\nelif b equal 0\nset x 2\nblockend\nblockend\n", "elif after else inside a library function");
     }
 
     /** Extracted function subsets must re-validate and compile identically to the original. */
@@ -1212,8 +1273,13 @@ public class SugarCompilerSelfTest{
         LAssembler.customParsers.put("whilebeginc", tokens -> SugarStatements.parseWhileBegin(tokens, true));
         LAssembler.customParsers.put("switchbegin", SugarStatements::parseSwitchBegin);
         LAssembler.customParsers.put("switchbeginc", tokens -> SugarStatements.parseSwitchBegin(tokens, true));
+        LAssembler.customParsers.put("ifbegin", SugarStatements::parseIfBegin);
+        LAssembler.customParsers.put("ifbeginc", tokens -> SugarStatements.parseIfBegin(tokens, true));
         LAssembler.customParsers.put("case", SugarStatements::parseCase);
+        LAssembler.customParsers.put("elif", SugarStatements::parseElseIf);
+        LAssembler.customParsers.put("else", SugarStatements::parseElse);
         LAssembler.customParsers.put("break", tokens -> new BreakStatement());
+        LAssembler.customParsers.put("continue", tokens -> new ContinueStatement());
         LAssembler.customParsers.put("blockend", tokens -> new BlockEndStatement());
         LAssembler.customParsers.put("funcdef", SugarStatements::parseFuncDef);
         LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));

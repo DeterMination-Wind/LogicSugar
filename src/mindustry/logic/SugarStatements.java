@@ -149,16 +149,10 @@ public final class SugarStatements{
         private void rebuildCondition(Table table){
             table.clearChildren();
             table.setColor(elem == null ? Pal.logicControl : elem.color);
-            float width = 60f;
-            field(table, variable, value -> variable = value).width(width);
-            table.button(button -> {
-                button.add(op.symbol);
-                button.clicked(() -> showSelect(button, ConditionOp.all, op, value -> {
-                    op = value;
-                    rebuildCondition(table);
-                }));
-            }, mindustry.ui.Styles.logict, () -> {}).size(op == ConditionOp.always ? 80f : 48f, 40f).pad(4f).color(table.color);
-            field(table, compare, value -> compare = value).width(width);
+            JumpStatement.addOp(this, table, op, result -> {
+                op = result;
+                rebuildCondition(table);
+            }, variable, result -> variable = result, compare, result -> compare = result);
         }
 
         @Override public String name(){ return text("for.begin", "For Begin"); }
@@ -172,18 +166,28 @@ public final class SugarStatements{
     }
 
     public static class WhileBeginStatement extends BeginStatement{
-        public String condition = "true";
+        public String value = "true", compare = "false";
+        public ConditionOp op = ConditionOp.notEqual;
 
         @Override
         public void build(Table table){
             table.add(text("condition", "condition"));
-            field(table, condition, value -> condition = value);
+            table.table(this::rebuildCondition);
             foldControl(table);
+        }
+
+        private void rebuildCondition(Table table){
+            table.clearChildren();
+            table.setColor(elem == null ? Pal.logicControl : elem.color);
+            JumpStatement.addOp(this, table, op, result -> {
+                op = result;
+                rebuildCondition(table);
+            }, value, result -> value = result, compare, result -> compare = result);
         }
 
         @Override public String name(){ return text("while.begin", "While Begin"); }
         @Override public String typeName(){ return "WhileBegin"; }
-        @Override public void write(StringBuilder out){ out.append(collapsed ? "whilebeginc " : "whilebegin ").append(condition).append(' ').append(destIndex); }
+        @Override public void write(StringBuilder out){ out.append(collapsed ? "whilebeginc " : "whilebegin ").append(value).append(' ').append(op.name()).append(' ').append(compare).append(' ').append(destIndex); }
     }
 
     public static class SwitchBeginStatement extends BeginStatement{
@@ -207,6 +211,62 @@ public final class SugarStatements{
         @Override public String name(){ return text("case", "Case"); }
         @Override public String typeName(){ return "Case"; }
         @Override public void write(StringBuilder out){ out.append("case ").append(value); }
+    }
+
+    public static class IfBeginStatement extends BeginStatement{
+        public String value = "true", compare = "false";
+        public ConditionOp op = ConditionOp.notEqual;
+
+        @Override
+        public void build(Table table){
+            table.add(text("if.condition", "if"));
+            table.table(this::rebuildCondition);
+            foldControl(table);
+        }
+
+        private void rebuildCondition(Table table){
+            table.clearChildren();
+            table.setColor(elem == null ? Pal.logicControl : elem.color);
+            JumpStatement.addOp(this, table, op, result -> {
+                op = result;
+                rebuildCondition(table);
+            }, value, result -> value = result, compare, result -> compare = result);
+        }
+
+        @Override public String name(){ return text("if.begin", "If Begin"); }
+        @Override public String typeName(){ return "IfBegin"; }
+        @Override public void write(StringBuilder out){ out.append(collapsed ? "ifbeginc " : "ifbegin ").append(value).append(' ').append(op.name()).append(' ').append(compare).append(' ').append(destIndex); }
+    }
+
+    public static class ElseIfStatement extends SugarStatement{
+        public String value = "true", compare = "false";
+        public ConditionOp op = ConditionOp.notEqual;
+
+        @Override
+        public void build(Table table){
+            table.add(text("elif", "elif"));
+            table.table(this::rebuildCondition);
+        }
+
+        private void rebuildCondition(Table table){
+            table.clearChildren();
+            table.setColor(elem == null ? Pal.logicControl : elem.color);
+            JumpStatement.addOp(this, table, op, result -> {
+                op = result;
+                rebuildCondition(table);
+            }, value, result -> value = result, compare, result -> compare = result);
+        }
+
+        @Override public String name(){ return text("elif", "Elif"); }
+        @Override public String typeName(){ return "ElseIf"; }
+        @Override public void write(StringBuilder out){ out.append("elif ").append(value).append(' ').append(op.name()).append(' ').append(compare); }
+    }
+
+    public static class ElseStatement extends SugarStatement{
+        @Override public void build(Table table){}
+        @Override public String name(){ return text("else", "Else"); }
+        @Override public String typeName(){ return "Else"; }
+        @Override public void write(StringBuilder out){ out.append("else"); }
     }
 
     public static class FuncDefStatement extends BeginStatement{
@@ -308,6 +368,13 @@ public final class SugarStatements{
         @Override public void write(StringBuilder out){ out.append("break"); }
     }
 
+    public static class ContinueStatement extends SugarStatement{
+        @Override public void build(Table table){}
+        @Override public String name(){ return text("continue", "Continue"); }
+        @Override public String typeName(){ return "Continue"; }
+        @Override public void write(StringBuilder out){ out.append("continue"); }
+    }
+
     public static class BlockEndStatement extends SugarStatement{
         @Override public void build(Table table){}
         @Override public String name(){ return "}"; }
@@ -337,8 +404,19 @@ public final class SugarStatements{
 
     public static LStatement parseWhileBegin(String[] tokens, boolean collapsed){
         WhileBeginStatement result = new WhileBeginStatement();
-        result.condition = tokens[1];
-        result.destIndex = Integer.parseInt(tokens[2]);
+        ConditionOp parsedOp = parseConditionOp(tokens[2]);
+        if(parsedOp != null){
+            result.value = tokens[1];
+            result.op = parsedOp;
+            result.compare = tokens[3];
+            result.destIndex = parseDestIndex(tokens[4]);
+        }else{
+            // legacy single-value condition: "whilebegin <cond> <destIndex>"
+            result.value = tokens[1];
+            result.op = ConditionOp.notEqual;
+            result.compare = "false";
+            result.destIndex = parseDestIndex(tokens[2]);
+        }
         result.collapsed = collapsed;
         return result;
     }
@@ -359,6 +437,36 @@ public final class SugarStatements{
         CaseStatement result = new CaseStatement();
         result.value = tokens[1];
         return result;
+    }
+
+    public static LStatement parseIfBegin(String[] tokens){
+        return parseIfBegin(tokens, false);
+    }
+
+    public static LStatement parseIfBegin(String[] tokens, boolean collapsed){
+        IfBeginStatement result = new IfBeginStatement();
+        result.value = tokens[1];
+        ConditionOp op = parseConditionOp(tokens[2]);
+        if(op == null) throw new IllegalArgumentException("Invalid ifbegin condition operator: '" + tokens[2] + "'");
+        result.op = op;
+        result.compare = tokens[3];
+        result.destIndex = parseDestIndex(tokens[4]);
+        result.collapsed = collapsed;
+        return result;
+    }
+
+    public static LStatement parseElseIf(String[] tokens){
+        ElseIfStatement result = new ElseIfStatement();
+        ConditionOp op = parseConditionOp(tokens[2]);
+        if(op == null) throw new IllegalArgumentException("Invalid elif condition operator: '" + tokens[2] + "'");
+        result.value = tokens[1];
+        result.op = op;
+        result.compare = tokens[3];
+        return result;
+    }
+
+    public static LStatement parseElse(String[] tokens){
+        return new ElseStatement();
     }
 
     public static LStatement parseFuncDef(String[] tokens){
@@ -394,5 +502,80 @@ public final class SugarStatements{
             return value.substring(1, value.length() - 1);
         }
         return value;
+    }
+
+    /** Parses a token as a ConditionOp, or null when it is not one (e.g. a legacy destIndex).
+     *  LParser reuses a static token array, so token count cannot distinguish the legacy
+     *  single-value form from the three-part form; the op name is the reliable marker. */
+    private static ConditionOp parseConditionOp(String name){
+        if(name == null) return null;
+        try{
+            return ConditionOp.valueOf(name);
+        }catch(IllegalArgumentException e){
+            return null;
+        }
+    }
+
+    /** Parses a destination index token, throwing a clean error instead of a bare
+     *  NumberFormatException when the token is missing or malformed (LParser reuses a static
+     *  token array, so a short line leaves stale or empty trailing tokens). */
+    private static int parseDestIndex(String token){
+        try{
+            return Integer.parseInt(token);
+        }catch(NumberFormatException e){
+            throw new IllegalArgumentException("Invalid statement destination index: '" + token + "'");
+        }
+    }
+
+    /**
+     * Encodes a single statement's serialized text (its {@code write()} output) into one
+     * mlog token so it can ride inside a {@code print} statement and survive the round trip
+     * losslessly. An unquoted mlog token cannot contain a space (the separator), so:
+     * <ul>
+     *   <li>{@code ~} (the escape char) becomes {@code ~~}</li>
+     *   <li>{@code ' '} becomes {@code ~_}</li>
+     * </ul>
+     * Every other character — including {@code _} (identifiers like {@code my_var}, {@code __ls_*}),
+     * {@code "} and {@code @} — is kept literal. This is a proper prefix-free code: in the output
+     * every {@code ~} is always followed by {@code ~} or {@code _}, so {@link #decodeStatementText}
+     * is unambiguous.
+     */
+    public static String encodeStatementText(String text){
+        StringBuilder out = new StringBuilder(text.length() + 8);
+        for(int i = 0; i < text.length(); i++){
+            char c = text.charAt(i);
+            if(c == '~'){
+                out.append("~~");
+            }else if(c == ' '){
+                out.append("~_");
+            }else{
+                out.append(c);
+            }
+        }
+        return out.toString();
+    }
+
+    /** Inverts {@link #encodeStatementText}. A {@code ~} not followed by {@code ~} or {@code _}
+     *  (possible only in hand-edited print text) is kept as a literal {@code ~}. */
+    public static String decodeStatementText(String text){
+        StringBuilder out = new StringBuilder(text.length());
+        for(int i = 0; i < text.length(); i++){
+            char c = text.charAt(i);
+            if(c == '~' && i + 1 < text.length()){
+                char next = text.charAt(i + 1);
+                if(next == '~'){
+                    out.append('~');
+                    i++;
+                }else if(next == '_'){
+                    out.append(' ');
+                    i++;
+                }else{
+                    out.append(c);
+                }
+            }else{
+                out.append(c);
+            }
+        }
+        return out.toString();
     }
 }
