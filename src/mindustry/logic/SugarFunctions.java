@@ -25,6 +25,7 @@ import mindustry.logic.SugarStatements.WhileBeginStatement;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -132,6 +133,11 @@ public final class SugarFunctions{
     /** Parsed and validated global function library. */
     public static final class LibraryIndex{
         public final Map<String, Function> functions = new LinkedHashMap<>();
+        /** True when the index was salvaged from a damaged library file and may be missing
+         *  definitions that could not be recovered. */
+        public boolean damaged;
+        /** Problems that were repaired while loading a damaged library file. */
+        public List<String> warnings = new ArrayList<>();
     }
 
     /** Local functions plus the resolved main statement list. */
@@ -471,33 +477,278 @@ public final class SugarFunctions{
         for(int i = 0; i < n; i++){
             int e = endOf[i];
             if(e < 0) continue;
-            // consecutive slices are concatenated, so targets shift by the slice start
-            // relative to the full text AND by the statements already appended
-            int base = appended;
-            for(int k = i; k <= e; k++){
-                LStatement statement = statements.get(k);
-                // BeginStatement.copy() resets destIndex, so capture the original first.
-                int dest = -1;
-                if(statement instanceof BeginStatement begin){
-                    dest = begin.destIndex;
-                }else if(statement instanceof JumpStatement jump){
-                    dest = jump.destIndex;
-                }
-                LStatement copy = statement.copy();
-                if(copy == null){
-                    throw new IllegalArgumentException("internal error: failed to copy a library statement");
-                }
-                if(copy instanceof BeginStatement begin){
-                    begin.destIndex = dest - i + base;
-                }else if(copy instanceof JumpStatement jump){
-                    jump.destIndex = dest - i + base;
-                }
-                copy.write(out);
-                out.append('\n');
-                appended++;
-            }
+            appended += copySlice(statements, i, e, out, appended);
         }
         return out.toString();
+    }
+
+    /**
+     * Copies statements [i..e] into the output, remapping begin/jump targets from the
+     * full-text coordinate space into the output space: every target shifts by (base - i)
+     * (base = statements already appended), so a funcdef keeps pointing at its own blockend
+     * when consecutive slices are concatenated. Returns the number of statements appended.
+     */
+    private static int copySlice(Seq<LStatement> statements, int i, int e, StringBuilder out, int base){
+        int appended = 0;
+        for(int k = i; k <= e; k++){
+            LStatement statement = statements.get(k);
+            // BeginStatement.copy() resets destIndex, so capture the original first.
+            int dest = -1;
+            if(statement instanceof BeginStatement begin){
+                dest = begin.destIndex;
+            }else if(statement instanceof JumpStatement jump){
+                dest = jump.destIndex;
+            }
+            LStatement copy = statement.copy();
+            if(copy == null){
+                throw new IllegalArgumentException("internal error: failed to copy a library statement");
+            }
+            if(copy instanceof BeginStatement begin){
+                begin.destIndex = dest - i + base;
+            }else if(copy instanceof JumpStatement jump){
+                jump.destIndex = dest - i + base;
+            }
+            copy.write(out);
+            out.append('\n');
+            appended++;
+        }
+        return appended;
+    }
+
+    /** Result of salvaging a (possibly damaged) library text. */
+    public static final class SanitizedLibrary{
+        /** Sanitized library text (byte-identical to the input when the library was valid). */
+        public final String text;
+        /** Partial index built from the functions that could be recovered. */
+        public final LibraryIndex index;
+        /** Problems that were repaired; empty when the library was valid. */
+        public final List<String> warnings;
+        /** True when anything had to be repaired. */
+        public final boolean damaged;
+
+        public SanitizedLibrary(String text, LibraryIndex index, List<String> warnings, boolean damaged){
+            this.text = text;
+            this.index = index;
+            this.warnings = warnings;
+            this.damaged = damaged;
+        }
+    }
+
+    /** The splice points (statement index pairs) around top-level function definitions.
+     *  Structurally broken funcdefs (no valid block end) are recorded as warnings. */
+    private static List<int[]> topLevelFuncdefSlices(Seq<LStatement> statements, List<String> warnings){
+        List<int[]> slices = new ArrayList<>();
+        int n = statements.size;
+        for(int i = 0; i < n; ){
+            if(statements.get(i) instanceof FuncDefStatement){
+                int dest = ((BeginStatement)statements.get(i)).destIndex;
+                if(dest > i && dest < n && statements.get(dest) instanceof BlockEndStatement){
+                    slices.add(new int[]{i, dest});
+                    i = dest + 1; // body + end belong to this slice (nested funcdefs damage it)
+                }else{
+                    warnings.add("funcdef at statement " + i + " is damaged and was skipped");
+                    i++;
+                }
+            }else{
+                i++;
+            }
+        }
+        return slices;
+    }
+
+    /**
+     * Salvages a library text function-by-function instead of rejecting the whole file when
+     * one definition is damaged: structurally broken or un-rewritable funcdefs are skipped,
+     * duplicate names keep the last definition, top-level stray statements are discarded, and
+     * survivors that call removed functions (or form call cycles) are removed too. The output
+     * is a sanitized text whose index is guaranteed to re-validate with {@link #buildLibrary};
+     * a fully valid input is returned byte-identical with no warnings.
+     */
+    public static SanitizedLibrary sanitizedLibrary(String text){
+        List<String> warnings = new ArrayList<>();
+        Seq<LStatement> statements;
+        try{
+            statements = LAssembler.read(text, true);
+        }catch(Throwable t){
+            String message = "the library text cannot be parsed: " + t.getMessage();
+            return new SanitizedLibrary("", new LibraryIndex(), List.of(message), true);
+        }
+
+        // Fast path: the whole library validates unchanged (output must equal the input).
+        try{
+            return new SanitizedLibrary(text, buildLibrary(statements), List.of(), false);
+        }catch(IllegalArgumentException ignored){
+            // buildLibrary remaps the bodies it processed before failing; parse again fresh
+            statements = LAssembler.read(text, true);
+        }
+
+        // identify top-level funcdef slices in source order
+        List<int[]> slices = topLevelFuncdefSlices(statements, warnings);
+
+        // top-level statements that belong to no funcdef slice are discarded as junk
+        boolean[] covered = new boolean[statements.size];
+        for(int[] slice : slices){
+            Arrays.fill(covered, slice[0], slice[1] + 1, true);
+        }
+        int strayCount = 0;
+        for(int i = 0; i < statements.size; i++){
+            if(!covered[i] && !(statements.get(i) instanceof FuncDefStatement)) strayCount++;
+        }
+        if(strayCount > 0){
+            warnings.add("top-level statement(s) outside any function were discarded");
+        }
+
+        // salvage each slice independently: build the function body without requiring its
+        // callees to exist yet (cross-function call validation happens below); duplicates
+        // keep the last definition
+        Map<String, Function> survivors = new LinkedHashMap<>();
+        Map<String, int[]> survivorSlices = new LinkedHashMap<>();
+        for(int[] slice : slices){
+            String name;
+            Function function;
+            try{
+                StringBuilder copyText = new StringBuilder();
+                copySlice(statements, slice[0], slice[1], copyText, 0);
+                Seq<LStatement> single = LAssembler.read(copyText.toString(), true);
+                if(single.size != slice[1] - slice[0] + 1){
+                    throw new IllegalArgumentException("slice round-trip changed the statement count");
+                }
+                function = buildFunction(single, 0, single.size - 1, true);
+                prepBody(function);
+                name = function.name;
+            }catch(RuntimeException e){
+                warnings.add("funcdef at statement " + slice[0] + " is damaged and was skipped (" + e.getMessage() + ")");
+                continue;
+            }
+            if(survivors.containsKey(name)){
+                warnings.add("duplicate function name '" + name + "'; keeping the last definition (statement " + slice[0] + ")");
+            }
+            survivors.put(name, function);
+            survivorSlices.put(name, slice);
+        }
+
+        // survivors whose in-library calls no longer resolve are removed (fixpoint)
+        removeInvalidCallers(survivors, survivorSlices, warnings);
+
+        // recursion among survivors would invalidate the whole library; drop the cycle members
+        Set<String> cycles = cycleMembers(survivors);
+        if(!cycles.isEmpty()){
+            warnings.add("library recursion was detected; the functions " + cycles + " were removed");
+            for(String name : cycles){
+                survivors.remove(name);
+                survivorSlices.remove(name);
+            }
+            removeInvalidCallers(survivors, survivorSlices, warnings);
+        }
+
+        // re-serialize the survivors and prove the result re-validates (safety net: the
+        // sanitizer must never hand back a text that buildLibrary would reject)
+        String output = serializeSlices(statements, survivorSlices.values());
+        LibraryIndex index = new LibraryIndex();
+        while(true){
+            try{
+                index = buildLibrary(LAssembler.read(output, true));
+                break;
+            }catch(IllegalArgumentException e){
+                if(survivorSlices.isEmpty()){
+                    warnings.add("the damaged library could not be salvaged; it was emptied (" + e.getMessage() + ")");
+                    break;
+                }
+                String last = null;
+                for(String name : survivorSlices.keySet()) last = name;
+                warnings.add("library function '" + last + "' was removed because the salvaged library still failed validation (" + e.getMessage() + ")");
+                survivors.remove(last);
+                survivorSlices.remove(last);
+                output = serializeSlices(statements, survivorSlices.values());
+            }
+        }
+        if(index.functions.isEmpty() && !warnings.isEmpty()){
+            warnings.add("no usable functions could be recovered from the damaged library");
+        }
+        return new SanitizedLibrary(output, index, warnings, true);
+    }
+
+    /** Removes survivors whose body calls do not resolve within the survivor set. */
+    private static void removeInvalidCallers(Map<String, Function> survivors, Map<String, int[]> survivorSlices, List<String> warnings){
+        boolean changed;
+        do{
+            changed = false;
+            for(String name : new ArrayList<>(survivors.keySet())){
+                if(!libraryBodyValid(survivors.get(name), survivors)){
+                    warnings.add("library function '" + name
+                        + "' was removed because it calls an undefined or invalid library function");
+                    survivors.remove(name);
+                    survivorSlices.remove(name);
+                    changed = true;
+                }
+            }
+        }while(changed);
+    }
+
+    /** Whether a salvaged function's body is self-contained and its calls resolve within the
+     *  survivor set (mirrors buildLibrary's per-function call rules); also rebuilds the
+     *  function's resolved callee set so recursion detection sees real edges. */
+    private static boolean libraryBodyValid(Function function, Map<String, Function> survivors){
+        int[] switchOwner = switchOwners(function.body);
+        int[] breakOwner = breakOwners(function.body);
+        function.callees.clear();
+        for(int i = 0; i < function.body.size; i++){
+            LStatement statement = function.body.get(i);
+            if(statement instanceof CaseStatement && switchOwner[i] < 0) return false;
+            if(statement instanceof BreakStatement && breakOwner[i] < 0) return false;
+            if(statement instanceof FuncCallStatement call){
+                Function target = survivors.get(call.name);
+                if(target == null) return false;
+                if(splitArgs(call.args).size() != target.params.size()) return false;
+                if(!call.result.isEmpty() && !target.hasValueReturn) return false;
+                function.callees.add(call.name);
+            }
+        }
+        return true;
+    }
+
+    /** Serializes the given funcdef slices into one library text (source order, concatenated). */
+    private static String serializeSlices(Seq<LStatement> statements, Collection<int[]> slices){
+        StringBuilder out = new StringBuilder();
+        int appended = 0;
+        for(int[] slice : slices){
+            appended += copySlice(statements, slice[0], slice[1], out, appended);
+        }
+        return out.toString();
+    }
+
+    /** Names that take part in at least one call cycle. */
+    private static Set<String> cycleMembers(Map<String, Function> all){
+        Set<String> inCycle = new HashSet<>();
+        Map<String, Integer> state = new HashMap<>();
+        Deque<String> stack = new ArrayDeque<>();
+        for(String name : all.keySet()){
+            if(state.get(name) == null) visitCycle(name, all, state, stack, inCycle);
+        }
+        return inCycle;
+    }
+
+    private static void visitCycle(String name, Map<String, Function> all, Map<String, Integer> state,
+                                   Deque<String> stack, Set<String> inCycle){
+        state.put(name, 1);
+        stack.push(name);
+        Function function = all.get(name);
+        if(function != null){
+            for(String callee : function.callees){
+                if(!all.containsKey(callee)) continue;
+                Integer seen = state.get(callee);
+                if(seen == null){
+                    visitCycle(callee, all, state, stack, inCycle);
+                }else if(seen == 1){
+                    for(String node : stack){
+                        inCycle.add(node);
+                        if(node.equals(callee)) break;
+                    }
+                }
+            }
+        }
+        stack.pop();
+        state.put(name, 2);
     }
 
     /** Splits a comma-separated parameter declaration list; empty entries are dropped. */
