@@ -177,3 +177,4 @@ tasks.register("copyAndroidJar", Copy){
 tasks.named("deploy").configure{
     finalizedBy tasks.named("copyAndroidJar")
 }
+

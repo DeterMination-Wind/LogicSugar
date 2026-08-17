@@ -67,6 +67,7 @@ public class SugarCompilerSelfTest{
         verificationDetectsExternalEdits();
         oversizeStripsComments();
         libraryDamageHarness();
+        librarySalvageRegressions();
         System.out.println("LogicSugar compiler self-test passed.");
     }
 
@@ -964,30 +965,22 @@ public class SugarCompilerSelfTest{
     // chain: the file later gained duplicate function definitions -> the library became
     // invalid -> every processor that called a library function failed to compile/save with
     // a misleading "calls undefined function" error.
-    //
-    // R1: Q1 builds through buildLibrary and contains spawnUnits + func.
-    // R2: a processor that calls spawnUnits (both modes) and the empty func (2 args, no
-    //     result variable) compiles.
-    // R3: calls to the empty func with 1 arg / with a result variable record the current
-    //     error texts (arity / "requests a result").
-    // R4: Q1 with 3x duplicate `spawn` definitions makes buildLibrary throw
-    //     "duplicate function name 'spawn'" (the exact trigger of the report).
-    // R5: end-to-end: a valid snapshot works, then the file turns bad -> library()==null
-    //     -> effectiveLibrary merge -> the compile fails with the EXACT reported error.
-    // R6: extractLibrarySource on the Q1 slices (used = {spawnUnits, func}) is idempotent
-    //     and the merged text re-validates.
+    private static final String q1LibraryText = """
+        funcdef spawnUnits count,team,unit,x,y 5
+        forbegin i 0 1 lessThan count 4
+        spawn unit x y 0 team r false
+        explosion @crux x y 10 1000 true true true false
+        blockend
+        blockend
+        funcdef func a,b 7
+        blockend
+        """;
+    /** Q1 with three duplicate `spawn` definitions appended (the report's actual trigger). */
+    private static final String q1DuplicatedText = q1LibraryText + "funcdef spawn a 9\nblockend\nfuncdef spawn a 11\nblockend\nfuncdef spawn a 13\nblockend\n";
+
     private static void libraryDamageHarness(){
-        System.out.println("== library damage harness R1-R6 ==");
-        String q1 = """
-            funcdef spawnUnits count,team,unit,x,y 5
-            forbegin i 0 1 lessThan count 4
-            spawn unit x y 0 team r false
-            explosion @crux x y 10 1000 true true true false
-            blockend
-            blockend
-            funcdef func a,b 7
-            blockend
-            """;
+        System.out.println("== library damage harness R1-R7 ==");
+        String q1 = q1LibraryText;
         String wprocSpawnUnits = "set x 1\nfunccall spawnUnits \"1, 1, 1, 1, 1\" ~\nend\n";
         String wprocFunc = "funccall func \"1, 2\" ~\nend\n";
 
@@ -1036,7 +1029,7 @@ public class SugarCompilerSelfTest{
         check(resultText != null && resultText.contains("requests a result"), "R3: no result error text recorded");
 
         // R4: duplicate definitions injected -> buildLibrary throws duplicate function name
-        String q1Duplicated = q1 + "funcdef spawn a 9\nblockend\nfuncdef spawn a 11\nblockend\nfuncdef spawn a 13\nblockend\n";
+        String q1Duplicated = q1DuplicatedText;
         try{
             SugarFunctions.buildLibrary(LAssembler.read(q1Duplicated, true));
             ok = false;
@@ -1083,7 +1076,7 @@ public class SugarCompilerSelfTest{
                 }
                 // a salvaged (damaged) library explains the failure through its repair warning
                 if(q1Index != null){
-                    String dupText = q1 + "funcdef spawn a 9\nblockend\nfuncdef spawn a 11\nblockend\nfuncdef spawn a 13\nblockend\n";
+                    String dupText = q1DuplicatedText;
                     SugarFunctions.LibraryIndex damaged = SugarFunctions.sanitizedLibrary(dupText).index;
                     check(damaged.damaged, "R5: salvaged library should be flagged damaged");
                     String damagedError = errorText("funccall nope \"1\" ~\nend\n", damaged);
@@ -1153,8 +1146,62 @@ public class SugarCompilerSelfTest{
         }
     }
 
-    /** Public entry for probe classes: installs the sugar statement parsers. */
-    public static void registerParsersPublic(){
+    // ===== library salvage regressions (T1-T5) ===========================================
+    private static void librarySalvageRegressions(){
+        String q1 = q1LibraryText;
+        String q1Duplicated = q1DuplicatedText;
+
+        // T1: the duplicated library is salvaged by function - spawnUnits, func and the last
+        // dup'd spawn survive; the processor that used to fail now compiles in both modes
+        SugarFunctions.SanitizedLibrary salvaged = SugarFunctions.sanitizedLibrary(q1Duplicated);
+        check(salvaged.damaged, "T1: duplicated library was not flagged damaged");
+        check(salvaged.index.functions.containsKey("spawnUnits"), "T1: spawnUnits was lost");
+        check(salvaged.index.functions.containsKey("func"), "T1: func was lost");
+        check(salvaged.index.functions.containsKey("spawn"), "T1: duplicate spawn was not kept");
+        check(salvaged.index.functions.get("spawn").params.size() == 1, "T1: kept spawn is not the last definition");
+        check(salvaged.warnings.stream().anyMatch(w -> w.contains("duplicate function name 'spawn'")),
+            "T1: duplicate-name repair is not reported");
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            SugarCompiler.compile("funccall spawnUnits \"1, 1, 1, 1, 1\" ~\nend\n", mode, salvaged.index);
+        }
+        SugarFunctions.buildLibrary(LAssembler.read(salvaged.text, true));
+
+        // T2: a fully valid library sanitizes byte-identically with no warnings
+        SugarFunctions.SanitizedLibrary clean = SugarFunctions.sanitizedLibrary(q1);
+        check(!clean.damaged && clean.warnings.isEmpty(), "T2: valid library flagged damaged");
+        check(clean.text.equals(q1), "T2: sanitizer changed a fully valid library");
+
+        // T3: empty-function call errors stay precise (arity / result request)
+        SugarFunctions.LibraryIndex q1Index = SugarFunctions.buildLibrary(LAssembler.read(q1, true));
+        String arity = errorText("funccall func \"1\" ~\nend\n", q1Index);
+        check("funccall at statement 0 calls 'func' with 1 argument(s) but it expects 2.".equals(arity),
+            "T3: arity text changed: " + arity);
+        String result = errorText("funccall func \"1, 2\" out\nend\n", q1Index);
+        check("funccall at statement 0 requests a result from 'func' but its body never returns a value.".equals(result),
+            "T3: result text changed: " + result);
+
+        // T4: extracting the slices around the empty function is idempotent and re-validates
+        Set<String> used = new HashSet<>(List.of("spawnUnits", "func"));
+        String extracted = SugarFunctions.extractLibrarySource(q1, used);
+        check(extracted.equals(SugarFunctions.extractLibrarySource(extracted, used)), "T4: extraction is not idempotent");
+        SugarFunctions.LibraryIndex reExtracted = SugarFunctions.buildLibrary(LAssembler.read(extracted, true));
+        check(reExtracted.functions.containsKey("spawnUnits") && reExtracted.functions.containsKey("func"),
+            "T4: extracted subset lost functions");
+
+        // T5: a damaged local library merges into a non-null effective library with the
+        // recoverable functions, and the damage state is propagated for the repair hint
+        SugarCompiler.EffectiveLibrary effective = SugarCompiler.effectiveLibrary("", null, q1Duplicated);
+        check(effective.index != null, "T5: effective library went null for a damaged local");
+        check(effective.index.functions.containsKey("spawnUnits") && effective.index.functions.containsKey("func"),
+            "T5: effective library lost the salvaged functions");
+        check(effective.index.damaged && !effective.index.warnings.isEmpty(),
+            "T5: effective merge did not propagate the damage state");
+        // the merged library compiles the processor that the pre-fix release rejected
+        SugarCompiler.compile("funccall spawnUnits \"1, 1, 1, 1, 1\" ~\nend\n",
+            SugarCompiler.FuncMode.normal, effective.index, effective.text);
+    }
+
+    private static void registerParsersPublic(){
         registerParsers();
     }
 
