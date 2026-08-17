@@ -12,6 +12,7 @@ import mindustry.logic.SugarFunctions;
 import mindustry.logic.SugarStatements;
 import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.BreakStatement;
+import mindustry.logic.SugarStatements.ContinueStatement;
 import mindustry.logic.SugarStatements.ForBeginStatement;
 import mindustry.logic.SugarStatements.FuncCallStatement;
 import mindustry.logic.SugarStatements.FuncDefStatement;
@@ -36,6 +37,7 @@ public class SugarCompilerSelfTest{
         semanticErrorsAreLocated();
         jumpsMayTargetStructureBoundaries();
         breaksLeaveNearestStructure();
+        ifElseChain();
         generatedCodeIsOptimized();
         vanillaCodePassesThrough();
         expressionOpsRoundTrip();
@@ -170,6 +172,37 @@ public class SugarCompilerSelfTest{
             """;
         check(SugarCompiler.compile(nested).contains("jump __ls_stmt_4 always x false"),
             "break did not choose the nearest enclosing switch");
+    }
+
+    private static void ifElseChain(){
+        // if a > 5 { x=1 } elif b <= 3 { x=2 } else { x=3 }
+        String chain = """
+            ifbegin a greaterThan 5 6
+            set x 1
+            elif b lessThanEq 3
+            set x 2
+            else
+            set x 3
+            blockend
+            """;
+        String compiled = loweredCode(SugarCompiler.compile(chain));
+        check(compiled.contains("jump __ls_if_branch_2 lessThanEq a 5"), "if false-branch jump is wrong");
+        check(compiled.contains("jump __ls_if_branch_4 greaterThan b 3"), "elif false-branch jump is wrong");
+        check(compiled.contains("__ls_if_branch_2:") && compiled.contains("__ls_if_branch_4:"), "if/elif branch labels missing");
+        check(compiled.contains("set x 1") && compiled.contains("set x 2") && compiled.contains("set x 3"), "if/elif/else bodies missing");
+
+        // simple if with no elif/else
+        String simple = loweredCode(SugarCompiler.compile("ifbegin a equal 0 2\nset x 1\nblockend\n"));
+        check(simple.contains("jump __ls_stmt_3 notEqual a 0"), "simple if negated jump is wrong");
+        check(!simple.contains("__ls_if_branch_"), "simple if has unexpected branch labels");
+
+        // legacy single-value while still maps to "!= false"
+        String legacy = loweredCode(SugarCompiler.compile("whilebegin a 2\nset y 1\nblockend\n"));
+        check(legacy.contains("jump __ls_while_body_0 notEqual a false"), "legacy while condition not mapped");
+
+        // elif/else outside an if are rejected
+        expectFailure("elif a equal 0\n", "elif outside an if");
+        expectFailure("else\n", "else outside an if");
     }
 
     private static void generatedCodeIsOptimized(){
@@ -963,8 +996,13 @@ public class SugarCompilerSelfTest{
         LAssembler.customParsers.put("whilebeginc", tokens -> SugarStatements.parseWhileBegin(tokens, true));
         LAssembler.customParsers.put("switchbegin", SugarStatements::parseSwitchBegin);
         LAssembler.customParsers.put("switchbeginc", tokens -> SugarStatements.parseSwitchBegin(tokens, true));
+        LAssembler.customParsers.put("ifbegin", SugarStatements::parseIfBegin);
+        LAssembler.customParsers.put("ifbeginc", tokens -> SugarStatements.parseIfBegin(tokens, true));
         LAssembler.customParsers.put("case", SugarStatements::parseCase);
+        LAssembler.customParsers.put("elif", SugarStatements::parseElseIf);
+        LAssembler.customParsers.put("else", SugarStatements::parseElse);
         LAssembler.customParsers.put("break", tokens -> new BreakStatement());
+        LAssembler.customParsers.put("continue", tokens -> new ContinueStatement());
         LAssembler.customParsers.put("blockend", tokens -> new BlockEndStatement());
         LAssembler.customParsers.put("funcdef", SugarStatements::parseFuncDef);
         LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));

@@ -72,8 +72,12 @@ public class LogicSugarMod extends Mod{
         LogicIO.allStatements.add(SugarStatements.ForBeginStatement::new);
         LogicIO.allStatements.add(SugarStatements.WhileBeginStatement::new);
         LogicIO.allStatements.add(SugarStatements.SwitchBeginStatement::new);
+        LogicIO.allStatements.add(SugarStatements.IfBeginStatement::new);
         LogicIO.allStatements.add(SugarStatements.CaseStatement::new);
+        LogicIO.allStatements.add(SugarStatements.ElseIfStatement::new);
+        LogicIO.allStatements.add(SugarStatements.ElseStatement::new);
         LogicIO.allStatements.add(SugarStatements.BreakStatement::new);
+        LogicIO.allStatements.add(SugarStatements.ContinueStatement::new);
         LogicIO.allStatements.add(SugarStatements.BlockEndStatement::new);
         LogicIO.allStatements.add(SugarStatements.FuncDefStatement::new);
         LogicIO.allStatements.add(SugarStatements.FuncCallStatement::new);
@@ -85,8 +89,13 @@ public class LogicSugarMod extends Mod{
         LAssembler.customParsers.put("whilebeginc", tokens -> SugarStatements.parseWhileBegin(tokens, true));
         LAssembler.customParsers.put("switchbegin", SugarStatements::parseSwitchBegin);
         LAssembler.customParsers.put("switchbeginc", tokens -> SugarStatements.parseSwitchBegin(tokens, true));
+        LAssembler.customParsers.put("ifbegin", SugarStatements::parseIfBegin);
+        LAssembler.customParsers.put("ifbeginc", tokens -> SugarStatements.parseIfBegin(tokens, true));
         LAssembler.customParsers.put("case", SugarStatements::parseCase);
+        LAssembler.customParsers.put("elif", SugarStatements::parseElseIf);
+        LAssembler.customParsers.put("else", SugarStatements::parseElse);
         LAssembler.customParsers.put("break", tokens -> new SugarStatements.BreakStatement());
+        LAssembler.customParsers.put("continue", tokens -> new SugarStatements.ContinueStatement());
         LAssembler.customParsers.put("blockend", tokens -> new SugarStatements.BlockEndStatement());
         LAssembler.customParsers.put("funcdef", SugarStatements::parseFuncDef);
         LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));
