@@ -125,6 +125,7 @@ funccall f "x, 4" out  # 调用：out = (3+4)*2
 - 库函数**不能修改调用方变量**：函数体内被写入的变量名自动混淆为 `__ls_func_<函数名>_<原名>`；只读变量原样保留（可读调用方全局变量）；`@` 系统变量、`cell1`/`bank1`/`memory1` 等存储设备豁免
 - 库函数只能调用其他库函数；处理器内调用先解析本地函数，找不到再查函数库（本地同名函数优先）
 - 未定义的调用、库文件损坏都会给出明确编译错误；不可达的函数体不产生任何指令（零成本）
+- **v2.1.3 函数库自愈**：函数库文件损坏（重名函数、结构损坏、残留垃圾行、半截写入）时改为**逐函数抢救**，不再让所有引用库函数的处理器集体编译失败——损坏定义被跳过、重名保留最后一个定义、垃圾行被丢弃。处理器继续可编译可保存；未解析调用现在会说明真实原因（库不可用 / 已修复的问题）并指向 设置 → 函数库。函数库编辑器加载**净化后**的内容（显示被跳过/合并的项，直接保存即写回自愈文件），并提供**放弃更改**出口；处理器编辑会话在库文件被改动时会自动刷新库快照，消除陈旧快照导致的假 undefined 报错。
 
 **保留前缀**：`__ls_`、`__ls_func_`、`__ls_f_`、`__ls_i_` 为编译器保留前缀，函数名、参数名和普通变量请勿使用。（`__ls_sugar` 和 `__ls_lib` 是每次保存时追加的持久化载体，见下文。）
 
@@ -150,9 +151,9 @@ funccall f "x, 4" out  # 调用：out = (3+4)*2
 gradlew deploy
 ```
 
-输出：`build/libs/LogicSugar-v2.1.2.jar` —— 同时包含桌面字节码与 Android `classes.dex` 的通用 JAR，一个文件在两种平台都可用。放入 Mindustry 的 `mods/` 目录即可。
+输出：`build/libs/LogicSugar-v2.1.3.jar` —— 同时包含桌面字节码与 Android `classes.dex` 的通用 JAR，一个文件在两种平台都可用。放入 Mindustry 的 `mods/` 目录即可。
 
-`deploy` 依赖 Android SDK：需要 `build-tools` 中的 D8（设置 `ANDROID_SDK_ROOT` 或 `ANDROID_HOME`，或将 `D8_PATH` 指向 `d8`/`d8.bat`），以及 `platforms` 目录下的 `android.jar`；缺失时 dex 步骤会直接失败。其他产物：`jar` → 仅桌面的 `LogicSugar-v2.1.2-desktop.jar`，`jarAndroid` → `LogicSugar-v2.1.2-android.jar`，`releaseZip` → `LogicSugar-v2.1.2.zip`（发布 JAR + README + LICENSE）。
+`deploy` 依赖 Android SDK：需要 `build-tools` 中的 D8（设置 `ANDROID_SDK_ROOT` 或 `ANDROID_HOME`，或将 `D8_PATH` 指向 `d8`/`d8.bat`），以及 `platforms` 目录下的 `android.jar`；缺失时 dex 步骤会直接失败。其他产物：`jar` → 仅桌面的 `LogicSugar-v2.1.3-desktop.jar`，`jarAndroid` → `LogicSugar-v2.1.3-android.jar`，`releaseZip` → `LogicSugar-v2.1.3.zip`（发布 JAR + README + LICENSE）。
 
 ## 致谢
 

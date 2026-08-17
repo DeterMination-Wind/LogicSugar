@@ -125,6 +125,7 @@ funccall f "x, 4" out  # call: out = (3+4)*2
 - Library functions **cannot modify caller variables**: every name the body writes is mangled to `__ls_func_<name>_<original>`; read-only names stay untouched (the caller's globals remain readable); `@` system variables and `cell1`/`bank1`/`memory1` storage devices are exempt
 - Library functions can only call other library functions; processor calls resolve local functions first, then the library (a local function shadows a library one)
 - Undefined calls and damaged library files produce clear compile errors; unreachable function bodies emit zero instructions
+- **v2.1.3 library resilience**: a damaged library file (duplicate functions, broken structure, stray lines, partial writes) is **salvaged per function** instead of breaking every processor that uses it — broken definitions are skipped, duplicate names keep the last definition, and junk is discarded. Processors keep compiling and saving; unresolved calls now explain the actual cause (library unavailable / repaired problems) and point at Settings → Function Library. The library editor loads the **healed** content (shows what was skipped/merged, a plain save rewrites the file) and offers a **Discard Changes** exit. Processor editors refresh their library snapshot when the file changes mid-session, so stale snapshots no longer produce fake undefined-function errors.
 
 **Reserved prefixes**: `__ls_`, `__ls_func_`, `__ls_f_`, `__ls_i_` are reserved for the compiler — do not use them for function names, parameter names, or variables. (`__ls_sugar` and `__ls_lib` are the persistence carriers appended to every saved program, see below.)
 
@@ -150,9 +151,9 @@ Colored scrollbar (each segment tinted by its block's category color), click-to-
 gradlew deploy
 ```
 
-Output: `build/libs/LogicSugar-v2.1.2.jar` — a universal JAR containing both desktop bytecode and the Android `classes.dex`, so one file works on both platforms. Drop it into Mindustry's `mods/` folder.
+Output: `build/libs/LogicSugar-v2.1.3.jar` — a universal JAR containing both desktop bytecode and the Android `classes.dex`, so one file works on both platforms. Drop it into Mindustry's `mods/` folder.
 
-`deploy` requires the Android SDK: D8 from `build-tools` (set `ANDROID_SDK_ROOT` or `ANDROID_HOME`, or point `D8_PATH` at `d8`/`d8.bat`) plus an `android.jar` from `platforms`; without them the dexing step fails. Other artifacts: `jar` → desktop-only `LogicSugar-v2.1.2-desktop.jar`, `jarAndroid` → `LogicSugar-v2.1.2-android.jar`, `releaseZip` → `LogicSugar-v2.1.2.zip` (release jar + README + LICENSE).
+`deploy` requires the Android SDK: D8 from `build-tools` (set `ANDROID_SDK_ROOT` or `ANDROID_HOME`, or point `D8_PATH` at `d8`/`d8.bat`) plus an `android.jar` from `platforms`; without them the dexing step fails. Other artifacts: `jar` → desktop-only `LogicSugar-v2.1.3-desktop.jar`, `jarAndroid` → `LogicSugar-v2.1.3-android.jar`, `releaseZip` → `LogicSugar-v2.1.3.zip` (release jar + README + LICENSE).
 
 ## Acknowledgements
 
