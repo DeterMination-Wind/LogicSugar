@@ -40,6 +40,7 @@ public class SugarCompilerSelfTest{
         ifElseChain();
         commentTextRoundTrip();
         generatedCodeIsOptimized();
+        counterOperationsAreNotOptimized();
         vanillaCodePassesThrough();
         expressionOpsRoundTrip();
         structuredTargetsFollowExpressionResize();
@@ -258,6 +259,22 @@ public class SugarCompilerSelfTest{
             """));
         check(switchCode.contains("jump __ls_case_1 equal x 1"), "switch did not compare its source value directly");
         check(!switchCode.contains("__ls_switch_"), "switch temporary variable was emitted");
+    }
+
+    /** Explicit @counter use is observable control flow and must not enter op optimization. */
+    private static void counterOperationsAreNotOptimized(){
+        String lowered = loweredCode(SugarCompiler.compile("""
+            whilebegin true 5
+            op add @counter 1 2
+            op add x @counter 1
+            op add _0 4 5
+            op add y _0 1
+            blockend
+            """));
+        check(lowered.contains("op add @counter 1 2"), "@counter write was folded or rewritten");
+        check(lowered.contains("op add x @counter 1"), "@counter read was folded or rewritten");
+        check(!lowered.contains("set @counter 3"), "constant folding changed an explicit @counter operation");
+        check(lowered.contains("set y 10"), "ordinary ops after the @counter barrier were not optimized");
     }
 
     private static String loweredCode(String compiled){

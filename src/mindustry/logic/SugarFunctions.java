@@ -1477,7 +1477,9 @@ public final class SugarFunctions{
 
     /**
      * Optimizes only straight runs of ordinary op statements. A run is cut at every possible
-     * statement-label entry, so constants are never propagated across a jump target.
+     * statement-label entry, so constants are never propagated across a jump target. Explicit
+     * @counter reads/writes are also hard barriers: the instruction pointer is observable in
+     * mlog, so treating it like an ordinary data-flow variable can change control flow.
      */
     private static String[] optimizeOperations(Seq<LStatement> statements, boolean[] statementLabels){
         String[] result = new String[statements.size];
@@ -1489,8 +1491,16 @@ public final class SugarFunctions{
                 continue;
             }
 
+            if(touchesCounter((OperationStatement)statements.get(start))){
+                result[start] = originalOperationText((OperationStatement)statements.get(start));
+                removeTemporaryReferences(remainingReferences, statements.get(start));
+                start++;
+                continue;
+            }
+
             int end = start + 1;
-            while(end < statements.size && statements.get(end) instanceof OperationStatement && !statementLabels[end]) end++;
+            while(end < statements.size && statements.get(end) instanceof OperationStatement
+                && !statementLabels[end] && !touchesCounter((OperationStatement)statements.get(end))) end++;
             for(int i = start; i < end; i++) removeTemporaryReferences(remainingReferences, statements.get(i));
             List<OptimizedOperation> operations = new ArrayList<>();
             Map<String, String> constants = new HashMap<>();
@@ -1532,6 +1542,19 @@ public final class SugarFunctions{
             start = end;
         }
         return result;
+    }
+
+    /** Returns true when an operation observes or changes the processor instruction pointer. */
+    private static boolean touchesCounter(OperationStatement operation){
+        return "@counter".equals(operation.dest) || "@counter".equals(operation.a)
+            || "@counter".equals(operation.b);
+    }
+
+    /** Serializes a counter-touching operation without data-flow rewrites. */
+    private static String originalOperationText(OperationStatement operation){
+        StringBuilder out = new StringBuilder();
+        operation.write(out);
+        return out.append('\n').toString();
     }
 
     private static String constantValue(OperationStatement operation, String a, String b){
