@@ -135,13 +135,16 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            table.add(text("for.variable", "for"));
-            field(table, variable, value -> variable = value).width(60f);
-            table.add(text("for.from", "from"));
-            field(table, initial, value -> initial = value).width(60f);
-            table.add(text("for.step", "step"));
-            field(table, step, value -> step = value).width(60f);
-            table.add(text("condition", "while"));
+            // Vanilla-style "label + input": fields() adds the label and field as separate
+            // left-aligned cells, so nothing gets centered.
+            fields(table, text("for.variable", "variable"), variable, value -> variable = value);
+            row(table);
+            fields(table, text("for.initial", "initial"), initial, value -> initial = value);
+            row(table);
+            fields(table, text("for.step", "step"), step, value -> step = value);
+            row(table);
+            // 终止条件：描述 + 三段式（value op compare）
+            table.add(text("for.condition", "until")).padLeft(10).left();
             table.table(this::rebuildCondition);
             foldControl(table);
         }
