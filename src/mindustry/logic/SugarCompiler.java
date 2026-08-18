@@ -309,6 +309,11 @@ public final class SugarCompiler{
         return false;
     }
 
+    /** Whether stored code was compiled by Logic Sugar (carries the persistence carrier). */
+    public static boolean isSugarProgram(String code){
+        return code != null && containsCarrier(code, carrierSugarPrefix);
+    }
+
     /** UTF-8 base64 via arc's coder (minSdk 21 forbids java.util.Base64). */
     private static String encode(String text){
         return new String(Base64Coder.encode(text.getBytes(StandardCharsets.UTF_8)));

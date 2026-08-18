@@ -16,6 +16,7 @@ import mindustry.mod.Mod;
 import mindustry.ui.dialogs.SettingsMenuDialog;
 import logicsugar.assist.BoxSelect;
 import logicsugar.assist.JumpLineColor;
+import logicsugar.assist.VarDisplayFilter;
 import logicsugar.assist.expr.ExprHook;
 
 import static arc.Events.on;
@@ -40,6 +41,7 @@ public class LogicSugarMod extends Mod{
                 Vars.ui.logic.hidden(JumpLineColor::clearCache);
                 BoxSelect.init();
                 ExprHook.init();
+                VarDisplayFilter.init();
                 // one settings category: functions + jump line coloring (the latter is
                 // bundled by Neon when bekBundled, so it is skipped there)
                 LogicSugarSettings.setup(!bekBundled);
@@ -112,6 +114,7 @@ public class LogicSugarMod extends Mod{
     public void bekBuildSettings(SettingsMenuDialog.SettingsTable table){
         table.pref(new LogicSugarSettings.FuncModeSetting(LogicSugarSettings.settingFuncMode, "normal"));
         table.pref(new LogicSugarSettings.LibraryButtonSetting("logicsugar.funclib"));
+        LogicSugarSettings.addHideVarsPref(table);
         JumpLineColor.buildSettings(table);
     }
 }

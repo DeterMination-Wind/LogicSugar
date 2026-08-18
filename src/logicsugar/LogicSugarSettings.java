@@ -38,9 +38,17 @@ public final class LogicSugarSettings{
     private static void build(SettingsMenuDialog.SettingsTable table, boolean includeJumpLines){
         table.pref(new FuncModeSetting(settingFuncMode, "normal"));
         table.pref(new LibraryButtonSetting("logicsugar.funclib"));
+        addHideVarsPref(table);
         if(includeJumpLines){
             logicsugar.assist.JumpLineColor.buildSettings(table);
         }
+    }
+
+    /** Checkbox for hiding compiler-generated variables in MindustryX's variable browser. */
+    static void addHideVarsPref(SettingsMenuDialog.SettingsTable table){
+        table.checkPref(logicsugar.assist.VarDisplayFilter.settingHideVars, true, b -> {
+            if(b) logicsugar.assist.VarDisplayFilter.applyToAll();
+        });
     }
 
     /** Click-to-cycle picker for the function expansion mode. */
