@@ -43,9 +43,10 @@ import java.util.*;
  *   2. 释放 → 选中积木高亮，显示工具栏，积木按钮被接管
  *   3. 拖动选中积木 → 积木/半透明预览跟随鼠标，显示插入指示器
  *   4. 松手 → 积木移动/复制到新位置
- *   5. Ctrl+点击单积木 → 选中并复制拖动
- *   6. Delete/Backspace → 快速删除选中积木
- *   7. 右键/Esc → 取消拖动
+ *   5. 普通单积木拖动需先离开积木宽度的 40%，避免误触改变顺序
+ *   6. Ctrl+点击单积木 → 选中并复制拖动
+ *   7. Delete/Backspace → 快速删除选中积木
+ *   8. 右键/Esc → 取消拖动
  *
  * ------------------------------------------------------------
  * 致谢 / Acknowledgements
@@ -58,6 +59,7 @@ public class BoxSelect{
 
     // ===== 常量 =====
     private static final float MIN_DRAG_DIST = 8f;
+    private static final float SINGLE_DRAG_WIDTH_RATIO = 0.4f;
     private static final float SCROLLBAR_WIDTH = 14f;
     private static final float AUTOSCROLL_MARGIN = 80f;
     private static final float AUTOSCROLL_SPEED = 15f;
@@ -88,7 +90,7 @@ public class BoxSelect{
 
     // ===== 状态 =====
     private enum State{
-        IDLE, SELECTING, SELECTED, DRAGGING_MOVE, DRAGGING_COPY
+        IDLE, SELECTING, SELECTED, PENDING_SINGLE_DRAG, DRAGGING_MOVE, DRAGGING_COPY
     }
     private static State state = State.IDLE;
 
@@ -111,6 +113,11 @@ public class BoxSelect{
     private static float dragStartMouseX, dragStartMouseY;
     private static float dragStartLocalX, dragStartLocalY;
     private static int dragInsertPos = -1;
+    private static StatementElem pendingSingleDrag;
+    private static float pendingSingleDragX, pendingSingleDragY;
+    private static boolean pendingSingleDragKeepsSelection;
+    private static boolean singleStatementDrag;
+    private static boolean singleStatementDragKeepsSelection;
 
     // 拖动期间保存的原始 child.y（用于恢复 layout() 的修改）
     private static float[] dragBaseYs = null;
@@ -377,17 +384,30 @@ public class BoxSelect{
                 event.stop();
                 return true;
             }
-            // 普通点击非选中积木 → 放行给原版（让原版处理单积木拖拽）
-            // 但如果当前有选中，先清空选中
+            // 中键复制仍交给原版；它在 touchDown 中直接执行 copy()。
+            if(button == KeyCode.mouseMiddle){
+                if(!selected.isEmpty()) clearSelection();
+                return false;
+            }
+
+            // 普通点击先进入候选拖动状态。原版 StatementElem 会在 touchDown
+            // 时立即 toFront()，所以必须延迟给它事件，才能让误触保持原顺序。
             if(!selected.isEmpty()){
                 clearSelection();
             }
-            return false;
+            startPendingSingleDrag(clickedStmt, stageCoords.x, stageCoords.y, false);
+            event.stop();
+            return true;
         }
 
         if(onSelectedStatement){
-            // 点击选中积木 → 开始拖动，拦截事件
-            startDrag(canvas, stageCoords.x, stageCoords.y, button);
+            if(button == KeyCode.mouseMiddle){
+                startDrag(canvas, stageCoords.x, stageCoords.y, button);
+                event.stop();
+                return true;
+            }
+            // 点击选中积木 → 先等待足够移动，避免误触语句本体时改变顺序
+            startPendingSingleDrag(clickedStmt, stageCoords.x, stageCoords.y, true);
             event.stop(); // 阻止原版 InputListener 收到事件
             return true;  // 注册 touchFocus，接收后续 drag/up
         }
@@ -404,6 +424,23 @@ public class BoxSelect{
 
         float mx = x;
         float my = y;
+
+        if(state == State.PENDING_SINGLE_DRAG){
+            if(!singleDragThresholdReached(canvas, mx, my)) return;
+
+            StatementElem statement = pendingSingleDrag;
+            float startX = pendingSingleDragX;
+            float startY = pendingSingleDragY;
+            boolean keepsSelection = pendingSingleDragKeepsSelection;
+            clearPendingSingleDrag();
+            if(!keepsSelection){
+                selected.clear();
+                selected.add(statement);
+            }
+            singleStatementDrag = true;
+            singleStatementDragKeepsSelection = keepsSelection;
+            startDrag(canvas, startX, startY, KeyCode.mouseLeft);
+        }
 
         if(state == State.SELECTING){
             selCurX = mx;
@@ -434,7 +471,17 @@ public class BoxSelect{
         LCanvas canvas = getCanvas();
         if(canvas == null) return;
 
-        if(state == State.SELECTING){
+        if(state == State.PENDING_SINGLE_DRAG){
+            boolean keepsSelection = pendingSingleDragKeepsSelection;
+            clearPendingSingleDrag();
+            if(keepsSelection){
+                state = State.SELECTED;
+            }else{
+                selected.clear();
+                state = State.IDLE;
+            }
+            event.stop();
+        }else if(state == State.SELECTING){
             if(!dragMoved){
                 if(!selected.isEmpty()) clearSelection();
                 state = State.IDLE;
@@ -459,6 +506,10 @@ public class BoxSelect{
             }else{
                 cancelDrag(canvas);
             }
+        }
+
+        if(singleStatementDrag){
+            finishSingleStatementDrag();
         }
     }
 
@@ -643,6 +694,46 @@ public class BoxSelect{
         state = State.IDLE;
     }
 
+    private static void startPendingSingleDrag(StatementElem statement, float mx, float my, boolean keepsSelection){
+        pendingSingleDrag = statement;
+        pendingSingleDragX = mx;
+        pendingSingleDragY = my;
+        pendingSingleDragKeepsSelection = keepsSelection;
+        state = State.PENDING_SINGLE_DRAG;
+    }
+
+    private static void clearPendingSingleDrag(){
+        pendingSingleDrag = null;
+        pendingSingleDragX = 0f;
+        pendingSingleDragY = 0f;
+        pendingSingleDragKeepsSelection = false;
+    }
+
+    /** Require a deliberate movement before taking over the vanilla single-block drag. */
+    private static boolean singleDragThresholdReached(LCanvas canvas, float mx, float my){
+        if(pendingSingleDrag == null) return false;
+
+        float width = pendingSingleDrag.getWidth();
+        if(width <= 0f) width = pendingSingleDrag.getPrefWidth();
+        if(width <= 0f) width = canvas.statements.getWidth();
+
+        float threshold = Math.max(MIN_DRAG_DIST, width * SINGLE_DRAG_WIDTH_RATIO);
+        float dx = mx - pendingSingleDragX;
+        float dy = my - pendingSingleDragY;
+        return dx * dx + dy * dy >= threshold * threshold;
+    }
+
+    private static void finishSingleStatementDrag(){
+        singleStatementDrag = false;
+        if(singleStatementDragKeepsSelection){
+            singleStatementDragKeepsSelection = false;
+        }else if(!selected.isEmpty()){
+            clearSelection();
+        }else{
+            state = State.IDLE;
+        }
+    }
+
     /** 重置所有积木的 translation（移动模式下选中积木设了 translation 跟随鼠标） */
     private static void resetAllTranslations(LCanvas canvas){
         for(Element child : canvas.statements.getChildren()){
@@ -654,6 +745,9 @@ public class BoxSelect{
         clearDraggingField(canvas);
         restoreButtonIcons(canvas);
         resetAllTranslations(canvas);
+        clearPendingSingleDrag();
+        singleStatementDrag = false;
+        singleStatementDragKeepsSelection = false;
         selected.clear();
         state = State.IDLE;
         dragInsertPos = -1;
