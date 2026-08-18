@@ -144,7 +144,7 @@ public final class SugarStatements{
             fields(table, text("for.step", "step"), step, value -> step = value);
             row(table);
             // 终止条件：描述 + 三段式（value op compare）
-            table.add(text("condition", "until")).padLeft(10).left();
+            table.add(text("for.condition", "until")).padLeft(10).left();
             table.table(this::rebuildCondition);
             foldControl(table);
         }
