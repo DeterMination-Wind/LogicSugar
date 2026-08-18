@@ -90,10 +90,14 @@ public final class VarDisplayFilter{
             if(af == null) return; // vanilla client: nothing to filter
             if(!(af.get(executor) instanceof LVar[] all)) return;
 
-            if(enabled() && hasSugarInternals(all)){
-                fullAllVars.put(executor, all);
-                cachedCode.put(executor, codeOf(executor));
-                af.set(executor, filter(all));
+            if(enabled()){
+                // Filter once when internal names are present; afterwards the array has none,
+                // so this is a no-op — the hidden state stays stable between sweeps.
+                if(hasSugarInternals(all)){
+                    fullAllVars.put(executor, all);
+                    cachedCode.put(executor, codeOf(executor));
+                    af.set(executor, filter(all));
+                }
             }else{
                 // Setting off: restore the full array we hid.
                 LVar[] full = takeCache(executor);
