@@ -1,9 +1,11 @@
 package mindustry.logic;
 
 import arc.Core;
+import arc.func.Cons;
 import arc.graphics.Color;
 import arc.scene.Element;
 import arc.scene.ui.TextField;
+import arc.scene.ui.layout.Cell;
 import arc.scene.ui.layout.Table;
 import arc.struct.Seq;
 import mindustry.graphics.Pal;
@@ -42,6 +44,17 @@ public final class SugarStatements{
         @Override
         public LCategory category(){
             return LCategory.control;
+        }
+
+        /** Attaches a vanilla-style hover hint to a parameter label (bundle key: logicsugar.hint.<key>). */
+        protected void hint(Cell<?> cell, String key){
+            LCanvas.tooltip(cell, "logicsugar.hint." + key);
+        }
+
+        /** Label + input row with a hover hint on the label, like vanilla fields(). */
+        protected Cell<TextField> fieldsHint(Table table, String desc, String hintKey, String value, Cons<String> setter){
+            table.add(desc).padLeft(10).left().self(c -> hint(c, hintKey));
+            return field(table, value, setter).width(85f).padRight(10).left();
         }
     }
 
@@ -137,14 +150,14 @@ public final class SugarStatements{
         public void build(Table table){
             // Vanilla-style "label + input": fields() adds the label and field as separate
             // left-aligned cells, so nothing gets centered.
-            fields(table, text("for.variable", "variable"), variable, value -> variable = value);
+            fieldsHint(table, text("for.variable", "variable"), "for.variable", variable, value -> variable = value);
             row(table);
-            fields(table, text("for.initial", "initial"), initial, value -> initial = value);
+            fieldsHint(table, text("for.initial", "initial"), "for.initial", initial, value -> initial = value);
             row(table);
-            fields(table, text("for.step", "step"), step, value -> step = value);
+            fieldsHint(table, text("for.step", "step"), "for.step", step, value -> step = value);
             row(table);
             // 终止条件：描述 + 三段式（value op compare）
-            table.add(text("for.condition", "until")).padLeft(10).left();
+            table.add(text("for.condition", "until")).padLeft(10).left().self(c -> hint(c, "for.condition"));
             table.table(this::rebuildCondition);
             foldControl(table);
         }
@@ -174,7 +187,7 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            table.add(text("condition", "condition"));
+            table.add(text("condition", "condition")).self(c -> hint(c, "while.condition"));
             table.table(this::rebuildCondition);
             foldControl(table);
         }
@@ -198,7 +211,7 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            table.add(text("switch.value", "switch"));
+            table.add(text("switch.value", "switch")).self(c -> hint(c, "switch.value"));
             field(table, value, result -> value = result);
             foldControl(table);
         }
@@ -210,7 +223,10 @@ public final class SugarStatements{
 
     public static class CaseStatement extends SugarStatement{
         public String value = "0";
-        @Override public void build(Table table){ table.add(text("case.value", "case")); field(table, value, result -> value = result); }
+        @Override public void build(Table table){
+            table.add(text("case.value", "case")).self(c -> hint(c, "case"));
+            field(table, value, result -> value = result).self(c -> hint(c, "case.value"));
+        }
         @Override public String name(){ return text("case", "Case"); }
         @Override public String typeName(){ return "Case"; }
         @Override public void write(StringBuilder out){ out.append("case ").append(value); }
@@ -222,7 +238,7 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            table.add(text("if.condition", "if"));
+            table.add(text("if.condition", "if")).self(c -> hint(c, "if.condition"));
             table.table(this::rebuildCondition);
             foldControl(table);
         }
@@ -247,7 +263,7 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            table.add(text("elif", "elif"));
+            table.add(text("elif", "elif")).self(c -> hint(c, "elif"));
             table.table(this::rebuildCondition);
         }
 
@@ -278,10 +294,10 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            table.add(text("func.def", "func"));
-            field(table, name, value -> name = value).width(90f);
+            table.add(text("func.def", "func")).self(c -> hint(c, "func.def"));
+            field(table, name, value -> name = value).width(90f).self(c -> hint(c, "func.name"));
             table.add("(");
-            TextField paramsField = field(table, params, value -> params = value).width(130f).get();
+            TextField paramsField = field(table, params, value -> params = value).width(130f).self(c -> hint(c, "func.params")).get();
             paramsField.setMessageText(text("func.params.hint", "a,b"));
             table.add(")");
             foldControl(table);
@@ -305,16 +321,16 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            table.add(text("func.call", "call"));
+            table.add(text("func.call", "call")).self(c -> hint(c, "func.call"));
             field(table, name, value -> name = value).width(90f);
             table.add("(");
             // 实参：完整表达式，高亮显示，点击进入编辑；
             // 空值时提示被调函数的参数列表（动态跟随函数名/参数变化），找不到或函数无参数时退回通用提示
             table.add(new ExpressionEditor(args, this::argsHint, value -> args = value))
-                .growX().padLeft(4f).padRight(2f);
+                .growX().padLeft(4f).padRight(2f).self(c -> hint(c, "func.args"));
             table.add(")");
             table.add("=");
-            field(table, result, value -> result = value).width(70f).padLeft(4f);
+            field(table, result, value -> result = value).width(70f).padLeft(4f).self(c -> hint(c, "func.result"));
         }
 
         /** 动态占位提示：被调函数（本地优先，库函数兜底）的参数列表，找不到或函数无参数时退回通用提示。 */
@@ -347,10 +363,10 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            table.add(text("func.return", "return"));
+            table.add(text("func.return", "return")).self(c -> hint(c, "func.return"));
             // 返回值：完整表达式，高亮显示，点击进入编辑
             table.add(new ExpressionEditor(expr, text("func.return.hint", "value"), value -> expr = value))
-                .growX().padLeft(4f);
+                .growX().padLeft(4f).self(c -> hint(c, "func.return.value"));
         }
 
         @Override public String name(){ return text("func.return", "Return"); }
