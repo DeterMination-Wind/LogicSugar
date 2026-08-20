@@ -2,6 +2,7 @@ package logicsugar;
 
 import arc.Core;
 import arc.scene.ui.Button;
+import arc.scene.ui.layout.Scl;
 import arc.util.Log;
 import mindustry.Vars;
 import mindustry.gen.Icon;
@@ -66,15 +67,18 @@ public final class LogicSugarSettings{
 
         @Override
         public void add(SettingsMenuDialog.SettingsTable table){
-            table.left();
-            table.add(title).padRight(12f).padLeft(4f);
-            button = table.button(button -> button.add(label()), Styles.logict, () -> {
-                current = SugarCompiler.FuncMode.parse(current) == SugarCompiler.FuncMode.normal ? "inline" : "normal";
-                Core.settings.put(name, current);
-                button.clearChildren();
-                button.add(label());
-            }).size(150f, 44f).get();
-            addDesc(button);
+            // single-cell row: the settings table is a grid, so splitting title/control
+            // into two cells would get pushed right past the panel by the wide vanilla rows
+            addDesc(table.table(box -> {
+                box.left();
+                box.add(title).padRight(12f).padLeft(4f);
+                button = box.button(button -> button.add(label()), Styles.logict, () -> {
+                    current = SugarCompiler.FuncMode.parse(current) == SugarCompiler.FuncMode.normal ? "inline" : "normal";
+                    Core.settings.put(name, current);
+                    button.clearChildren();
+                    button.add(label());
+                }).size(150f, 44f).get();
+            }).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().left().padTop(4f).get());
             table.row();
         }
 
@@ -91,11 +95,12 @@ public final class LogicSugarSettings{
 
         @Override
         public void add(SettingsMenuDialog.SettingsTable table){
-            table.left();
-            table.add(title).padRight(12f).padLeft(4f);
-            Button button = table.button("@logicsugar.funclib.open", Icon.book, () -> new FunctionLibraryDialog().show())
-                .size(220f, 46f).get();
-            addDesc(button);
+            // single-cell row for the same grid alignment reason as FuncModeSetting
+            addDesc(table.table(box -> {
+                box.left();
+                box.add(title).padRight(12f).padLeft(4f);
+                box.button("@logicsugar.funclib.open", Icon.book, () -> new FunctionLibraryDialog().show()).size(220f, 46f);
+            }).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().left().padTop(4f).get());
             table.row();
         }
     }
