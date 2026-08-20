@@ -257,6 +257,17 @@ public class BoxSelect{
         return target instanceof Image;
     }
 
+    /** True when the click hits a text input or the expression editor (self or ancestor chain).
+     *  These must never be swallowed by the drag state machine, or they cannot take focus. */
+    private static boolean isClickOnEditable(Element target){
+        Element cur = target;
+        while(cur != null){
+            if(cur instanceof TextField || cur instanceof logicsugar.assist.expr.ExpressionEditor) return true;
+            cur = cur.parent;
+        }
+        return false;
+    }
+
     /** 判断元素是否是 canvas（LCanvas）的后代。
      *  返回按钮、变量按钮等在 LogicDialog.buttons 区，不在 canvas 内。
      *  只有 canvas 内的空白区才允许框选。 */
@@ -349,6 +360,13 @@ public class BoxSelect{
         // 兜底：hit test 可能因父容器裁剪/层叠等原因未命中按钮内部元素，
         // 手动检测点击位置是否落在任何 Button 的边界内（MindustryX 的 JUMP/pencil 按钮等）
         if(isClickWithinButtonBounds(target, stageCoords.x, stageCoords.y)){
+            return false;
+        }
+
+        // 输入框/表达式编辑器必须放行给原版（聚焦、进入编辑）。
+        // 上游 "fix accidental statement dragging" 把普通点击改为进入候选拖动并吞掉事件，
+        // 导致语句上的 TextField 收不到 touchDown、无法聚焦（B12.4 回归）。
+        if(isClickOnEditable(target)){
             return false;
         }
 
