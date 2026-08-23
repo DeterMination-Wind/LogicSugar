@@ -2,30 +2,43 @@ package mindustry.logic;
 
 import arc.Core;
 import arc.func.Cons;
+import arc.func.Prov;
+import arc.input.KeyCode;
 import arc.scene.Element;
 import arc.scene.Group;
 import arc.scene.ui.Button;
 import arc.scene.ui.Dialog;
 import arc.scene.ui.TextButton;
+import arc.scene.ui.TextButton.TextButtonStyle;
 import arc.scene.ui.layout.Table;
 import arc.struct.Seq;
 import arc.util.Time;
 import mindustry.Vars;
 import mindustry.gen.Building;
 import mindustry.gen.Icon;
+import mindustry.gen.LogicIO;
+import mindustry.gen.Tex;
+import mindustry.graphics.Pal;
 import mindustry.logic.LExecutor;
+import mindustry.ui.Fonts;
 import mindustry.ui.Styles;
+import mindustry.ui.dialogs.BaseDialog;
 import mindustry.world.blocks.logic.LogicBlock;
 import logicsugar.FunctionLibrary;
 import logicsugar.FunctionLibraryDialog;
 
 import java.lang.reflect.Field;
 import java.util.IdentityHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 public class SugarLogicDialog extends LogicDialog{
     private static final String compiledCopyName = "logicsugar-copy-compiled";
     private static final Field consumerField = field(LogicDialog.class, "consumer");
+    /** LogicDialog.privileged is package-private and lives in the MindustryX mod class loader at
+     *  runtime, so it must be read reflectively (cross-loader package access throws
+     *  IllegalAccessError). */
+    private static final Field privilegedField = field(LogicDialog.class, "privileged");
     /** Mirrors LogicBlock.maxCompressedLen (private upstream); the compressed code must fit. */
     private static final int maxCompressedBytes = 16_000;
     private final Map<Object, String> drafts = new IdentityHashMap<>();
@@ -121,6 +134,103 @@ public class SugarLogicDialog extends LogicDialog{
             }
         }
         return null;
+    }
+
+    @Override
+    public void showAddDialog(int position){
+        BaseDialog dialog = new BaseDialog("@add");
+        boolean priv;
+        try{
+            priv = (boolean)privilegedField.get(this);
+        }catch(ReflectiveOperationException exception){
+            throw new RuntimeException(exception);
+        }
+        dialog.cont.table(table -> {
+            String[] searchText = {""};
+            Prov[] matched = {null};
+            Runnable[] rebuild = {() -> {}};
+
+            table.background(Tex.button);
+
+            table.table(s -> {
+                s.image(Icon.zoom).padRight(8);
+                var search = s.field(null, text -> {
+                    searchText[0] = text;
+                    rebuild[0].run();
+                }).growX().get();
+                search.setMessageText("@players.search");
+
+                if(!Vars.mobile){
+                    Core.app.post(search::requestKeyboard);
+
+                    search.keyDown(KeyCode.enter, () -> {
+                        if(!searchText[0].isEmpty() && matched[0] != null){
+                            canvas.addAt(position == -1 ? canvas.statements.getChildren().size : position, (LStatement)matched[0].get());
+                            dialog.hide();
+                        }
+                    });
+                }
+            }).growX().padBottom(4).row();
+
+            table.pane(t -> {
+                rebuild[0] = () -> {
+                    t.clear();
+
+                    var text = searchText[0].toLowerCase();
+
+                    matched[0] = null;
+
+                    for(Prov<LStatement> prov : LogicIO.allStatements){
+                        LStatement example = prov.get();
+                        if(example instanceof LStatements.InvalidStatement || example.hidden() || (example.privileged() && !priv) || (example.nonPrivileged() && priv) ||
+                            (!text.isEmpty() && !example.name().toLowerCase(Locale.ROOT).contains(text) && !example.typeName().toLowerCase(Locale.ROOT).contains(text)) ||
+                            (!priv && !Vars.state.rules.logicUnitControl && example.category() == LCategory.unit)) continue;
+
+                        if(matched[0] == null){
+                            matched[0] = prov;
+                        }
+
+                        LCategory category = example.category();
+                        Table cat = t.find(category.name);
+                        if(cat == null){
+                            t.table(s -> {
+                                if(category.icon != null){
+                                    s.image(category.icon, Pal.darkishGray).left().size(15f).padRight(10f);
+                                }
+                                s.add(category.localized()).color(Pal.darkishGray).left().tooltip(category.description());
+                                s.image(Tex.whiteui, Pal.darkishGray).left().height(5f).growX().padLeft(10f);
+                            }).growX().pad(5f).padTop(10f);
+
+                            t.row();
+
+                            cat = t.table(c -> {
+                                c.top().left();
+                            }).name(category.name).top().left().growX().fillY().get();
+                            t.row();
+                        }
+
+                        TextButtonStyle style = new TextButtonStyle(Styles.flatt);
+                        style.fontColor = category.color;
+                        style.font = Fonts.outline;
+
+                        cat.button(example.name(), style, () -> {
+                            canvas.addAt(position == -1 ? canvas.statements.getChildren().size : position, prov.get());
+                            dialog.hide();
+                        }).size(130f, 50f).self(c -> {
+                            // LogicSugar statements use dedicated hint keys; vanilla ones keep the original lookup
+                            String sugarKey = "logicsugar.lst." + example.typeName().toLowerCase(Locale.ROOT);
+                            LCanvas.tooltip(c, Core.bundle.has(sugarKey) ? sugarKey : "lst." + example.name());
+                        }).top().left();
+
+                        if(cat.getChildren().size % 3 == 0) cat.row();
+                    }
+                };
+
+                rebuild[0].run();
+            }).grow();
+        }).fill().maxHeight(Core.graphics.getHeight() * 0.8f);
+        dialog.addCloseButton();
+        dialog.show();
     }
 
     @Override
