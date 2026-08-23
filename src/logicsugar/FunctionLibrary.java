@@ -26,6 +26,8 @@ public final class FunctionLibrary{
     private static String cachedHash;
     private static SugarFunctions.LibraryIndex cached;
     private static boolean cachedDamaged;
+    private static boolean cachedExists;
+    private static long cachedModified;
     private static java.util.List<String> cachedWarnings = java.util.List.of();
 
     private FunctionLibrary(){}
@@ -36,10 +38,16 @@ public final class FunctionLibrary{
 
     /** Loads the library, salvaging damaged files function-by-function; the index is cached
      *  by content hash. A damaged file yields a partial index ({@link #isDamaged()} true) with
-     *  the repaired problems listed in {@link #lastWarnings()}. */
+     *  the repaired problems listed in {@link #lastWarnings()}. The file is re-read only when
+     *  its last-modified time changes; repeated calls (per compile) stay on disk-stat cost. */
     public static SugarFunctions.LibraryIndex index(){
         Fi file = file();
-        if(!file.exists()) return null;
+        boolean exists = file.exists();
+        long modified = exists ? file.lastModified() : 0;
+        if(exists && cachedExists && modified == cachedModified && cached != null) return cached;
+        cachedExists = exists;
+        cachedModified = modified;
+        if(!exists) return null;
         String text = file.readString("UTF-8");
         String hash = Integer.toHexString(text.hashCode());
         if(cachedHash != null && cachedHash.equals(hash) && cached != null) return cached;

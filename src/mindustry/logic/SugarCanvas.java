@@ -50,15 +50,17 @@ public class SugarCanvas extends LCanvas{
     final StructureController structure = new StructureController();
     private StructureGuideLayer guideLayer;
     private Group jumpLayer;
-    private static final Field draggingField = field(LCanvas.class, "dragging");
-    private static final Field privilegedField = field(LCanvas.class, "privileged");
-    private static final Field spaceField = field(LCanvas.DragLayout.class, "space");
+    // Feature fields are optional: when upstream renames one, that feature degrades instead of
+    // killing the whole editor with an ExceptionInInitializerError.
+    private static final Field draggingField = optionalField(LCanvas.class, "dragging");
+    private static final Field privilegedField = optionalField(LCanvas.class, "privileged");
+    private static final Field spaceField = optionalField(LCanvas.DragLayout.class, "space");
     private static final Field layoutJumpsField = optionalField(LCanvas.DragLayout.class, "jumps");
     private static final Field canvasJumpsField = optionalField(LCanvas.class, "jumps");
     private static final Field updateJumpHeightsField = optionalField(LCanvas.DragLayout.class, "updateJumpHeights");
     private static final Method recalculateMethod = optionalMethod(LCanvas.class, "recalculate");
-    private static final Field addressLabelField = field(LCanvas.StatementElem.class, "addressLabel");
-    private static final Field needsLayoutField = field(WidgetGroup.class, "needsLayout");
+    private static final Field addressLabelField = optionalField(LCanvas.StatementElem.class, "addressLabel");
+    private static final Field needsLayoutField = optionalField(WidgetGroup.class, "needsLayout");
 
     public SugarCanvas(){
         super();
@@ -110,9 +112,6 @@ public class SugarCanvas extends LCanvas{
         Seq<Element> children = statements.getChildren();
         if(children.isEmpty()) return;
 
-        statements.invalidate();
-        statements.validate();
-
         boolean changed = false;
         int mlogLine = 0;
         for(Element child : children){
@@ -132,7 +131,7 @@ public class SugarCanvas extends LCanvas{
                 ? mlogLine + "->" + (mlogLine + lineCount - 1)
                 : Integer.toString(mlogLine);
             try{
-                Label label = (Label)addressLabelField.get(elem);
+                Label label = addressLabelField == null ? null : (Label)addressLabelField.get(elem);
                 if(label != null && !label.getText().toString().equals(text)){
                     label.setText(text);
                     changed = true;
@@ -141,10 +140,22 @@ public class SugarCanvas extends LCanvas{
             mlogLine += lineCount;
         }
 
-        if(changed){
+        // Only force a layout pass when a label changed or something else already
+        // invalidated the statement list; relayouting every frame is O(n) even at idle.
+        boolean alreadyInvalid = false;
+        if(needsLayoutField != null){
             try{
-                needsLayoutField.setBoolean(statements, false);
+                alreadyInvalid = needsLayoutField.getBoolean(statements);
             }catch(IllegalAccessException ignored){}
+        }
+        if(changed || alreadyInvalid){
+            statements.invalidate();
+            statements.validate();
+            if(changed && needsLayoutField != null){
+                try{
+                    needsLayoutField.setBoolean(statements, false);
+                }catch(IllegalAccessException ignored){}
+            }
         }
     }
 
@@ -156,7 +167,7 @@ public class SugarCanvas extends LCanvas{
     }
 
     private void setLayoutSpace(){
-        if(statements == null) return;
+        if(statements == null || spaceField == null) return;
         try{
             spaceField.setFloat(statements, 0f);
         }catch(IllegalAccessException exception){
@@ -165,6 +176,7 @@ public class SugarCanvas extends LCanvas{
     }
 
     private boolean isDragging(){
+        if(draggingField == null) return false;
         try{
             return draggingField.get(this) != null;
         }catch(IllegalAccessException exception){
@@ -443,6 +455,7 @@ public class SugarCanvas extends LCanvas{
         /** Reads LCanvas.privileged via reflection: it is package-private and the mod class
          *  loader cannot access it directly (IllegalAccessError) even though the package names match. */
         private boolean isPrivileged(){
+            if(privilegedField == null) return false;
             try{
                 return privilegedField.getBoolean(SugarCanvas.this);
             }catch(IllegalAccessException e){

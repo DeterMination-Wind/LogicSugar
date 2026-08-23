@@ -804,7 +804,10 @@ public final class SugarFunctions{
         return null;
     }
 
-    /** Extracts one function definition and remaps its body into body-relative space. */
+    /** Extracts one function definition and remaps its body into body-relative space.
+     *  REMAP IS IN PLACE: begin/jump indices inside the body statements are rewritten, and the
+     *  statements are aliased into {@code function.body}, so the input Seq must not be analyzed
+     *  again (sanitizedLibrary re-reads it after a failed buildLibrary for exactly this reason). */
     private static Function buildFunction(Seq<LStatement> statements, int s, int e, boolean library){
         FuncDefStatement def = (FuncDefStatement)statements.get(s);
         Function function = new Function(def.name, library);
@@ -1005,7 +1008,9 @@ public final class SugarFunctions{
         if(name.startsWith(reservedPrefix)) return true;
         // storage devices: cell1/bank1/memory1 (and bare cell/bank/memory forms)
         if(name.startsWith("cell") || name.startsWith("bank") || name.startsWith("memory")){
-            for(int i = 4; i < name.length(); i++){
+            // the digit run starts at the end of the device prefix: memory is 6 chars, cell/bank 4
+            int prefixLen = name.startsWith("memory") ? 6 : 4;
+            for(int i = prefixLen; i < name.length(); i++){
                 if(!Character.isDigit(name.charAt(i))) return false;
             }
             return true;
@@ -1046,13 +1051,29 @@ public final class SugarFunctions{
 
     private static String rewriteTokens(String text, Map<String, String> map){
         StringBuilder out = new StringBuilder(text.length() + 16);
-        for(String token : text.split("\\s+")){
-            if(!token.isEmpty()){
+        int i = 0;
+        while(i < text.length()){
+            char c = text.charAt(i);
+            if(c == '"'){
+                // string literals are copied verbatim: identifiers and whitespace inside them
+                // must not be rewritten or collapsed (e.g. print "cost _1 credits")
+                int end = text.indexOf('"', i + 1);
+                if(end == -1){ // unterminated quote: copy the rest as-is
+                    out.append(text, i, text.length());
+                    break;
+                }
+                out.append(text, i, end + 1);
+                i = end + 1;
+            }else if(c == ' ' || c == '\t' || c == '\n' || c == '\r'){
+                out.append(c);
+                i++;
+            }else{
+                int start = i;
+                while(i < text.length() && text.charAt(i) != ' ' && text.charAt(i) != '\t' && text.charAt(i) != '\n' && text.charAt(i) != '\r' && text.charAt(i) != '"') i++;
+                String token = text.substring(start, i);
                 out.append(map.getOrDefault(token, token));
-                out.append(' ');
             }
         }
-        if(out.length() > 0) out.setLength(out.length() - 1);
         return out.toString();
     }
 
@@ -1063,7 +1084,16 @@ public final class SugarFunctions{
         int i = 0;
         while(i < expr.length()){
             char c = expr.charAt(i);
-            if(c == '@'){
+            if(c == '"'){
+                // string literals are copied verbatim: identifiers inside them must not be rewritten
+                int end = expr.indexOf('"', i + 1);
+                if(end == -1){
+                    out.append(expr, i, expr.length());
+                    break;
+                }
+                out.append(expr, i, end + 1);
+                i = end + 1;
+            }else if(c == '@'){
                 int start = i++;
                 while(i < expr.length() && (Character.isLetterOrDigit(expr.charAt(i)) || expr.charAt(i) == '_')) i++;
                 out.append(expr, start, i);
