@@ -127,6 +127,22 @@ public class SugarCompilerSelfTest{
         check(invalid[1], "bare break was not marked invalid");
         expectFailure("case 1\n", "bare case");
         expectFailure("break\n", "bare break");
+
+        // return outside a function: the compile fails and the editor must mark it red too
+        Seq<LStatement> returns = LAssembler.read("return \"\"\n", true);
+        boolean[] returnInvalid = SugarCompiler.invalidStatements(returns);
+        check(returnInvalid[0], "bare return was not marked invalid");
+
+        // a return inside a loop but still outside any function is equally invalid
+        Seq<LStatement> loopReturn = LAssembler.read("forbegin i 0 1 lessThanEq 3 2\nreturn \"\"\nblockend\n", true);
+        boolean[] loopReturnInvalid = SugarCompiler.invalidStatements(loopReturn);
+        check(loopReturnInvalid[1], "return inside a loop but outside a function was not marked invalid");
+
+        // return inside a function body is legal: nothing is marked and compilation succeeds
+        Seq<LStatement> funcReturn = LAssembler.read("funcdef f ~ 2\nreturn \"\"\nblockend\n", true);
+        boolean[] funcReturnInvalid = SugarCompiler.invalidStatements(funcReturn);
+        check(!funcReturnInvalid[1], "return inside a function was marked invalid");
+        SugarCompiler.compile("funcdef f ~ 2\nreturn \"\"\nblockend\n");
     }
 
     private static void jumpsMayTargetStructureBoundaries(){
