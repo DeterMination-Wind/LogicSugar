@@ -415,8 +415,9 @@ public final class SugarStatements{
         }
         result.initial = optionalValue(tokens[2]);
         result.step = optionalValue(tokens[3]);
-        // Same guard as parseIfBegin: a missing/malformed op must fail cleanly, not crash
-        // with a bare valueOf or silently parse a stale token from a previous line.
+        // Same guard as parseIfBegin: a null/garbage op must fail with a clean error instead
+        // of a raw valueOf NPE. LParser passes no token count, so a stale op name that is
+        // itself a valid ConditionOp is indistinguishable and parses as-is.
         ConditionOp op = parseConditionOp(tokens[4]);
         if(op == null) throw new IllegalArgumentException("Invalid forbegin condition operator: '" + tokens[4] + "'");
         result.op = op;
@@ -533,7 +534,7 @@ public final class SugarStatements{
     /** Removes the surrounding quotes that LParser keeps on string tokens. */
     private static String stripQuotes(String value){
         if(value == null || value.isEmpty()) return "";
-        if(value.charAt(0) == '"' && value.charAt(value.length() - 1) == '"'){
+        if(value.length() >= 2 && value.charAt(0) == '"' && value.charAt(value.length() - 1) == '"'){
             return value.substring(1, value.length() - 1);
         }
         return value;
