@@ -82,21 +82,19 @@ public class BoxSelect{
         return Core.settings.getBool(settingCtrlDragCopy, true);
     }
 
-    // ===== 反射字段（包级私有，缓存 Field）=====
-    private static final Field draggingField;
-    private static final Field privilegedField;
-    static Field needsLayoutField;
-    static{
+    // ===== 反射字段（包级私有，缓存 Field；缺失时按可选降级，不阻塞编辑器）=====
+    private static final Field draggingField = optionalField(LCanvas.class, "dragging");
+    private static final Field privilegedField = optionalField(LCanvas.class, "privileged");
+    static final Field needsLayoutField = optionalField(arc.scene.ui.layout.WidgetGroup.class, "needsLayout");
+
+    private static Field optionalField(Class<?> type, String name){
         try{
-            draggingField = LCanvas.class.getDeclaredField("dragging");
-            draggingField.setAccessible(true);
-            privilegedField = LCanvas.class.getDeclaredField("privileged");
-            privilegedField.setAccessible(true);
-            needsLayoutField = arc.scene.ui.layout.WidgetGroup.class.getDeclaredField("needsLayout");
-            needsLayoutField.setAccessible(true);
+            Field result = type.getDeclaredField(name);
+            result.setAccessible(true);
+            return result;
         }catch(Exception e){
-            Log.err("[LogicAssist] Failed to access LCanvas fields", e);
-            throw new RuntimeException(e);
+            Log.warn("[LogicAssist] Field not found, feature degraded: " + type.getName() + "." + name, e);
+            return null;
         }
     }
 
@@ -146,6 +144,7 @@ public class BoxSelect{
     private static Element overlay;
     private static boolean initialized = false;
     private static InputListener captureListener;
+    private static InputListener deleteKeyListener;
 
     // 反射缓存（vScrollBounds / vKnobBounds）
     private static Field vScrollBoundsField;
@@ -176,21 +175,25 @@ public class BoxSelect{
             }
         });
 
-        // Delete/Backspace 键：事件驱动，不再轮询
-        Core.scene.addListener(new InputListener(){
-            @Override
-            public boolean keyDown(InputEvent event, KeyCode key){
-                if(key != KeyCode.del && key != KeyCode.backspace) return false;
-                LogicDialog dialog = Vars.ui.logic;
-                if(dialog == null || !dialog.isShown()) return false;
-                if(state != State.SELECTED || selected.isEmpty()) return false;
-                LCanvas canvas = getCanvas();
-                if(canvas != null){
-                    deleteSelected(canvas);
+        // Delete/Backspace 键：事件驱动，不再轮询。
+        // 注册必须幂等：init() 在 canvas 就绪前会每帧重试，重复 addListener 会累积监听器
+        if(deleteKeyListener == null){
+            deleteKeyListener = new InputListener(){
+                @Override
+                public boolean keyDown(InputEvent event, KeyCode key){
+                    if(key != KeyCode.del && key != KeyCode.backspace) return false;
+                    LogicDialog dialog = Vars.ui.logic;
+                    if(dialog == null || !dialog.isShown()) return false;
+                    if(state != State.SELECTED || selected.isEmpty()) return false;
+                    LCanvas canvas = getCanvas();
+                    if(canvas != null){
+                        deleteSelected(canvas);
+                    }
+                    return false;
                 }
-                return false;
-            }
-        });
+            };
+            Core.scene.addListener(deleteKeyListener);
+        }
     }
 
     /** 注册 capture listener 和 overlay。
@@ -838,9 +841,11 @@ public class BoxSelect{
         }
 
         // 重置 needsLayout，防止 draw() 中 validate() → layout() 覆盖我们的修改
-        try{
-            needsLayoutField.setBoolean(canvas.statements, false);
-        }catch(Exception ignored){}
+        if(needsLayoutField != null){
+            try{
+                needsLayoutField.setBoolean(canvas.statements, false);
+            }catch(Exception ignored){}
+        }
 
         // 干净起点，避免累积
         resetAllTranslations(canvas);
@@ -1350,22 +1355,25 @@ public class BoxSelect{
 
         Draw.reset();
         Draw.alpha(alpha);
-        for(StatementElem elem : selected){
-            boolean oldCullable = elem.cullable;
-            elem.cullable = false;
-            elem.x += dx;
-            elem.y += dy;
-            try{
-                elem.draw();
-            }finally{
-                elem.x -= dx;
-                elem.y -= dy;
-                elem.cullable = oldCullable;
+        try{
+            for(StatementElem elem : selected){
+                boolean oldCullable = elem.cullable;
+                elem.cullable = false;
+                elem.x += dx;
+                elem.y += dy;
+                try{
+                    elem.draw();
+                }finally{
+                    elem.x -= dx;
+                    elem.y -= dy;
+                    elem.cullable = oldCullable;
+                }
             }
+        }finally{
+            // 某个 elem.draw() 抛异常时也必须恢复矩阵，避免后续 UI 绘制错位
+            Draw.reset();
+            Draw.trans(oldTrans);
         }
-        Draw.reset();
-
-        Draw.trans(oldTrans);
     }
     // ===== 拖动移动 =====
 
@@ -1555,6 +1563,9 @@ public class BoxSelect{
     /**
      * Inserts a copied selection as one stable batch. SugarCanvas.addAt() creates an end immediately
      * for a Begin block, but later insertions shift that end and invalidate its stored index.
+     * Elements are inserted as plain StatementElems on purpose: the copied statements keep their
+     * index-based dest links valid during the batch, and StructureController.normalizeElements()
+     * replaces them with SugarStatementElems on the next frame.
      */
     private static void insertCopiedStatements(LCanvas canvas, int insertPos, Seq<LStatement> copies, List<StatementElem> sources){
         if(!(canvas instanceof SugarCanvas) || sources == null || sources.size() != copies.size){
@@ -1667,6 +1678,7 @@ public class BoxSelect{
     }
 
     private static boolean isPrivileged(LCanvas canvas){
+        if(privilegedField == null) return false;
         try{
             return privilegedField.getBoolean(canvas);
         }catch(Exception e){
@@ -1675,6 +1687,7 @@ public class BoxSelect{
     }
 
     private static void clearDraggingField(LCanvas canvas){
+        if(draggingField == null) return;
         try{
             draggingField.set(canvas, null);
         }catch(Exception e){

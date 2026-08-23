@@ -94,7 +94,8 @@ public class ExprHook{
                 // 安全检查：若有 jump 指向链中间 [i+1, i+chainLen-1]，放弃折叠。
                 // 场景：别人没装插件时写的 jump 指向 op 链中间，折叠会改变语义。
                 // 指向链首 i 是允许的，折叠后仍指向 expr 积木。
-                if(hasJumpInRange(canvas, i + 1, i + chainLen - 1)){
+                // 链内临时变量被链外语句读取时同样放弃（折叠会删除这些变量，值也会变）。
+                if(hasJumpInRange(canvas, i + 1, i + chainLen - 1) || hasExternalReads(children, i, j, ops)){
                     i = j; // 跳过整条链，不折叠
                     continue;
                 }
@@ -192,17 +193,8 @@ public class ExprHook{
 
     // ===== 目标索引调整 =====
 
-    private static void adjustStatementIndices(LCanvas canvas, int threshold, int delta){
-        if(delta == 0) return;
-        Seq<Element> children = canvas.statements.getChildren();
-        for(Element child : children){
-            if(!(child instanceof StatementElem)) continue;
-            adjustStatementIndex(((StatementElem)child).st, threshold, delta);
-        }
-    }
-
     /**
-     * Shifts targets after a statement range is replaced. Structured blocks use
+     * Shifts jump/block targets after a statement range is replaced. Structured blocks use
      * the same index model as jumps, so both must be updated together.
      */
     public static void adjustStatementIndex(LStatement statement, int threshold, int delta){
@@ -229,6 +221,45 @@ public class ExprHook{
             }
         }
         return false;
+    }
+
+    /** 检查链外语句是否读取了链内临时变量（折叠会删除这些临时变量）。
+     *  保守实现：用序列化文本做标识符边界匹配，宁可少折叠也不改变语义。 */
+    private static boolean hasExternalReads(Seq<Element> children, int chainStart, int chainEnd, List<ExprCompiler.OpLine> ops){
+        Set<String> temps = new HashSet<>();
+        for(int k = 0; k < ops.size() - 1; k++){ // 链内被后续 op 消费的临时变量
+            temps.add(ops.get(k).dest);
+        }
+        if(temps.isEmpty()) return false;
+        for(int idx = 0; idx < children.size; idx++){
+            if(idx >= chainStart && idx < chainEnd) continue;
+            if(!(children.get(idx) instanceof StatementElem)) continue;
+            LStatement st = ((StatementElem)children.get(idx)).st;
+            StringBuilder text = new StringBuilder();
+            st.write(text);
+            for(String temp : temps){
+                if(containsIdentifier(text, temp)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** 字符串是否包含独立成词的标识符（避免 "_1" 误匹配 "_10"）。 */
+    private static boolean containsIdentifier(StringBuilder text, String identifier){
+        int from = 0;
+        while(true){
+            int at = text.indexOf(identifier, from);
+            if(at < 0) return false;
+            boolean boundaryBefore = at == 0 || !isIdentifierChar(text.charAt(at - 1));
+            int after = at + identifier.length();
+            boolean boundaryAfter = after == text.length() || !isIdentifierChar(text.charAt(after));
+            if(boundaryBefore && boundaryAfter) return true;
+            from = at + 1;
+        }
+    }
+
+    private static boolean isIdentifierChar(char c){
+        return Character.isLetterOrDigit(c) || c == '_';
     }
 
     // ===== 工具方法 =====

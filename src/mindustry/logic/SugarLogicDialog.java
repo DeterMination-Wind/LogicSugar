@@ -37,11 +37,17 @@ public class SugarLogicDialog extends LogicDialog{
     private static final Field consumerField = field(LogicDialog.class, "consumer");
     /** LogicDialog.privileged is package-private and lives in the MindustryX mod class loader at
      *  runtime, so it must be read reflectively (cross-loader package access throws
-     *  IllegalAccessError). */
+     *  IllegalAccessError). Both this and consumer keep the hard field(): they are load-bearing
+     *  for the dialog (there is no degraded mode), unlike SugarCanvas's optional feature fields. */
     private static final Field privilegedField = field(LogicDialog.class, "privileged");
-    /** Mirrors LogicBlock.maxCompressedLen (private upstream); the compressed code must fit. */
-    private static final int maxCompressedBytes = 16_000;
+    /** Mirrors LogicBlock.maxCompressedLen (private upstream); read reflectively so the limit
+     *  tracks upstream instead of drifting silently when the game adjusts it. */
+    private static final int maxCompressedBytes = compressedLimit();
     private final Map<Object, String> drafts = new IdentityHashMap<>();
+    /** Cached copy-button scan results (see {@link #installCompiledCopy}); cleared on hide. */
+    private TextButton cachedCopyButton;
+    private Table cachedCopyMenu;
+    private Dialog cachedCopyDialog;
     public LExecutor executor;
     /** When true, a failed compile during a close is passed back to the caller as raw sugar
      *  instead of being dropped. Used by the function library editing session (executor == null),
@@ -92,16 +98,35 @@ public class SugarLogicDialog extends LogicDialog{
         button.clicked(() -> Core.app.post(this::installCompiledCopy));
     }
 
+    private static int compressedLimit(){
+        try{
+            Field field = LogicBlock.class.getDeclaredField("maxCompressedLen");
+            field.setAccessible(true);
+            return field.getInt(null);
+        }catch(Exception exception){
+            // upstream renamed/removed the constant; fall back to the known value
+            return 16_000;
+        }
+    }
+
     private void installCompiledCopy(){
-        TextButton copy = findCopyButton(Core.scene.root);
-        if(copy == null || !(copy.parent instanceof Table menu)) return;
-        if(menu.find(compiledCopyName) != null) return;
+        if(cachedCopyButton != null && cachedCopyButton.parent != cachedCopyMenu){
+            // the menu was rebuilt out from under us; rescan from scratch
+            cachedCopyButton = null;
+            cachedCopyMenu = null;
+            cachedCopyDialog = null;
+        }
+        if(cachedCopyButton == null){
+            cachedCopyButton = findCopyButton(Core.scene.root);
+            cachedCopyMenu = cachedCopyButton != null && cachedCopyButton.parent instanceof Table menu ? menu : null;
+            cachedCopyDialog = cachedCopyButton != null ? parentDialog(cachedCopyButton) : null;
+        }
+        if(cachedCopyButton == null || cachedCopyMenu == null || cachedCopyDialog == null) return;
+        if(cachedCopyMenu.find(compiledCopyName) != null) return;
 
-        Dialog dialog = parentDialog(copy);
-        if(dialog == null) return;
-
-        menu.row();
-        menu.button("@logicsugar.copy.compiled", Icon.copy, Styles.flatt, () -> {
+        Dialog dialog = cachedCopyDialog;
+        cachedCopyMenu.row();
+        cachedCopyMenu.button("@logicsugar.copy.compiled", Icon.copy, Styles.flatt, () -> {
             try{
                 // copy with the session's effective library, so the embedded functions survive
                 Core.app.setClipboardText(SugarCompiler.compile(canvas.save(), SugarCompiler.currentMode(),
@@ -113,7 +138,7 @@ public class SugarLogicDialog extends LogicDialog{
                 showCompileError(exception, false);
             }
         }).size(280f, 60f).left().marginLeft(12f).get().name = compiledCopyName;
-        menu.invalidateHierarchy();
+        cachedCopyMenu.invalidateHierarchy();
     }
 
     private Dialog parentDialog(Element element){
@@ -238,6 +263,9 @@ public class SugarLogicDialog extends LogicDialog{
         this.executor = executor;
         discardButton.visible = executor == null;
         this.openedCode = code;
+        // drafts are keyed by Building; drop entries whose processor is gone so the map
+        // cannot grow without bound over a session
+        drafts.keySet().removeIf(key -> key instanceof Building build && !build.isValid());
         Object key = draftKey(executor);
         if(drafts.containsKey(key)){
             // a failed compile kept the user's work; trust it over any stored code
@@ -262,6 +290,19 @@ public class SugarLogicDialog extends LogicDialog{
         }
         effectiveLibrary = SugarCompiler.effectiveLibrary(code, SugarFunctions.library(), FunctionLibrary.loadText());
         libraryHashAtOpen = FunctionLibrary.hash();
+
+        // Never open the editor with code it cannot parse: LogicDialog's load fallback
+        // (canvas.load("")) would present an empty canvas, and the stale-close guard treats
+        // an untouched empty canvas as "edited", so closing would submit an empty program and
+        // silently wipe the processor. Pre-validate with the same parse the canvas performs.
+        try{
+            LAssembler.read(editable, privileged);
+        }catch(Throwable exception){
+            hide();
+            showCompileError(new IllegalArgumentException("Cannot open the logic editor: " + exception.getMessage()), false);
+            return;
+        }
+
         Cons<String> submit = sugar -> submit(sugar, executor, modified, key, false);
         super.show(editable, executor, privileged, submit);
 
@@ -311,6 +352,14 @@ public class SugarLogicDialog extends LogicDialog{
     /** The stored code as of right now (the build may have been reconfigured while open). */
     private String currentCode(LExecutor executor){
         return executor.build != null ? executor.build.code : openedCode;
+    }
+
+    @Override
+    public void hide(){
+        cachedCopyButton = null;
+        cachedCopyMenu = null;
+        cachedCopyDialog = null;
+        super.hide();
     }
 
     /** Library-file editing sessions only: close the editor without saving, so a user who

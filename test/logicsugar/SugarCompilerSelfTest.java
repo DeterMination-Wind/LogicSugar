@@ -45,6 +45,10 @@ public class SugarCompilerSelfTest{
         expressionOpsRoundTrip();
         structuredTargetsFollowExpressionResize();
         functionStatementsRoundTrip();
+        quotedExpressionsRoundTrip();
+        truncatedLinesFailCleanly();
+        functionStringLiteralsSurviveRewrite();
+        storageDevicesStayExempt();
         functionParamBindingInline();
         functionParamBindingNormal();
         functionVoidAndEarlyReturn();
@@ -531,6 +535,89 @@ public class SugarCompilerSelfTest{
             funccall f "" ~
             """, SugarCompiler.FuncMode.normal));
         check(compiled.contains("op add __ls_f_f_0 __ls_f_f_0 1"), "normal mode body temp was not namespaced");
+    }
+
+    private static void quotedExpressionsRoundTrip(){
+        // args/expr containing quotes, tildes and inner spaces must survive write → read losslessly
+        FuncCallStatement call = new FuncCallStatement();
+        call.name = "f";
+        call.args = "\"a  b\" ~ \"c\"";
+        call.result = "out";
+        StringBuilder callText = new StringBuilder();
+        call.write(callText);
+        Seq<LStatement> callParsed = LAssembler.read(callText.toString(), true);
+        check(callParsed.size == 1 && callParsed.get(0) instanceof FuncCallStatement roundTrip
+            && roundTrip.args.equals("\"a  b\" ~ \"c\"") && roundTrip.result.equals("out"),
+            "funccall args with quotes/tildes did not round-trip: " + callText);
+
+        ReturnStatement ret = new ReturnStatement();
+        ret.expr = "\"x\" == \"y\"";
+        StringBuilder retText = new StringBuilder();
+        ret.write(retText);
+        Seq<LStatement> retParsed = LAssembler.read(retText.toString(), true);
+        check(retParsed.size == 1 && retParsed.get(0) instanceof ReturnStatement rt
+            && rt.expr.equals("\"x\" == \"y\""), "return expr with quotes did not round-trip: " + retText);
+    }
+
+    private static void truncatedLinesFailCleanly(){
+        // Truncated custom-prefix lines must fail with a clean parse error (not a raw
+        // NumberFormatException/NPE). LParser hands parsers a static 16-slot array whose
+        // trailing slots are null/stale, so the tests emulate that shape.
+        expectParseFailure(() -> SugarStatements.parseForBegin(tokens("forbegin")), "forbegin");
+        expectParseFailure(() -> SugarStatements.parseForBegin(tokens("forbegin", "i", "0", "1")), "forbegin without a condition");
+        expectParseFailure(() -> SugarStatements.parseSwitchBegin(tokens("switchbegin")), "switchbegin");
+        expectParseFailure(() -> SugarStatements.parseFuncDef(tokens("funcdef")), "funcdef");
+        expectParseFailure(() -> SugarStatements.parseFuncCall(tokens("funccall")), "funccall");
+
+        // a bare return is a valid void return, not an error
+        ReturnStatement ret = (ReturnStatement)SugarStatements.parseReturn(tokens("return"));
+        check(ret.expr.isEmpty(), "bare return did not parse as a void return");
+    }
+
+    private static String[] tokens(String... values){
+        String[] result = new String[16]; // LParser's static token array size
+        System.arraycopy(values, 0, result, 0, values.length);
+        return result;
+    }
+
+    private static void expectParseFailure(arc.func.Prov<LStatement> parser, String label){
+        try{
+            parser.get();
+            check(false, "'" + label + "' parsed without error");
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().startsWith("Invalid "), "'" + label + "' error lacks context: " + expected.getMessage());
+        }
+    }
+
+    private static void functionStringLiteralsSurviveRewrite(){
+        // multi-space strings and _digit patterns inside quotes must survive the body rewrite
+        // untouched: "cost  _1  credits" is text, not a variable reference
+        String compiled = loweredCode(SugarCompiler.compile("""
+            funcdef f ~ 4
+            op add _0 _0 1
+            op add _1 _0 1
+            print "cost  _1  credits"
+            blockend
+            funccall f "" ~
+            """, SugarCompiler.FuncMode.inline));
+        check(compiled.contains("op add __ls_f_f_1 __ls_f_f_0 1"), "temps outside strings were not namespaced: " + compiled);
+        check(compiled.contains("cost  _1  credits"), "string literal inside a function body was rewritten: " + compiled);
+    }
+
+    private static void storageDevicesStayExempt(){
+        // a storage device name written by a library function must stay exempt from mangling
+        // (the digit run starts at the end of the prefix: memory is 6 chars, cell/bank 4)
+        Seq<LStatement> libraryStatements = LAssembler.read("""
+            funcdef f ~ 3
+            set memory1 5
+            set bank1 6
+            blockend
+            """, true);
+        SugarFunctions.LibraryIndex library = SugarFunctions.buildLibrary(libraryStatements);
+        String compiled = loweredCode(SugarCompiler.compile("funccall f \"\" ~\nend\n",
+            SugarCompiler.FuncMode.normal, library));
+        check(compiled.contains("set memory1 5"), "memory1 was mangled in a library function body: " + compiled);
+        check(compiled.contains("set bank1 6"), "bank1 was mangled in a library function body");
     }
 
     private static void functionJumpToOwnEndIsExit(){

@@ -2,6 +2,7 @@ package mindustry.logic;
 
 import arc.Core;
 import arc.struct.Seq;
+import arc.util.Log;
 import arc.util.serialization.Base64Coder;
 import mindustry.logic.LExecutor;
 import mindustry.logic.SugarStatements.BeginStatement;
@@ -298,6 +299,11 @@ public final class SugarCompiler{
         String encoded = encode(text);
         if(encoded.length() <= carrierMaxChars){
             out.append(prefix).append(encoded).append("\"\n");
+        }else{
+            // The carrier must not be dropped silently: without it the saved program still
+            // works, but the sugar source (and the library) can no longer be restored.
+            Log.warn("LogicSugar: sugar text too large for the carrier (@ chars, limit @); the source will not survive this save",
+                encoded.length(), carrierMaxChars);
         }
     }
 

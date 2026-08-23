@@ -42,9 +42,12 @@ public class LogicSugarMod extends Mod{
                 BoxSelect.init();
                 ExprHook.init();
                 VarDisplayFilter.init();
-                // one settings category: functions + jump line coloring (the latter is
-                // bundled by Neon when bekBundled, so it is skipped there)
-                LogicSugarSettings.setup(!bekBundled);
+                // When bundled into Neon, every settings row is registered through
+                // bekBuildSettings (host sets bekBundled, host calls bekBuildSettings), so the
+                // mod-owned category is skipped entirely to avoid duplicate entries.
+                if(!bekBundled){
+                    LogicSugarSettings.setup(true);
+                }
             }
         }));
     }
