@@ -58,6 +58,54 @@ public final class SugarStatements{
         }
     }
 
+    /**
+     * Shared condition editor for if/elif/for/while: the native three-part selector on the
+     * left, an EXPR/OP mode toggle on the right. The row colour follows the statement card
+     * every frame, so invalid-state red marking can never leave a stale snapshot behind.
+     */
+    private static void rebuildConditionEditor(LStatement owner, Table table, boolean expressionMode, String expr,
+                                               Cons<String> setExpr, Runnable enterExpr, Runnable leaveExpr,
+                                               ConditionOp op, Cons<ConditionOp> setOp,
+                                               String value, Cons<String> setValue,
+                                               String compare, Cons<String> setCompare,
+                                               Runnable rebuild){
+        table.clearChildren();
+        table.left();
+        table.update(() -> {
+            Color target = owner.elem == null ? Pal.logicControl : owner.elem.color;
+            table.setColor(target);
+            for(Element child : table.getChildren()){
+                child.setColor(target);
+            }
+        });
+        if(expressionMode){
+            table.add(new ExpressionEditor(expr, text("condition.expr.hint", "a > b && enabled"), setExpr))
+                .growX().fillX().pad(4f);
+            // 显示当前状态：Expr 模式下按钮显示 "Expr"，点击切回三段式
+            table.button(b -> {
+                b.add(text("condition.expr", "Expr"));
+                b.clicked(() -> {
+                    leaveExpr.run();
+                    rebuild.run();
+                });
+            }, Styles.logict, () -> {}).size(72f, 40f).pad(4f).color(table.color);
+        }else{
+            JumpStatement.addOp(owner, table, op, result -> {
+                setOp.get(result);
+                rebuild.run();
+            }, value, setValue, compare, setCompare);
+            table.add().growX();
+            // 显示当前状态：三段式模式下按钮显示 "op"，点击切换为表达式
+            table.button(b -> {
+                b.add(text("condition.expr.back", "op"));
+                b.clicked(() -> {
+                    enterExpr.run();
+                    rebuild.run();
+                });
+            }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(table.color);
+        }
+    }
+
     public abstract static class BeginStatement extends SugarStatement{
         public transient StatementElem dest;
         public int destIndex = -1;
@@ -71,10 +119,15 @@ public final class SugarStatements{
         }
 
         protected void foldControl(Table table){
-            var fold = table.button(collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen, mindustry.ui.Styles.logici, () -> {
+            // logici draws a plain black glyph with no background, which vanishes on the
+            // tinted statement card; use a visible background with a light icon instead.
+            arc.scene.ui.ImageButton.ImageButtonStyle foldStyle = new arc.scene.ui.ImageButton.ImageButtonStyle(mindustry.ui.Styles.logici);
+            foldStyle.up = mindustry.ui.Styles.logict.up;
+            foldStyle.imageUpColor = arc.graphics.Color.white;
+            var fold = table.button(collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen, foldStyle, () -> {
                 collapsed = !collapsed;
                 SugarCanvas.refreshCurrent();
-            }).size(30f).padRight(2f).tooltip(text("fold", "Fold block")).get();
+            }).size(34f, 40f).pad(4f).tooltip(text("fold", "Fold block")).get();
             fold.update(() -> fold.getStyle().imageUp = collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen);
         }
 
@@ -145,30 +198,33 @@ public final class SugarStatements{
     public static class ForBeginStatement extends BeginStatement{
         public String variable = "i", initial = "0", step = "1", compare = "10";
         public ConditionOp op = ConditionOp.lessThanEq;
+        /** When true, conditionExpr replaces the variable/operator/compare triplet. */
+        public boolean expressionMode;
+        public String conditionExpr = "true";
 
         @Override
         public void build(Table table){
-            // Vanilla-style "label + input": fields() adds the label and field as separate
-            // left-aligned cells, so nothing gets centered.
             fieldsHint(table, text("for.variable", "variable"), "for.variable", variable, value -> variable = value);
             row(table);
             fieldsHint(table, text("for.initial", "initial"), "for.initial", initial, value -> initial = value);
             row(table);
             fieldsHint(table, text("for.step", "step"), "for.step", step, value -> step = value);
             row(table);
-            // 终止条件：描述 + 三段式（value op compare）
+            // 终止条件：描述 + 三段式（value op compare）或 Expr
             table.add(text("for.condition", "until")).padLeft(10).left().self(c -> hint(c, "for.condition"));
-            table.table(this::rebuildCondition);
+            table.table(this::rebuildCondition).growX().fillX();
             foldControl(table);
         }
 
         private void rebuildCondition(Table table){
-            table.clearChildren();
-            table.setColor(elem == null ? Pal.logicControl : elem.color);
-            JumpStatement.addOp(this, table, op, result -> {
-                op = result;
-                rebuildCondition(table);
-            }, variable, result -> variable = result, compare, result -> compare = result);
+            rebuildConditionEditor(this, table, expressionMode, conditionExpr,
+                result -> conditionExpr = result,
+                () -> expressionMode = true,
+                () -> expressionMode = false,
+                op, result -> op = result,
+                variable, result -> variable = result,
+                compare, result -> compare = result,
+                () -> rebuildCondition(table));
         }
 
         @Override public String name(){ return text("for.begin", "For Begin"); }
@@ -176,34 +232,51 @@ public final class SugarStatements{
 
         @Override
         public void write(StringBuilder out){
-            out.append(collapsed ? "forbeginc " : "forbegin ").append(variable).append(' ').append(optional(initial)).append(' ').append(optional(step)).append(' ')
-                .append(op.name()).append(' ').append(compare).append(' ').append(destIndex);
+            if(expressionMode){
+                out.append(collapsed ? "forbeginc " : "forbegin ").append(variable).append(' ')
+                    .append(optional(initial)).append(' ').append(optional(step)).append(" expr \"")
+                    .append(conditionExpr).append("\" ").append(destIndex);
+            }else{
+                out.append(collapsed ? "forbeginc " : "forbegin ").append(variable).append(' ').append(optional(initial)).append(' ').append(optional(step)).append(' ')
+                    .append(op.name()).append(' ').append(compare).append(' ').append(destIndex);
+            }
         }
     }
 
     public static class WhileBeginStatement extends BeginStatement{
         public String value = "true", compare = "false";
         public ConditionOp op = ConditionOp.notEqual;
+        public boolean expressionMode;
+        public String conditionExpr = "true";
 
         @Override
         public void build(Table table){
             table.add(text("condition", "condition")).self(c -> hint(c, "while.condition"));
-            table.table(this::rebuildCondition);
+            table.table(this::rebuildCondition).growX().fillX();
             foldControl(table);
         }
 
         private void rebuildCondition(Table table){
-            table.clearChildren();
-            table.setColor(elem == null ? Pal.logicControl : elem.color);
-            JumpStatement.addOp(this, table, op, result -> {
-                op = result;
-                rebuildCondition(table);
-            }, value, result -> value = result, compare, result -> compare = result);
+            rebuildConditionEditor(this, table, expressionMode, conditionExpr,
+                result -> conditionExpr = result,
+                () -> expressionMode = true,
+                () -> expressionMode = false,
+                op, result -> op = result,
+                value, result -> value = result,
+                compare, result -> compare = result,
+                () -> rebuildCondition(table));
         }
 
         @Override public String name(){ return text("while.begin", "While Begin"); }
         @Override public String typeName(){ return "WhileBegin"; }
-        @Override public void write(StringBuilder out){ out.append(collapsed ? "whilebeginc " : "whilebegin ").append(value).append(' ').append(op.name()).append(' ').append(compare).append(' ').append(destIndex); }
+        @Override public void write(StringBuilder out){
+            if(expressionMode){
+                out.append(collapsed ? "whilebeginc " : "whilebegin ").append("expr \"")
+                    .append(conditionExpr).append("\" ").append(destIndex);
+            }else{
+                out.append(collapsed ? "whilebeginc " : "whilebegin ").append(value).append(' ').append(op.name()).append(' ').append(compare).append(' ').append(destIndex);
+            }
+        }
     }
 
     public static class SwitchBeginStatement extends BeginStatement{
@@ -235,50 +308,73 @@ public final class SugarStatements{
     public static class IfBeginStatement extends BeginStatement{
         public String value = "true", compare = "false";
         public ConditionOp op = ConditionOp.notEqual;
+        /** When true, conditionExpr replaces the native value/operator/compare triplet. */
+        public boolean expressionMode;
+        public String conditionExpr = "true";
 
         @Override
         public void build(Table table){
             table.add(text("if.condition", "if")).self(c -> hint(c, "if.condition"));
-            table.table(this::rebuildCondition);
+            table.table(this::rebuildCondition).growX().fillX();
             foldControl(table);
         }
 
         private void rebuildCondition(Table table){
-            table.clearChildren();
-            table.setColor(elem == null ? Pal.logicControl : elem.color);
-            JumpStatement.addOp(this, table, op, result -> {
-                op = result;
-                rebuildCondition(table);
-            }, value, result -> value = result, compare, result -> compare = result);
+            rebuildConditionEditor(this, table, expressionMode, conditionExpr,
+                result -> conditionExpr = result,
+                () -> expressionMode = true,
+                () -> expressionMode = false,
+                op, result -> op = result,
+                value, result -> value = result,
+                compare, result -> compare = result,
+                () -> rebuildCondition(table));
         }
 
         @Override public String name(){ return text("if.begin", "If Begin"); }
         @Override public String typeName(){ return "IfBegin"; }
-        @Override public void write(StringBuilder out){ out.append(collapsed ? "ifbeginc " : "ifbegin ").append(value).append(' ').append(op.name()).append(' ').append(compare).append(' ').append(destIndex); }
+        @Override public void write(StringBuilder out){
+            if(expressionMode){
+                out.append(collapsed ? "ifbeginc expr \"" : "ifbegin expr \"")
+                    .append(conditionExpr).append("\" ").append(destIndex);
+            }else{
+                out.append(collapsed ? "ifbeginc " : "ifbegin ").append(value).append(' ')
+                    .append(op.name()).append(' ').append(compare).append(' ').append(destIndex);
+            }
+        }
     }
 
     public static class ElseIfStatement extends SugarStatement{
         public String value = "true", compare = "false";
         public ConditionOp op = ConditionOp.notEqual;
+        public boolean expressionMode;
+        public String conditionExpr = "true";
 
         @Override
         public void build(Table table){
             table.add(text("elif", "elif")).self(c -> hint(c, "elif"));
-            table.table(this::rebuildCondition);
+            table.table(this::rebuildCondition).growX().fillX();
         }
 
         private void rebuildCondition(Table table){
-            table.clearChildren();
-            table.setColor(elem == null ? Pal.logicControl : elem.color);
-            JumpStatement.addOp(this, table, op, result -> {
-                op = result;
-                rebuildCondition(table);
-            }, value, result -> value = result, compare, result -> compare = result);
+            rebuildConditionEditor(this, table, expressionMode, conditionExpr,
+                result -> conditionExpr = result,
+                () -> expressionMode = true,
+                () -> expressionMode = false,
+                op, result -> op = result,
+                value, result -> value = result,
+                compare, result -> compare = result,
+                () -> rebuildCondition(table));
         }
 
         @Override public String name(){ return text("elif", "Elif"); }
         @Override public String typeName(){ return "ElseIf"; }
-        @Override public void write(StringBuilder out){ out.append("elif ").append(value).append(' ').append(op.name()).append(' ').append(compare); }
+        @Override public void write(StringBuilder out){
+            if(expressionMode){
+                out.append("elif expr \"").append(conditionExpr).append("\"");
+            }else{
+                out.append("elif ").append(value).append(' ').append(op.name()).append(' ').append(compare);
+            }
+        }
     }
 
     public static class ElseStatement extends SugarStatement{
@@ -410,8 +506,13 @@ public final class SugarStatements{
         result.variable = tokens[1];
         result.initial = optionalValue(tokens[2]);
         result.step = optionalValue(tokens[3]);
-        result.op = ConditionOp.valueOf(tokens[4]);
-        result.compare = tokens[5];
+        if("expr".equals(tokens[4])){
+            result.expressionMode = true;
+            result.conditionExpr = stripQuotes(tokens[5]);
+        }else{
+            result.op = ConditionOp.valueOf(tokens[4]);
+            result.compare = tokens[5];
+        }
         result.destIndex = Integer.parseInt(tokens[6]);
         result.collapsed = collapsed;
         return result;
@@ -423,18 +524,26 @@ public final class SugarStatements{
 
     public static LStatement parseWhileBegin(String[] tokens, boolean collapsed){
         WhileBeginStatement result = new WhileBeginStatement();
-        ConditionOp parsedOp = parseConditionOp(tokens[2]);
-        if(parsedOp != null){
-            result.value = tokens[1];
-            result.op = parsedOp;
-            result.compare = tokens[3];
-            result.destIndex = parseDestIndex(tokens[4]);
+        // "whilebegin expr "<cond>" <destIndex>" — the quoted expression distinguishes it
+        // from a legacy variable literally named "expr".
+        if("expr".equals(tokens[1]) && tokens[2].length() >= 2 && tokens[2].charAt(0) == '"'){
+            result.expressionMode = true;
+            result.conditionExpr = stripQuotes(tokens[2]);
+            result.destIndex = parseDestIndex(tokens[3]);
         }else{
-            // legacy single-value condition: "whilebegin <cond> <destIndex>"
-            result.value = tokens[1];
-            result.op = ConditionOp.notEqual;
-            result.compare = "false";
-            result.destIndex = parseDestIndex(tokens[2]);
+            ConditionOp parsedOp = parseConditionOp(tokens[2]);
+            if(parsedOp != null){
+                result.value = tokens[1];
+                result.op = parsedOp;
+                result.compare = tokens[3];
+                result.destIndex = parseDestIndex(tokens[4]);
+            }else{
+                // legacy single-value condition: "whilebegin <cond> <destIndex>"
+                result.value = tokens[1];
+                result.op = ConditionOp.notEqual;
+                result.compare = "false";
+                result.destIndex = parseDestIndex(tokens[2]);
+            }
         }
         result.collapsed = collapsed;
         return result;
@@ -464,23 +573,39 @@ public final class SugarStatements{
 
     public static LStatement parseIfBegin(String[] tokens, boolean collapsed){
         IfBeginStatement result = new IfBeginStatement();
-        result.value = tokens[1];
-        ConditionOp op = parseConditionOp(tokens[2]);
-        if(op == null) throw new IllegalArgumentException("Invalid ifbegin condition operator: '" + tokens[2] + "'");
-        result.op = op;
-        result.compare = tokens[3];
-        result.destIndex = parseDestIndex(tokens[4]);
+        // "ifbegin expr \"<cond>\" <destIndex>" — require the quoted expression so an old
+        // save whose variable is literally named "expr" is not silently re-parsed as an
+        // expression condition (e.g. "ifbegin expr lessThan 5 4").
+        if("expr".equals(tokens[1]) && tokens.length > 2 && tokens[2].length() >= 2 && tokens[2].charAt(0) == '"'){
+            result.expressionMode = true;
+            result.conditionExpr = stripQuotes(tokens[2]);
+            result.destIndex = parseDestIndex(tokens[3]);
+        }else{
+            result.value = tokens[1];
+            ConditionOp op = parseConditionOp(tokens[2]);
+            if(op == null) throw new IllegalArgumentException("Invalid ifbegin condition operator: '" + tokens[2] + "'");
+            result.op = op;
+            result.compare = tokens[3];
+            result.destIndex = parseDestIndex(tokens[4]);
+        }
         result.collapsed = collapsed;
         return result;
     }
 
     public static LStatement parseElseIf(String[] tokens){
         ElseIfStatement result = new ElseIfStatement();
-        ConditionOp op = parseConditionOp(tokens[2]);
-        if(op == null) throw new IllegalArgumentException("Invalid elif condition operator: '" + tokens[2] + "'");
-        result.value = tokens[1];
-        result.op = op;
-        result.compare = tokens[3];
+        // Same quoted-expression guard as parseIfBegin: a variable named "expr" must not
+        // be silently re-parsed as an expression condition.
+        if("expr".equals(tokens[1]) && tokens.length > 2 && tokens[2].length() >= 2 && tokens[2].charAt(0) == '"'){
+            result.expressionMode = true;
+            result.conditionExpr = stripQuotes(tokens[2]);
+        }else{
+            ConditionOp op = parseConditionOp(tokens[2]);
+            if(op == null) throw new IllegalArgumentException("Invalid elif condition operator: '" + tokens[2] + "'");
+            result.value = tokens[1];
+            result.op = op;
+            result.compare = tokens[3];
+        }
         return result;
     }
 

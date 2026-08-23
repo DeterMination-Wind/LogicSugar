@@ -1032,6 +1032,51 @@ public final class SugarFunctions{
                 rewritten.add(copy);
                 continue;
             }
+            if(statement instanceof IfBeginStatement ifBegin && ifBegin.expressionMode){
+                IfBeginStatement copy = new IfBeginStatement();
+                copy.value = ifBegin.value;
+                copy.compare = ifBegin.compare;
+                copy.op = ifBegin.op;
+                copy.expressionMode = true;
+                copy.conditionExpr = rewriteExpression(ifBegin.conditionExpr, map);
+                copy.destIndex = ifBegin.destIndex;
+                rewritten.add(copy);
+                continue;
+            }
+            if(statement instanceof ElseIfStatement elseIf && elseIf.expressionMode){
+                ElseIfStatement copy = new ElseIfStatement();
+                copy.value = elseIf.value;
+                copy.compare = elseIf.compare;
+                copy.op = elseIf.op;
+                copy.expressionMode = true;
+                copy.conditionExpr = rewriteExpression(elseIf.conditionExpr, map);
+                rewritten.add(copy);
+                continue;
+            }
+            if(statement instanceof WhileBeginStatement whileBegin && whileBegin.expressionMode){
+                WhileBeginStatement copy = new WhileBeginStatement();
+                copy.value = whileBegin.value;
+                copy.compare = whileBegin.compare;
+                copy.op = whileBegin.op;
+                copy.expressionMode = true;
+                copy.conditionExpr = rewriteExpression(whileBegin.conditionExpr, map);
+                copy.destIndex = whileBegin.destIndex;
+                rewritten.add(copy);
+                continue;
+            }
+            if(statement instanceof ForBeginStatement forBegin && forBegin.expressionMode){
+                ForBeginStatement copy = new ForBeginStatement();
+                copy.variable = forBegin.variable;
+                copy.initial = forBegin.initial;
+                copy.step = forBegin.step;
+                copy.compare = forBegin.compare;
+                copy.op = forBegin.op;
+                copy.expressionMode = true;
+                copy.conditionExpr = rewriteExpression(forBegin.conditionExpr, map);
+                copy.destIndex = forBegin.destIndex;
+                rewritten.add(copy);
+                continue;
+            }
             StringBuilder text = new StringBuilder();
             statement.write(text);
             String rewrittenText = rewriteTokens(text.toString(), map);
@@ -1166,13 +1211,23 @@ public final class SugarFunctions{
             if(statement instanceof ForBeginStatement begin){
                 if(!begin.initial.isEmpty()) out.append("set ").append(begin.variable).append(' ').append(begin.initial).append('\n');
                 out.append(label(prefix, "for_check_", i)).append(":\n");
-                out.append("jump ").append(label(prefix, "for_body_", i)).append(' ').append(begin.op.name()).append(' ')
-                    .append(begin.variable).append(' ').append(begin.compare).append('\n');
+                if(begin.expressionMode){
+                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out);
+                    out.append("jump ").append(label(prefix, "for_body_", i)).append(" notEqual ").append(condition).append(" 0\n");
+                }else{
+                    out.append("jump ").append(label(prefix, "for_body_", i)).append(' ').append(begin.op.name()).append(' ')
+                        .append(begin.variable).append(' ').append(begin.compare).append('\n');
+                }
                 out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
                 out.append(label(prefix, "for_body_", i)).append(":\n");
             }else if(statement instanceof WhileBeginStatement begin){
-                out.append("jump ").append(label(prefix, "while_body_", i)).append(' ').append(begin.op.name()).append(' ')
-                    .append(begin.value).append(' ').append(begin.compare).append('\n');
+                if(begin.expressionMode){
+                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out);
+                    out.append("jump ").append(label(prefix, "while_body_", i)).append(" notEqual ").append(condition).append(" 0\n");
+                }else{
+                    out.append("jump ").append(label(prefix, "while_body_", i)).append(' ').append(begin.op.name()).append(' ')
+                        .append(begin.value).append(' ').append(begin.compare).append('\n');
+                }
                 out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
                 out.append(label(prefix, "while_body_", i)).append(":\n");
             }else if(statement instanceof SwitchBeginStatement begin){
@@ -1189,10 +1244,15 @@ public final class SugarFunctions{
                 String target = nextBranch[i] >= 0
                     ? label(prefix, "if_branch_", nextBranch[i])
                     : label(prefix, "stmt_", begin.destIndex + 1);
-                ConditionOp negated = negate(begin.op);
-                if(negated != null){
-                    out.append("jump ").append(target).append(' ').append(negated.name()).append(' ')
-                        .append(begin.value).append(' ').append(begin.compare).append('\n');
+                if(begin.expressionMode){
+                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out);
+                    out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
+                }else{
+                    ConditionOp negated = negate(begin.op);
+                    if(negated != null){
+                        out.append("jump ").append(target).append(' ').append(negated.name()).append(' ')
+                            .append(begin.value).append(' ').append(begin.compare).append('\n');
+                    }
                 }
             }else if(statement instanceof ElseIfStatement item){
                 int owner = ifOwner[i];
@@ -1203,10 +1263,15 @@ public final class SugarFunctions{
                 String target = nextBranch[i] >= 0
                     ? label(prefix, "if_branch_", nextBranch[i])
                     : label(prefix, "stmt_", end + 1);
-                ConditionOp negated = negate(item.op);
-                if(negated != null){
-                    out.append("jump ").append(target).append(' ').append(negated.name()).append(' ')
-                        .append(item.value).append(' ').append(item.compare).append('\n');
+                if(item.expressionMode){
+                    String condition = emitConditionExpression(item.conditionExpr, prefix, i, out);
+                    out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
+                }else{
+                    ConditionOp negated = negate(item.op);
+                    if(negated != null){
+                        out.append("jump ").append(target).append(' ').append(negated.name()).append(' ')
+                            .append(item.value).append(' ').append(item.compare).append('\n');
+                    }
                 }
             }else if(statement instanceof ElseStatement){
                 int owner = ifOwner[i];
@@ -1260,6 +1325,33 @@ public final class SugarFunctions{
             }
         }
         if(statementLabels[statements.size]) out.append(label(prefix, "stmt_", statements.size)).append(":\n");
+    }
+
+    /** Compiles an if/elif expression into a compiler-private boolean temporary. */
+    private static String emitConditionExpression(String expression, String prefix, int statementIndex, StringBuilder out){
+        List<ExprCompiler.OpLine> ops;
+        String base = "__ls_cond_" + prefix.replace('-', '_') + statementIndex;
+        String dest = base;
+        try{
+            ops = ExprCompiler.compile(dest, expression);
+        }catch(Exception e){
+            throw new IllegalArgumentException("Invalid condition expression '" + expression + "': " + e.getMessage());
+        }
+        for(ExprCompiler.OpLine op : ops){
+            String a = renameConditionTemp(op.a, prefix, statementIndex);
+            String b = renameConditionTemp(op.b, prefix, statementIndex);
+            String d = renameConditionTemp(op.dest, prefix, statementIndex);
+            out.append("op ").append(op.op).append(' ').append(d).append(' ').append(a).append(' ').append(b).append('\n');
+        }
+        return dest;
+    }
+
+    private static String renameConditionTemp(String value, String prefix, int statementIndex){
+        if(!ExprCompiler.isTemp(value)) return value;
+        // ExprCompiler may reuse the destination temporary as an operand; preserve the
+        // generated condition's base name and append the temporary suffix only for _0+.
+        return "__ls_cond_" + prefix.replace('-', '_') + statementIndex
+            + ("_0".equals(value) ? "" : value.substring(1));
     }
 
     private static void emitReturn(ReturnStatement ret, String prefix, FuncMode mode, StringBuilder out, String funcName){

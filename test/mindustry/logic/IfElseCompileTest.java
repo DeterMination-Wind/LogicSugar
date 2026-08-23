@@ -68,6 +68,41 @@ public final class IfElseCompileTest{
         System.out.println("=== legacy while ===\n" + compiledLegacyWhile);
         check(compiledLegacyWhile.contains("jump __ls_while_body_0 notEqual a false"), "legacy while maps to != false");
 
+        // Expr mode: the full condition lowers to op instructions plus a native jump.
+        String exprIf = "ifbegin expr \"a > 5 && ready\" 4\nset x 1\nelif expr \"fallback != 0\"\nset x 2\nblockend\n";
+        String compiledExpr = SugarCompiler.compile(exprIf);
+        System.out.println("=== if/elif expr ===\n" + compiledExpr);
+        check(compiledExpr.contains("op greaterThan __ls_cond_0 a 5"), "expr if comparison emitted");
+        check(compiledExpr.contains("op land __ls_cond_0 __ls_cond_0 ready"), "expr if boolean operator emitted");
+        check(compiledExpr.contains("jump __ls_if_branch_2 equal __ls_cond_0 0"), "expr if false branch emitted");
+        check(compiledExpr.contains("op notEqual __ls_cond_2 fallback 0"), "expr elif comparison emitted");
+        check(compiledExpr.contains("jump __ls_stmt_5 equal __ls_cond_2 0"), "expr elif false branch emitted");
+
+        // while with Expr condition: the condition lowers to op + a notEqual enter jump
+        String exprWhile = "whilebegin expr \"x < 10 && ready\" 2\nset y 1\nblockend\n";
+        String compiledExprWhile = SugarCompiler.compile(exprWhile);
+        System.out.println("=== while expr ===\n" + compiledExprWhile);
+        check(compiledExprWhile.contains("op lessThan __ls_cond_0 x 10"), "expr while comparison emitted");
+        check(compiledExprWhile.contains("jump __ls_while_body_0 notEqual __ls_cond_0 0"), "expr while enter jump");
+
+        // for with Expr condition
+        String exprFor = "forbegin i 0 1 expr \"i < count && go\" 2\nset y 1\nblockend\n";
+        String compiledExprFor = SugarCompiler.compile(exprFor);
+        System.out.println("=== for expr ===\n" + compiledExprFor);
+        check(compiledExprFor.contains("op lessThan __ls_cond_0 i count"), "expr for comparison emitted");
+        check(compiledExprFor.contains("jump __ls_for_body_0 notEqual __ls_cond_0 0"), "expr for body jump");
+
+        // Function body with an Expr condition referencing a function parameter:
+        // rewriteBody must rewrite the parameter inside the condition expression,
+        // otherwise the compiled call would compare against the outer variable.
+        // statements: 0=funcdef, 1=ifbegin expr, 2=set, 3=blockend(if), 4=blockend(func)
+        String funcExpr = "funcdef f a 4\nifbegin expr \"a > 0 && ready\" 3\nset x 1\nblockend\nblockend\nfunccall f \"threshold\" ~\n";
+        String compiledFuncExpr = SugarCompiler.compile(funcExpr);
+        System.out.println("=== func body expr ===\n" + compiledFuncExpr);
+        check(compiledFuncExpr.contains("op greaterThan __ls_cond_func_f_0 a 0"), "func Expr condition compiled with function-local temp");
+        check(compiledFuncExpr.contains("jump __ls_func_f_stmt_3 equal __ls_cond_func_f_0 0"), "func Expr false branch emitted");
+        check(compiledFuncExpr.contains("set a threshold"), "func Expr condition parameter bound to call argument");
+
         // invalid: elif outside if must throw
         expectFailure("elif a equal 0\n", "elif outside if rejected");
 
@@ -80,6 +115,49 @@ public final class IfElseCompileTest{
         StringBuilder text = new StringBuilder();
         ifBegin.write(text);
         check(text.toString().equals("ifbegin a greaterThan 5 3"), "ifbegin serializes via write()");
+
+        // for/while Expr serialization round-trip
+        SugarStatements.ForBeginStatement forExpr = new SugarStatements.ForBeginStatement();
+        forExpr.variable = "i";
+        forExpr.initial = "0";
+        forExpr.step = "1";
+        forExpr.expressionMode = true;
+        forExpr.conditionExpr = "i < count && go";
+        forExpr.destIndex = 4;
+        StringBuilder forText = new StringBuilder();
+        forExpr.write(forText);
+        check(forText.toString().equals("forbegin i 0 1 expr \"i < count && go\" 4"), "for expr serializes via write()");
+        LStatement parsedFor = LAssembler.read(forText.toString(), true).first();
+        check(parsedFor instanceof SugarStatements.ForBeginStatement, "for expr round-trips back to ForBeginStatement");
+        SugarStatements.ForBeginStatement parsedForExpr = (SugarStatements.ForBeginStatement)parsedFor;
+        check(parsedForExpr.expressionMode && parsedForExpr.conditionExpr.equals("i < count && go") && parsedForExpr.destIndex == 4,
+            "for expr fields survive round-trip");
+
+        SugarStatements.WhileBeginStatement whileExpr = new SugarStatements.WhileBeginStatement();
+        whileExpr.expressionMode = true;
+        whileExpr.conditionExpr = "x < 10 && ready";
+        whileExpr.destIndex = 2;
+        StringBuilder whileText = new StringBuilder();
+        whileExpr.write(whileText);
+        check(whileText.toString().equals("whilebegin expr \"x < 10 && ready\" 2"), "while expr serializes via write()");
+        LStatement parsedWhile = LAssembler.read(whileText.toString(), true).first();
+        check(parsedWhile instanceof SugarStatements.WhileBeginStatement, "while expr round-trips back to WhileBeginStatement");
+        SugarStatements.WhileBeginStatement parsedWhileExpr = (SugarStatements.WhileBeginStatement)parsedWhile;
+        check(parsedWhileExpr.expressionMode && parsedWhileExpr.conditionExpr.equals("x < 10 && ready") && parsedWhileExpr.destIndex == 2,
+            "while expr fields survive round-trip");
+
+        SugarStatements.IfBeginStatement exprStatement = new SugarStatements.IfBeginStatement();
+        exprStatement.expressionMode = true;
+        exprStatement.conditionExpr = "a > 5 && ready";
+        exprStatement.destIndex = 3;
+        StringBuilder exprText = new StringBuilder();
+        exprStatement.write(exprText);
+        check(exprText.toString().equals("ifbegin expr \"a > 5 && ready\" 3"), "expr ifbegin serializes via write()");
+        LStatement parsedExpr = LAssembler.read(exprText.toString(), true).first();
+        check(parsedExpr instanceof SugarStatements.IfBeginStatement, "expr ifbegin round-trips back to IfBeginStatement");
+        SugarStatements.IfBeginStatement parsedExprIf = (SugarStatements.IfBeginStatement)parsedExpr;
+        check(parsedExprIf.expressionMode && parsedExprIf.conditionExpr.equals("a > 5 && ready") && parsedExprIf.destIndex == 3,
+            "expr ifbegin fields survive round-trip");
         LStatement parsed = LAssembler.read(text.toString(), true).first();
         check(parsed instanceof SugarStatements.IfBeginStatement, "ifbegin round-trips back to IfBeginStatement");
         SugarStatements.IfBeginStatement parsedIf = (SugarStatements.IfBeginStatement)parsed;

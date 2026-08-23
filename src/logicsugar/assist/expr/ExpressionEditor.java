@@ -148,4 +148,9 @@ public class ExpressionEditor extends Stack{
     public float getPrefWidth(){
         return 0f;
     }
+
+    @Override
+    public float getMinWidth(){
+        return 80f;
+    }
 }
