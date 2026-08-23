@@ -82,10 +82,11 @@ public class BoxSelect{
         return Core.settings.getBool(settingCtrlDragCopy, true);
     }
 
-    // ===== 反射字段（包级私有，缓存 Field；缺失时按可选降级，不阻塞编辑器）=====
+// ===== 反射字段（包级私有，缓存 Field；缺失时按可选降级，不阻塞编辑器）=====
     private static final Field draggingField = optionalField(LCanvas.class, "dragging");
     private static final Field privilegedField = optionalField(LCanvas.class, "privileged");
     static final Field needsLayoutField = optionalField(arc.scene.ui.layout.WidgetGroup.class, "needsLayout");
+    private static final Field dragLayoutSpaceField = optionalField(LCanvas.DragLayout.class, "space");
 
     private static Field optionalField(Class<?> type, String name){
         try{
@@ -95,6 +96,33 @@ public class BoxSelect{
         }catch(Exception e){
             Log.warn("[LogicAssist] Field not found, feature degraded: " + type.getName() + "." + name, e);
             return null;
+        }
+    }
+
+    /** 读取 DragLayout 当前实际间距。SugarCanvas 会把 space 反射设为 0f（紧凑布局），
+     *  拖拽几何必须与布局几何用同一个值，否则拖动时积木间会凭空多出 10f 间距、
+     *  底部积木被推出可视区而滚动条不变。读取失败时退回原生默认值。 */
+    private static float getLayoutSpace(LCanvas canvas){
+        try{
+            return dragLayoutSpaceField.getFloat(canvas.statements);
+        }catch(Exception e){
+            return Scl.scl(10f);
+        }
+    }
+
+    /** 临时修改 DragLayout.space 并立即重排：拖动期间用 10f 间距把积木分得更开，
+     *  DragLayout 高度随之增大，滚动条范围同步扩大；结束拖动时传 0f 恢复紧凑布局。 */
+    private static void setDragLayoutSpace(LCanvas canvas, float space){
+        try{
+            dragLayoutSpaceField.setFloat(canvas.statements, space);
+            // 高度变化需要双重 invalidate+validate（参考 finalizeLayout）：
+            // 第一次 layout 用旧 height 执行并标记父节点，第二次用新 height 真正重排。
+            canvas.statements.invalidate();
+            canvas.statements.validate();
+            canvas.statements.invalidate();
+            canvas.statements.validate();
+        }catch(Exception e){
+            Log.warn("[LogicAssist] Failed to set layout space", e);
         }
     }
 
@@ -131,6 +159,11 @@ public class BoxSelect{
 
     // 拖动期间保存的原始 child.y（用于恢复 layout() 的修改）
     private static float[] dragBaseYs = null;
+
+    // 布局切换补偿：startDrag 时把 space 从 0f 切到 10f 会触发 layout 重排，
+    // 所有积木整体上移 10f×(N-i)。记录切换前后的 y 差，拖动时加回 translation，
+    // 保证被拖积木锚定在按下点，避免鼠标相对积木偏移（blockend 等高小的块尤甚）。
+    private static float[] dragYOffsets = null;
 
     // 插入指示器几何位置
     private static float indicatorX, indicatorY, indicatorW, indicatorH;
@@ -776,8 +809,12 @@ public class BoxSelect{
 
     private static void resetState(LCanvas canvas){
         clearDraggingField(canvas);
+        // 兜底恢复紧凑布局（若拖动中对话框被关闭等场景）
+        setDragLayoutSpace(canvas, 0f);
         restoreButtonIcons(canvas);
         resetAllTranslations(canvas);
+        dragBaseYs = null;
+        dragYOffsets = null;
         clearPendingSingleDrag();
         singleStatementDrag = false;
         singleStatementDragKeepsSelection = false;
@@ -802,20 +839,36 @@ public class BoxSelect{
         dragInsertPos = -1;
         dragMoved = false;
 
-        // 保存所有积木的原始 y 坐标（layout() 会修改，拖动期间需要恢复）
+        // 清除原版 dragging 字段，防止原版 layout 跳过错误积木
+        clearDraggingField(canvas);
+
+        // 切换布局前记录每个积木的 y（0f 间距布局），用于计算切换补偿。
+        // setDragLayoutSpace(10f) 会触发重排，所有积木上移 (N-i)×10f，
+        // 若不补偿，被拖积木相对鼠标锚点会整体偏移（blockend 等高小的块尤其明显）。
         Seq<Element> children = canvas.statements.getChildren();
+        float[] yBefore = new float[children.size];
+        for(int i = 0; i < children.size; i++){
+            yBefore[i] = children.get(i).y;
+        }
+
+        // 拖动期间把积木间距切到 10f（分得更开，方便操作），并立即重排，
+        // 让 DragLayout 高度/滚动条范围同步变大。结束拖动时恢复 0f。
+        setDragLayoutSpace(canvas, Scl.scl(10f));
+
+        // 保存所有积木的原始 y 坐标（layout() 会修改，拖动期间需要恢复）。
+        // 注意：必须在 setDragLayoutSpace 重排之后记录，基准才是 10f 间距的布局。
         dragBaseYs = new float[children.size];
+        dragYOffsets = new float[children.size];
         for(int i = 0; i < children.size; i++){
             dragBaseYs[i] = children.get(i).y;
+            // 补偿 = 切换前位置 - 切换后位置：让被拖积木视觉上仍锚定在按下点
+            dragYOffsets[i] = yBefore[i] - dragBaseYs[i];
         }
 
         // 拖动模式：dragMode 持久模式 + Ctrl/中键临时覆盖。
         // 框选框/高亮框颜色由 getModeColor() 实时反映此判断，保证与松手后拖动模式一致。
         boolean ctrlDown = Core.input.keyDown(KeyCode.controlLeft);
         boolean isCopy = (ctrlDown && ctrlDragCopyEnabled()) || dragMode == DragMode.COPY || button == KeyCode.mouseMiddle;
-
-        // 清除原版 dragging 字段，防止原版 layout 跳过错误积木
-        clearDraggingField(canvas);
 
         if(isCopy){
             prepareCopyData(canvas);
@@ -853,26 +906,43 @@ public class BoxSelect{
         if(state == State.DRAGGING_MOVE){
             // 移动模式：紧凑排列非选中积木，消除选中积木原始位置占用的空间
             relayoutNonSelected(canvas);
-            // 选中积木用 translation 跟随鼠标
+            // 选中积木用 translation 跟随鼠标。
+            // 关键：translation.y 要加上布局切换补偿（dragYOffsets），
+            // 否则 setDragLayoutSpace(10f) 重排让积木上移后，视觉锚点不再在按下点，
+            // 鼠标会跑到积木下侧甚至块外（blockend 等高小的块尤其明显）。
             Vec2 localMouse = canvas.statements.stageToLocalCoordinates(Tmp.v2.set(mx, my));
             float dx = localMouse.x - dragStartLocalX;
             float dy = localMouse.y - dragStartLocalY;
             for(StatementElem elem : selected){
-                elem.setTranslation(dx, dy);
+                int idx = children.indexOf(elem, true);
+                float offsetY = dragYOffsets != null && idx >= 0 && idx < dragYOffsets.length ? dragYOffsets[idx] : 0f;
+                elem.setTranslation(dx, dy + offsetY);
             }
         }
         // 复制模式：原积木保持原位，预览由 drawCopyPreview() 绘制
 
-        // 计算插入位置（移动模式下用 relayoutNonSelected 后的紧凑位置）
+        // 先按上一帧的插入位置腾位，让视觉空隙出现在用户上次看到的位置，
+        // 再基于"腾位后"的视觉位置判定新插入点——否则判定用的是紧凑位置，
+        // 鼠标落在视觉空隙（如 C、D 之间）时会被误判成下一块积木的位置。
+        applyInsertShift(canvas);
         int newInsertPos = computeInsertPosition(canvas, my);
         if(newInsertPos != dragInsertPos){
+            // 插入点变化：清掉旧腾位，按新位置重新排列并腾位，保证判定与显示一致
             dragInsertPos = newInsertPos;
+            resetAllTranslations(canvas);
+            if(state == State.DRAGGING_MOVE){
+                relayoutNonSelected(canvas);
+                Vec2 localMouse = canvas.statements.stageToLocalCoordinates(Tmp.v2.set(mx, my));
+                float dx = localMouse.x - dragStartLocalX;
+                float dy = localMouse.y - dragStartLocalY;
+                for(StatementElem elem : selected){
+                    int idx = children.indexOf(elem, true);
+                    float offsetY = dragYOffsets != null && idx >= 0 && idx < dragYOffsets.length ? dragYOffsets[idx] : 0f;
+                    elem.setTranslation(dx, dy + offsetY);
+                }
+            }
+            applyInsertShift(canvas);
         }
-
-        // 腾位：将插入点下方的非选中积木向下移，撑开空间显示插入位置。
-        // 关键：用 translation 而非修改 child.y，因为 translation 会被
-        // localToAscendantCoordinates 正确计算，JumpCurve 能跟随。
-        applyInsertShift(canvas);
 
         // 腾位后更新跳转线位置——此时 translation 已反映腾位，JumpCurve 能正确定位
         SugarCanvas.refreshJumpLayer(canvas);
@@ -926,7 +996,7 @@ public class BoxSelect{
      *  这样 localToAscendantCoordinates 能正确计算，JumpCurve 跟随。 */
     private static void relayoutNonSelected(LCanvas canvas){
         Seq<Element> children = canvas.statements.getChildren();
-        float space = Scl.scl(10f);
+        float space = getLayoutSpace(canvas);
 
         // 从顶部开始紧凑排列非选中积木（用 translation 表示相对于原始位置的偏移）
         float compactY = 0; // 紧凑布局中的累积 y（从顶部开始）
@@ -957,7 +1027,7 @@ public class BoxSelect{
         if(dragInsertPos < 0 || selected.isEmpty()) return;
 
         Seq<Element> children = canvas.statements.getChildren();
-        float space = Scl.scl(10f);
+        float space = getLayoutSpace(canvas);
 
         // 腾位量 = 所有选中积木高度 + 间距，减去末尾多余的一个间距
         float shiftAmount = 0;
@@ -994,7 +1064,7 @@ public class BoxSelect{
 
         Seq<Element> children = canvas.statements.getChildren();
         float paneWidth = canvas.statements.getWidth();
-        float space = Scl.scl(10f);
+        float space = getLayoutSpace(canvas);
 
         float totalH = 0;
         for(StatementElem elem : selected){
@@ -1244,7 +1314,7 @@ public class BoxSelect{
         Seq<Element> children = canvas.statements.getChildren();
         if(children.isEmpty()) return;
 
-        float space = Scl.scl(10f);
+        float space = getLayoutSpace(canvas);
         float totalHeight = 0;
         for(Element child : children){
             totalHeight += child.getPrefHeight() + space;
@@ -1380,8 +1450,12 @@ public class BoxSelect{
     private static void executeDragMove(LCanvas canvas, int insertPos){
         clearDraggingField(canvas);
 
+        // 拖动期间是 10f 间距，移动完成后恢复紧凑布局（滚动条同步缩回）
+        setDragLayoutSpace(canvas, 0f);
+
         resetAllTranslations(canvas);
         dragBaseYs = null;
+        dragYOffsets = null;
 
         List<StatementElem> sorted = getSortedSelected(canvas);
         Seq<Element> children = canvas.statements.getChildren();
@@ -1434,8 +1508,12 @@ public class BoxSelect{
     private static void executeDragCopy(LCanvas canvas, int insertPos){
         clearDraggingField(canvas);
 
+        // 拖动期间是 10f 间距，复制完成后恢复紧凑布局（滚动条同步缩回）
+        setDragLayoutSpace(canvas, 0f);
+
         resetAllTranslations(canvas);
         dragBaseYs = null;
+        dragYOffsets = null;
 
         if(clipboardCopies == null || clipboardCopies.isEmpty()){
             enterSelectedState(canvas);
@@ -1483,8 +1561,12 @@ public class BoxSelect{
     private static void cancelDrag(LCanvas canvas){
         clearDraggingField(canvas);
 
+        // 拖动期间是 10f 间距，取消后恢复紧凑布局（滚动条同步缩回）
+        setDragLayoutSpace(canvas, 0f);
+
         resetAllTranslations(canvas);
         dragBaseYs = null;
+        dragYOffsets = null;
         clipboardCopies = null;
         clipboardSize = 0;
         clipboardSources = null;
@@ -1496,8 +1578,12 @@ public class BoxSelect{
     /** Delete 键快速删除选中积木 */
     private static void deleteSelected(LCanvas canvas){
         clearDraggingField(canvas);
+        // 兜底恢复紧凑布局（删除可从任何状态进入）
+        setDragLayoutSpace(canvas, 0f);
 
         resetAllTranslations(canvas);
+        dragBaseYs = null;
+        dragYOffsets = null;
 
         List<StatementElem> sorted = getSortedSelected(canvas);
         int count = sorted.size();

@@ -27,7 +27,9 @@ import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.CaseStatement;
 import mindustry.logic.SugarStatements.ElseIfStatement;
 import mindustry.logic.SugarStatements.ElseStatement;
+import mindustry.logic.SugarStatements.ForBeginStatement;
 import mindustry.logic.SugarStatements.IfBeginStatement;
+import mindustry.logic.SugarStatements.WhileBeginStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
 import logicsugar.assist.BoxSelect;
 import logicsugar.assist.JumpLineColor;
@@ -362,7 +364,15 @@ public class SugarCanvas extends LCanvas{
             float unit = Core.graphics.isPortrait() ? 17f : 24f;
             float minWidth = Core.graphics.isPortrait() ? 285f : 360f;
             float maxInset = Math.max(0f, getWidth() / Scl.scl(1f) - minWidth);
-            float nextInset = Math.min(Math.max(0, structureDepth) * unit, maxInset);
+            // 缩进深度封顶：嵌套过深时不再继续增加缩进，避免内容区被挤到只剩
+            // minWidth 甚至更窄。语句内部文本/输入框不会自动换行，缩进无上限时
+            // 深嵌套会把行内容挤到无法阅读（横屏 900 宽下 22 层就达到 540 极限）。
+            // 封顶取 3 层：for 等宽语句的行尾按钮（EXPR/OP/折叠）在深缩进时会被
+            // 顶出屏幕，且 for 本身多行+行尾按钮，缩进 4 层（96px）已能把
+            // EXPR/OP 顶出可视区。3 层（横屏 72px）进一步收紧，保证行尾按钮可见。
+            float maxDepth = 3f;
+            float depthInset = Math.min(Math.max(0, structureDepth), maxDepth) * unit;
+            float nextInset = Math.min(depthInset, maxInset);
             if(Math.abs(inset - nextInset) > 0.1f){
                 inset = nextInset;
                 marginLeft(inset);
@@ -506,6 +516,21 @@ public class SugarCanvas extends LCanvas{
                 if(elem.st instanceof BeginStatement begin){
                     nextSignature = 31 * nextSignature + System.identityHashCode(begin.dest);
                     nextSignature = 31 * nextSignature + (begin.collapsed ? 1 : 0);
+                }
+                // Condition content changes (typing in the Expr editor, switching op/Expr mode)
+                // must re-run invalidStatements, or stale red marking never refreshes.
+                if(elem.st instanceof IfBeginStatement ifBegin){
+                    nextSignature = 31 * nextSignature + (ifBegin.expressionMode ? 1 : 0);
+                    nextSignature = 31 * nextSignature + ifBegin.conditionExpr.hashCode();
+                }else if(elem.st instanceof ElseIfStatement elseIf){
+                    nextSignature = 31 * nextSignature + (elseIf.expressionMode ? 1 : 0);
+                    nextSignature = 31 * nextSignature + elseIf.conditionExpr.hashCode();
+                }else if(elem.st instanceof WhileBeginStatement whileBegin){
+                    nextSignature = 31 * nextSignature + (whileBegin.expressionMode ? 1 : 0);
+                    nextSignature = 31 * nextSignature + whileBegin.conditionExpr.hashCode();
+                }else if(elem.st instanceof ForBeginStatement forBegin){
+                    nextSignature = 31 * nextSignature + (forBegin.expressionMode ? 1 : 0);
+                    nextSignature = 31 * nextSignature + forBegin.conditionExpr.hashCode();
                 }
             }
             if(nextSignature == signature) return;

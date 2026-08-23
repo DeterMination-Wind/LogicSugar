@@ -19,6 +19,7 @@ import mindustry.logic.SugarStatements.IfBeginStatement;
 import mindustry.logic.SugarStatements.ReturnStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
 import mindustry.logic.SugarStatements.WhileBeginStatement;
+import logicsugar.assist.expr.ExprCompiler;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
@@ -385,6 +386,18 @@ public final class SugarCompiler{
             if(statements.get(i) instanceof ReturnStatement && funcOwner[i] < 0){
                 invalid[i] = true;
             }
+            if(statements.get(i) instanceof IfBeginStatement ifBegin && ifBegin.expressionMode){
+                invalid[i] |= !validConditionExpression(ifBegin.conditionExpr);
+            }
+            if(statements.get(i) instanceof ElseIfStatement elseIf && elseIf.expressionMode){
+                invalid[i] |= !validConditionExpression(elseIf.conditionExpr);
+            }
+            if(statements.get(i) instanceof WhileBeginStatement whileBegin && whileBegin.expressionMode){
+                invalid[i] |= !validConditionExpression(whileBegin.conditionExpr);
+            }
+            if(statements.get(i) instanceof ForBeginStatement forBegin && forBegin.expressionMode){
+                invalid[i] |= !validConditionExpression(forBegin.conditionExpr);
+            }
         }
 
         // an if chain may have at most one else, and no elif may follow it (shared rule,
@@ -407,6 +420,15 @@ public final class SugarCompiler{
             }
         }
         return invalid;
+    }
+
+    private static boolean validConditionExpression(String expression){
+        try{
+            ExprCompiler.compile("__ls_cond_check", expression);
+            return true;
+        }catch(Exception ignored){
+            return false;
+        }
     }
 
     public static FuncMode currentMode(){
