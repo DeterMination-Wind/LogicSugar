@@ -39,6 +39,7 @@ public final class LogicSugarSettings{
         table.pref(new FuncModeSetting(settingFuncMode, "normal"));
         table.pref(new LibraryButtonSetting("logicsugar.funclib"));
         addHideVarsPref(table);
+        addBoxSelectPrefs(table);
         if(includeJumpLines){
             logicsugar.assist.JumpLineColor.buildSettings(table);
         }
@@ -49,6 +50,12 @@ public final class LogicSugarSettings{
         table.checkPref(logicsugar.assist.VarDisplayFilter.settingHideVars, true, b -> {
             if(b) logicsugar.assist.VarDisplayFilter.applyToAll();
         });
+    }
+
+    /** Checkboxes for BoxSelect drag behavior (Ctrl+click copy and Ctrl+drag copy). */
+    static void addBoxSelectPrefs(SettingsMenuDialog.SettingsTable table){
+        table.checkPref(logicsugar.assist.BoxSelect.settingCtrlClickCopy, true);
+        table.checkPref(logicsugar.assist.BoxSelect.settingCtrlDragCopy, true);
     }
 
     /** Click-to-cycle picker for the function expansion mode. */

@@ -70,6 +70,18 @@ public class BoxSelect{
     private static final Mat tmpMat = new Mat();
     private static final Mat tmpMat2 = new Mat();
 
+    // ===== 设置键 =====
+    public static final String settingCtrlClickCopy = "logicsugar.ctrlClickCopy";
+    public static final String settingCtrlDragCopy = "logicsugar.ctrlDragCopy";
+
+    private static boolean ctrlClickCopyEnabled(){
+        return Core.settings.getBool(settingCtrlClickCopy, true);
+    }
+
+    private static boolean ctrlDragCopyEnabled(){
+        return Core.settings.getBool(settingCtrlDragCopy, true);
+    }
+
     // ===== 反射字段（包级私有，缓存 Field）=====
     private static final Field draggingField;
     private static final Field privilegedField;
@@ -257,6 +269,17 @@ public class BoxSelect{
         return target instanceof Image;
     }
 
+    /** True when the click hits a text input or the expression editor (self or ancestor chain).
+     *  These must never be swallowed by the drag state machine, or they cannot take focus. */
+    private static boolean isClickOnEditable(Element target){
+        Element cur = target;
+        while(cur != null){
+            if(cur instanceof TextField || cur instanceof logicsugar.assist.expr.ExpressionEditor) return true;
+            cur = cur.parent;
+        }
+        return false;
+    }
+
     /** 判断元素是否是 canvas（LCanvas）的后代。
      *  返回按钮、变量按钮等在 LogicDialog.buttons 区，不在 canvas 内。
      *  只有 canvas 内的空白区才允许框选。 */
@@ -352,6 +375,13 @@ public class BoxSelect{
             return false;
         }
 
+        // 输入框/表达式编辑器必须放行给原版（聚焦、进入编辑）。
+        // 上游 "fix accidental statement dragging" 把普通点击改为进入候选拖动并吞掉事件，
+        // 导致语句上的 TextField 收不到 touchDown、无法聚焦（B12.4 回归）。
+        if(isClickOnEditable(target)){
+            return false;
+        }
+
         // 滚动条点击跳转：点击轨道（非滑块）时直接跳转到对应位置，点击滑块放行给原版拖拽
         if(canvas.pane != null && canvas.pane.hasScroll()){
             float paneX = canvas.pane.x;
@@ -375,9 +405,9 @@ public class BoxSelect{
         boolean onSelectedStatement = onStatement && selected.contains(clickedStmt);
 
         if(onStatement && !onSelectedStatement){
-            // Ctrl+点击非选中积木 → 选中该积木并开始复制拖动
+            // Ctrl+点击非选中积木 → 选中该积木并开始复制拖动（开关关闭时退化为普通点击）
             boolean ctrlDown = Core.input.keyDown(KeyCode.controlLeft);
-            if(ctrlDown){
+            if(ctrlDown && ctrlClickCopyEnabled()){
                 selected.clear();
                 selected.add(clickedStmt);
                 startDrag(canvas, stageCoords.x, stageCoords.y, button);
@@ -779,7 +809,7 @@ public class BoxSelect{
         // 拖动模式：dragMode 持久模式 + Ctrl/中键临时覆盖。
         // 框选框/高亮框颜色由 getModeColor() 实时反映此判断，保证与松手后拖动模式一致。
         boolean ctrlDown = Core.input.keyDown(KeyCode.controlLeft);
-        boolean isCopy = ctrlDown || dragMode == DragMode.COPY || button == KeyCode.mouseMiddle;
+        boolean isCopy = (ctrlDown && ctrlDragCopyEnabled()) || dragMode == DragMode.COPY || button == KeyCode.mouseMiddle;
 
         // 清除原版 dragging 字段，防止原版 layout 跳过错误积木
         clearDraggingField(canvas);
@@ -1115,7 +1145,7 @@ public class BoxSelect{
         }else{
             // 框选/选中态：与 startDrag 的判断保持一致
             boolean ctrlDown = Core.input.keyDown(KeyCode.controlLeft);
-            isCopy = ctrlDown || dragMode == DragMode.COPY;
+            isCopy = (ctrlDown && ctrlDragCopyEnabled()) || dragMode == DragMode.COPY;
         }
         return isCopy ? Pal.heal : Pal.place;
     }

@@ -115,6 +115,7 @@ public class LogicSugarMod extends Mod{
         table.pref(new LogicSugarSettings.FuncModeSetting(LogicSugarSettings.settingFuncMode, "normal"));
         table.pref(new LogicSugarSettings.LibraryButtonSetting("logicsugar.funclib"));
         LogicSugarSettings.addHideVarsPref(table);
+        LogicSugarSettings.addBoxSelectPrefs(table);
         JumpLineColor.buildSettings(table);
     }
 }
