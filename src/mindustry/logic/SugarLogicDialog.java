@@ -55,9 +55,6 @@ public class SugarLogicDialog extends LogicDialog{
      *  instead of being dropped. Used by the function library editing session (executor == null),
      *  so processor edits are never affected. */
     public boolean passThroughSugarOnError;
-    /** Set while a library discard is in flight, so hide()'s uncompilable-expression guard
-     *  (which would otherwise trap the user in the dialog) is bypassed. */
-    private boolean discarding;
     /** The stored code as it was when the dialog opened (stale-close protection). */
     private String openedCode = "";
     /** The sugar (or compiled fallback) the canvas was loaded with. */
@@ -377,8 +374,9 @@ public class SugarLogicDialog extends LogicDialog{
         // 关闭保存路径（hidden -> canvas.save()）没有 try/catch：ExprStatement.write() 对
         // 从未成功编译的表达式抛 IllegalArgumentException 会冒泡成引擎级报错。这里在
         // hide 之前预检，命中则提示并阻止关闭——画布原样保留（标红可见），不破坏任何状态。
-        // 函数库会话（passThroughSugarOnError）与"放弃修改"路径（discarding）保留放行语义。
-        if(!passThroughSugarOnError && !discarding && hasUncompilableExpression()){
+        // 仅处理器会话执行预检：函数库会话（executor == null）有自己的错误处理与
+        // "放弃修改"路径（discardLibraryChanges），不应被拦截。
+        if(executor != null && !passThroughSugarOnError && hasUncompilableExpression()){
             Core.app.post(() -> showCompileError(
                 new IllegalArgumentException(uncompilableExpressionMessage()), true));
             return;
@@ -387,7 +385,6 @@ public class SugarLogicDialog extends LogicDialog{
         cachedCopyMenu = null;
         cachedCopyDialog = null;
         super.hide();
-        discarding = false;
     }
 
     /** 画布上是否存在从未成功编译的表达式（ExprStatement.write 会因此抛错）。 */
@@ -418,7 +415,6 @@ public class SugarLogicDialog extends LogicDialog{
     private void discardLibraryChanges(){
         if(executor != null) return; // processor sessions keep their normal close semantics
         passThroughSugarOnError = false;
-        discarding = true; // 绕过 hide() 的不可编译表达式 guard：放弃修改必须总能退出
         drafts.clear();
         hide();
     }
