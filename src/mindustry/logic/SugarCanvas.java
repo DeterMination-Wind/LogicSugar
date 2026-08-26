@@ -11,6 +11,7 @@ import arc.scene.Group;
 import arc.scene.event.Touchable;
 import arc.scene.style.BaseDrawable;
 import arc.scene.style.Drawable;
+import arc.scene.ui.ImageButton;
 import arc.scene.ui.Label;
 import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.WidgetGroup;
@@ -18,7 +19,9 @@ import arc.struct.Seq;
 import arc.struct.SnapshotSeq;
 import arc.util.Tmp;
 import mindustry.Vars;
+import mindustry.gen.Icon;
 import mindustry.gen.Tex;
+import mindustry.ui.Styles;
 import mindustry.logic.LStatements.InvalidStatement;
 import mindustry.logic.LStatements.JumpStatement;
 import mindustry.logic.LStatements.PrintStatement;
@@ -77,6 +80,10 @@ public class SugarCanvas extends LCanvas{
     @Override
     public void load(String asm){
         super.load(asm);
+        // super.load() 先清空了 jumpLayer（statements.jumps.clear()），结构引导线层
+        // 随之被移除；installGuideLayer 只在 rebuild() 里调用（重开才触发），所以
+        // 这里必须重装，否则粘贴导入后所有结构竖线消失且新增/删除语句都无法恢复。
+        installGuideLayer();
         ExprHook.foldAll(this);
     }
 
@@ -219,6 +226,8 @@ public class SugarCanvas extends LCanvas{
     private void installGuideLayer(){
         jumpLayer = resolveJumpLayer(this);
         if(jumpLayer == null) return;
+        // 防重：load() 会清空 jumpLayer 再重装；rebuild() 也可能重复调用
+        if(guideLayer != null && guideLayer.parent == jumpLayer) return;
         guideLayer = new StructureGuideLayer();
         guideLayer.touchable = Touchable.disabled;
         guideLayer.fillParent = true;
@@ -343,6 +352,41 @@ public class SugarCanvas extends LCanvas{
             if(statement instanceof BlockEndStatement && getCells().size > 1){
                 getCells().peek().height(0f).minHeight(0f).pad(0f);
                 getChildren().peek().visible = false;
+            }
+            fixActionIconHitBounds();
+        }
+
+        /**
+         * 修复高 UI 缩放（200% 等）下新增/复制/删除按钮的点击判定区偏左。
+         *
+         * 根因（已从字节码确认）：ImageButton(Drawable, ImageButtonStyle) 构造时会把传入
+         * 的 style 拷贝一份（new ImageButtonStyle(style)）再 setStyle，因此
+         * getStyle() == Styles.logici 的引用比较永远为 false——必须改用图标引用比较。
+         * Icon 是静态单例（imageUp 字段直接引用 Icon.add/copy/cancel 等实例，不被拷贝），
+         * 引用比较可靠。Icon 字体图标按 Scl.scl() 放大后 prefWidth 远大于 24f 父按钮，
+         * 子 Image 命中区重叠 → 命中判定偏左。resizeImage(24f) = imageCell().size(24f)
+         * （min/max=scl(24f)），布局时 Image 被 clamp 到与父按钮一致，命中区对齐。
+         */
+        private void fixActionIconHitBounds(){
+            fixIconButtons(this);
+        }
+
+        /** 原版/MindustryX 的语句动作按钮（均在内层白色 Table 中，经 table(...) 创建）。 */
+        private static boolean isActionButton(ImageButton button){
+            Drawable icon = button.getStyle().imageUp;
+            return icon == Icon.add || icon == Icon.copy || icon == Icon.cancel
+                || icon == Icon.fileText || icon == Icon.pencil;
+        }
+
+        private static void fixIconButtons(Group group){
+            for(Element child : group.getChildren()){
+                if(child instanceof ImageButton button && isActionButton(button)){
+                    button.resizeImage(24f);
+                    button.invalidateHierarchy();
+                }
+                if(child instanceof Group sub){
+                    fixIconButtons(sub);
+                }
             }
         }
 

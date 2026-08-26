@@ -306,11 +306,16 @@ public class BoxSelect{
     }
 
     /** True when the click hits a text input or the expression editor (self or ancestor chain).
-     *  These must never be swallowed by the drag state machine, or they cannot take focus. */
+     *  These must never be swallowed by the drag state machine, or they cannot take focus.
+     *  ExprStatement's expression field is a plain Label styled with the nodeField background
+     *  (click switches it to a TextField), so a Label with that input-box style is editable too. */
     private static boolean isClickOnEditable(Element target){
         Element cur = target;
         while(cur != null){
             if(cur instanceof TextField || cur instanceof logicsugar.assist.expr.ExpressionEditor) return true;
+            // 输入框样式的 Label（ExprStatement 的表达式区域：点击后切换为 TextField 编辑）
+            if(cur instanceof Label label && label.getStyle() != null
+                && label.getStyle().background == Styles.nodeField.background) return true;
             cur = cur.parent;
         }
         return false;

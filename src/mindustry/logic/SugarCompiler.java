@@ -189,11 +189,21 @@ public final class SugarCompiler{
         SugarFunctions.CallIds ids = new SugarFunctions.CallIds();
         if(mode == FuncMode.normal){
             SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null);
-            for(SugarFunctions.Function function : functions.hoistOrder()){
-                out.append(function.entryName()).append(":\n");
-                SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name);
-                out.append(function.exitName()).append(":\n");
-                out.append("set @counter ").append(function.retName()).append('\n');
+            java.util.List<SugarFunctions.Function> hoisted = functions.hoistOrder();
+            if(!hoisted.isEmpty()){
+                // Normal-mode function bodies sit right after the main program. A call site's
+                // return point (the `set <result> <retName>` after its jump) is inside main;
+                // once main runs past it, the instruction stream would fall through into the
+                // shared function body and re-execute it every tick (caller variables like
+                // <result> keep incrementing). Jump past all bodies at the end of main.
+                out.append("jump __ls_end always x false\n");
+                for(SugarFunctions.Function function : hoisted){
+                    out.append(function.entryName()).append(":\n");
+                    SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name);
+                    out.append(function.exitName()).append(":\n");
+                    out.append("set @counter ").append(function.retName()).append('\n');
+                }
+                out.append("__ls_end:\n");
             }
         }else{
             SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null);
@@ -383,20 +393,26 @@ public final class SugarCompiler{
             }
             // return is only legal inside a function body; mirror the compile-time
             // "return ... is outside a function" error in the editor (red marking)
-            if(statements.get(i) instanceof ReturnStatement && funcOwner[i] < 0){
-                invalid[i] = true;
+            if(statements.get(i) instanceof ReturnStatement ret){
+                if(funcOwner[i] < 0){
+                    invalid[i] = true;
+                }else if(!ret.expr.isEmpty() && !validConditionExpression(ret.expr, statements)){
+                    // return 表达式本身非法（如 a1.1 = 变量后接数字成员）时编译期会抛错，
+                    // 编辑期必须同步标红，否则保存/编译失败但编辑器毫无提示。
+                    invalid[i] = true;
+                }
             }
             if(statements.get(i) instanceof IfBeginStatement ifBegin && ifBegin.expressionMode){
-                invalid[i] |= !validConditionExpression(ifBegin.conditionExpr);
+                invalid[i] |= !validConditionExpression(ifBegin.conditionExpr, statements);
             }
             if(statements.get(i) instanceof ElseIfStatement elseIf && elseIf.expressionMode){
-                invalid[i] |= !validConditionExpression(elseIf.conditionExpr);
+                invalid[i] |= !validConditionExpression(elseIf.conditionExpr, statements);
             }
             if(statements.get(i) instanceof WhileBeginStatement whileBegin && whileBegin.expressionMode){
-                invalid[i] |= !validConditionExpression(whileBegin.conditionExpr);
+                invalid[i] |= !validConditionExpression(whileBegin.conditionExpr, statements);
             }
             if(statements.get(i) instanceof ForBeginStatement forBegin && forBegin.expressionMode){
-                invalid[i] |= !validConditionExpression(forBegin.conditionExpr);
+                invalid[i] |= !validConditionExpression(forBegin.conditionExpr, statements);
             }
         }
 
@@ -414,21 +430,44 @@ public final class SugarCompiler{
         }
         SugarFunctions.LibraryIndex library = SugarFunctions.library();
         for(int i = 0; i < statements.size; i++){
-            if(statements.get(i) instanceof FuncCallStatement call && !local.contains(call.name)
-                && (library == null || !library.functions.containsKey(call.name))){
-                invalid[i] = true;
+            if(statements.get(i) instanceof FuncCallStatement call){
+                if(!local.contains(call.name)
+                    && (library == null || !library.functions.containsKey(call.name))){
+                    invalid[i] = true;
+                }
+                // 实参表达式非法（如 a1.1）时编译期会抛错，编辑期同步标红；
+                // 用括号感知的 splitArgs 拆分，避免 max(1, 2) 这类嵌套实参被朴素逗号切分误伤
+                if(!call.args.isEmpty()){
+                    for(String arg : SugarFunctions.splitArgs(call.args)){
+                        if(!validConditionExpression(arg, statements)){
+                            invalid[i] = true;
+                            break;
+                        }
+                    }
+                }
             }
         }
         return invalid;
     }
 
-    private static boolean validConditionExpression(String expression){
+    private static boolean validConditionExpression(String expression, Seq<LStatement> statements){
         try{
-            ExprCompiler.compile("__ls_cond_check", expression);
+            ExprCompiler.compile("__ls_cond_check", expression, conditionChecker(statements));
             return true;
         }catch(Exception ignored){
             return false;
         }
+    }
+
+    /** 条件表达式里的函数名校验：本地 funcdef + 库函数（数学函数由 ExprCompiler 内置）。 */
+    private static ExprCompiler.FunctionChecker conditionChecker(Seq<LStatement> statements){
+        Set<String> names = new HashSet<>();
+        for(LStatement statement : statements){
+            if(statement instanceof FuncDefStatement def) names.add(def.name);
+        }
+        SugarFunctions.LibraryIndex library = SugarFunctions.library();
+        if(library != null) names.addAll(library.functions.keySet());
+        return names::contains;
     }
 
     public static FuncMode currentMode(){

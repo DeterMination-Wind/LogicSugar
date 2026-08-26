@@ -268,8 +268,12 @@ public final class SugarFunctions{
             LStatement statement = statements.get(i);
             if(statement instanceof FuncCallStatement call){
                 resolveCall(call, null, set, i);
+                resolveStatementExprCalls(call, null, set, i);
             }else if(statement instanceof ReturnStatement){
                 throw error("return", i, "is outside a function");
+            }else{
+                // 条件表达式等文本中的调用也要进调用图（递归检测 / reachability / 参数校验）
+                resolveStatementExprCalls(statement, null, set, i);
             }
         }
         for(Function function : set.functions.values()){
@@ -277,6 +281,9 @@ public final class SugarFunctions{
                 LStatement statement = function.body.get(i);
                 if(statement instanceof FuncCallStatement call){
                     resolveCall(call, function, set, i);
+                    resolveStatementExprCalls(call, function, set, i);
+                }else{
+                    resolveStatementExprCalls(statement, function, set, i);
                 }
             }
         }
@@ -868,6 +875,39 @@ public final class SugarFunctions{
         (owner == null ? set.mainCalls : owner.callees).add(call.name);
     }
 
+    /**
+     * 登记语句文本（return 表达式 / funccall 实参 / 条件表达式）里的函数调用。
+     * 这些调用藏在表达式文本中，只有 resolveCall 收集的显式 funccall 语句是看不到的——
+     * 不登记会导致：normal 模式漏 hoist（函数体缺失）、隐式递归检测不到（return foo(x)
+     * 自调用在展开时无限循环）、参数个数错误到运行期才暴露。
+     */
+    private static void resolveStatementExprCalls(LStatement statement, Function owner, FunctionSet set, int index){
+        if(statement instanceof ReturnStatement ret){
+            registerExprCalls(ret.expr, owner, set, index);
+        }else if(statement instanceof FuncCallStatement call){
+            // 嵌套调用：g(foo(x)) —— foo 也要进调用图
+            registerExprCalls(call.args, owner, set, index);
+        }else if(statement instanceof IfBeginStatement ifBegin && ifBegin.expressionMode){
+            registerExprCalls(ifBegin.conditionExpr, owner, set, index);
+        }else if(statement instanceof ElseIfStatement elseIf && elseIf.expressionMode){
+            registerExprCalls(elseIf.conditionExpr, owner, set, index);
+        }else if(statement instanceof WhileBeginStatement whileBegin && whileBegin.expressionMode){
+            registerExprCalls(whileBegin.conditionExpr, owner, set, index);
+        }else if(statement instanceof ForBeginStatement forBegin && forBegin.expressionMode){
+            registerExprCalls(forBegin.conditionExpr, owner, set, index);
+        }
+    }
+
+    private static void registerExprCalls(String expr, Function owner, FunctionSet set, int index){
+        for(ExprCompiler.CallSite site : ExprCompiler.collectCalls(expr)){
+            FuncCallStatement stmt = new FuncCallStatement();
+            stmt.name = site.name;
+            stmt.args = site.args;
+            stmt.result = "_"; // 表达式里的调用必须能返回一个值
+            resolveCall(stmt, owner, set, index);
+        }
+    }
+
     /** Localizes an "undefined function" error when the library state explains the miss.
      *  An otherwise-valid library keeps the plain message (a function really does not
      *  exist); a missing or damaged library points the user at the repair path. */
@@ -1242,7 +1282,7 @@ public final class SugarFunctions{
                 if(!begin.initial.isEmpty()) out.append("set ").append(begin.variable).append(' ').append(begin.initial).append('\n');
                 out.append(label(prefix, "for_check_", i)).append(":\n");
                 if(begin.expressionMode){
-                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out);
+                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids);
                     out.append("jump ").append(label(prefix, "for_body_", i)).append(" notEqual ").append(condition).append(" 0\n");
                 }else{
                     out.append("jump ").append(label(prefix, "for_body_", i)).append(' ').append(begin.op.name()).append(' ')
@@ -1252,7 +1292,7 @@ public final class SugarFunctions{
                 out.append(label(prefix, "for_body_", i)).append(":\n");
             }else if(statement instanceof WhileBeginStatement begin){
                 if(begin.expressionMode){
-                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out);
+                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids);
                     out.append("jump ").append(label(prefix, "while_body_", i)).append(" notEqual ").append(condition).append(" 0\n");
                 }else{
                     out.append("jump ").append(label(prefix, "while_body_", i)).append(' ').append(begin.op.name()).append(' ')
@@ -1275,7 +1315,7 @@ public final class SugarFunctions{
                     ? label(prefix, "if_branch_", nextBranch[i])
                     : label(prefix, "stmt_", begin.destIndex + 1);
                 if(begin.expressionMode){
-                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out);
+                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids);
                     out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
                 }else{
                     ConditionOp negated = negate(begin.op);
@@ -1294,7 +1334,7 @@ public final class SugarFunctions{
                     ? label(prefix, "if_branch_", nextBranch[i])
                     : label(prefix, "stmt_", end + 1);
                 if(item.expressionMode){
-                    String condition = emitConditionExpression(item.conditionExpr, prefix, i, out);
+                    String condition = emitConditionExpression(item.conditionExpr, prefix, i, out, functions, mode, ids);
                     out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
                 }else{
                     ConditionOp negated = negate(item.op);
@@ -1346,7 +1386,7 @@ public final class SugarFunctions{
                 expandCall(call, functions, mode, out, ids);
             }else if(statement instanceof ReturnStatement){
                 if(funcName == null) throw error("return", i, "is outside a function");
-                emitReturn((ReturnStatement)statement, prefix, mode, out, funcName);
+                emitReturn((ReturnStatement)statement, prefix, mode, out, funcName, functions, ids);
             }else if(statement instanceof FuncDefStatement){
                 throw error("funcdef", i, "cannot be lowered; function definitions are expanded at call sites");
             }else{
@@ -1358,8 +1398,9 @@ public final class SugarFunctions{
     }
 
     /** Compiles an if/elif expression into a compiler-private boolean temporary. */
-    private static String emitConditionExpression(String expression, String prefix, int statementIndex, StringBuilder out){
-        List<ExprCompiler.OpLine> ops;
+    private static String emitConditionExpression(String expression, String prefix, int statementIndex, StringBuilder out,
+                                                  FunctionSet functions, FuncMode mode, CallIds ids){
+        List<ExprCompiler.Line> ops;
         String base = "__ls_cond_" + prefix.replace('-', '_') + statementIndex;
         String dest = base;
         try{
@@ -1367,11 +1408,31 @@ public final class SugarFunctions{
         }catch(Exception e){
             throw new IllegalArgumentException("Invalid condition expression '" + expression + "': " + e.getMessage());
         }
-        for(ExprCompiler.OpLine op : ops){
-            String a = renameConditionTemp(op.a, prefix, statementIndex);
-            String b = renameConditionTemp(op.b, prefix, statementIndex);
-            String d = renameConditionTemp(op.dest, prefix, statementIndex);
-            out.append("op ").append(op.op).append(' ').append(d).append(' ').append(a).append(' ').append(b).append('\n');
+        for(ExprCompiler.Line line : ops){
+            if(line instanceof ExprCompiler.SensorLine sensor){
+                String a = renameConditionTemp(sensor.a, prefix, statementIndex);
+                String b = renameConditionTemp(sensor.b, prefix, statementIndex);
+                String d = renameConditionTemp(sensor.dest, prefix, statementIndex);
+                out.append("sensor ").append(d).append(' ').append(a).append(' ').append(b).append('\n');
+            }else if(line instanceof ExprCompiler.CallLine call){
+                // 函数调用展开：实参与结果 temp 都要进入条件命名空间
+                FuncCallStatement stmt = new FuncCallStatement();
+                stmt.name = call.name;
+                StringBuilder args = new StringBuilder();
+                for(String value : ExprCompiler.splitValues(call.args)){
+                    if(args.length() > 0) args.append(", ");
+                    args.append(renameConditionTemp(value, prefix, statementIndex));
+                }
+                stmt.args = args.toString();
+                stmt.result = renameConditionTemp(call.dest, prefix, statementIndex);
+                expandCall(stmt, functions, mode, out, ids);
+            }else{
+                ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
+                String a = renameConditionTemp(op.a, prefix, statementIndex);
+                String b = renameConditionTemp(op.b, prefix, statementIndex);
+                String d = renameConditionTemp(op.dest, prefix, statementIndex);
+                out.append("op ").append(op.op).append(' ').append(d).append(' ').append(a).append(' ').append(b).append('\n');
+            }
         }
         return dest;
     }
@@ -1384,11 +1445,35 @@ public final class SugarFunctions{
             + ("_0".equals(value) ? "" : value.substring(1));
     }
 
-    private static void emitReturn(ReturnStatement ret, String prefix, FuncMode mode, StringBuilder out, String funcName){
+    private static void emitReturn(ReturnStatement ret, String prefix, FuncMode mode, StringBuilder out, String funcName,
+                                   FunctionSet functions, CallIds ids){
         if(!ret.expr.isEmpty()){
             try{
-                List<ExprCompiler.OpLine> ops = ExprCompiler.compile("__ls_func_" + funcName + "_result", ret.expr);
-                for(ExprCompiler.OpLine op : ops) out.append(op.toText()).append('\n');
+                List<ExprCompiler.Line> ops = ExprCompiler.compile("__ls_func_" + funcName + "_result", ret.expr);
+                for(ExprCompiler.Line line : ops){
+                    if(line instanceof ExprCompiler.CallLine call){
+                        FuncCallStatement stmt = new FuncCallStatement();
+                        stmt.name = call.name;
+                        StringBuilder args = new StringBuilder();
+                        for(String value : ExprCompiler.splitValues(call.args)){
+                            if(args.length() > 0) args.append(", ");
+                            args.append(renameReturnTemp(value, funcName));
+                        }
+                        stmt.args = args.toString();
+                        stmt.result = renameReturnTemp(call.dest, funcName);
+                        expandCall(stmt, functions, mode, out, ids);
+                    }else if(line instanceof ExprCompiler.SensorLine sensor){
+                        out.append("sensor ").append(renameReturnTemp(sensor.dest, funcName)).append(' ')
+                            .append(renameReturnTemp(sensor.a, funcName)).append(' ')
+                            .append(renameReturnTemp(sensor.b, funcName)).append('\n');
+                    }else{
+                        ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
+                        out.append("op ").append(op.op).append(' ')
+                            .append(renameReturnTemp(op.dest, funcName)).append(' ')
+                            .append(renameReturnTemp(op.a, funcName)).append(' ')
+                            .append(renameReturnTemp(op.b, funcName)).append('\n');
+                    }
+                }
             }catch(Exception e){
                 throw new IllegalArgumentException("Invalid return expression '" + ret.expr + "': " + e.getMessage());
             }
@@ -1399,6 +1484,17 @@ public final class SugarFunctions{
         }else{
             out.append("set @counter __ls_func_").append(funcName).append("_ret\n");
         }
+    }
+
+    /**
+     * return 表达式编译生成的临时变量进入函数命名空间（__ls_rt_&lt;func&gt;_&lt;n&gt;）。
+     * 修复上游 bug：表达式 temp 在 lower 阶段现场生成，analyze 阶段的 prepBody 来不及改名，
+     * 裸 _0 会与调用者表达式链中"跨调用存活"的 _0 冲突（函数体覆盖链 temp → 结果错值）。
+     * 前缀与 prepBody 的 __ls_f_&lt;func&gt;_&lt;n&gt; 错开，避免函数体内已有语句的 mangle 编号冲突。
+     */
+    private static String renameReturnTemp(String value, String funcName){
+        if(!ExprCompiler.isTemp(value)) return value;
+        return "__ls_rt_" + funcName + "_" + value.substring(1);
     }
 
     /** Expands one call site. */
@@ -1412,7 +1508,7 @@ public final class SugarFunctions{
             int id = ids.next();
             String prefix = "i_" + id + "_";
             for(int k = 0; k < args.size(); k++){
-                emitArg(out, args.get(k), target.bindingName(k));
+                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids);
             }
             lower(target.body, prefix, functions, mode, out, ids, target.name);
             // Value returns jump here so the caller-side result copy still runs;
@@ -1424,7 +1520,7 @@ public final class SugarFunctions{
             out.append("__ls_").append(prefix).append("exit:\n");
         }else{
             for(int k = 0; k < args.size(); k++){
-                emitArg(out, args.get(k), target.bindingName(k));
+                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids);
             }
             out.append("set ").append(target.retName()).append(" @counter\n");
             out.append("op add ").append(target.retName()).append(' ').append(target.retName()).append(" 2\n");
@@ -1435,19 +1531,35 @@ public final class SugarFunctions{
         }
     }
 
+    /** 展开表达式链中的一行函数调用（CallLine 的实参已是编译后的值名）。 */
+    private static void expandCallLine(ExprCompiler.CallLine call, FunctionSet functions, FuncMode mode, StringBuilder out, CallIds ids){
+        FuncCallStatement stmt = new FuncCallStatement();
+        stmt.name = call.name;
+        stmt.args = call.args;
+        stmt.result = call.dest;
+        expandCall(stmt, functions, mode, out, ids);
+    }
+
     /** Compiles one argument expression and binds it to the parameter. */
-    private static void emitArg(StringBuilder out, String arg, String param){
-        List<ExprCompiler.OpLine> ops;
+    private static void emitArg(StringBuilder out, String arg, String param, FunctionSet functions, FuncMode mode, CallIds ids){
+        List<ExprCompiler.Line> ops;
         try{
             ops = ExprCompiler.compile("_0", arg);
         }catch(Exception e){
             throw new IllegalArgumentException("Invalid argument expression '" + arg + "': " + e.getMessage());
         }
-        if(ops.size() == 1 && ops.get(0).op.equals("add") && ops.get(0).b.equals("0")){
-            out.append("set ").append(param).append(' ').append(ops.get(0).a).append('\n');
+        if(ops.size() == 1 && ops.get(0) instanceof ExprCompiler.OpLine op
+            && op.op.equals("add") && op.b.equals("0")){
+            out.append("set ").append(param).append(' ').append(op.a).append('\n');
             return;
         }
-        for(ExprCompiler.OpLine op : ops) out.append(op.toText()).append('\n');
+        for(ExprCompiler.Line line : ops){
+            if(line instanceof ExprCompiler.CallLine call){
+                expandCallLine(call, functions, mode, out, ids);
+            }else{
+                out.append(line.toText()).append('\n');
+            }
+        }
         out.append("set ").append(param).append(" _0\n");
     }
 
@@ -1764,6 +1876,16 @@ public final class SugarFunctions{
             int count = counts.getOrDefault(token, 0) + amount;
             if(count <= 0) counts.remove(token);
             else counts.put(token, count);
+        }
+        // funccall 实参在 write() 文本里是带引号的 token（"_0"），isTemporary 匹配不到；
+        // 实参里的 temp 必须计数，否则优化器会把实参求值 op 当死代码删除
+        if(statement instanceof FuncCallStatement call){
+            for(String token : call.args.split("[,\\s]+")){
+                if(!isTemporary(token)) continue;
+                int count = counts.getOrDefault(token, 0) + amount;
+                if(count <= 0) counts.remove(token);
+                else counts.put(token, count);
+            }
         }
     }
 
