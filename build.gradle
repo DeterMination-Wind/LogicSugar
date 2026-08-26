@@ -58,8 +58,14 @@ tasks.register("ifElseTest", JavaExec){
     mainClass = "mindustry.logic.IfElseCompileTest"
 }
 
+tasks.register("decompileTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "mindustry.logic.SugarDecompilerTest"
+}
+
 test.enabled = false
-check.dependsOn selfTest, ifElseTest
+check.dependsOn selfTest, ifElseTest, decompileTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

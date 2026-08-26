@@ -36,6 +36,7 @@ import java.util.Map;
 
 public class SugarLogicDialog extends LogicDialog{
     private static final String compiledCopyName = "logicsugar-copy-compiled";
+    private static final String originalViewName = "logicsugar-view-original";
     private static final Field consumerField = field(LogicDialog.class, "consumer");
     /** LogicDialog.privileged is package-private and lives in the MindustryX mod class loader at
      *  runtime, so it must be read reflectively (cross-loader package access throws
@@ -50,6 +51,13 @@ public class SugarLogicDialog extends LogicDialog{
     private TextButton cachedCopyButton;
     private Table cachedCopyMenu;
     private Dialog cachedCopyDialog;
+    private TextButton originalViewButton;
+    private Table originalViewMenu;
+    private Dialog originalViewDialog;
+    /** Raw code and recovered source for the optional original/Sugar view toggle. */
+    private String originalCode;
+    private String recoveredSugar;
+    private boolean showingOriginal;
     public LExecutor executor;
     /** When true, a failed compile during a close is passed back to the caller as raw sugar
      *  instead of being dropped. Used by the function library editing session (executor == null),
@@ -89,6 +97,7 @@ public class SugarLogicDialog extends LogicDialog{
             if(menuScanTimer >= 6f){
                 menuScanTimer = 0f;
                 installCompiledCopy();
+                installOriginalView();
             }
         });
     }
@@ -143,6 +152,66 @@ public class SugarLogicDialog extends LogicDialog{
             }
         }).size(280f, 60f).left().marginLeft(12f).get().name = compiledCopyName;
         cachedCopyMenu.invalidateHierarchy();
+    }
+
+    /** Adds a menu action for switching between an inferred Sugar view and the stored mlog. */
+    private void installOriginalView(){
+        if(originalCode == null || recoveredSugar == null) return;
+        if(originalViewButton != null && !inSceneTree(originalViewButton)){
+            originalViewButton = null;
+            originalViewMenu = null;
+            originalViewDialog = null;
+        }
+        if(originalViewButton == null){
+            TextButton candidate = findTextButton(Core.scene.root, originalViewName);
+            if(candidate != null){
+                originalViewButton = candidate;
+                originalViewMenu = candidate.parent instanceof Table table ? table : null;
+                originalViewDialog = parentDialog(candidate);
+            }
+        }
+        if(originalViewButton != null) return;
+        TextButton copyButton = cachedCopyButton;
+        Table menu = cachedCopyMenu;
+        Dialog dialog = cachedCopyDialog;
+        if(copyButton == null || menu == null || dialog == null) return;
+        menu.row();
+        originalViewButton = menu.button("@logicsugar.view.original", Icon.edit, Styles.flatt, this::toggleOriginalView)
+            .size(280f, 60f).left().marginLeft(12f).get();
+        originalViewButton.name = originalViewName;
+        originalViewMenu = menu;
+        originalViewDialog = dialog;
+        menu.invalidateHierarchy();
+    }
+
+    private TextButton findTextButton(Element element, String name){
+        if(element instanceof TextButton button && name.equals(button.name)) return button;
+        if(element instanceof Group group){
+            for(Element child : group.getChildren()){
+                TextButton found = findTextButton(child, name);
+                if(found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private void toggleOriginalView(){
+        if(originalCode == null || recoveredSugar == null) return;
+        String target = showingOriginal ? recoveredSugar : originalCode;
+        try{
+            canvas.load(target);
+            editable = target;
+            showingOriginal = !showingOriginal;
+            updateOriginalViewButton();
+            if(originalViewDialog != null) originalViewDialog.hide();
+        }catch(Throwable exception){
+            showCompileError(new IllegalArgumentException("Cannot switch logic view: " + exception.getMessage()), false);
+        }
+    }
+
+    private void updateOriginalViewButton(){
+        if(originalViewButton == null) return;
+        originalViewButton.setText(showingOriginal ? "@logicsugar.view.sugar" : "@logicsugar.view.original");
     }
 
     private Dialog parentDialog(Element element){
@@ -278,6 +347,12 @@ public class SugarLogicDialog extends LogicDialog{
         this.executor = executor;
         discardButton.visible = executor == null;
         this.openedCode = code;
+        this.originalCode = null;
+        this.recoveredSugar = null;
+        this.showingOriginal = false;
+        this.originalViewButton = null;
+        this.originalViewMenu = null;
+        this.originalViewDialog = null;
         // drafts are keyed by Building; drop entries whose processor is gone so the map
         // cannot grow without bound over a session
         drafts.keySet().removeIf(key -> key instanceof Building build && !build.isValid());
@@ -298,9 +373,20 @@ public class SugarLogicDialog extends LogicDialog{
             if(verified){
                 editable = restored;
             }else{
-                // the stored code was changed outside Logic Sugar: show it as-is
-                editable = code;
-                Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.external.edit"));
+                // First try to infer a Sugar view from pure vanilla mlog. The result is only
+                // used when its normalized recompilation is verified; otherwise retain the
+                // existing raw-code behavior for externally edited programs.
+                SugarDecompiler.Result recovered = SugarDecompiler.decompile(code, privileged);
+                if(recovered.verified && recovered.matchedMode != null && !"flat".equals(recovered.matchedMode)
+                    && recovered.structured > 0){
+                    editable = recovered.sugar;
+                    originalCode = code;
+                    recoveredSugar = recovered.sugar;
+                    Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.recovered"));
+                }else{
+                    editable = code;
+                    Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.external.edit"));
+                }
             }
         }
         effectiveLibrary = SugarCompiler.effectiveLibrary(code, SugarFunctions.library(), FunctionLibrary.loadText());
