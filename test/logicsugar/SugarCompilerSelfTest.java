@@ -502,6 +502,11 @@ public class SugarCompilerSelfTest{
         String callOk = "funcdef f x 2\nreturn \"x\"\nblockend\nfunccall f \"1.5, x\" r\n";
         boolean[] invalidCallOk = SugarCompiler.invalidStatements(LAssembler.read(callOk, true));
         check(!invalidCallOk[3], "valid funccall arguments are marked invalid");
+
+        // 嵌套多参实参（max(1, 2)）不能被朴素逗号切分误伤：括号感知的 splitArgs 下应整体合法
+        String callNested = "funcdef f x 2\nreturn \"x\"\nblockend\nfunccall f \"max(1, 2)\" r\n";
+        boolean[] invalidNested = SugarCompiler.invalidStatements(LAssembler.read(callNested, true));
+        check(!invalidNested[3], "nested multi-arg call max(1, 2) is marked invalid: " + java.util.Arrays.toString(invalidNested));
     }
 
     private static void returnTempNamespace(){
@@ -514,12 +519,12 @@ public class SugarCompilerSelfTest{
         String lowered = loweredCode(compiled);
         // 函数体 temp 必须是命名空间（__ls_rt_foo_0），不能是裸 _0
         check(lowered.contains("op mul __ls_rt_foo_0 a 2"),
-            "return expression temp was not namespaced://n" + lowered);
+            "return expression temp was not namespaced\n" + lowered);
         check(!lowered.contains("op mul _0 a 2"),
-            "return expression leaked a bare _0 temp://n" + lowered);
+            "return expression leaked a bare _0 temp\n" + lowered);
         // 调用者链的 _0（cos(5) 结果）跨 funccall 存活，且函数体不再覆盖它
         check(lowered.contains("op cos _0 5 0") && lowered.contains("op add y _0 _2"),
-            "caller chain temp was clobbered across the call://n" + lowered);
+            "caller chain temp was clobbered across the call\n" + lowered);
     }
 
     private static void normalModeMainJumpsPastBodies(){

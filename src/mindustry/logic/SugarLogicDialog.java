@@ -26,6 +26,8 @@ import mindustry.ui.dialogs.BaseDialog;
 import mindustry.world.blocks.logic.LogicBlock;
 import logicsugar.FunctionLibrary;
 import logicsugar.FunctionLibraryDialog;
+import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ExprStatement;
 
 import java.lang.reflect.Field;
 import java.util.IdentityHashMap;
@@ -369,10 +371,39 @@ public class SugarLogicDialog extends LogicDialog{
 
     @Override
     public void hide(){
+        // 关闭保存路径（hidden -> canvas.save()）没有 try/catch：ExprStatement.write() 对
+        // 从未成功编译的表达式抛 IllegalArgumentException 会冒泡成引擎级报错。这里在
+        // hide 之前预检，命中则提示并阻止关闭——画布原样保留（标红可见），不破坏任何状态。
+        // 函数库会话（passThroughSugarOnError）保留原有的放行语义。
+        if(!passThroughSugarOnError && hasUncompilableExpression()){
+            Core.app.post(() -> showCompileError(
+                new IllegalArgumentException(uncompilableExpressionMessage()), true));
+            return;
+        }
         cachedCopyButton = null;
         cachedCopyMenu = null;
         cachedCopyDialog = null;
         super.hide();
+    }
+
+    /** 画布上是否存在从未成功编译的表达式（ExprStatement.write 会因此抛错）。 */
+    private boolean hasUncompilableExpression(){
+        return uncompilableExpressionMessage() != null;
+    }
+
+    /** 第一个不可编译表达式的错误消息；全部合法时返回 null。与编辑器 build() 的校验口径一致。 */
+    private String uncompilableExpressionMessage(){
+        if(canvas == null || canvas.statements == null) return null;
+        for(Element child : canvas.statements.getChildren()){
+            if(child instanceof LCanvas.StatementElem elem && elem.st instanceof ExprStatement expr){
+                try{
+                    ExprCompiler.compile(expr.dest, expr.expr);
+                }catch(Exception e){
+                    return e.getMessage();
+                }
+            }
+        }
+        return null;
     }
 
     /** Library-file editing sessions only: close the editor without saving, so a user who

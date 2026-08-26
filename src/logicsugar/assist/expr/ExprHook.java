@@ -177,17 +177,18 @@ public class ExprHook{
         if(call.result == null || call.result.isEmpty()) return false;
         String args = call.args.trim();
         if(args.isEmpty()) return true;
-        for(ExprCompiler.CallSite site : ExprCompiler.collectCalls(args)){
-            return false; // 实参里含函数调用
-        }
+        if(!ExprCompiler.collectCalls(args).isEmpty()) return false; // 实参里含函数调用
         try{
             for(String arg : args.split(",")){
                 String value = arg.trim();
-                // 纯值：temp / 变量 / 数字（操作符、括号、空格都拒绝）
+                // 纯值：temp / 变量 / 数字（操作符、括号、空格都拒绝）；
+                // '-' 仅对负数字面量放行，否则 a-b 折叠进 foo(a-b) 会静默变成减法
                 if(value.isEmpty()) return false;
+                boolean negativeNumber = value.matches("-\\d+(\\.\\d+)?");
                 for(int i = 0; i < value.length(); i++){
                     char c = value.charAt(i);
-                    if(!Character.isLetterOrDigit(c) && c != '_' && c != '@' && c != '.' && c != '-') return false;
+                    if(!Character.isLetterOrDigit(c) && c != '_' && c != '@' && c != '.'
+                        && !(c == '-' && negativeNumber)) return false;
                 }
             }
             return true;

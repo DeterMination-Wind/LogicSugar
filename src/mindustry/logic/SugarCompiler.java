@@ -435,9 +435,10 @@ public final class SugarCompiler{
                     && (library == null || !library.functions.containsKey(call.name))){
                     invalid[i] = true;
                 }
-                // 实参表达式非法（如 a1.1）时编译期会抛错，编辑期同步标红
+                // 实参表达式非法（如 a1.1）时编译期会抛错，编辑期同步标红；
+                // 用括号感知的 splitArgs 拆分，避免 max(1, 2) 这类嵌套实参被朴素逗号切分误伤
                 if(!call.args.isEmpty()){
-                    for(String arg : ExprCompiler.splitValues(call.args)){
+                    for(String arg : SugarFunctions.splitArgs(call.args)){
                         if(!validConditionExpression(arg, statements)){
                             invalid[i] = true;
                             break;
