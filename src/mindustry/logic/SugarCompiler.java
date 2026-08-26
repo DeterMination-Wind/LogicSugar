@@ -393,8 +393,14 @@ public final class SugarCompiler{
             }
             // return is only legal inside a function body; mirror the compile-time
             // "return ... is outside a function" error in the editor (red marking)
-            if(statements.get(i) instanceof ReturnStatement && funcOwner[i] < 0){
-                invalid[i] = true;
+            if(statements.get(i) instanceof ReturnStatement ret){
+                if(funcOwner[i] < 0){
+                    invalid[i] = true;
+                }else if(!ret.expr.isEmpty() && !validConditionExpression(ret.expr, statements)){
+                    // return 表达式本身非法（如 a1.1 = 变量后接数字成员）时编译期会抛错，
+                    // 编辑期必须同步标红，否则保存/编译失败但编辑器毫无提示。
+                    invalid[i] = true;
+                }
             }
             if(statements.get(i) instanceof IfBeginStatement ifBegin && ifBegin.expressionMode){
                 invalid[i] |= !validConditionExpression(ifBegin.conditionExpr, statements);
@@ -424,9 +430,20 @@ public final class SugarCompiler{
         }
         SugarFunctions.LibraryIndex library = SugarFunctions.library();
         for(int i = 0; i < statements.size; i++){
-            if(statements.get(i) instanceof FuncCallStatement call && !local.contains(call.name)
-                && (library == null || !library.functions.containsKey(call.name))){
-                invalid[i] = true;
+            if(statements.get(i) instanceof FuncCallStatement call){
+                if(!local.contains(call.name)
+                    && (library == null || !library.functions.containsKey(call.name))){
+                    invalid[i] = true;
+                }
+                // 实参表达式非法（如 a1.1）时编译期会抛错，编辑期同步标红
+                if(!call.args.isEmpty()){
+                    for(String arg : ExprCompiler.splitValues(call.args)){
+                        if(!validConditionExpression(arg, statements)){
+                            invalid[i] = true;
+                            break;
+                        }
+                    }
+                }
             }
         }
         return invalid;

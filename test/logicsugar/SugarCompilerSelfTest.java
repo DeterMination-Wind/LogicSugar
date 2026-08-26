@@ -21,6 +21,7 @@ import mindustry.logic.SugarStatements.WhileBeginStatement;
 import mindustry.logic.LStatements.JumpStatement;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprHook;
+import logicsugar.assist.expr.ExprStatement;
 import mindustry.world.blocks.logic.LogicBlock;
 
 import java.util.HashSet;
@@ -47,6 +48,8 @@ public class SugarCompilerSelfTest{
         functionCallsInExpressions();
         exprCallEndToEnd();
         returnTempNamespace();
+        returnExprRedMark();
+        highlightMemberColor();
         normalModeMainJumpsPastBodies();
         structuredTargetsFollowExpressionResize();
         functionStatementsRoundTrip();
@@ -456,6 +459,49 @@ public class SugarCompilerSelfTest{
         String condCompiled = SugarCompiler.compile(condSugar);
         check(condCompiled.contains("jump __ls_func_foo_entry always x false"), "condition expression call was not expanded");
         check(condCompiled.contains("op greaterThan __ls_cond_0 __ls_cond_0 5"), "condition result was not chained after the call");
+    }
+
+    private static void highlightMemberColor(){
+        // 成员访问高亮：unit.Health 的 Health 应为天蓝成员色；数字/函数配色保持
+        String h = ExprStatement.highlight("unit.Health");
+        check(h.contains("[sky]Health[]"), "member name not highlighted in sky: " + h);
+        check(h.contains("[white]unit[]"), "base variable lost white color: " + h);
+        String chain = ExprStatement.highlight("unit.controller.maxHealth");
+        check(chain.contains("[sky]controller[]") && chain.contains("[sky]maxHealth[]"),
+            "chained members not highlighted: " + chain);
+        String mixed = ExprStatement.highlight("cos(a).Health * 2.5");
+        check(mixed.contains("[coral]cos[]") && mixed.contains("[sky]Health[]") && mixed.contains("[goldenrod]2.5[]"),
+            "mixed highlight wrong: " + mixed);
+        String broken = ExprStatement.highlight("unit.");
+        check(!broken.contains("[sky]"), "dangling dot should not highlight anything: " + broken);
+    }
+
+    private static void returnExprRedMark(){
+        // 回归：return 表达式 / funccall 实参编译报错但编辑器不标红。
+        // a1.1 = 变量 a1 后接数字成员（非法），编译期抛错，编辑期 invalidStatements 必须标红。
+        boolean thrown = false;
+        try{
+            ExprCompiler.compile("r", "a1.1");
+        }catch(ExprCompiler.ParseException e){
+            thrown = true;
+        }
+        check(thrown, "a1.1 should fail to compile");
+
+        String sugar = "funcdef f x 2\nreturn \"a1.1\"\nblockend\nfunccall f \"1\" r\n";
+        boolean[] invalid = SugarCompiler.invalidStatements(LAssembler.read(sugar, true));
+        check(invalid[1], "return expression a1.1 is not marked invalid at statement 1");
+
+        String ok = "funcdef f x 2\nreturn \"x + 1.5\"\nblockend\nfunccall f \"1\" r\n";
+        boolean[] invalidOk = SugarCompiler.invalidStatements(LAssembler.read(ok, true));
+        check(!invalidOk[1], "valid return expression is marked invalid");
+
+        String callSugar = "funcdef f x 2\nreturn \"x\"\nblockend\nfunccall f \"a1.1\" r\n";
+        boolean[] invalidCall = SugarCompiler.invalidStatements(LAssembler.read(callSugar, true));
+        check(invalidCall[3], "funccall argument a1.1 is not marked invalid at statement 3");
+
+        String callOk = "funcdef f x 2\nreturn \"x\"\nblockend\nfunccall f \"1.5, x\" r\n";
+        boolean[] invalidCallOk = SugarCompiler.invalidStatements(LAssembler.read(callOk, true));
+        check(!invalidCallOk[3], "valid funccall arguments are marked invalid");
     }
 
     private static void returnTempNamespace(){

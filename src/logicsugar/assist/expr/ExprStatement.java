@@ -252,7 +252,10 @@ public class ExprStatement extends LStatement{
                 }else if(tok.type == ExprCompiler.TokType.IDENT){
                     boolean isFunc = (i + 1 < tokens.size()
                         && tokens.get(i + 1).type == ExprCompiler.TokType.LPAREN);
-                    color = isFunc ? "coral" : "white";
+                    // 成员访问：`.` 之后的标识符（unit.Health 的 Health）用天蓝色区分
+                    boolean isMember = (i > 0 && tokens.get(i - 1).type == ExprCompiler.TokType.OP
+                        && tokens.get(i - 1).text.equals("."));
+                    color = isFunc ? "coral" : isMember ? "sky" : "white";
                 }else{
                     color = "lightgray";
                 }
