@@ -420,6 +420,14 @@ public class SugarCompilerSelfTest{
             thrown = true;
         }
         check(!thrown, "known function with checker threw");
+
+        // 负数字面量实参往返：foo(-5) → op sub + funccall 链 → rebuild 回 foo(-5)
+        ops = ExprCompiler.compile("x", "foo(-5)");
+        String negRestored = ExprCompiler.rebuild(ops);
+        check("foo(-5)".equals(negRestored), "negative literal arg did not round-trip: " + negRestored);
+        // 再编译一次语义等价（-5 求值为 op sub，funccall 实参为 temp）
+        check(opText(ExprCompiler.compile("x", negRestored)).equals(opText(ops)),
+            "restored negative-literal call changed the generated chain");
     }
 
     private static void exprCallEndToEnd(){

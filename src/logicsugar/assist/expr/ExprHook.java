@@ -215,7 +215,10 @@ public class ExprHook{
 
             List<ExprCompiler.Line> ops;
             try{
-                ops = ExprCompiler.compile(exprStmt.dest, exprStmt.expr);
+                // 与 ExprStatement.write()/SugarLogicDialog 预检同口径：使用 functionChecker
+                // 校验函数名，否则未定义函数会被展开成 will-fail 的 funccall（编译时才报错），
+                // 与编辑期标红、保存拦截的行为不一致。
+                ops = ExprCompiler.compile(exprStmt.dest, exprStmt.expr, ExprStatement.functionChecker());
             }catch(Exception e){
                 // 编译失败：保留 ExprStatement 不展开，write() 会输出 lastOps
                 // 避免 unfold→fold 循环用 lastOps 重建 ExprStatement 覆盖错误的 expr

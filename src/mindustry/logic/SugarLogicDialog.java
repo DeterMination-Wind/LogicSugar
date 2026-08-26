@@ -55,6 +55,9 @@ public class SugarLogicDialog extends LogicDialog{
      *  instead of being dropped. Used by the function library editing session (executor == null),
      *  so processor edits are never affected. */
     public boolean passThroughSugarOnError;
+    /** Set while a library discard is in flight, so hide()'s uncompilable-expression guard
+     *  (which would otherwise trap the user in the dialog) is bypassed. */
+    private boolean discarding;
     /** The stored code as it was when the dialog opened (stale-close protection). */
     private String openedCode = "";
     /** The sugar (or compiled fallback) the canvas was loaded with. */
@@ -374,8 +377,8 @@ public class SugarLogicDialog extends LogicDialog{
         // 关闭保存路径（hidden -> canvas.save()）没有 try/catch：ExprStatement.write() 对
         // 从未成功编译的表达式抛 IllegalArgumentException 会冒泡成引擎级报错。这里在
         // hide 之前预检，命中则提示并阻止关闭——画布原样保留（标红可见），不破坏任何状态。
-        // 函数库会话（passThroughSugarOnError）保留原有的放行语义。
-        if(!passThroughSugarOnError && hasUncompilableExpression()){
+        // 函数库会话（passThroughSugarOnError）与"放弃修改"路径（discarding）保留放行语义。
+        if(!passThroughSugarOnError && !discarding && hasUncompilableExpression()){
             Core.app.post(() -> showCompileError(
                 new IllegalArgumentException(uncompilableExpressionMessage()), true));
             return;
@@ -384,6 +387,7 @@ public class SugarLogicDialog extends LogicDialog{
         cachedCopyMenu = null;
         cachedCopyDialog = null;
         super.hide();
+        discarding = false;
     }
 
     /** 画布上是否存在从未成功编译的表达式（ExprStatement.write 会因此抛错）。 */
@@ -391,13 +395,15 @@ public class SugarLogicDialog extends LogicDialog{
         return uncompilableExpressionMessage() != null;
     }
 
-    /** 第一个不可编译表达式的错误消息；全部合法时返回 null。与编辑器 build() 的校验口径一致。 */
+    /** 第一个不可编译表达式的错误消息；全部合法时返回 null。
+     *  与 ExprStatement.write() 完全同口径：同样使用 functionChecker() 校验函数名，
+     *  否则未定义用户函数（如 noSuch(a)）会在预检中被漏过、保存时才抛错。 */
     private String uncompilableExpressionMessage(){
         if(canvas == null || canvas.statements == null) return null;
         for(Element child : canvas.statements.getChildren()){
             if(child instanceof LCanvas.StatementElem elem && elem.st instanceof ExprStatement expr){
                 try{
-                    ExprCompiler.compile(expr.dest, expr.expr);
+                    ExprCompiler.compile(expr.dest, expr.expr, ExprStatement.functionChecker());
                 }catch(Exception e){
                     return e.getMessage();
                 }
@@ -412,6 +418,7 @@ public class SugarLogicDialog extends LogicDialog{
     private void discardLibraryChanges(){
         if(executor != null) return; // processor sessions keep their normal close semantics
         passThroughSugarOnError = false;
+        discarding = true; // 绕过 hide() 的不可编译表达式 guard：放弃修改必须总能退出
         drafts.clear();
         hide();
     }
