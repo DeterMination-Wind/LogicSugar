@@ -110,8 +110,10 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     private void installCompiledCopy(){
-        if(cachedCopyButton != null && cachedCopyButton.parent != cachedCopyMenu){
-            // the menu was rebuilt out from under us; rescan from scratch
+        if(cachedCopyButton != null && !inSceneTree(cachedCopyButton)){
+            // the menu (and its dialog) was closed and detached; rescan from scratch.
+            // A bare parent check is not enough: an old edit dialog's menu object may
+            // survive hidden in the scene tree, so the stale button keeps matching it.
             cachedCopyButton = null;
             cachedCopyMenu = null;
             cachedCopyDialog = null;
@@ -145,6 +147,17 @@ public class SugarLogicDialog extends LogicDialog{
         Element current = element;
         while(current != null && !(current instanceof Dialog)) current = current.parent;
         return (Dialog)current;
+    }
+
+    /** True when the element is still attached under the scene root (a closed dialog's
+     *  children are detached from the tree, so a cached button there is stale). */
+    private static boolean inSceneTree(Element element){
+        Element current = element;
+        while(current != null){
+            if(current == Core.scene.root) return true;
+            current = current.parent;
+        }
+        return false;
     }
 
     private TextButton findCopyButton(Element element){

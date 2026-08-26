@@ -10,6 +10,7 @@ import mindustry.logic.*;
 import mindustry.logic.LCanvas.*;
 import mindustry.logic.LStatements.*;
 import mindustry.logic.SugarStatements.BeginStatement;
+import mindustry.logic.SugarStatements.FuncCallStatement;
 
 import java.util.*;
 
@@ -66,24 +67,46 @@ public class ExprHook{
         int i = 0;
         while(i < children.size){
             if(!(children.get(i) instanceof StatementElem) ||
-               !(((StatementElem)children.get(i)).st instanceof OperationStatement)){
+               !isChainLine(((StatementElem)children.get(i)).st)){
                 i++;
                 continue;
             }
 
-            List<ExprCompiler.OpLine> ops = new ArrayList<>();
+            List<ExprCompiler.Line> ops = new ArrayList<>();
             int j = i;
             while(j < children.size){
                 if(!(children.get(j) instanceof StatementElem)) break;
                 StatementElem elem = (StatementElem)children.get(j);
-                if(!(elem.st instanceof OperationStatement)) break;
-
-                OperationStatement opStmt = (OperationStatement)elem.st;
-                ops.add(new ExprCompiler.OpLine(
-                    opStmt.op.name(), opStmt.dest, opStmt.a, opStmt.b));
-
-                if(!ExprCompiler.isTemp(opStmt.dest)){
-                    j++;
+                LStatement st = elem.st;
+                if(st instanceof OperationStatement opStmt){
+                    ops.add(new ExprCompiler.OpLine(
+                        opStmt.op.name(), opStmt.dest, opStmt.a, opStmt.b));
+                    if(!ExprCompiler.isTemp(opStmt.dest)){
+                        j++;
+                        break;
+                    }
+                }else if(st instanceof SensorStatement sensor){
+                    // sensor 语句也可入链：sensor _0 unit @health + op mul x _0 2
+                    // → unit.health * 2。仅折叠 type 为 @LAccess 常量的 sensor
+                    // （变量 type 是动态属性传感，语义上不等价于成员访问）。
+                    if(!sensor.type.startsWith("@") || ExprCompiler.resolveMember(sensor.type) == null){
+                        break;
+                    }
+                    ops.add(new ExprCompiler.SensorLine(sensor.to, sensor.from, sensor.type));
+                    if(!ExprCompiler.isTemp(sensor.to)){
+                        j++;
+                        break;
+                    }
+                }else if(st instanceof FuncCallStatement call && isFoldableCall(call)){
+                    // funccall 入链：call foo(a) _1 + op mul x _1 2 → foo(a) * 2
+                    // 仅折叠实参为纯值（temp/变量/数字）的调用——带嵌套表达式的实参
+                    // 无法无损重建（实参文本需要重新解析），保持原样积木。
+                    ops.add(new ExprCompiler.CallLine(call.name, call.args, call.result));
+                    if(!ExprCompiler.isTemp(call.result)){
+                        j++;
+                        break;
+                    }
+                }else{
                     break;
                 }
                 j++;
@@ -101,10 +124,10 @@ public class ExprHook{
                 }
                 String expr = ExprCompiler.rebuild(ops);
                 if(expr != null){
-                    String dest = ops.get(ops.size() - 1).dest;
+                    String dest = ExprCompiler.lineDest(ops.get(ops.size() - 1));
 
                     ExprStatement exprStmt = new ExprStatement();
-                    exprStmt.dest = dest;
+                    exprStmt.dest = dest == null ? "result" : dest;
                     exprStmt.expr = expr;
                     exprStmt.lastOps = ops;
 
@@ -138,6 +161,41 @@ public class ExprHook{
 
     // ===== 展开：ExprStatement → op 链 =====
 
+    /** 语句能否作为表达式链的节点：op 语句、type 为 @LAccess 常量的 sensor 语句、
+     *  实参为纯值的 funccall 语句。 */
+    private static boolean isChainLine(LStatement st){
+        if(st instanceof OperationStatement) return true;
+        if(st instanceof SensorStatement sensor){
+            return sensor.type.startsWith("@") && ExprCompiler.resolveMember(sensor.type) != null;
+        }
+        if(st instanceof FuncCallStatement call) return isFoldableCall(call);
+        return false;
+    }
+
+    /** funccall 的实参必须是纯值（temp/变量/数字，无逗号无括号），否则无法无损重建表达式。 */
+    private static boolean isFoldableCall(FuncCallStatement call){
+        if(call.result == null || call.result.isEmpty()) return false;
+        String args = call.args.trim();
+        if(args.isEmpty()) return true;
+        for(ExprCompiler.CallSite site : ExprCompiler.collectCalls(args)){
+            return false; // 实参里含函数调用
+        }
+        try{
+            for(String arg : args.split(",")){
+                String value = arg.trim();
+                // 纯值：temp / 变量 / 数字（操作符、括号、空格都拒绝）
+                if(value.isEmpty()) return false;
+                for(int i = 0; i < value.length(); i++){
+                    char c = value.charAt(i);
+                    if(!Character.isLetterOrDigit(c) && c != '_' && c != '@' && c != '.' && c != '-') return false;
+                }
+            }
+            return true;
+        }catch(Exception e){
+            return false;
+        }
+    }
+
     public static void unfoldAll(LCanvas canvas){
         if(canvas == null || canvas.statements == null) return;
 
@@ -154,7 +212,7 @@ public class ExprHook{
 
             ExprStatement exprStmt = (ExprStatement)elem.st;
 
-            List<ExprCompiler.OpLine> ops;
+            List<ExprCompiler.Line> ops;
             try{
                 ops = ExprCompiler.compile(exprStmt.dest, exprStmt.expr);
             }catch(Exception e){
@@ -168,14 +226,30 @@ public class ExprHook{
             elem.remove();
 
             for(int k = 0; k < chainLen; k++){
-                ExprCompiler.OpLine line = ops.get(k);
-                OperationStatement opStmt = new OperationStatement();
-                opStmt.op = LogicOp.valueOf(line.op);
-                opStmt.dest = line.dest;
-                opStmt.a = line.a;
-                opStmt.b = line.b;
-
-                canvas.addAt(i + k, opStmt);
+                ExprCompiler.Line line = ops.get(k);
+                if(line instanceof ExprCompiler.SensorLine sensor){
+                    SensorStatement st = new SensorStatement();
+                    st.to = sensor.dest;
+                    st.from = sensor.a;
+                    st.type = sensor.b;
+                    canvas.addAt(i + k, st);
+                }else if(line instanceof ExprCompiler.CallLine call){
+                    // 函数调用展开为 funccall 语句（result 绑定临时变量），
+                    // 编译管线（analyze/expandCall）对 funccall 已有完整支持
+                    FuncCallStatement st = new FuncCallStatement();
+                    st.name = call.name;
+                    st.args = call.args;
+                    st.result = call.dest;
+                    canvas.addAt(i + k, st);
+                }else{
+                    ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
+                    OperationStatement st = new OperationStatement();
+                    st.op = LogicOp.valueOf(op.op);
+                    st.dest = op.dest;
+                    st.a = op.a;
+                    st.b = op.b;
+                    canvas.addAt(i + k, st);
+                }
             }
 
             changed = true;
@@ -225,10 +299,11 @@ public class ExprHook{
 
     /** 检查链外语句是否读取了链内临时变量（折叠会删除这些临时变量）。
      *  保守实现：用序列化文本做标识符边界匹配，宁可少折叠也不改变语义。 */
-    private static boolean hasExternalReads(Seq<Element> children, int chainStart, int chainEnd, List<ExprCompiler.OpLine> ops){
+    private static boolean hasExternalReads(Seq<Element> children, int chainStart, int chainEnd, List<ExprCompiler.Line> ops){
         Set<String> temps = new HashSet<>();
         for(int k = 0; k < ops.size() - 1; k++){ // 链内被后续 op 消费的临时变量
-            temps.add(ops.get(k).dest);
+            String dest = ExprCompiler.lineDest(ops.get(k));
+            if(dest != null) temps.add(dest);
         }
         if(temps.isEmpty()) return false;
         for(int idx = 0; idx < children.size; idx++){

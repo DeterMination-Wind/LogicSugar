@@ -43,6 +43,11 @@ public class SugarCompilerSelfTest{
         counterOperationsAreNotOptimized();
         vanillaCodePassesThrough();
         expressionOpsRoundTrip();
+        sensorMemberAccess();
+        functionCallsInExpressions();
+        exprCallEndToEnd();
+        returnTempNamespace();
+        normalModeMainJumpsPastBodies();
         structuredTargetsFollowExpressionResize();
         functionStatementsRoundTrip();
         quotedExpressionsRoundTrip();
@@ -303,7 +308,7 @@ public class SugarCompilerSelfTest{
     }
 
     private static void expressionOpsRoundTrip(){
-        List<ExprCompiler.OpLine> ops = ExprCompiler.compile("result", "cos(a) * 10 + x");
+        List<ExprCompiler.Line> ops = ExprCompiler.compile("result", "cos(a) * 10 + x");
         check(opText(ops).equals("op cos _0 a 0\nop mul _0 _0 10\nop add result _0 x"),
             "expression compiler emitted unexpected op chain");
 
@@ -313,13 +318,177 @@ public class SugarCompilerSelfTest{
             "restored expression changed the generated op chain");
     }
 
-    private static String opText(List<ExprCompiler.OpLine> ops){
+    private static String opText(List<ExprCompiler.Line> ops){
         StringBuilder result = new StringBuilder();
         for(int i = 0; i < ops.size(); i++){
             if(i > 0) result.append('\n');
             result.append(ops.get(i).toText());
         }
         return result.toString();
+    }
+
+    private static void sensorMemberAccess(){
+        // 单属性：unit.Health → sensor result unit @health（大小写不敏感）
+        List<ExprCompiler.Line> ops = ExprCompiler.compile("x", "unit.Health");
+        check(opText(ops).equals("sensor x unit @health"),
+            "member access did not compile to a sensor instruction: " + opText(ops));
+
+        // 链式混合：@unit.Health * 2 → sensor _0 @unit @health + op mul x _0 2
+        ops = ExprCompiler.compile("x", "@unit.Health * 2");
+        check(opText(ops).equals("sensor _0 @unit @health\nop mul x _0 2"),
+            "member access inside an expression chain failed: " + opText(ops));
+
+        // 逆向重建：sensor 链 → unit.health * 2，往返编译一致
+        String restored = ExprCompiler.rebuild(ops);
+        check(restored != null, "member access chain did not rebuild");
+        check(opText(ExprCompiler.compile("x", restored)).equals(opText(ops)),
+            "restored member expression changed the generated chain");
+
+        // 链式多级：unit.controller.Health → 两条 sensor
+        ops = ExprCompiler.compile("x", "unit.controller.Health");
+        check(opText(ops).equals("sensor _0 unit @controller\nsensor x _0 @health"),
+            "chained member access failed: " + opText(ops));
+
+        // 大写 camelCase：unit.maxHealth
+        ops = ExprCompiler.compile("x", "unit.MaxHealth");
+        check(opText(ops).equals("sensor x unit @maxHealth"),
+            "camelCase member name failed: " + opText(ops));
+
+        // 未知属性报错
+        boolean thrown = false;
+        try{
+            ExprCompiler.compile("x", "unit.Amor");
+        }catch(ExprCompiler.ParseException e){
+            thrown = true;
+        }
+        check(thrown, "unknown member name did not throw");
+
+        // 点后缺成员名报错
+        thrown = false;
+        try{
+            ExprCompiler.compile("x", "unit.");
+        }catch(ExprCompiler.ParseException e){
+            thrown = true;
+        }
+        check(thrown, "missing member name after '.' did not throw");
+    }
+
+    private static void functionCallsInExpressions(){
+        // 单调用：x = foo(a) → funccall foo "a" x
+        List<ExprCompiler.Line> ops = ExprCompiler.compile("x", "foo(a)");
+        check(opText(ops).equals("funccall foo \"a\" x"),
+            "single function call failed: " + opText(ops));
+
+        // 调用参与运算：x = foo(a) * 2 → funccall foo "a" _0 + op mul x _0 2
+        ops = ExprCompiler.compile("x", "foo(a) * 2");
+        check(opText(ops).equals("funccall foo \"a\" _0\nop mul x _0 2"),
+            "function call in expression chain failed: " + opText(ops));
+
+        // 多参数 + 嵌套：foo(cos(a), b) → 实参求值 + 调用
+        ops = ExprCompiler.compile("x", "foo(cos(a), b)");
+        check(opText(ops).equals("op cos _0 a 0\nfunccall foo \"_0, b\" x"),
+            "call with computed argument failed: " + opText(ops));
+
+        // 逆向重建：funccall 链 → foo(a) * 2，往返一致
+        ops = ExprCompiler.compile("x", "foo(a) * 2");
+        String restored = ExprCompiler.rebuild(ops);
+        check(restored != null, "function call chain did not rebuild");
+        check(opText(ExprCompiler.compile("x", restored)).equals(opText(ops)),
+            "restored function call expression changed the generated chain");
+
+        // collectCalls：收集文本中的用户函数（数学函数 cos 排除）
+        java.util.List<ExprCompiler.CallSite> sites = ExprCompiler.collectCalls("foo(cos(a), bar(b)) > 5");
+        check(sites.size() == 2 && sites.get(0).name.equals("foo") && sites.get(1).name.equals("bar"),
+            "collectCalls did not collect nested user function calls: " + sites);
+
+        // checker 校验：未知函数名在编辑期报错
+        boolean thrown = false;
+        try{
+            ExprCompiler.compile("x", "nope(a)", name -> name.equals("foo"));
+        }catch(ExprCompiler.ParseException e){
+            thrown = true;
+        }
+        check(thrown, "unknown function with checker did not throw");
+        // checker 通过的函数不报错
+        thrown = false;
+        try{
+            ExprCompiler.compile("x", "foo(a)", name -> name.equals("foo"));
+        }catch(ExprCompiler.ParseException e){
+            thrown = true;
+        }
+        check(!thrown, "known function with checker threw");
+    }
+
+    private static void exprCallEndToEnd(){
+        // 画布 unfold 后的 sugar：funcdef foo + x = foo(cos(a)) * 2 展开的语句链
+        String sugar = "funcdef foo x 2\n"
+            + "return \"x * 2\"\n"
+            + "blockend\n"
+            + "op cos _0 a 0\n"
+            + "funccall foo \"_0\" _1\n"
+            + "op mul x _1 2\n";
+        String compiled = SugarCompiler.compile(sugar);
+        check(compiled.contains("op cos _0 a 0"), "argument evaluation op was optimized away by the temp ref count fix");
+        check(compiled.contains("jump __ls_func_foo_entry always x false"), "expr call did not emit normal-mode call sequence");
+        check(compiled.contains("op mul __ls_func_foo_result x 2"), "function body was not hoisted (reachability)");
+        check(compiled.contains("set _1 __ls_func_foo_result"), "call result was not bound into the expression chain");
+
+        // 隐式递归：return foo(x) 里的调用也要进调用图，否则展开时无限循环
+        String recursive = "funcdef foo x 2\n"
+            + "return \"foo(x)\"\n"
+            + "blockend\n"
+            + "funccall foo \"x\" r\n";
+        boolean thrown = false;
+        try{
+            SugarCompiler.compile(recursive);
+        }catch(IllegalArgumentException e){
+            thrown = e.getMessage().contains("recursion");
+        }
+        check(thrown, "implicit recursion via return expression was not detected");
+
+        // 条件表达式里的调用：if foo(a) > 5
+        String condSugar = "funcdef foo x 2\n"
+            + "return \"x + 1\"\n"
+            + "blockend\n"
+            + "ifbegin expr \"foo(a) > 5\" 5\n"
+            + "print \"hi\"\n"
+            + "blockend\n";
+        String condCompiled = SugarCompiler.compile(condSugar);
+        check(condCompiled.contains("jump __ls_func_foo_entry always x false"), "condition expression call was not expanded");
+        check(condCompiled.contains("op greaterThan __ls_cond_0 __ls_cond_0 5"), "condition result was not chained after the call");
+    }
+
+    private static void returnTempNamespace(){
+        // 上游 bug 回归：函数体 return 表达式的 temp 必须进入函数命名空间。
+        // 裸 _0 会与调用者表达式链中"跨调用存活"的 _0 冲突（函数体覆盖链 temp → 错值）。
+        List<ExprCompiler.Line> ops = ExprCompiler.compile("y", "cos(5) + foo(1) + cos(2)");
+        StringBuilder sugar = new StringBuilder("funcdef foo a 2\nreturn \"a*2+1\"\nblockend\n");
+        for(ExprCompiler.Line line : ops) sugar.append(line.toText()).append('\n');
+        String compiled = SugarCompiler.compile(sugar.toString());
+        String lowered = loweredCode(compiled);
+        // 函数体 temp 必须是命名空间（__ls_rt_foo_0），不能是裸 _0
+        check(lowered.contains("op mul __ls_rt_foo_0 a 2"),
+            "return expression temp was not namespaced://n" + lowered);
+        check(!lowered.contains("op mul _0 a 2"),
+            "return expression leaked a bare _0 temp://n" + lowered);
+        // 调用者链的 _0（cos(5) 结果）跨 funccall 存活，且函数体不再覆盖它
+        check(lowered.contains("op cos _0 5 0") && lowered.contains("op add y _0 _2"),
+            "caller chain temp was clobbered across the call://n" + lowered);
+    }
+
+    private static void normalModeMainJumpsPastBodies(){
+        // 上游 bug：normal 模式函数体紧跟 main 程序之后，调用返回后（set result 执行完）
+        // 指令流顺序落进共享函数体，导致函数体每帧重复执行、调用者结果变量无限递增。
+        String sugar = "funcdef func x,y,z 2\nreturn \"x+y+z\"\nblockend\nfunccall func \"1, 2, 3\" x\n";
+        String lowered = loweredCode(SugarCompiler.compile(sugar));
+        int jumpAt = lowered.indexOf("jump __ls_end always x false");
+        int entryAt = lowered.indexOf("__ls_func_func_entry:");
+        int endAt = lowered.indexOf("__ls_end:");
+        check(jumpAt >= 0 && entryAt > jumpAt && endAt > entryAt,
+            "normal mode main must jump past function bodies (jump=" + jumpAt + " entry=" + entryAt + " end=" + endAt + "):\n" + lowered);
+        // 无函数调用时不引入多余的跳转
+        String plain = loweredCode(SugarCompiler.compile("set a 1\n"));
+        check(!plain.contains("__ls_end"), "functionless program should not emit the __ls_end jump");
     }
 
     private static void structuredTargetsFollowExpressionResize(){
