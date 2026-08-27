@@ -43,6 +43,10 @@ Prerequisites:
 
 Produces `build/libs/LogicSugar-v<version>.jar`, a cross-platform JAR for desktop and Android; the plain `build` task runs deploy as well.
 
+## Docs
+
+Classified project documentation (architecture, development, release, testing, glossary) lives in [docs/README.md](docs/README.md).
+
 ## License
 
 Licensed under the [GNU GPL v3](LICENSE).
