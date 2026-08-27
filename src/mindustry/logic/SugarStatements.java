@@ -81,6 +81,26 @@ public final class SugarStatements{
             return LCategory.control;
         }
 
+        /** {@link JumpStatement#addOp} with the value/compare fields narrowed to 85px, so the
+         *  for statement's single-row inline form fits the wide 900px card.
+         *
+         *  Must be an instance method on this subclass: {@code field} and {@code showSelect}
+         *  are protected LStatement members, and at runtime the mod class loader is a
+         *  different runtime package from the game's, so a same-package call from a static
+         *  helper throws IllegalAccessError (see AGENTS.md). Subclass access stays legal. */
+        public void addCompactOp(Table t, ConditionOp op, Cons<ConditionOp> setOp,
+                                 String value, Cons<String> setValue, String compare, Cons<String> setCompare){
+            if(op != ConditionOp.always) field(t, value, setValue).width(85f).pad(2f);
+
+            t.button(b -> {
+                b.add(op.symbol);
+                b.clicked(() -> showSelect(b, ConditionOp.all, op, setOp));
+            }, Styles.logict, () -> {
+            }).size(op == ConditionOp.always ? 80f : 48f, 40f).pad(4f).color(t.color);
+
+            if(op != ConditionOp.always) field(t, compare, setCompare).width(85f).pad(2f);
+        }
+
         /** Attaches a vanilla-style hover hint to a parameter label (bundle key: logicsugar.hint.<key>). */
         protected void hint(Cell<?> cell, String key){
             LCanvas.tooltip(cell, "logicsugar.hint." + key);
@@ -97,12 +117,19 @@ public final class SugarStatements{
      * Shared condition editor for if/elif/for/while: the native three-part selector on the
      * left, an EXPR/OP mode toggle on the right. The row colour follows the statement card
      * every frame, so invalid-state red marking can never leave a stale snapshot behind.
+     *
+     * @param compactCondition for statements whose inline (no-rows) form would overflow the
+     *                         900px card: uses narrower condition fields (85px like the
+     *                         vanilla {@code fields} helper instead of the 144px ones vanilla
+     *                         {@code addOp} reserves), and on narrow rowed cards (400px) also
+     *                         wraps the mode toggle onto its own row.
      */
     private static void rebuildConditionEditor(LStatement owner, Table table, boolean expressionMode, String expr,
                                                Cons<String> setExpr, Runnable enterExpr, Runnable leaveExpr,
                                                ConditionOp op, Cons<ConditionOp> setOp,
                                                String value, Cons<String> setValue,
                                                String compare, Cons<String> setCompare,
+                                               boolean compactCondition,
                                                Runnable rebuild){
         table.clearChildren();
         table.left();
@@ -125,21 +152,44 @@ public final class SugarStatements{
                 });
             }, Styles.logict, () -> {}).size(72f, 40f).pad(4f).color(table.color);
         }else{
-            JumpStatement.addOp(owner, table, op, result -> {
-                setOp.get(result);
-                rebuild.run();
-            }, value, setValue, compare, setCompare);
-            table.add().growX();
-            // 显示当前状态：三段式模式下按钮显示 "op"，点击切换为表达式
-            table.button(b -> {
-                b.add(text("condition.expr.back", "op"));
-                b.clicked(() -> {
-                    enterExpr.run();
+            if(compactCondition){
+                ((SugarStatement)owner).addCompactOp(table, op, result -> {
+                    setOp.get(result);
                     rebuild.run();
-                });
-            }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(table.color);
+                }, value, setValue, compare, setCompare);
+            }else{
+                JumpStatement.addOp(owner, table, op, result -> {
+                    setOp.get(result);
+                    rebuild.run();
+                }, value, setValue, compare, setCompare);
+            }
+            if(compactCondition && LCanvas.useRows()){
+                // 窄屏（换行卡片）模式下三段条件几乎占满整行，切换按钮换行放置
+                table.row();
+                table.button(b -> {
+                    b.add(text("condition.expr.back", "op"));
+                    b.clicked(() -> {
+                        enterExpr.run();
+                        rebuild.run();
+                    });
+                }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(table.color);
+            }else{
+                table.add().growX();
+                // 显示当前状态：三段式模式下按钮显示 "op"，点击切换为表达式
+                table.button(b -> {
+                    b.add(text("condition.expr.back", "op"));
+                    b.clicked(() -> {
+                        enterExpr.run();
+                        rebuild.run();
+                    });
+                }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(table.color);
+            }
         }
     }
+
+    /** {@link JumpStatement#addOp} with the value/compare fields narrowed to 85px lives on
+     *  {@link SugarStatement#addCompactOp}: it must run inside the subclass context, see the
+     *  classloader note there and in AGENTS.md. */
 
     public abstract static class BeginStatement extends SugarStatement{
         public transient StatementElem dest;
@@ -259,6 +309,7 @@ public final class SugarStatements{
                 op, result -> op = result,
                 variable, result -> variable = result,
                 compare, result -> compare = result,
+                true,
                 () -> rebuildCondition(table));
         }
 
@@ -299,6 +350,7 @@ public final class SugarStatements{
                 op, result -> op = result,
                 value, result -> value = result,
                 compare, result -> compare = result,
+                false,
                 () -> rebuildCondition(table));
         }
 
@@ -362,6 +414,7 @@ public final class SugarStatements{
                 op, result -> op = result,
                 value, result -> value = result,
                 compare, result -> compare = result,
+                false,
                 () -> rebuildCondition(table));
         }
 
@@ -398,6 +451,7 @@ public final class SugarStatements{
                 op, result -> op = result,
                 value, result -> value = result,
                 compare, result -> compare = result,
+                false,
                 () -> rebuildCondition(table));
         }
 
