@@ -23,6 +23,8 @@ That compatibility is the important part: a program written with Logic Sugar can
 - **Function library** — global functions shared by every logic processor, edited right inside the processor editor, validated and saved automatically, with self-repair if the library file gets corrupted.
 - **Expression compiler** — infix expressions are automatically expanded into vanilla `op` instruction chains; since v2.3.0 the conditions of `if` / `elif` / `for` / `while` also accept full expressions.
 - **Vanilla-compatible output** — the structured source travels inside the saved mlog as carrier statements (`set __ls_sugar "..."`), so programs run unchanged on ordinary clients and can be reopened later as editable sugar blocks.
+- **Vanilla mlog recovery** — import ordinary mlog and recover verified `if` / `elif` / `else`, `for`, `while`, `switch` / `case`, and normal-mode function structures. Recovery is accepted only after recompilation matches the original instruction stream; uncertain code stays vanilla mlog.
+- **Original/Sugar views** — switch between the original mlog and a verified Sugar view without losing edits: unsaved changes and failed saves are detected before a view change.
 - **Editor helpers** — jump line coloring, hiding of internal compiler variables (`__ls_*`, expression temporaries) in the variable browser, Ctrl+Click / Ctrl+Drag statement copying, hover hints for every block, and search-box match highlighting.
 
 ## Install

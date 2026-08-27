@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Anuken/Arc
-          ref: 7637600c41922c078ac6bde26953ef1e71746f35
+          ref: a3c7d2cbf36dfcee2c16b3c95a9f4834843d74a1
           path: Arc
           fetch-depth: 1
 
