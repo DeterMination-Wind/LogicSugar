@@ -4,9 +4,9 @@ import arc.Core;
 import arc.func.Cons;
 import arc.func.Prov;
 import arc.input.KeyCode;
-import arc.scene.style.Drawable;
 import arc.scene.Element;
 import arc.scene.Group;
+import arc.scene.style.Drawable;
 import arc.scene.ui.Button;
 import arc.scene.ui.Dialog;
 import arc.scene.ui.TextButton;
@@ -215,9 +215,11 @@ public class SugarLogicDialog extends LogicDialog{
         String target = showingOriginal ? recoveredSugar : originalCode;
         String snapshot = showingOriginal ? originalCode : recoveredSugar;
         String current = safeCanvasSave();
-        if(current != null && !current.equals(snapshot)){
+        if(current == null || !current.equals(snapshot)){
             // the current view was edited: loading the other snapshot would drop those
-            // edits silently, so switching requires explicit confirmation
+            // edits silently, so switching requires explicit confirmation. A failed
+            // save() (uncompilable expression) counts as edited too: an untouched,
+            // verified canvas always serializes successfully.
             Vars.ui.showConfirm(
                 Core.bundle.get("logicsugar.view.confirm", "Unsaved Changes"),
                 Core.bundle.get("logicsugar.view.confirm.text",
@@ -229,8 +231,8 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     /** Canvas serialization for change detection. {@code save()} throws on uncompilable
-     *  expressions; there is then no comparable snapshot, so switching is allowed to
-     *  proceed (the close path surfaces those errors on its own). */
+     *  expressions; the caller then treats the view as edited, since an untouched,
+     *  verified canvas always serializes successfully. */
     private String safeCanvasSave(){
         try{
             return canvas.save();
