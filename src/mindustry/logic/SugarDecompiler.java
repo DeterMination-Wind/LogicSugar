@@ -8,6 +8,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * Reverse view for LogicSugar.
@@ -69,8 +71,31 @@ public final class SugarDecompiler{
             }catch(Throwable exception){
                 notes.add("Sugar carrier could not be verified: " + message(exception));
             }
+
+            // The stored sugar source is stale relative to the instructions: the program was
+            // edited outside Logic Sugar, so the carrier variable is now the least trustworthy
+            // content. Keeping it as a statement also breaks recompilation equality — a
+            // recovered candidate regenerates its own carrier, which the verification strips,
+            // while the target stream still contains the old one. Retry on the bare
+            // instruction stream; the same recompilation gate applies.
+            String bare = stripCarrierVariables(input);
+            if(!bare.trim().isEmpty()){
+                List<String> retryNotes = new ArrayList<>();
+                retryNotes.add("stored sugar carrier was stale; recovered from the instruction stream");
+                retryNotes.addAll(notes);
+                Result retry = infer(bare, privileged, retryNotes);
+                if(retry.verified && retry.matchedMode != null && !"flat".equals(retry.matchedMode)
+                    && retry.structured > 0){
+                    return retry;
+                }
+            }
         }
 
+        return infer(input, privileged, notes);
+    }
+
+    /** Validation, structure recovery and recompilation-verified emission for one input. */
+    private static Result infer(String input, boolean privileged, List<String> notes){
         String canonical;
         try{
             validateInput(input, privileged);
@@ -91,7 +116,7 @@ public final class SugarDecompiler{
         }
 
         String structured = candidate.emit();
-        Verification verification = verify(structured, canonical, privileged);
+        Verification verification = verify(structured, input, privileged);
         if(!verification.matched){
             notes.add("unstructured instructions were kept as vanilla mlog");
             return new Result(canonical, true, "flat", 0, program.statements.size(), notes);
@@ -139,6 +164,19 @@ public final class SugarDecompiler{
         return result.toString();
     }
 
+    /** Drops persistence-carrier 'set' lines (stale sugar source + embedded library) from a
+     *  program that was recognized as LogicSugar-compiled but whose carrier failed
+     *  verification. Only reached after isSugarProgram, so ordinary hand-written programs
+     *  keep their carrier-looking variables untouched. */
+    private static String stripCarrierVariables(String code){
+        StringBuilder result = new StringBuilder();
+        for(String line : normalizeLineEndings(code).split("\n", -1)){
+            if(line.startsWith("set __ls_sugar \"") || line.startsWith("set __ls_lib \"")) continue;
+            result.append(line).append('\n');
+        }
+        return result.toString();
+    }
+
     private static String normalizeLineEndings(String code){
         return code.replace("\r\n", "\n").replace('\r', '\n');
     }
@@ -154,10 +192,15 @@ public final class SugarDecompiler{
     private static Verification verify(String candidate, String original, boolean privileged){
         try{
             String target = normalize(original, privileged);
+            // Jump threading (2.3.1+) retargets unconditional jumps inside lowered output,
+            // so candidates compiled today may only match older artifacts after applying the
+            // same idempotent pass to them.
+            String threadedTarget = normalize(SugarCompiler.threadAlwaysJumpTargets(original), privileged);
             for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
                 try{
                     String compiled = SugarCompiler.compile(candidate, mode);
-                    if(normalize(stripGeneratedMetadata(compiled), privileged).equals(target)){
+                    if(normalize(stripGeneratedMetadata(compiled), privileged).equals(target)
+                        || normalize(stripGeneratedMetadata(compiled), privileged).equals(threadedTarget)){
                         return new Verification(true, mode.name());
                     }
                 }catch(Throwable ignored){
@@ -567,6 +610,9 @@ public final class SugarDecompiler{
         enum Kind{ IF, WHILE, FOR, SWITCH }
         Kind kind;
         int start, bodyStart, bodyEnd, exit, resume, continueTarget;
+        /** Breaks may be threaded past the structural exit label; the blockend still belongs
+         *  at exit, while this optional target is accepted when recognizing BreakItem jumps. */
+        int breakTarget = -1;
         String variable, initial, step, switchValue;
         Condition condition;
         IfFrame ifFrame;
@@ -653,9 +699,13 @@ public final class SugarDecompiler{
             // The normal-mode compiler inserts one jump over all hoisted bodies.
             int firstEntry = functions.stream().mapToInt(f -> f.entry).min().orElse(program.statements.size());
             int lastEnd = functions.stream().mapToInt(FunctionInfo::zoneEnd).max().orElse(program.statements.size());
-            for(int i = 0; i < firstEntry; i++){
-                Statement s = program.statements.get(i);
-                if(s.isAlways() && s.target >= lastEnd) hidden.add(i);
+            // The compiler adds exactly one main-tail jump immediately before the first
+            // hoisted function entry. Do not hide every earlier jump to the same terminal:
+            // jump-threaded switch break/default edges can legitimately target __ls_end too.
+            int mainTailJump = firstEntry - 1;
+            if(mainTailJump >= 0 && mainTailJump < program.statements.size()){
+                Statement s = program.statements.get(mainTailJump);
+                if(s.isAlways() && s.target >= lastEnd) hidden.add(mainTailJump);
             }
 
             for(int position : preludePositions){
@@ -729,6 +779,17 @@ public final class SugarDecompiler{
             if(token == null || token.isEmpty() || token.startsWith("@") || token.startsWith("\"")) return false;
             char first = token.charAt(0);
             return Character.isLetter(first) || first == '_';
+        }
+
+        /** Integral literal in a table operand (guards, op sub offset), or null. */
+        private static Double integerLiteral(String token){
+            if(token == null || token.isEmpty()) return null;
+            try{
+                double value = Double.parseDouble(token);
+                return value == Math.rint(value) && Double.isFinite(value) ? value : null;
+            }catch(NumberFormatException ignored){
+                return null;
+            }
         }
 
         private static String functionNameFromReturn(String token){
@@ -875,19 +936,148 @@ public final class SugarDecompiler{
         }
 
         /** Single structure-trial pipeline shared by the main range and function bodies, so
-         *  identical instruction shapes recover identically everywhere. {@code while} is
-         *  tried before {@code for} because a loop without a leading 'set' initialization
-         *  compiles to the exact same instruction stream as its whilebegin form; trying
-         *  for first would rewrite every while into a degenerate forbegin. An explicit
-         *  initializer cannot be claimed by while at all (readCondition rejects 'set'
-         *  heads), so real for-loops still recover as for either way. Any wrong guess is
-         *  caught by recompilation verification. */
+         *  identical instruction shapes recover identically everywhere. The @counter jump
+         *  table is tried before the comparison-chain switch (its {@code op add @counter}
+         *  dispatch distinguishes the shapes unambiguously); {@code while} is tried before
+         *  {@code for} because a loop without a leading 'set' initialization compiles to the
+         *  exact same instruction stream as its whilebegin form; trying for first would
+         *  rewrite every while into a degenerate forbegin. An explicit initializer cannot be
+         *  claimed by while at all (readCondition rejects 'set' heads), so real for-loops
+         *  still recover as for either way. Any wrong guess is caught by recompilation
+         *  verification. */
         private Frame tryFrames(int at, int limit){
-            Frame frame = trySwitch(at, limit);
+            Frame frame = trySwitchTable(at, limit);
+            if(frame == null) frame = trySwitch(at, limit);
             if(frame == null) frame = tryWhile(at, limit);
             if(frame == null) frame = tryFor(at, limit);
             if(frame == null) frame = tryIf(at, limit);
             return frame;
+        }
+
+        /**
+         * Recovers the @counter jump-table lowering of a switch: [optional op sub] + two
+         * bounds guards + {@code op add @counter @counter idx} + span unconditional slot
+         * rows. Guards and hole slots share the default target; case slots point at body
+         * starts and group back into ascending case labels. Slot targets retargeted by jump
+         * threading (a hole that hops straight to wherever the default chain ended) are
+         * classified by chasing unconditional chains, so both lowering eras recover.
+         * Anything unmatched falls through to the comparison-chain or flat vanilla paths;
+         * recompilation verification stays the final gate.
+         */
+        private Frame trySwitchTable(int at, int limit){
+            if(at >= limit) return null;
+            double min = 0;
+            int cursor = at;
+            String switchValue;
+            Statement first = program.statements.get(at);
+            boolean hasSub = first.kind().equals("op") && first.tokens.length >= 5
+                && "sub".equals(first.token(1)) && first.token(2).startsWith("__ls_sw_");
+            if(hasSub){
+                Double parsed = integerLiteral(first.token(4));
+                if(parsed == null || parsed != Math.rint(parsed) || Math.abs(parsed) > 9007199254740992d
+                    || first.token(3).isEmpty()) return null;
+                min = parsed;
+                switchValue = first.token(3);
+                cursor++;
+            }else{
+                switchValue = null;
+            }
+
+            // lower bound: jump D lessThan <idx> 0
+            if(cursor + 2 >= limit) return null;
+            Statement guardLow = program.statements.get(cursor);
+            if(guardLow.target < 0
+                || !(guardLow.isConditional() && "lessThan".equals(guardLow.token(2)) && "0".equals(guardLow.token(4)))) return null;
+            String idx = guardLow.token(3);
+            if(idx.isEmpty()) return null;
+            if(hasSub){
+                if(!idx.equals(first.token(2))) return null;
+            }else{
+                switchValue = idx;
+            }
+
+            // upper bound: jump D greaterThan <idx> <span-1>
+            Statement guardHigh = program.statements.get(cursor + 1);
+            if(!(guardHigh.isConditional() && "greaterThan".equals(guardHigh.token(2))
+                && guardHigh.token(3).equals(idx) && guardHigh.target == guardLow.target)) return null;
+            Double spanMinusOne = integerLiteral(guardHigh.token(4));
+            if(spanMinusOne == null || spanMinusOne < 0 || spanMinusOne > SugarFunctions.MAX_TABLE_SPAN - 1) return null;
+            int span = (int)(double)spanMinusOne + 1;
+
+            // dispatch: op add @counter @counter <idx>
+            Statement dispatch = program.statements.get(cursor + 2);
+            if(!(dispatch.kind().equals("op") && dispatch.tokens.length >= 5
+                && "add".equals(dispatch.token(1)) && "@counter".equals(dispatch.token(2))
+                && "@counter".equals(dispatch.token(3)) && dispatch.token(4).equals(idx))) return null;
+
+            int rowsStart = cursor + 3;
+            int lastRow = rowsStart + span - 1;
+            if(lastRow >= limit) return null;
+            int[] rowTargets = new int[span];
+            for(int k = 0; k < span; k++){
+                Statement row = program.statements.get(rowsStart + k);
+                if(!row.isAlways() || row.target < 0) return null;
+                rowTargets[k] = row.target;
+            }
+
+            int exit = guardLow.target;
+            if(exit <= lastRow || exit > limit) return null;
+            int terminalExit = followAlwaysChain(exit);
+
+            // Group slot values by their body target. The direct default target and its
+            // terminal always-jump target are both default holes, which covers output from
+            // before and after the compiler's jump-threading pass.
+            TreeMap<Integer, TreeSet<Long>> interior = new TreeMap<>();
+            for(int k = 0; k < span; k++){
+                long value = (long)min + k;
+                int target = rowTargets[k];
+                if(target == exit || target == terminalExit) continue;
+                if(target < lastRow + 1 || target >= exit) return null;
+                interior.computeIfAbsent(target, key -> new TreeSet<>()).add(value);
+            }
+            if(interior.isEmpty()) return null;
+
+            Frame frame = new Frame();
+            frame.kind = Frame.Kind.SWITCH;
+            frame.start = at; frame.exit = exit; frame.resume = exit;
+            frame.breakTarget = terminalExit != exit ? terminalExit : exit;
+            frame.switchValue = switchValue;
+            frame.caseTargets = new ArrayList<>();
+            frame.caseValues = new ArrayList<>();
+            for(Map.Entry<Integer, TreeSet<Long>> entry : interior.entrySet()){
+                for(long value : entry.getValue()){
+                    frame.caseTargets.add(entry.getKey());
+                    frame.caseValues.add(Long.toString(value));
+                }
+            }
+
+            // Repeated case values which targeted the same first label are invisible after
+            // label folding. Reinsert only zero-length labels (same target, before its body)
+            // until a recompilation still selects the table; they add no executable lines.
+            int tableCost = (min != 0 ? 1 : 0) + 3 + span;
+            int requiredCases = tableCost - 1;
+            int additions = Math.max(0, requiredCases - frame.caseValues.size());
+            if(additions > 0){
+                int target = frame.caseTargets.get(0);
+                String value = frame.caseValues.get(0);
+                for(int i = 0; i < additions; i++){
+                    frame.caseTargets.add(0, target);
+                    frame.caseValues.add(0, value);
+                }
+            }
+            return frame;
+        }
+
+        /** Follows an unconditional-jump chain from a folded label position to its end. */
+        private int followAlwaysChain(int at){
+            Set<Integer> seen = new HashSet<>();
+            int current = at;
+            while(current >= 0 && current < program.statements.size() && seen.add(current)){
+                Statement s = program.statements.get(current);
+                if(!s.isAlways() || s.target < 0) break;
+                current = s.target;
+            }
+            return current;
         }
 
         private FunctionInfo functionAt(int index){
@@ -945,7 +1135,8 @@ public final class SugarDecompiler{
                         int start = frame.caseTargets.get(i);
                         int end = i + 1 < frame.caseTargets.size() ? frame.caseTargets.get(i + 1) : frame.exit;
                         items.add(new CaseItem(start, frame.caseValues.get(i)));
-                        parseRange(start, end, new Context(frame.exit, -1, parent));
+                        int breakTarget = frame.breakTarget >= 0 ? frame.breakTarget : frame.exit;
+                        parseRange(start, end, new Context(breakTarget, -1, parent));
                         structured++;
                     }
                     BlockEndItem end = new BlockEndItem(frame.exit);

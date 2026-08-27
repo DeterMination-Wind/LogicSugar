@@ -18,6 +18,8 @@ public final class SugarDecompilerTest{
         forRoundTrip();
         switchRoundTrip();
         switchFallthroughRoundTrip();
+        switchTableRoundTrip();
+        threadedSwitchTableRoundTrip();
         nestedRoundTrip();
         metadataAndLineEndings();
         malformedInputIsPreserved();
@@ -27,6 +29,7 @@ public final class SugarDecompilerTest{
         tildeExpressionEscapingSurvivesRecovery();
         quotedEscapeIsSelfInverse();
         deletedCarrierDegradesToInference();
+        staleCarrierRecoversFromInstructions();
         System.out.println("LogicSugar decompiler self-test passed.");
     }
 
@@ -71,6 +74,63 @@ public final class SugarDecompilerTest{
             "switch fallthrough lost statements: " + result.sugar);
         check(result.sugar.contains("case 1") && result.sugar.contains("case 2"),
             "switch fallthrough lost case labels: " + result.sugar);
+    }
+
+    /** A duplication-heavy integer switch selects the jump table; duplicate empty case labels
+     *  are intentionally present so recovery can preserve a table-winning cost without adding
+     *  executable instructions. */
+    private static void switchTableRoundTrip(){
+        String source = tableSource(false);
+        String compiled = SugarCompiler.compile(source);
+        String raw = stripGenerated(compiled);
+        check(raw.contains("op add @counter @counter x"), "table source did not compile to a jump table");
+        SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
+        check(result.verified, "jump-table candidate did not recompile identically: " + result.notes);
+        check(result.structured > 0 && result.sugar.contains("switchbegin")
+            && result.sugar.contains("case 0") && result.sugar.contains("case 1"),
+            "jump-table switch was not recovered: " + result.sugar);
+    }
+
+    /** The same table at the end of a normal-mode main program has its default/hole rows
+     *  threaded past the exit label into __ls_end. Recovery must still pass the verify gate. */
+    private static void threadedSwitchTableRoundTrip(){
+        String source = tableSource(true);
+        String compiled = SugarCompiler.compile(source, SugarCompiler.FuncMode.normal);
+        String raw = stripGenerated(compiled);
+        check(raw.contains("jump __ls_end always x false"), "threaded table fixture has no hoist exit jump");
+        check(!raw.contains("jump __ls_stmt_" + switchDestForThreadedSource() + " always x false"),
+            "threaded table retained a default-label jump:\n" + raw);
+        SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
+        check(result.verified, "threaded jump-table candidate did not recompile identically: " + result.notes);
+        check(result.structured > 0 && result.sugar.contains("switchbegin")
+            && result.sugar.contains("case 0") && result.sugar.contains("case 1"),
+            "threaded jump-table switch was not recovered: " + result.sugar);
+    }
+
+    /** Builds the same table shape used by the compiler tests. With a function prefix, the
+     *  switch is the final main structure so its default label is threaded into __ls_end. */
+    private static String tableSource(boolean withFunction){
+        StringBuilder body = new StringBuilder();
+        body.append("case 0\nprint zero\nbreak\n");
+        body.append("case 1\nprint one\nbreak\n");
+        for(int i = 0; i < 8; i++) body.append("case 0\ncase 1\n");
+        int bodyLines = body.toString().split("\\n", -1).length - 1;
+        // The blockend follows the switch header and all body statements. In the function
+        // fixture the header starts at source index 4, so its body starts at index 5.
+        int switchDest = withFunction ? 5 + bodyLines : 1 + bodyLines;
+        StringBuilder source = new StringBuilder();
+        if(withFunction){
+            source.append("funcdef f ~ 2\nset flag 1\nblockend\nfunccall f \"\" ~\n");
+        }
+        source.append("switchbegin x ").append(switchDest).append('\n').append(body)
+            .append("blockend\n");
+        return source.toString();
+    }
+
+    /** Default-label statement index in the function fixture: switch begins at 4 and the
+     *  generated body has 22 statements, so its blockend is 27 and the label is stmt_28. */
+    private static int switchDestForThreadedSource(){
+        return 28;
     }
 
     private static void nestedRoundTrip(){
@@ -161,6 +221,28 @@ public final class SugarDecompilerTest{
         check(!"carrier".equals(result.matchedMode), "deleted metadata must not look like a carrier restore");
         check(result.sugar.contains("ifbegin") && result.sugar.contains("print y"),
             "carrier-stripped program lost its logic: " + result.sugar);
+    }
+
+    /** Mirror of the reported scenario: the carrier line survives but the instructions were
+     *  edited by another client, so the stored sugar source is stale. The structure must be
+     *  recovered from the instruction stream, with the carrier demoted to untrusted
+     *  metadata instead of blocking recompilation equality. */
+    private static void staleCarrierRecoversFromInstructions(){
+        String sugar = "forbegin i 0 1 lessThanEq 10 3\nprint i\nprintflush message1\nblockend\n";
+        String compiled = SugarCompiler.compile(sugar);
+        check(compiled.contains("set __ls_sugar "), "compiled code unexpectedly lost its carrier");
+        // external edit: loop step changed from 1 to 2 in the instruction stream
+        String edited = compiled.replace("op add i i 1", "op add i i 2");
+        check(!edited.equals(compiled), "external edit did not change the program");
+        // dialog-level restore must fail (stale source), so the decompiler is the recovery path
+        check(!SugarCompiler.verifyRestore(edited, SugarCompiler.restore(edited)),
+            "stale carrier unexpectedly verified");
+
+        SugarDecompiler.Result result = SugarDecompiler.decompile(edited);
+        check(result.verified, "externally edited program was rejected outright: " + result.notes);
+        check(result.structured > 0 && result.sugar.contains("forbegin i 0 2"),
+            "stale-carrier program did not recover its structure: " + result.sugar);
+        check(!result.sugar.contains("__ls_sugar"), "stale carrier leaked into the recovered view");
     }
 
     private static String stripGenerated(String code){
