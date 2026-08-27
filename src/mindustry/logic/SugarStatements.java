@@ -23,6 +23,41 @@ import java.util.List;
 public final class SugarStatements{
     private SugarStatements(){}
 
+    private static boolean parsersInstalled;
+
+    /** Registers every Sugar token parser into {@code LAssembler.customParsers}. This is the
+     *  single registration point shared by mod init, the decompiler's parse preflight and the
+     *  self-tests, so all entry points agree on parsing behavior (including the legacy
+     *  dev-version markers). Idempotent per class loader. */
+    public static void installParsers(){
+        if(parsersInstalled) return;
+        parsersInstalled = true;
+
+        LAssembler.customParsers.put("forbegin", SugarStatements::parseForBegin);
+        LAssembler.customParsers.put("forbeginc", tokens -> SugarStatements.parseForBegin(tokens, true));
+        LAssembler.customParsers.put("whilebegin", SugarStatements::parseWhileBegin);
+        LAssembler.customParsers.put("whilebeginc", tokens -> SugarStatements.parseWhileBegin(tokens, true));
+        LAssembler.customParsers.put("switchbegin", SugarStatements::parseSwitchBegin);
+        LAssembler.customParsers.put("switchbeginc", tokens -> SugarStatements.parseSwitchBegin(tokens, true));
+        LAssembler.customParsers.put("ifbegin", SugarStatements::parseIfBegin);
+        LAssembler.customParsers.put("ifbeginc", tokens -> SugarStatements.parseIfBegin(tokens, true));
+        LAssembler.customParsers.put("case", SugarStatements::parseCase);
+        LAssembler.customParsers.put("elif", SugarStatements::parseElseIf);
+        LAssembler.customParsers.put("else", SugarStatements::parseElse);
+        LAssembler.customParsers.put("break", tokens -> new SugarStatements.BreakStatement());
+        LAssembler.customParsers.put("continue", tokens -> new SugarStatements.ContinueStatement());
+        LAssembler.customParsers.put("blockend", tokens -> new SugarStatements.BlockEndStatement());
+        LAssembler.customParsers.put("funcdef", SugarStatements::parseFuncDef);
+        LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));
+        LAssembler.customParsers.put("funccall", SugarStatements::parseFuncCall);
+        LAssembler.customParsers.put("return", SugarStatements::parseReturn);
+
+        // Read-only compatibility for markers produced by the first development version.
+        LAssembler.customParsers.put("forend", tokens -> new SugarStatements.BlockEndStatement());
+        LAssembler.customParsers.put("whileend", tokens -> new SugarStatements.BlockEndStatement());
+        LAssembler.customParsers.put("switchend", tokens -> new SugarStatements.BlockEndStatement());
+    }
+
     private static String optional(String value){
         return value.isEmpty() ? "~" : value;
     }
@@ -668,8 +703,10 @@ if("expr".equals(tokens[4])){
 
     /** Escapes {@code ~} and {@code "} inside quoted statement tokens (see
      *  {@link #unescapeQuoted}). {@code "} would cut the LParser string token short, and
-     *  {@code ~} must be escaped so the sequence is unambiguous. */
-    private static String escapeQuoted(String value){
+     *  {@code ~} must be escaped so the sequence is unambiguous. Public because the
+     *  decompiler must escape with exactly these rules: any drift between the two sides
+     *  would make recompilation verification silently reject valid recoveries. */
+    public static String escapeQuoted(String value){
         if(value.indexOf('~') < 0 && value.indexOf('"') < 0) return value;
         StringBuilder out = new StringBuilder(value.length() + 8);
         for(int i = 0; i < value.length(); i++){
@@ -687,7 +724,7 @@ if("expr".equals(tokens[4])){
 
     /** Inverts {@link #escapeQuoted}: {@code ~~} becomes {@code ~}, {@code ~q} becomes
      *  {@code "}; any other {@code ~} sequence is kept literal. */
-    private static String unescapeQuoted(String value){
+    public static String unescapeQuoted(String value){
         if(value.indexOf('~') < 0) return value;
         StringBuilder out = new StringBuilder(value.length());
         for(int i = 0; i < value.length(); i++){

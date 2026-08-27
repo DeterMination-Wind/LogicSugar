@@ -4,6 +4,7 @@ import arc.Core;
 import arc.func.Cons;
 import arc.func.Prov;
 import arc.input.KeyCode;
+import arc.scene.style.Drawable;
 import arc.scene.Element;
 import arc.scene.Group;
 import arc.scene.ui.Button;
@@ -125,21 +126,21 @@ public class SugarLogicDialog extends LogicDialog{
             // the menu (and its dialog) was closed and detached; rescan from scratch.
             // A bare parent check is not enough: an old edit dialog's menu object may
             // survive hidden in the scene tree, so the stale button keeps matching it.
-            cachedCopyButton = null;
-            cachedCopyMenu = null;
-            cachedCopyDialog = null;
+            clearCompiledCopyCache();
         }
         if(cachedCopyButton == null){
-            cachedCopyButton = findCopyButton(Core.scene.root);
-            cachedCopyMenu = cachedCopyButton != null && cachedCopyButton.parent instanceof Table menu ? menu : null;
-            cachedCopyDialog = cachedCopyButton != null ? parentDialog(cachedCopyButton) : null;
+            TextButton found = findCopyButton(Core.scene.root);
+            if(found != null){
+                cachedCopyButton = found;
+                cachedCopyMenu = found.parent instanceof Table table ? table : null;
+                cachedCopyDialog = parentDialog(found);
+            }
         }
         if(cachedCopyButton == null || cachedCopyMenu == null || cachedCopyDialog == null) return;
         if(cachedCopyMenu.find(compiledCopyName) != null) return;
 
         Dialog dialog = cachedCopyDialog;
-        cachedCopyMenu.row();
-        cachedCopyMenu.button("@logicsugar.copy.compiled", Icon.copy, Styles.flatt, () -> {
+        installMenuButton(cachedCopyMenu, compiledCopyName, "@logicsugar.copy.compiled", Icon.copy, () -> {
             try{
                 // copy with the session's effective library, so the embedded functions survive
                 Core.app.setClipboardText(SugarCompiler.compile(canvas.save(), SugarCompiler.currentMode(),
@@ -150,18 +151,13 @@ public class SugarLogicDialog extends LogicDialog{
                 dialog.hide();
                 showCompileError(exception, false);
             }
-        }).size(280f, 60f).left().marginLeft(12f).get().name = compiledCopyName;
-        cachedCopyMenu.invalidateHierarchy();
+        });
     }
 
     /** Adds a menu action for switching between an inferred Sugar view and the stored mlog. */
     private void installOriginalView(){
         if(originalCode == null || recoveredSugar == null) return;
-        if(originalViewButton != null && !inSceneTree(originalViewButton)){
-            originalViewButton = null;
-            originalViewMenu = null;
-            originalViewDialog = null;
-        }
+        if(originalViewButton != null && !inSceneTree(originalViewButton)) clearOriginalViewCache();
         if(originalViewButton == null){
             TextButton candidate = findTextButton(Core.scene.root, originalViewName);
             if(candidate != null){
@@ -171,17 +167,36 @@ public class SugarLogicDialog extends LogicDialog{
             }
         }
         if(originalViewButton != null) return;
-        TextButton copyButton = cachedCopyButton;
-        Table menu = cachedCopyMenu;
-        Dialog dialog = cachedCopyDialog;
-        if(copyButton == null || menu == null || dialog == null) return;
+        // anchor next to the compiled-copy action, which runs first in the periodic scan
+        if(cachedCopyButton == null || cachedCopyMenu == null || cachedCopyDialog == null) return;
+        originalViewButton = installMenuButton(cachedCopyMenu, originalViewName,
+            "@logicsugar.view.original", Icon.edit, this::toggleOriginalView);
+        originalViewMenu = cachedCopyMenu;
+        originalViewDialog = cachedCopyDialog;
+    }
+
+    /** Mounts one named action into a copy-dialog menu and returns its button. Shared by the
+     *  compiled-copy and view-toggle features so their layout stays in lockstep. */
+    private static TextButton installMenuButton(Table menu, String name, String labelKey,
+                                                Drawable icon, Runnable handler){
         menu.row();
-        originalViewButton = menu.button("@logicsugar.view.original", Icon.edit, Styles.flatt, this::toggleOriginalView)
+        TextButton result = menu.button(labelKey, icon, Styles.flatt, handler)
             .size(280f, 60f).left().marginLeft(12f).get();
-        originalViewButton.name = originalViewName;
-        originalViewMenu = menu;
-        originalViewDialog = dialog;
+        result.name = name;
         menu.invalidateHierarchy();
+        return result;
+    }
+
+    private void clearCompiledCopyCache(){
+        cachedCopyButton = null;
+        cachedCopyMenu = null;
+        cachedCopyDialog = null;
+    }
+
+    private void clearOriginalViewCache(){
+        originalViewButton = null;
+        originalViewMenu = null;
+        originalViewDialog = null;
     }
 
     private TextButton findTextButton(Element element, String name){
@@ -198,6 +213,33 @@ public class SugarLogicDialog extends LogicDialog{
     private void toggleOriginalView(){
         if(originalCode == null || recoveredSugar == null) return;
         String target = showingOriginal ? recoveredSugar : originalCode;
+        String snapshot = showingOriginal ? originalCode : recoveredSugar;
+        String current = safeCanvasSave();
+        if(current != null && !current.equals(snapshot)){
+            // the current view was edited: loading the other snapshot would drop those
+            // edits silently, so switching requires explicit confirmation
+            Vars.ui.showConfirm(
+                Core.bundle.get("logicsugar.view.confirm", "Unsaved Changes"),
+                Core.bundle.get("logicsugar.view.confirm.text",
+                    "The current view has unsaved edits. Switching views discards them.\nContinue?"),
+                () -> applyViewSwitch(target));
+            return;
+        }
+        applyViewSwitch(target);
+    }
+
+    /** Canvas serialization for change detection. {@code save()} throws on uncompilable
+     *  expressions; there is then no comparable snapshot, so switching is allowed to
+     *  proceed (the close path surfaces those errors on its own). */
+    private String safeCanvasSave(){
+        try{
+            return canvas.save();
+        }catch(Throwable exception){
+            return null;
+        }
+    }
+
+    private void applyViewSwitch(String target){
         try{
             canvas.load(target);
             editable = target;
@@ -350,9 +392,7 @@ public class SugarLogicDialog extends LogicDialog{
         this.originalCode = null;
         this.recoveredSugar = null;
         this.showingOriginal = false;
-        this.originalViewButton = null;
-        this.originalViewMenu = null;
-        this.originalViewDialog = null;
+        clearOriginalViewCache();
         // drafts are keyed by Building; drop entries whose processor is gone so the map
         // cannot grow without bound over a session
         drafts.keySet().removeIf(key -> key instanceof Building build && !build.isValid());
@@ -377,6 +417,9 @@ public class SugarLogicDialog extends LogicDialog{
                 // used when its normalized recompilation is verified; otherwise retain the
                 // existing raw-code behavior for externally edited programs.
                 SugarDecompiler.Result recovered = SugarDecompiler.decompile(code, privileged);
+                // structured > 0 also keeps the decompiler's carrier branch out of this view:
+                // carrier restoration is checked (and failed) above, so a "carrier" Result here
+                // would be unreachable; requiring at least one real structure is belt-and-braces.
                 if(recovered.verified && recovered.matchedMode != null && !"flat".equals(recovered.matchedMode)
                     && recovered.structured > 0){
                     editable = recovered.sugar;
@@ -467,9 +510,8 @@ public class SugarLogicDialog extends LogicDialog{
                 new IllegalArgumentException(uncompilableExpressionMessage()), true));
             return;
         }
-        cachedCopyButton = null;
-        cachedCopyMenu = null;
-        cachedCopyDialog = null;
+        clearCompiledCopyCache();
+        clearOriginalViewCache();
         super.hide();
     }
 

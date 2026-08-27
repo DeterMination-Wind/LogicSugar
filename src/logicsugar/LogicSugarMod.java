@@ -7,7 +7,6 @@ import arc.util.Log;
 import mindustry.Vars;
 import mindustry.game.EventType.ClientLoadEvent;
 import mindustry.gen.LogicIO;
-import mindustry.logic.LAssembler;
 import mindustry.logic.LogicDialog;
 import mindustry.logic.SugarFunctions;
 import mindustry.logic.SugarLogicDialog;
@@ -88,29 +87,8 @@ public class LogicSugarMod extends Mod{
         LogicIO.allStatements.add(SugarStatements.FuncCallStatement::new);
         LogicIO.allStatements.add(SugarStatements.ReturnStatement::new);
 
-        LAssembler.customParsers.put("forbegin", SugarStatements::parseForBegin);
-        LAssembler.customParsers.put("forbeginc", tokens -> SugarStatements.parseForBegin(tokens, true));
-        LAssembler.customParsers.put("whilebegin", SugarStatements::parseWhileBegin);
-        LAssembler.customParsers.put("whilebeginc", tokens -> SugarStatements.parseWhileBegin(tokens, true));
-        LAssembler.customParsers.put("switchbegin", SugarStatements::parseSwitchBegin);
-        LAssembler.customParsers.put("switchbeginc", tokens -> SugarStatements.parseSwitchBegin(tokens, true));
-        LAssembler.customParsers.put("ifbegin", SugarStatements::parseIfBegin);
-        LAssembler.customParsers.put("ifbeginc", tokens -> SugarStatements.parseIfBegin(tokens, true));
-        LAssembler.customParsers.put("case", SugarStatements::parseCase);
-        LAssembler.customParsers.put("elif", SugarStatements::parseElseIf);
-        LAssembler.customParsers.put("else", SugarStatements::parseElse);
-        LAssembler.customParsers.put("break", tokens -> new SugarStatements.BreakStatement());
-        LAssembler.customParsers.put("continue", tokens -> new SugarStatements.ContinueStatement());
-        LAssembler.customParsers.put("blockend", tokens -> new SugarStatements.BlockEndStatement());
-        LAssembler.customParsers.put("funcdef", SugarStatements::parseFuncDef);
-        LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));
-        LAssembler.customParsers.put("funccall", SugarStatements::parseFuncCall);
-        LAssembler.customParsers.put("return", SugarStatements::parseReturn);
-
-        // Read-only compatibility for markers produced by the first development version.
-        LAssembler.customParsers.put("forend", tokens -> new SugarStatements.BlockEndStatement());
-        LAssembler.customParsers.put("whileend", tokens -> new SugarStatements.BlockEndStatement());
-        LAssembler.customParsers.put("switchend", tokens -> new SugarStatements.BlockEndStatement());
+        // single registration point shared with the decompiler preflight and the self-tests
+        SugarStatements.installParsers();
     }
 
     /** Host (Neon) settings aggregation: function mode, library entry and jump line coloring. */

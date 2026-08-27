@@ -172,25 +172,10 @@ public final class SugarDecompiler{
 
     private record Verification(boolean matched, String mode){}
 
+    /** Defensive re-registration for headless/self-test environments; the game mod path
+     *  installs them at init via {@link SugarStatements#installParsers()} (idempotent). */
     private static void installSugarParsers(){
-        LAssembler.customParsers.put("forbegin", SugarStatements::parseForBegin);
-        LAssembler.customParsers.put("forbeginc", tokens -> SugarStatements.parseForBegin(tokens, true));
-        LAssembler.customParsers.put("whilebegin", SugarStatements::parseWhileBegin);
-        LAssembler.customParsers.put("whilebeginc", tokens -> SugarStatements.parseWhileBegin(tokens, true));
-        LAssembler.customParsers.put("switchbegin", SugarStatements::parseSwitchBegin);
-        LAssembler.customParsers.put("switchbeginc", tokens -> SugarStatements.parseSwitchBegin(tokens, true));
-        LAssembler.customParsers.put("ifbegin", SugarStatements::parseIfBegin);
-        LAssembler.customParsers.put("ifbeginc", tokens -> SugarStatements.parseIfBegin(tokens, true));
-        LAssembler.customParsers.put("case", SugarStatements::parseCase);
-        LAssembler.customParsers.put("elif", SugarStatements::parseElseIf);
-        LAssembler.customParsers.put("else", SugarStatements::parseElse);
-        LAssembler.customParsers.put("break", tokens -> new SugarStatements.BreakStatement());
-        LAssembler.customParsers.put("continue", tokens -> new SugarStatements.ContinueStatement());
-        LAssembler.customParsers.put("blockend", tokens -> new SugarStatements.BlockEndStatement());
-        LAssembler.customParsers.put("funcdef", SugarStatements::parseFuncDef);
-        LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));
-        LAssembler.customParsers.put("funccall", SugarStatements::parseFuncCall);
-        LAssembler.customParsers.put("return", SugarStatements::parseReturn);
+        SugarStatements.installParsers();
     }
 
     private static void validateInput(String code, boolean privileged){
@@ -209,6 +194,19 @@ public final class SugarDecompiler{
         if(index != heads.size()) throw new IllegalArgumentException("mlog parser did not consume the complete program");
     }
 
+    /** Statement heads in input order, used by {@link #validateInput} to name the offending
+     *  statement and to prove {@code LAssembler.read} consumed the whole program.
+     *
+     *  <p>These heads cannot be taken from the parse result itself: vanilla InvalidStatement
+     *  carries no fields (no token/position info), and LogicIO.write serializes every
+     *  invalid statement back as "noop", which would make genuinely broken code
+     *  indistinguishable from a deliberate noop. This tokenizer therefore mirrors LParser's
+     *  rules — statements end at newline/';', '#' starts a comment outside strings, strings
+     *  run raw to the closing quote, and a lone 'label:' line registers a jump location
+     *  instead of a statement (LParser.statement + parse). The only known divergences are
+     *  inputs that make LParser throw outright (unterminated string, missing space before a
+     *  quote); those reject the entire program upstream, so misalignment here is unreachable,
+     *  and any future drift fails toward rejecting more input — the safe direction.</p> */
     private static List<String> logicalHeads(String code){
         List<String> result = new ArrayList<>();
         for(String line : normalizeLineEndings(code).split("\n", -1)){
@@ -252,8 +250,9 @@ public final class SugarDecompiler{
 
     private static int countStatements(String code){
         int result = 0;
-        for(String line : normalizeLineEndings(code).split("\n")){
-            if(!line.trim().isEmpty() && !line.trim().startsWith("#")) result++;
+        for(String line : normalizeLineEndings(code).split("\n", -1)){
+            String trimmed = line.trim();
+            if(!trimmed.isEmpty() && !trimmed.startsWith("#")) result++;
         }
         return result;
     }
@@ -537,14 +536,9 @@ public final class SugarDecompiler{
     }
 
     private static String escape(String text){
-        StringBuilder result = new StringBuilder(text.length() + 8);
-        for(int i = 0; i < text.length(); i++){
-            char c = text.charAt(i);
-            if(c == '~') result.append("~~");
-            else if(c == '"') result.append("~q");
-            else result.append(c);
-        }
-        return result.toString();
+        // Must stay in lockstep with the parser side (SugarStatements.escapeQuoted); sharing
+        // the implementation keeps recompilation verification immune to one-sided rule changes.
+        return SugarStatements.escapeQuoted(text);
     }
 
     // ===== Candidate and inverse patterns ================================================
@@ -673,6 +667,11 @@ public final class SugarDecompiler{
             }
         }
 
+        /** Binds call arguments by scanning backwards from the @counter prelude for consecutive
+         *  'set' statements whose targets appear inside the function body. This relies on name
+         *  coincidence: an unrelated earlier 'set' of a same-named variable can be miscounted as
+         *  an argument. Harmless here — wrong bindings fail recompilation verification and the
+         *  region falls back to raw vanilla statements. */
         private CallSite makeCallSite(int position){
             Statement setRet = program.statements.get(position);
             FunctionInfo function = functionByName(functionNameFromReturn(setRet.token(1)));
@@ -775,10 +774,7 @@ public final class SugarDecompiler{
                         continue;
                     }
                 }
-                Frame frame = trySwitch(cursor, function.finalTail);
-                if(frame == null) frame = tryFor(cursor, function.finalTail);
-                if(frame == null) frame = tryWhile(cursor, function.finalTail);
-                if(frame == null) frame = tryIf(cursor, function.finalTail);
+                Frame frame = tryFrames(cursor, function.finalTail);
                 if(frame != null){ emitFrame(frame, null); cursor = frame.resume; }
                 else { addFlat(cursor, null); cursor++; }
             }
@@ -867,10 +863,7 @@ public final class SugarDecompiler{
                     continue;
                 }
 
-                Frame frame = trySwitch(cursor, to);
-                if(frame == null) frame = tryWhile(cursor, to);
-                if(frame == null) frame = tryFor(cursor, to);
-                if(frame == null) frame = tryIf(cursor, to);
+                Frame frame = tryFrames(cursor, to);
                 if(frame != null){
                     emitFrame(frame, context);
                     cursor = frame.resume;
@@ -879,6 +872,22 @@ public final class SugarDecompiler{
                     cursor++;
                 }
             }
+        }
+
+        /** Single structure-trial pipeline shared by the main range and function bodies, so
+         *  identical instruction shapes recover identically everywhere. {@code while} is
+         *  tried before {@code for} because a loop without a leading 'set' initialization
+         *  compiles to the exact same instruction stream as its whilebegin form; trying
+         *  for first would rewrite every while into a degenerate forbegin. An explicit
+         *  initializer cannot be claimed by while at all (readCondition rejects 'set'
+         *  heads), so real for-loops still recover as for either way. Any wrong guess is
+         *  caught by recompilation verification. */
+        private Frame tryFrames(int at, int limit){
+            Frame frame = trySwitch(at, limit);
+            if(frame == null) frame = tryWhile(at, limit);
+            if(frame == null) frame = tryFor(at, limit);
+            if(frame == null) frame = tryIf(at, limit);
+            return frame;
         }
 
         private FunctionInfo functionAt(int index){

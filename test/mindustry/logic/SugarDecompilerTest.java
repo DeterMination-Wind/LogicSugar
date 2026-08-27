@@ -9,41 +9,25 @@ public final class SugarDecompilerTest{
     private SugarDecompilerTest(){}
 
     public static void main(String[] args){
-        registerSugarParsers();
+        SugarStatements.installParsers();
         plainVanillaRoundTrip();
         ifRoundTrip();
         ifElseAndElifRoundTrip();
+        elifChainOfThreeRoundTrip();
         whileRoundTrip();
         forRoundTrip();
         switchRoundTrip();
+        switchFallthroughRoundTrip();
         nestedRoundTrip();
         metadataAndLineEndings();
         malformedInputIsPreserved();
         strictEqualityDoesNotCrash();
         expressionControlFlowIsPreserved();
         functionControlFlowIsPreserved();
+        tildeExpressionEscapingSurvivesRecovery();
+        quotedEscapeIsSelfInverse();
+        deletedCarrierDegradesToInference();
         System.out.println("LogicSugar decompiler self-test passed.");
-    }
-
-    private static void registerSugarParsers(){
-        LAssembler.customParsers.put("forbegin", SugarStatements::parseForBegin);
-        LAssembler.customParsers.put("forbeginc", tokens -> SugarStatements.parseForBegin(tokens, true));
-        LAssembler.customParsers.put("whilebegin", SugarStatements::parseWhileBegin);
-        LAssembler.customParsers.put("whilebeginc", tokens -> SugarStatements.parseWhileBegin(tokens, true));
-        LAssembler.customParsers.put("switchbegin", SugarStatements::parseSwitchBegin);
-        LAssembler.customParsers.put("switchbeginc", tokens -> SugarStatements.parseSwitchBegin(tokens, true));
-        LAssembler.customParsers.put("ifbegin", SugarStatements::parseIfBegin);
-        LAssembler.customParsers.put("ifbeginc", tokens -> SugarStatements.parseIfBegin(tokens, true));
-        LAssembler.customParsers.put("case", SugarStatements::parseCase);
-        LAssembler.customParsers.put("elif", SugarStatements::parseElseIf);
-        LAssembler.customParsers.put("else", SugarStatements::parseElse);
-        LAssembler.customParsers.put("break", tokens -> new SugarStatements.BreakStatement());
-        LAssembler.customParsers.put("continue", tokens -> new SugarStatements.ContinueStatement());
-        LAssembler.customParsers.put("blockend", tokens -> new SugarStatements.BlockEndStatement());
-        LAssembler.customParsers.put("funcdef", SugarStatements::parseFuncDef);
-        LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));
-        LAssembler.customParsers.put("funccall", SugarStatements::parseFuncCall);
-        LAssembler.customParsers.put("return", SugarStatements::parseReturn);
     }
 
     private static void plainVanillaRoundTrip(){
@@ -61,6 +45,10 @@ public final class SugarDecompilerTest{
         assertCompiled("ifbegin x greaterThan 0 6\nset y 1\nelif x lessThan 0\nset y 2\nelse\nset y 3\nblockend\nprint y\n", "elif");
     }
 
+    private static void elifChainOfThreeRoundTrip(){
+        assertCompiled("ifbegin x greaterThan 2 8\nset y 1\nelif x equal 1\nset y 2\nelif x lessThan -5\nset y 3\nelse\nset y 4\nblockend\nprint y\n", "elif");
+    }
+
     private static void whileRoundTrip(){
         assertCompiled("whilebegin x greaterThan 0 2\nset x 0\nblockend\nprint x\n", "whilebegin");
     }
@@ -71,6 +59,18 @@ public final class SugarDecompilerTest{
 
     private static void switchRoundTrip(){
         assertCompiled("switchbegin x 7\ncase 1\nset y 1\nbreak\ncase 2\nset y 2\nbreak\nblockend\nprint y\n", "switchbegin");
+    }
+
+    private static void switchFallthroughRoundTrip(){
+        // case 1 has no break: its body must flow into case 2. Either a structured recovery
+        // that verifies, or the safe flat fallback is acceptable — losing code is not.
+        String source = "switchbegin x 6\ncase 1\nset y 1\ncase 2\nset y 2\nbreak\nblockend\nprint y\n";
+        String compiled = SugarCompiler.compile(source);
+        SugarDecompiler.Result result = SugarDecompiler.decompile(stripGenerated(compiled));
+        check(result.sugar.contains("set y 1") && result.sugar.contains("set y 2"),
+            "switch fallthrough lost statements: " + result.sugar);
+        check(result.sugar.contains("case 1") && result.sugar.contains("case 2"),
+            "switch fallthrough lost case labels: " + result.sugar);
     }
 
     private static void nestedRoundTrip(){
@@ -122,6 +122,45 @@ public final class SugarDecompilerTest{
         check(result.sugar.contains("funccall f") && result.sugar.contains("funcdef f"),
             "function constructs were not recovered: " + result.sugar);
         check(result.sugar.contains("return"), "function return was not recovered: " + result.sugar);
+    }
+
+    /** Unary operators in returned expressions are rebuilt symbolically (e.g. {@code ~a}
+     *  becomes "not(a)"), so no quote ever reaches the decompiler's escaper through
+     *  supported expressions — pin that faithful rebuild plus a fully verified recovery.
+     *  The escaping rules themselves are guarded by {@link #quotedEscapeIsSelfInverse}. */
+    private static void tildeExpressionEscapingSurvivesRecovery(){
+        String source = "funcdef g a 2\nreturn \"~a\"\nblockend\nset x true\nfunccall g \"x\" out\nprint out\n";
+        String compiled = SugarCompiler.compile(source, SugarCompiler.FuncMode.normal);
+        SugarDecompiler.Result result = SugarDecompiler.decompile(stripGenerated(compiled));
+        check(result.verified, "tilde return expression did not recompile identically: " + result.notes);
+        check(result.sugar.contains("funcdef g") && result.sugar.contains("funccall g")
+            && result.sugar.contains("return \"not(a)\""),
+            "recovered function body did not faithfully rebuild the unary return: " + result.sugar);
+    }
+
+    /** Locks the invariant between both sides of the quoted-token escaping now that the
+     *  decompiler calls {@link SugarStatements#escapeQuoted} directly. */
+    private static void quotedEscapeIsSelfInverse(){
+        String tricky = "say ~~ then \"quoted\" ~q and lone tilde ~ end";
+        check(SugarStatements.unescapeQuoted(SugarStatements.escapeQuoted(tricky)).equals(tricky),
+            "escapeQuoted/unescapeQuoted are not inverses");
+    }
+
+    /** Hand-deleting the persistence carrier (an external edit) must drop the program into
+     *  the inference path instead of failing or pretending a verified carrier restore. */
+    private static void deletedCarrierDegradesToInference(){
+        String sugar = "ifbegin x greaterThan 0 2\nset y 1\nblockend\nprint y\n";
+        String compiled = SugarCompiler.compile(sugar);
+        check(compiled.contains("set __ls_sugar "), "compiled code unexpectedly lost its carrier");
+        StringBuilder mangled = new StringBuilder();
+        for(String line : compiled.replace("\r\n", "\n").split("\n", -1)){
+            if(!line.startsWith("set __ls_sugar ")) mangled.append(line).append('\n');
+        }
+        SugarDecompiler.Result result = SugarDecompiler.decompile(mangled.toString());
+        check(result.verified, "carrier-stripped program was rejected outright: " + result.notes);
+        check(!"carrier".equals(result.matchedMode), "deleted metadata must not look like a carrier restore");
+        check(result.sugar.contains("ifbegin") && result.sugar.contains("print y"),
+            "carrier-stripped program lost its logic: " + result.sugar);
     }
 
     private static String stripGenerated(String code){
