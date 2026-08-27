@@ -11,39 +11,37 @@
 
 > 写逻辑时关注结构和意图，而不是在一堆跳转指令里迷路。
 
-Logic Sugar 面向希望让逻辑更易读、更易修改和更易分享的 Mindustry 玩家。它把常见的控制流和计算表达成更接近结构化编程的形式，同时在保存时生成原版兼容的 mlog。
-
-这种兼容性是它最重要的价值：使用 Logic Sugar 编写的程序仍然可以在普通 Mindustry 客户端中运行。它既适合学习逻辑，也适合维护规模较大的处理器程序。
+Logic Sugar 面向希望让逻辑更易读、更易修改、更易分享的 Mindustry 玩家。它把常见的控制流和计算变成编辑器里清晰的结构化块，同时保存为原版兼容的 mlog——写出来的程序在任何普通客户端里都能运行，之后还能重新打开继续编辑。
 
 ## 功能
 
-- **结构化控制流** —— `if` / `elif` / `else`、`for`、`while`、`switch` / `case`，以及 `break` / `continue`：在逻辑编辑器中以代码块的形式编写，编译为普通原版 jump 指令。
-- **Switch 分派优化** —— `auto` 模式会按可执行指令成本，在整数 case 值的比较链与 `@counter` 跳转表之间自动选择；重复 case 值可以共用首个匹配表槽位。设置为 `chainOnly` 可逐字复现旧版比较链输出。跳转表使用数值守卫语义，非整数值或值域跨度超过 255 时自动回退到比较链。
-- **函数** —— 定义带参数的函数、调用并返回值；两种编译模式：**normal（子程序）**（每个函数共享一份 `@counter` 子程序）和 **inline（内联）**（函数体复制到每个调用点）。
-- **函数库** —— 所有逻辑处理器共享的全局函数，直接在处理器编辑器中编辑，关闭时自动校验保存，库文件损坏时可自动修复。
-- **表达式编译** —— 中缀表达式自动展开为原版 `op` 指令链；自 v2.3.0 起，`if` / `elif` / `for` / `while` 的条件也支持完整表达式。
-- **原版兼容输出** —— 结构化源码以载体语句（`set __ls_sugar "..."`）随 mlog 一同保存，程序在普通客户端上原样运行，之后仍可重新打开为可编辑的 sugar 代码块。
-- **原版 mlog 恢复** —— 导入普通 mlog 后，可恢复经过验证的 `if` / `elif` / `else`、`for`、`while`、`switch` / `case` 和 normal 函数结构；只有重编译结果匹配原始指令流才会采用恢复结果，无法确认的代码保留为原版 mlog。
-- **原版 / Sugar 视图** —— 可在原始 mlog 和经过验证的 Sugar 视图之间切换；切换前会检查未保存修改和保存失败，避免丢失编辑内容。
-- **编辑器辅助** —— 跳转线着色、在变量浏览器中隐藏编译内部变量（`__ls_*`、表达式临时变量）、Ctrl+点击 / Ctrl+拖动复制积木、每个积木的悬停提示、搜索框匹配高亮。
+- **结构化控制流** —— `if` / `elif` / `else`、`for`、`while`、`switch` / `case`、`break` / `continue` 以块的形式编写，保存时编译为普通 mlog。
+- **条件里写表达式** —— `if` / `elif` / `while` / `for` 的条件（Expr 模式）可直接写 `hp < 25 && !shielded` 这样的完整表达式。
+- **表达式语句** —— `result = (a + b) * 2` 一行搞定：保存时自动展开为等价指令，重新打开自动折叠回来，写错当场标红。
+- **随处表达式** —— 赋值、函数参数、`return` 返回值等任何值的位置都可以写表达式，包括 `@unit.@health` 成员访问。
+- **函数** —— 定义带参数的函数、调用并返回值；normal（子程序）与 inline（内联）两种模式可在设置中切换。
+- **函数库** —— 所有处理器共享的全局函数，在编辑器内直接编辑，关闭时自动校验保存，文件损坏可自动修复。
+- **恢复结构** —— 打开普通 mlog 自动识别并恢复其中的 `if` / `for` / `while` / `switch` / 函数结构；仅恢复验证无误的部分，其余保持原样。
+- **原版 / Sugar 双视图** —— 随时切换查看生成的原版 mlog 或返回编辑，切换前保护未保存的修改。
+- **编辑器辅助** —— 跳转线着色、隐藏 `__ls_*` 内部变量、Ctrl+点击 / Ctrl+拖动复制积木、悬停提示、搜索高亮。
 
 ## 安装
 
-需要 **Mindustry v155 或更高版本**（桌面或 Android）。从 Releases 下载通用 JAR——单个文件同时支持两个平台——放入 Mindustry 的 mods 目录即可。mod 会自动加载，也可以像其他 mod 一样在游戏内模组列表中启用或禁用。然后打开逻辑编辑器即可使用增强后的编辑流程。
+需要 **Mindustry v155 或更高版本**（桌面或 Android）。从 [Releases](https://github.com/DeterMination-Wind/LogicSugar/releases) 下载通用 JAR——一个文件同时支持两个平台——放进 Mindustry 的 mods 目录，启动游戏后在模组列表里启用，再打开逻辑处理器编辑器即可使用。
 
-## 构建
+## 从源码构建
 
 前置条件：
 
 - **Java 17+**
-- 本仓库旁需有一份已构建的游戏源码：编译依赖 `../Mindustry-master/desktop/build/libs/Mindustry.jar`。
-- 打包时需要本地 Android SDK 中的 **D8** 以及至少一个 platform 的 `android.jar`（通过 `ANDROID_SDK_ROOT`/`ANDROID_HOME` 或 `D8_PATH` 环境变量定位）。
+- 仓库旁有一份构建好的 Mindustry 源码（编译依赖 `../Mindustry-master/desktop/build/libs/Mindustry.jar`）
+- 打包 Android 端需要本地 Android SDK 的 **D8** 和至少一个 platform 的 `android.jar`（通过 `ANDROID_SDK_ROOT`、`ANDROID_HOME` 或 `D8_PATH` 环境变量指定）
 
 ~~~powershell
 .\gradlew.bat deploy
 ~~~
 
-deploy 会把桌面字节码与 Android 的 `classes.dex` 合并为单个跨平台 JAR，输出到 `build/libs/LogicSugar-v<版本>.jar`；普通的 `build` 任务也会触发 deploy。
+输出的 `build/libs/LogicSugar-v<版本>.jar` 是一个同时支持桌面与 Android 的跨平台 JAR；普通的 `build` 任务同样会触发 deploy。
 
 ## 许可证
 
