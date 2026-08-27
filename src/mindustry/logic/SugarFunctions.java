@@ -1252,7 +1252,7 @@ public final class SugarFunctions{
      * mode, {@code __ls_i_<id>_} per inline copy). Call sites expand recursively.
      */
     public static void lower(Seq<LStatement> statements, String prefix, FunctionSet functions, FuncMode mode,
-                             StringBuilder out, CallIds ids, String funcName){
+                             StringBuilder out, CallIds ids, String funcName, SugarCompiler.SwitchStrategy strategy){
         int[] switchOwner = switchOwners(statements);
         int[] breakOwner = breakOwners(statements);
         int[] continueOwner = continueOwners(statements);
@@ -1282,7 +1282,7 @@ public final class SugarFunctions{
                 if(!begin.initial.isEmpty()) out.append("set ").append(begin.variable).append(' ').append(begin.initial).append('\n');
                 out.append(label(prefix, "for_check_", i)).append(":\n");
                 if(begin.expressionMode){
-                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids);
+                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
                     out.append("jump ").append(label(prefix, "for_body_", i)).append(" notEqual ").append(condition).append(" 0\n");
                 }else{
                     out.append("jump ").append(label(prefix, "for_body_", i)).append(' ').append(begin.op.name()).append(' ')
@@ -1292,7 +1292,7 @@ public final class SugarFunctions{
                 out.append(label(prefix, "for_body_", i)).append(":\n");
             }else if(statement instanceof WhileBeginStatement begin){
                 if(begin.expressionMode){
-                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids);
+                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
                     out.append("jump ").append(label(prefix, "while_body_", i)).append(" notEqual ").append(condition).append(" 0\n");
                 }else{
                     out.append("jump ").append(label(prefix, "while_body_", i)).append(' ').append(begin.op.name()).append(' ')
@@ -1301,12 +1301,7 @@ public final class SugarFunctions{
                 out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
                 out.append(label(prefix, "while_body_", i)).append(":\n");
             }else if(statement instanceof SwitchBeginStatement begin){
-                for(int at = i + 1; at < begin.destIndex; at++){
-                    if(switchOwner[at] == i && statements.get(at) instanceof CaseStatement item){
-                        out.append("jump ").append(label(prefix, "case_", at)).append(" equal ").append(begin.value).append(' ').append(item.value).append('\n');
-                    }
-                }
-                out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
+                emitSwitch(statements, i, begin, switchOwner, prefix, strategy, out);
             }else if(statement instanceof CaseStatement){
                 if(switchOwner[i] < 0) throw error("case", i, "is outside a switch");
                 out.append(label(prefix, "case_", i)).append(":\n");
@@ -1315,7 +1310,7 @@ public final class SugarFunctions{
                     ? label(prefix, "if_branch_", nextBranch[i])
                     : label(prefix, "stmt_", begin.destIndex + 1);
                 if(begin.expressionMode){
-                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids);
+                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
                     out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
                 }else{
                     ConditionOp negated = negate(begin.op);
@@ -1334,7 +1329,7 @@ public final class SugarFunctions{
                     ? label(prefix, "if_branch_", nextBranch[i])
                     : label(prefix, "stmt_", end + 1);
                 if(item.expressionMode){
-                    String condition = emitConditionExpression(item.conditionExpr, prefix, i, out, functions, mode, ids);
+                    String condition = emitConditionExpression(item.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
                     out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
                 }else{
                     ConditionOp negated = negate(item.op);
@@ -1383,10 +1378,10 @@ public final class SugarFunctions{
                         .append(jump.value).append(' ').append(jump.compare).append('\n');
                 }
             }else if(statement instanceof FuncCallStatement call){
-                expandCall(call, functions, mode, out, ids);
+                expandCall(call, functions, mode, out, ids, strategy);
             }else if(statement instanceof ReturnStatement){
                 if(funcName == null) throw error("return", i, "is outside a function");
-                emitReturn((ReturnStatement)statement, prefix, mode, out, funcName, functions, ids);
+                emitReturn((ReturnStatement)statement, prefix, mode, out, funcName, functions, ids, strategy);
             }else if(statement instanceof FuncDefStatement){
                 throw error("funcdef", i, "cannot be lowered; function definitions are expanded at call sites");
             }else{
@@ -1399,7 +1394,8 @@ public final class SugarFunctions{
 
     /** Compiles an if/elif expression into a compiler-private boolean temporary. */
     private static String emitConditionExpression(String expression, String prefix, int statementIndex, StringBuilder out,
-                                                  FunctionSet functions, FuncMode mode, CallIds ids){
+                                                  FunctionSet functions, FuncMode mode, CallIds ids,
+                                                  SugarCompiler.SwitchStrategy strategy){
         List<ExprCompiler.Line> ops;
         String base = "__ls_cond_" + prefix.replace('-', '_') + statementIndex;
         String dest = base;
@@ -1425,7 +1421,7 @@ public final class SugarFunctions{
                 }
                 stmt.args = args.toString();
                 stmt.result = renameConditionTemp(call.dest, prefix, statementIndex);
-                expandCall(stmt, functions, mode, out, ids);
+                expandCall(stmt, functions, mode, out, ids, strategy);
             }else{
                 ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
                 String a = renameConditionTemp(op.a, prefix, statementIndex);
@@ -1446,7 +1442,7 @@ public final class SugarFunctions{
     }
 
     private static void emitReturn(ReturnStatement ret, String prefix, FuncMode mode, StringBuilder out, String funcName,
-                                   FunctionSet functions, CallIds ids){
+                                   FunctionSet functions, CallIds ids, SugarCompiler.SwitchStrategy strategy){
         if(!ret.expr.isEmpty()){
             try{
                 List<ExprCompiler.Line> ops = ExprCompiler.compile("__ls_func_" + funcName + "_result", ret.expr);
@@ -1461,7 +1457,7 @@ public final class SugarFunctions{
                         }
                         stmt.args = args.toString();
                         stmt.result = renameReturnTemp(call.dest, funcName);
-                        expandCall(stmt, functions, mode, out, ids);
+                        expandCall(stmt, functions, mode, out, ids, strategy);
                     }else if(line instanceof ExprCompiler.SensorLine sensor){
                         out.append("sensor ").append(renameReturnTemp(sensor.dest, funcName)).append(' ')
                             .append(renameReturnTemp(sensor.a, funcName)).append(' ')
@@ -1498,7 +1494,8 @@ public final class SugarFunctions{
     }
 
     /** Expands one call site. */
-    private static void expandCall(FuncCallStatement call, FunctionSet functions, FuncMode mode, StringBuilder out, CallIds ids){
+    private static void expandCall(FuncCallStatement call, FunctionSet functions, FuncMode mode, StringBuilder out, CallIds ids,
+                                   SugarCompiler.SwitchStrategy strategy){
         Function target = functions.resolve(call.name);
         if(target == null){
             throw new IllegalArgumentException("call to undefined function '" + call.name + "'");
@@ -1508,9 +1505,9 @@ public final class SugarFunctions{
             int id = ids.next();
             String prefix = "i_" + id + "_";
             for(int k = 0; k < args.size(); k++){
-                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids);
+                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids, strategy);
             }
-            lower(target.body, prefix, functions, mode, out, ids, target.name);
+            lower(target.body, prefix, functions, mode, out, ids, target.name, strategy);
             // Value returns jump here so the caller-side result copy still runs;
             // void returns and jumps to the function end skip it via the exit label.
             out.append("__ls_").append(prefix).append("ret:\n");
@@ -1520,7 +1517,7 @@ public final class SugarFunctions{
             out.append("__ls_").append(prefix).append("exit:\n");
         }else{
             for(int k = 0; k < args.size(); k++){
-                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids);
+                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids, strategy);
             }
             out.append("set ").append(target.retName()).append(" @counter\n");
             out.append("op add ").append(target.retName()).append(' ').append(target.retName()).append(" 2\n");
@@ -1532,16 +1529,18 @@ public final class SugarFunctions{
     }
 
     /** 展开表达式链中的一行函数调用（CallLine 的实参已是编译后的值名）。 */
-    private static void expandCallLine(ExprCompiler.CallLine call, FunctionSet functions, FuncMode mode, StringBuilder out, CallIds ids){
+    private static void expandCallLine(ExprCompiler.CallLine call, FunctionSet functions, FuncMode mode, StringBuilder out, CallIds ids,
+                                       SugarCompiler.SwitchStrategy strategy){
         FuncCallStatement stmt = new FuncCallStatement();
         stmt.name = call.name;
         stmt.args = call.args;
         stmt.result = call.dest;
-        expandCall(stmt, functions, mode, out, ids);
+        expandCall(stmt, functions, mode, out, ids, strategy);
     }
 
     /** Compiles one argument expression and binds it to the parameter. */
-    private static void emitArg(StringBuilder out, String arg, String param, FunctionSet functions, FuncMode mode, CallIds ids){
+    private static void emitArg(StringBuilder out, String arg, String param, FunctionSet functions, FuncMode mode, CallIds ids,
+                                SugarCompiler.SwitchStrategy strategy){
         List<ExprCompiler.Line> ops;
         try{
             ops = ExprCompiler.compile("_0", arg);
@@ -1555,12 +1554,132 @@ public final class SugarFunctions{
         }
         for(ExprCompiler.Line line : ops){
             if(line instanceof ExprCompiler.CallLine call){
-                expandCallLine(call, functions, mode, out, ids);
+                expandCallLine(call, functions, mode, out, ids, strategy);
             }else{
                 out.append(line.toText()).append('\n');
             }
         }
         out.append("set ").append(param).append(" _0\n");
+    }
+
+    // ===== switch dispatch: comparison chain vs @counter jump table =======================
+
+    /** Hard cap on the jump-table slot span; wider integer ranges keep the comparison chain. */
+    static final int MAX_TABLE_SPAN = 255;
+
+    /** One direct-child {@code case} of a switch under lowering. */
+    private static final class SwitchCase{
+        final int index;
+        final String text;
+        final Double value; // null when the case value is not an integer constant
+
+        SwitchCase(int index, String text, Double value){
+            this.index = index;
+            this.text = text;
+            this.value = value;
+        }
+    }
+
+    /** A qualified jump table: slot space and each slot's case statement (-1 = hole). */
+    private static final class SwitchTable{
+        final double min;
+        final int[] slots;
+
+        SwitchTable(double min, int[] slots){
+            this.min = min;
+            this.slots = slots;
+        }
+
+        int span(){ return slots.length; }
+
+        int cost(){
+            return (min != 0 ? 1 : 0) // op sub normalization
+                + 2                    // bounds guards
+                + 1                    // @counter dispatch
+                + slots.length;        // slot rows
+        }
+    }
+
+    /**
+     * Emits the switch dispatch header. Two shapes (labels are free; only real instructions
+     * cost, mirroring Bang's is_solid cost model):
+     * <ul>
+     *   <li>comparison chain — one {@code jump equal} per case plus the default jump: N+1;</li>
+     *   <li>{@code @counter} jump table — [op sub] + two bounds guards + dispatch +
+     *       span unconditional slot rows.</li>
+     * </ul>
+     * The table deduplicates repeated case values into single slots, so duplication-heavy
+     * switches win on cost. Equal lengths prefer the table. A table requires every case
+     * value to be an integer constant with span <= {@link #MAX_TABLE_SPAN}; anything else,
+     * or the {@code chainOnly} strategy, keeps the chain (byte-identical to pre-2.3.1).
+     * Case labels and bodies still come from the case path in declaration order, so
+     * fall-through, break, nesting and in-function semantics are unchanged.
+     */
+    private static void emitSwitch(Seq<LStatement> statements, int index, SwitchBeginStatement begin,
+                                   int[] switchOwner, String prefix, SugarCompiler.SwitchStrategy strategy, StringBuilder out){
+        List<SwitchCase> cases = new ArrayList<>();
+        for(int at = index + 1; at < begin.destIndex; at++){
+            if(switchOwner[at] == index && statements.get(at) instanceof CaseStatement item){
+                cases.add(new SwitchCase(at, item.value, finiteNumber(item.value)));
+            }
+        }
+
+        SwitchTable table = switchTable(cases);
+        int chainCost = cases.size() + 1;
+        if(strategy == SugarCompiler.SwitchStrategy.chainOnly || table == null || table.cost() > chainCost){
+            for(SwitchCase item : cases){
+                out.append("jump ").append(label(prefix, "case_", item.index)).append(" equal ")
+                    .append(begin.value).append(' ').append(item.text).append('\n');
+            }
+            out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
+            return;
+        }
+
+        int span = table.span();
+        String idxVar;
+        if(table.min != 0){
+            idxVar = "__ls_sw_" + prefix + index;
+            out.append("op sub ").append(idxVar).append(' ').append(begin.value).append(' ')
+                .append(formatNumber(table.min)).append('\n');
+        }else{
+            idxVar = begin.value; // min == 0: the source value indexes the table directly
+        }
+        String defaultLabel = label(prefix, "stmt_", begin.destIndex + 1);
+        out.append("jump ").append(defaultLabel).append(" lessThan ").append(idxVar).append(" 0\n");
+        out.append("jump ").append(defaultLabel).append(" greaterThan ").append(idxVar).append(' ').append(span - 1).append('\n');
+        out.append("op add @counter @counter ").append(idxVar).append('\n');
+        for(int slot = 0; slot < span; slot++){
+            int caseIndex = table.slots[slot];
+            out.append("jump ").append(caseIndex < 0 ? defaultLabel : label(prefix, "case_", caseIndex))
+                .append(" always x false\n");
+        }
+    }
+
+    /**
+     * Plans a jump table for the given cases, or null when none qualifies: every value must
+     * be an integer constant and (max-min)+1 must fit {@link #MAX_TABLE_SPAN}. Slot k holds
+     * the statement index of the first declared case owning value min+k, or -1 for a hole
+     * (that slot falls to the switch exit at runtime).
+     */
+    private static SwitchTable switchTable(List<SwitchCase> cases){
+        if(cases.isEmpty()) return null;
+        double min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
+        for(SwitchCase item : cases){
+            Double value = item.value;
+            if(value == null || value != Math.rint(value) || Math.abs(value) > 9007199254740992d) return null;
+            min = Math.min(min, value);
+            max = Math.max(max, value);
+        }
+        long low = (long)min, high = (long)max;
+        long spanL = high - low + 1;
+        if(spanL < 1 || spanL > MAX_TABLE_SPAN) return null;
+        int[] slots = new int[(int)spanL];
+        java.util.Arrays.fill(slots, -1);
+        for(SwitchCase item : cases){
+            int slot = (int)((long)(double)item.value - low); // integral by the rint check above
+            if(slots[slot] < 0) slots[slot] = item.index;     // repeated values hit the first label
+        }
+        return new SwitchTable(low, slots);
     }
 
     private static String label(String prefix, String kind, int id){

@@ -18,6 +18,7 @@ That compatibility is the important part: a program written with Logic Sugar can
 ## Features
 
 - **Structured control flow** — `if` / `elif` / `else`, `for`, `while`, `switch` / `case`, plus `break` / `continue`: written as blocks in the logic editor and compiled down to plain vanilla jump instructions.
+- **Switch dispatch optimization** — in `auto` mode, integer-valued switches choose between the comparison chain and an `@counter` jump table using executable-instruction cost; repeated case values can share the first matching table slot. Set `chainOnly` to reproduce the legacy comparison-chain output. Jump tables use numeric guard semantics and fall back automatically for non-integer values or spans above 255.
 - **Functions** — define functions with parameters, call them, and return values; two compile modes: **normal** (each function becomes one shared `@counter` subroutine) and **inline** (the body is copied to every call site).
 - **Function library** — global functions shared by every logic processor, edited right inside the processor editor, validated and saved automatically, with self-repair if the library file gets corrupted.
 - **Expression compiler** — infix expressions are automatically expanded into vanilla `op` instruction chains; since v2.3.0 the conditions of `if` / `elif` / `for` / `while` also accept full expressions.

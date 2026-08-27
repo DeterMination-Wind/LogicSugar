@@ -42,6 +42,11 @@ public class SugarCompilerSelfTest{
         commentTextRoundTrip();
         generatedCodeIsOptimized();
         counterOperationsAreNotOptimized();
+        switchStrategyFormulasAndShapes();
+        switchTableExecutesSemantics();
+        switchRegressionGrid();
+        chainOnlyPreservesLegacySwitchOutput();
+        jumpThreadCollapsesKnownChains();
         vanillaCodePassesThrough();
         expressionOpsRoundTrip();
         sensorMemberAccess();
@@ -279,14 +284,22 @@ public class SugarCompilerSelfTest{
         check(!lowered.contains("op div _0 4 5"), "unused constant division remained in output");
         check(!lowered.contains("__ls_stmt_1:"), "unreferenced statement label was emitted");
 
-        String switchCode = loweredCode(SugarCompiler.compile("""
+        String switchCodeAuto = loweredCode(SugarCompiler.compile("""
             switchbegin x 3
             case 1
             print one
             blockend
             """));
-        check(switchCode.contains("jump __ls_case_1 equal x 1"), "switch did not compare its source value directly");
-        check(!switchCode.contains("__ls_switch_"), "switch temporary variable was emitted");
+        String switchCodeChain = loweredCode(SugarCompiler.compile("""
+            switchbegin x 3
+            case 1
+            print one
+            blockend
+            """, SugarCompiler.FuncMode.normal, null, null, SugarCompiler.SwitchStrategy.chainOnly));
+        // tiny dense switches stay on the comparison chain under every strategy
+        check(switchCodeAuto.equals(switchCodeChain), "strategy changed the output of a chain-eligible switch");
+        check(switchCodeChain.contains("jump __ls_case_1 equal x 1"), "switch did not compare its source value directly");
+        check(!switchCodeChain.contains("__ls_sw_"), "switch temporary variable was emitted");
     }
 
     /** Explicit @counter use is observable control flow and must not enter op optimization. */
@@ -303,6 +316,303 @@ public class SugarCompilerSelfTest{
         check(lowered.contains("op add x @counter 1"), "@counter read was folded or rewritten");
         check(!lowered.contains("set @counter 3"), "constant folding changed an explicit @counter operation");
         check(lowered.contains("set y 10"), "ordinary ops after the @counter barrier were not optimized");
+    }
+
+    // ===== switch jump tables =============================================================
+
+    /** Builds a switch with the same pair of values declared many times. destIndex (and the
+     *  default label stmt_<n+1>) is derived from the real blockend position, and one trailing
+     *  `end` keeps the tail stable against threading. */
+    private static StringBuilder dupSwitch(int valueA, int valueB, int repeats, String aBody, String bBody, String tail){
+        StringBuilder body = new StringBuilder();
+        for(int i = 0; i < repeats; i++){
+            body.append("case ").append(valueA).append('\n').append(aBody).append('\n');
+            body.append("case ").append(valueB).append('\n').append(bBody).append('\n');
+        }
+        if(tail != null && !tail.isEmpty()) body.append(tail).append('\n');
+        int dest = 1 + body.toString().split("\n", -1).length - 1; // switchbegin + inner lines
+        StringBuilder s = new StringBuilder("switchbegin x ").append(dest).append('\n');
+        s.append(body);
+        s.append("blockend\nend\n");
+        return s;
+    }
+
+    private static int instructionLines(String lowered){
+        int count = 0;
+        for(String line : lowered.split("\n", -1)){
+            String bare = line.trim();
+            if(bare.isEmpty() || bare.endsWith(":")) continue;
+            count++;
+        }
+        return count;
+    }
+
+    /** auto picks a jump table exactly when the cost model says so: N+1 chain vs sub?+2 guards
+     *  +dispatch+span rows. Repeated values dedupe into slots, duplication-heavy switches win. */
+    private static void switchStrategyFormulasAndShapes(){
+        // span 2, min 0, 16 case statements: chain=17 vs table=0(sub)+2+1+2=5 -> table
+        String dup = dupSwitch(0, 1, 8, "print zero", "print one", null).toString();
+        String autoLowered = loweredCode(SugarCompiler.compile(dup));
+        String chainLowered = loweredCode(SugarCompiler.compile(dup,
+            SugarCompiler.FuncMode.normal, null, null, SugarCompiler.SwitchStrategy.chainOnly));
+
+        // Bang-style executable-cost assertions on both shapes
+        check(instructionLines(autoLowered) == instructionLines(chainLowered) - 12,
+            "table saving must equal (chain cost 17 - table cost 5): "
+                + instructionLines(autoLowered) + " vs " + instructionLines(chainLowered));
+
+        // table shape: two bounds guards onto the default label, one dispatch, span slot rows
+        check(autoLowered.contains("jump __ls_stmt_34 lessThan x 0"), "lower guard missing:\n" + autoLowered);
+        check(autoLowered.contains("jump __ls_stmt_34 greaterThan x 1"), "upper guard missing");
+        check(autoLowered.contains("op add @counter @counter x"), "dispatch missing");
+        long rowsAuto = autoLowered.lines().filter(l -> l.equals("jump __ls_case_1 always x false")
+            || l.equals("jump __ls_case_3 always x false")).count();
+        check(rowsAuto == 2, "expected exactly span slot rows, got " + rowsAuto);
+        check(!autoLowered.contains("equal x "), "table form must not compare the source value");
+
+        // chain shape: one comparison per declared case plus the default jump (old output)
+        check(chainLowered.contains("jump __ls_case_1 equal x 0") && chainLowered.contains("jump __ls_case_3 equal x 1"),
+            "chain comparisons missing");
+        check(chainLowered.contains("jump __ls_stmt_34 always x false"), "default jump missing");
+        check(chainLowered.lines().filter(l -> l.startsWith("jump __ls_case_")).filter(l -> l.contains(" equal x ")).count() == 16,
+            "expected one comparison per declared case");
+        check(!chainLowered.contains("__ls_sw_") && !chainLowered.contains("@counter @counter"),
+            "chain form leaked table artifacts");
+
+        // span > MAX_TABLE_SPAN falls back to the chain even when duplication would win
+        String wide = dupSwitch(0, 300, 8, "print a", "print b", null).toString();
+        String wideAuto = loweredCode(SugarCompiler.compile(wide));
+        check(wideAuto.contains("equal x 0") && wideAuto.contains("equal x 300"), "wide-range switch ignored span cap");
+        check(!wideAuto.contains("@counter @counter"), "span-capped switch emitted a table");
+
+        // non-integer case values are ineligible by definition (tables assume numeric ids)
+        StringBuilder f = new StringBuilder("switchbegin x 9\n");
+        for(int i = 0; i < 4; i++) f.append("case 0.5\nprint a\n");
+        f.append("blockend\nend\n");
+        String fracAuto = loweredCode(SugarCompiler.compile(f.toString()));
+        check(fracAuto.contains("equal x 0.5"), "fractional case value did not keep the chain");
+        check(!fracAuto.contains("@counter @counter"), "fractional case value emitted a table");
+
+        // negative minimum normalizes through an explicit op sub into the index variable
+        StringBuilder neg = dupSwitch(-2, 3, 6, "set y 20", "set y 30", "set y 99");
+        String negAuto = loweredCode(SugarCompiler.compile(neg.toString()));
+        check(negAuto.contains("op sub __ls_sw_0 x -2"), "negative-minimum table missed its op sub normalization:\n" + negAuto);
+        check(negAuto.contains("jump __ls_stmt_27 lessThan __ls_sw_0 0"), "normalized lower guard wrong");
+        check(negAuto.contains("jump __ls_stmt_27 greaterThan __ls_sw_0 5"), "normalized upper guard wrong");
+        check(!negAuto.contains("lessThan x 0"), "guards compared the un-normalized source value");
+    }
+
+    /** Compiled tables behave exactly like chains at runtime: slots run their first-declared
+     *  body (duplicate values follow first-match), holes and out-of-range probes take default. */
+    private static void switchTableExecutesSemantics(){
+        Vars.logicVars = new GlobalVars();
+        Vars.logicVars.putEntry("false", 0);
+        Vars.logicVars.putEntry("true", 1);
+
+        // two leading lines shift every statement; recompute the destIndex token accordingly
+        String head0 = dupSwitch(-2, 3, 6, "set y 20\nbreak", "set y 30\nbreak", null).toString();
+        int dest = Integer.parseInt(head0.split("\n")[0].split(" ")[2]);
+        String sugarHead = head0.replaceFirst("^switchbegin x \\d+", "switchbegin x " + (dest + 2));
+        double[] probes = {-9, -3, -2, -1, 0, 1, 2, 3, 4, 99};
+        for(double probe : probes){
+            double expected = probe == -2 ? 20 : probe == 3 ? 30 : 0;
+            String program = "set x " + formatProbe(probe) + "\nset y 0\n" + sugarHead;
+            check(execute(program, SugarCompiler.FuncMode.normal, "y") == expected,
+                "probe " + probe + ": expected y=" + expected
+                    + "\n" + loweredCode(SugarCompiler.compile(program)));
+        }
+    }
+
+    private static String formatProbe(double probe){
+        return probe == Math.rint(probe) ? Long.toString((long)probe) : Double.toString(probe);
+    }
+
+    /** One function-level switch exercising fall-through, break, first-match duplicates and
+     *  a nested dense switch; executed across the whole FuncMode x strategy grid. */
+    private static void switchRegressionGrid(){
+        Vars.logicVars = new GlobalVars();
+        Vars.logicVars.putEntry("false", 0);
+        Vars.logicVars.putEntry("true", 1);
+
+        // Assembled with counted positions so funcdef/switchbegin destIndex tokens stay valid
+        // no matter how the bodies evolve.
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        lines.add("funcdef grade p,q PLACEFUNC");
+        int switchHeaderAt = lines.size();
+        lines.add("switchbegin p PLACESW");
+        lines.add("case 1");
+        lines.add("switchbegin q PLACEQ");
+        lines.add("case 1");
+        lines.add("set inner 11");
+        lines.add("break");
+        lines.add("case 2");
+        lines.add("set inner 22");
+        lines.add("break");
+        int innerBlockend = lines.size();
+        lines.add("blockend");
+        lines.add("op add out q 10");       // outer case 1 intentionally falls through
+        lines.add("case 2");
+        lines.add("op add out out 100");    // only reached directly or via the fall-through
+        lines.add("break");
+        int dupPairs = 8;
+        for(int i = 0; i < dupPairs; i++){
+            lines.add("case 1");
+            lines.add("set dead 7777");     // duplicated values must follow first match only
+            lines.add("case 2");
+            lines.add("set dead 7777");
+        }
+        int blockendAt = lines.size();
+        lines.add("blockend");              // closes the outer switch
+        int funcEndAt = lines.size();
+        lines.add("blockend");              // closes the function definition itself
+        // the run seeds five variables ahead of the program text, shifting every statement;
+        // bump the three absolute destIndex tokens so validatePairs sees the real blockends
+        int shift = 5;
+        lines.set(0, lines.get(0).replace("PLACEFUNC", Integer.toString(funcEndAt + shift)));
+        lines.set(switchHeaderAt, lines.get(switchHeaderAt).replace("PLACESW", Integer.toString(blockendAt + shift)));
+        lines.set(switchHeaderAt + 2, lines.get(switchHeaderAt + 2).replace("PLACEQ", Integer.toString(innerBlockend + shift)));
+
+        StringBuilder program = new StringBuilder();
+        for(String line : lines) program.append(line).append('\n');
+        program.append("funccall grade \"p, q\" ~\n").append("end\n");
+
+        double[][] probes = {
+            {1, 1, 111.0, 11.0},   // nested hit; fall-through adds twice (q+10, then +100)
+            {1, 5, 115.0, -3.0},   // nested miss still falls through with its add
+            {2, 9, 93.0, -3.0},    // direct case 2 skips the fall-through add entirely
+            {9, 5, -7.0, -3.0},    // default: header hops past the whole block
+        };
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            for(SugarCompiler.SwitchStrategy strategy : SugarCompiler.SwitchStrategy.values()){
+                for(double[] probe : probes){
+                    String seed = "set p " + formatProbe(probe[0]) + "\nset q " + formatProbe(probe[1])
+                        + "\nset out -7\nset inner -3\nset dead 0\n" + program;
+                    String code = SugarCompiler.compile(seed, mode, null, null, strategy);
+                    String lowered = loweredCode(code);
+                    check(instructionLines(lowered) > 4, mode + "/" + strategy + ": program collapsed");
+                    double out = executeCode(code, "out");
+                    check(out == probe[2], mode + "/" + strategy + ": p=" + probe[0]
+                        + " expected out=" + probe[2] + " but got " + out + "\n" + lowered);
+                    double nestedVal = executeCode(code, "inner");
+                    check(nestedVal == probe[3], mode + "/" + strategy + ": p=" + probe[0]
+                        + " expected inner=" + probe[3] + " but got " + nestedVal);
+                    double dead = executeCode(code, "dead");
+                    check(dead == 0.0, mode + "/" + strategy + ": duplicate case body executed (first-match violated)");
+                }
+            }
+        }
+    }
+
+    /** chainOnly reproduces the pre-jump-table output byte-for-byte, including programs the
+     *  auto strategy lowers as tables. */
+    private static void chainOnlyPreservesLegacySwitchOutput(){
+        String dup = dupSwitch(0, 1, 8, "print zero", "print one", null).toString();
+        String auto = SugarCompiler.compile(dup);
+        String chainOnly = SugarCompiler.compile(dup,
+            SugarCompiler.FuncMode.normal, null, null, SugarCompiler.SwitchStrategy.chainOnly);
+        check(auto.contains("op add @counter @counter x"), "auto did not pick the table for a dup-heavy switch");
+        check(!chainOnly.contains("@counter @counter") && !chainOnly.contains("__ls_sw_"),
+            "chainOnly leaked table instructions:\n" + chainOnly);
+        // legacy shape: comparisons plus one unconditional default jump, nothing else
+        check(chainOnly.contains("jump __ls_case_1 equal x 0"), "chainOnly lost the comparison header");
+        check(chainOnly.contains("jump __ls_stmt_34 always x false"), "chainOnly lost the default jump");
+        check(!chainOnly.contains("lessThan x 0") && !chainOnly.contains("greaterThan x "),
+            "chainOnly emitted table guards");
+
+        // negative-minimum duplication-heavy switches also stay verbatim under chainOnly
+        String neg = dupSwitch(-2, 3, 6, "set y 20", "set y 30", "set y 99").toString();
+        String negAuto = loweredCode(SugarCompiler.compile(neg));
+        String negChain = loweredCode(SugarCompiler.compile(neg,
+            SugarCompiler.FuncMode.normal, null, null, SugarCompiler.SwitchStrategy.chainOnly));
+        check(negAuto.contains("op sub __ls_sw_0 x -2"), "negative minimum did not build a normalized table:\n" + negAuto);
+        check(negAuto.contains("jump __ls_stmt_27 greaterThan __ls_sw_0 5"), "normalized upper guard wrong");
+        check(negChain.contains("jump __ls_case_1 equal x -2") && negChain.contains("jump __ls_case_3 equal x 3"),
+            "chainOnly negative case lost comparisons");
+        check(!negChain.contains("__ls_sw_") && !negChain.contains("@counter @counter"),
+            "chainOnly leaked table artifacts:\n" + negChain);
+    }
+
+    /** The go-threading pass retargets jumps whose label sits directly above another always
+     *  jump; stacked switch defaults collapse into it and semantics stay identical. */
+    private static void jumpThreadCollapsesKnownChains(){
+        Vars.logicVars = new GlobalVars();
+        Vars.logicVars.putEntry("false", 0);
+        Vars.logicVars.putEntry("true", 1);
+        // statements: funcdef@0..2, funccall@3, switchbegin@4 (dest 8), case@5, set@6,
+        // break@7, blockend@8 -> default/break label stmt_9. In normal mode the hoisted-body
+        // prelude appends "jump __ls_end" directly under that label, so break/default rows
+        // and the default jump thread straight into it; inline has no hoist section.
+        String sugar = """
+            funcdef f ~ 2
+            set flagK 7
+            blockend
+            funccall f "" ~
+            switchbegin x 8
+            case 3
+            set y 1
+            break
+            blockend
+            """;
+
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            for(SugarCompiler.SwitchStrategy strategy : SugarCompiler.SwitchStrategy.values()){
+                String lowered = loweredCode(SugarCompiler.compile(sugar, mode, null, null, strategy));
+                long endJumps = lowered.lines().filter(l -> l.equals("jump __ls_end always x false")).count();
+                if(mode == SugarCompiler.FuncMode.normal){
+                    check(!lowered.contains("jump __ls_stmt_9 always x false"),
+                        mode + "/" + strategy + ": pre-threading default jump survived\n" + lowered);
+                    check(endJumps >= 2, mode + "/" + strategy + ": stacked default was not threaded ("
+                        + endJumps + " end jumps)\n" + lowered);
+                }else{
+                    check(endJumps == 0, mode + ": bodyless program must not emit the end jump");
+                }
+
+                // a one-line probe prefix shifts every statement: retokenize both headers
+                int swDest = Integer.parseInt(sugar.split("\n")[4].split(" ")[2]);
+                String probeSugar = "set x V\n" + sugar
+                    .replaceFirst("funcdef f ~ \\d+", "funcdef f ~ 3")
+                    .replaceFirst("switchbegin x \\d+", "switchbegin x " + (swDest + 1));
+                check(execute(probeSugar.replace("set x V", "set x 3"), mode, "y") == 1.0,
+                    mode + "/" + strategy + ": threaded switch broke matching");
+                check(execute(probeSugar.replace("set x V", "set x 3"), mode, "flagK") == 7.0,
+                    mode + "/" + strategy + ": threading broke the function body");
+                check(execute(probeSugar.replace("set x V", "set x 99"), mode, "y") == 0.0,
+                    mode + "/" + strategy + ": default path executed a case body");
+            }
+        }
+
+        // idempotence: threading an already-threaded program changes nothing
+        String once = SugarCompiler.threadAlwaysJumpTargets(loweredCode(SugarCompiler.compile(sugar)));
+        String twice = SugarCompiler.threadAlwaysJumpTargets(once);
+        check(once.equals(twice), "threading is not idempotent");
+
+        // hand-built graph: unconditional chains collapse; conditional jumps stay put;
+        // self-targeting chains keep their original loop semantics
+        String manual = """
+            set a 1
+            jump mid always x false
+            jump out lessThan a 5
+            mid:
+            jump fin always x false
+            out:
+            set b 2
+            fin:
+            set c 3
+            """;
+        String threadedManual = SugarCompiler.threadAlwaysJumpTargets(manual);
+        check(threadedManual.contains("jump fin always x false\njump out lessThan a 5"),
+            "conditional jump was rewritten or ordering changed:\n" + threadedManual);
+        check(!threadedManual.contains("jump mid always"), "mid->fin chain not collapsed:\n" + threadedManual);
+        check(threadedManual.contains("mid:") && threadedManual.contains("out:"),
+            "label lines must survive threading verbatim:\n" + threadedManual);
+
+        String selfLoop = "loop:\nset i 1\njump loop always x false\n";
+        check(SugarCompiler.threadAlwaysJumpTargets(selfLoop).equals(selfLoop),
+            "self-looping chain was altered:\n" + SugarCompiler.threadAlwaysJumpTargets(selfLoop));
+
+        String mutualA = "a:\nb:\njump z always x false\nz:\nset k 1\n";
+        check(SugarCompiler.threadAlwaysJumpTargets(mutualA).contains("z"),
+            "degenerate label stack handled unsafely:\n" + SugarCompiler.threadAlwaysJumpTargets(mutualA));
     }
 
     private static String loweredCode(String compiled){
@@ -952,7 +1262,11 @@ public class SugarCompilerSelfTest{
 
     /** Runs a compiled program headless and returns the value of a variable after it ends. */
     private static double execute(String sugar, SugarCompiler.FuncMode mode, String variable){
-        String code = SugarCompiler.compile(sugar, mode);
+        return executeCode(SugarCompiler.compile(sugar, mode), variable);
+    }
+
+    /** Runs an already-compiled program headless (strategy-specific variants). */
+    private static double executeCode(String code, String variable){
         LExecutor executor = new LExecutor();
         executor.load(LAssembler.assemble(code, true));
         for(int i = 0; i < 20000 && executor.counter.numval >= 0 && executor.counter.numval < executor.instructions.length; i++){

@@ -24,7 +24,9 @@ import logicsugar.assist.expr.ExprCompiler;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 public final class SugarCompiler{
@@ -48,6 +50,19 @@ public final class SugarCompiler{
         public static FuncMode parse(String value){
             if("inline".equalsIgnoreCase(value)) return inline;
             return normal;
+        }
+    }
+
+    /** switch dispatch shape. auto picks per switch between the comparison chain and an
+     *  @counter jump table by instruction cost; chainOnly always lowers the comparison chain
+     *  (byte-identical to pre-2.3.1 output). Jump tables assume integer case values: any
+     *  non-integer or out-of-range value set falls back to the chain regardless. */
+    public enum SwitchStrategy{
+        auto, chainOnly;
+
+        public static SwitchStrategy parse(String value){
+            if("chainOnly".equalsIgnoreCase(value)) return chainOnly;
+            return auto;
         }
     }
 
@@ -136,16 +151,13 @@ public final class SugarCompiler{
                 embeddedSource = sanitized.text;
             }
         }
-        String storedNormalized;
-        try{
-            storedNormalized = LAssembler.write(LAssembler.read(code, true));
-        }catch(RuntimeException e){
-            return false;
-        }
         for(FuncMode mode : FuncMode.values()){
             try{
                 String recompiled = compile(restored, mode, embedded, embeddedSource);
-                if(LAssembler.write(LAssembler.read(recompiled, true)).equals(storedNormalized)) return true;
+                // Threaded current output against either the stored stream (saved by this
+                // version) or the same stream normalized through the idempotent threading
+                // pass (pre-2.3.1 saves were lowered without it).
+                if(matchesStoredStream(recompiled, code)) return true;
             }catch(RuntimeException ignored){
                 // one mode may legitimately fail (e.g. inline blowup); the other may match
             }
@@ -175,10 +187,17 @@ public final class SugarCompiler{
         return compile(sugar, mode, library, null);
     }
 
-    /** Compiles against an explicit library and its text. The library text is used to embed
-     *  the used subset into the output ({@code set __ls_lib "..."}), so other machines can
-     *  recompile the program without the local library file. */
+    /** Compiles against an explicit library and its text, using the user-selected switch strategy. */
     public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText){
+        return compile(sugar, mode, library, libraryText, currentStrategy());
+    }
+
+    /** Compiles against an explicit library and its text with an explicit switch strategy.
+     *  The library text is used to embed the used subset into the output
+     *  ({@code set __ls_lib "..."}), so other machines can recompile the program without
+     *  the local library file. */
+    public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
+                                 SwitchStrategy switchStrategy){
         Seq<LStatement> statements = LAssembler.read(sugar, true);
         if(!containsSugar(statements)) return sugar;
 
@@ -188,7 +207,7 @@ public final class SugarCompiler{
         StringBuilder out = new StringBuilder();
         SugarFunctions.CallIds ids = new SugarFunctions.CallIds();
         if(mode == FuncMode.normal){
-            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null);
+            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy);
             java.util.List<SugarFunctions.Function> hoisted = functions.hoistOrder();
             if(!hoisted.isEmpty()){
                 // Normal-mode function bodies sit right after the main program. A call site's
@@ -199,15 +218,21 @@ public final class SugarCompiler{
                 out.append("jump __ls_end always x false\n");
                 for(SugarFunctions.Function function : hoisted){
                     out.append(function.entryName()).append(":\n");
-                    SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name);
+                    SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name, switchStrategy);
                     out.append(function.exitName()).append(":\n");
                     out.append("set @counter ").append(function.retName()).append('\n');
                 }
                 out.append("__ls_end:\n");
             }
         }else{
-            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null);
+            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy);
         }
+
+        // Jump-thread the lowered label text (before marker/carriers): a jump whose target
+        // label is immediately followed by another unconditional jump now points at the
+        // final destination directly. Semantics-preserving; merges stacked structure-exit
+        // defaults and jump-table hole rows that would otherwise hop twice at runtime.
+        String lowered = threadAlwaysJumpTargets(out.toString());
 
         // Persistence carriers: real "set" statements appended after the marker block. They
         // survive the vanilla parse/save round trip that drops the comment markers, and are
@@ -226,15 +251,16 @@ public final class SugarCompiler{
 
         // LAssembler.read silently truncates at LExecutor.maxInstructions lines, so the count
         // must be computed from the emitted text itself (one instruction per non-label line).
-        int instructionCount = countInstructions(out) + countInstructions(carriers);
+        int instructionCount = countInstructions(new StringBuilder(lowered)) + countInstructions(carriers);
         if(instructionCount > LExecutor.maxInstructions){
             String hint = mode == FuncMode.inline ? " Switch to normal mode to share function bodies." : "";
             throw new IllegalArgumentException("Compiled program has " + instructionCount + " instructions; maximum is " + LExecutor.maxInstructions + "." + hint);
         }
 
-        appendMarker(out, sugar);
-        out.append(carriers);
-        return out.toString();
+        StringBuilder result = new StringBuilder(lowered);
+        appendMarker(result, sugar);
+        result.append(carriers);
+        return result.toString();
     }
 
     /** The merged library for editing a stored program: embedded functions first, then
@@ -481,6 +507,18 @@ public final class SugarCompiler{
         return FuncMode.normal;
     }
 
+    /** The user-selected switch lowering strategy (auto when settings are unavailable). */
+    public static SwitchStrategy currentStrategy(){
+        try{
+            if(Core.settings != null){
+                return SwitchStrategy.parse(Core.settings.getString("logicsugar.switchStrategy", "auto"));
+            }
+        }catch(Exception ignored){
+            // settings unavailable (e.g. self-test environment): fall back to auto
+        }
+        return SwitchStrategy.auto;
+    }
+
     private static boolean containsSugar(Seq<LStatement> statements){
         for(LStatement statement : statements){
             if(statement.getClass().getEnclosingClass() == SugarStatements.class) return true;
@@ -612,5 +650,131 @@ public final class SugarCompiler{
         if(count > 0 && lines[count - 1].isEmpty()) count--;
         for(int i = 0; i < count; i++) out.append(markerLine).append(lines[i]).append('\n');
         out.append(markerEnd).append('\n');
+    }
+
+    /**
+     * Jump-threading over lowered label text (Bang TagCodes::follow_always_jump_chain):
+     * whenever a label's first real instruction is an unconditional {@code jump T always x false},
+     * every jump aimed at that label is retargeted straight at T, iterated to a fixed point.
+     * Conditional jumps are left alone. Cyclic or self-reaching chains keep their original
+     * targets so deliberate infinite loops survive; each lookup is bounded by its own label
+     * chain. The pass is idempotent and preserves the line structure (instruction count and
+     * order stay identical), which keeps carriers/markers and the instruction limit intact.
+     *
+     * <p>The input may be a full stored program: blank lines, {@code #} comments and the
+     * persistence carriers are simply not jumps, so they terminate adjacency scans and no
+     * metadata is ever rewritten.</p>
+     */
+    public static String threadAlwaysJumpTargets(String code){
+        if(code == null || code.isEmpty()) return code == null ? "" : code;
+        String[] lines = code.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+
+        Map<String, Integer> labels = new HashMap<>();
+        for(int i = 0; i < lines.length; i++){
+            String bare = lines[i].trim();
+            if(!bare.endsWith(":") || bare.length() < 2 || bare.contains(" ")) continue;
+            String name = bare.substring(0, bare.length() - 1);
+            if(isPlainIdentifier(name)) labels.putIfAbsent(name, i);
+        }
+        if(labels.isEmpty()) return code;
+
+        Set<String> pending = new HashSet<>(labels.keySet());
+        Map<String, String> resolved = new HashMap<>();
+        while(!pending.isEmpty()){
+            String label = pending.iterator().next();
+            pending.remove(label);
+            resolveLabelChain(label, labels, lines, resolved, new HashSet<>());
+        }
+
+        StringBuilder result = new StringBuilder(code.length());
+        for(int i = 0; i < lines.length; i++){
+            String target = alwaysJumpTargetToken(lines[i]);
+            String mapped = target == null ? null : resolved.get(target);
+            if(mapped != null && !mapped.equals(target)){
+                result.append("jump ").append(mapped).append(" always x false");
+            }else{
+                result.append(lines[i]);
+            }
+            if(i < lines.length - 1) result.append('\n');
+        }
+        return result.toString();
+    }
+
+    /** Resolves one label to the final destination of the always-jump chain under it. */
+    private static String resolveLabelChain(String label, Map<String, Integer> labels, String[] lines,
+                                            Map<String, String> resolved, Set<String> path){
+        String done = resolved.get(label);
+        if(done != null) return done;
+        Integer at = labels.get(label);
+        if(at == null){
+            resolved.put(label, label);
+            return label;
+        }
+        // A cyclic chain has no terminal destination. Propagate null to every member so the
+        // rewrite pass leaves the entire cycle untouched instead of turning one edge into a
+        // self-loop (which would be equivalent only for the label-only case, not as a general
+        // control-flow transformation).
+        if(!path.add(label)) return null;
+        String deep = label;
+        int next = firstRealInstruction(lines, at + 1);
+        if(next >= 0){
+            String target = alwaysJumpTargetToken(lines[next]);
+            if(target != null && !target.equals(label)){
+                deep = resolveLabelChain(target, labels, lines, resolved, path);
+                if(deep == null){
+                    path.remove(label);
+                    return null;
+                }
+            }
+        }
+        resolved.put(label, deep);
+        path.remove(label);
+        return deep;
+    }
+
+    /** Index of the next non-blank, non-comment, non-label line at/after {@code from}, or -1. */
+    private static int firstRealInstruction(String[] lines, int from){
+        for(int i = Math.max(from, 0); i < lines.length; i++){
+            String bare = lines[i].trim();
+            if(bare.isEmpty() || bare.startsWith("#") || (bare.endsWith(":") && !bare.contains(" ") && bare.length() >= 2)) continue;
+            return i;
+        }
+        return -1;
+    }
+
+    /** The destination token of an unconditional {@code jump T always x false} line, else null. */
+    private static String alwaysJumpTargetToken(String line){
+        String[] tokens = line.trim().split("\\s+");
+        if(tokens.length != 5 || !"jump".equals(tokens[0]) || !"always".equals(tokens[2])
+            || !"x".equals(tokens[3]) || !"false".equals(tokens[4])) return null;
+        return tokens[1];
+    }
+
+    private static boolean isPlainIdentifier(String name){
+        if(name.isEmpty()) return false;
+        char first = name.charAt(0);
+        if(!(Character.isLetter(first) || first == '_')) return false;
+        for(int i = 1; i < name.length(); i++){
+            char c = name.charAt(i);
+            if(!(Character.isLetterOrDigit(c) || c == '_')) return false;
+        }
+        return true;
+    }
+
+    /** Whether {@code compiled} matches the stored program under either lowering era:
+     *  current output is jump-threaded, pre-2.3.1 saves are not; the thread pass is
+     *  idempotent, so normalizing the stored text through it covers both. */
+    public static boolean matchesStoredStream(String recompiled, String stored){
+        try{
+            if(LAssembler.write(LAssembler.read(recompiled, true)).equals(LAssembler.write(LAssembler.read(stored, true)))) return true;
+        }catch(RuntimeException ignored){
+            return false;
+        }
+        try{
+            return LAssembler.write(LAssembler.read(recompiled, true))
+                .equals(LAssembler.write(LAssembler.read(threadAlwaysJumpTargets(stored), true)));
+        }catch(RuntimeException ignored){
+            return false;
+        }
     }
 }
