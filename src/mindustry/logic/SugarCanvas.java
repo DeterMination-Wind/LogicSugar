@@ -79,7 +79,9 @@ public class SugarCanvas extends LCanvas{
 
     @Override
     public void load(String asm){
+        BoxSelect.canvasWillChange(this);
         super.load(asm);
+        BoxSelect.canvasDidChange(this);
         // super.load() 先清空了 jumpLayer（statements.jumps.clear()），结构引导线层
         // 随之被移除；installGuideLayer 只在 rebuild() 里调用（重开才触发），所以
         // 这里必须重装，否则粘贴导入后所有结构竖线消失且新增/删除语句都无法恢复。
@@ -170,7 +172,9 @@ public class SugarCanvas extends LCanvas{
 
     @Override
     public void rebuild(){
+        BoxSelect.canvasWillChange(this);
         super.rebuild();
+        BoxSelect.canvasDidChange(this);
         setLayoutSpace();
         installGuideLayer();
     }

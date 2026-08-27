@@ -43,7 +43,7 @@ import java.util.*;
  *   2. 释放 → 选中积木高亮，显示工具栏，积木按钮被接管
  *   3. 拖动选中积木 → 积木/半透明预览跟随鼠标，显示插入指示器
  *   4. 松手 → 积木移动/复制到新位置
- *   5. 普通单积木拖动需先离开积木宽度的 40%，避免误触改变顺序
+ *   5. 普通单积木拖动在移动端需长按后移动超过固定 slop，桌面端移动超过 slop 即可
  *   6. Ctrl+点击单积木 → 选中并复制拖动
  *   7. Delete/Backspace → 快速删除选中积木
  *   8. 右键/Esc → 取消拖动
@@ -58,8 +58,7 @@ import java.util.*;
 public class BoxSelect{
 
     // ===== 常量 =====
-    private static final float MIN_DRAG_DIST = 8f;
-    private static final float SINGLE_DRAG_WIDTH_RATIO = 0.4f;
+    private static final float MIN_DRAG_DIST = BoxSelectDragPolicy.SLOP;
     private static final float SCROLLBAR_WIDTH = 14f;
     private static final float AUTOSCROLL_MARGIN = 80f;
     private static final float AUTOSCROLL_SPEED = 15f;
@@ -153,9 +152,11 @@ public class BoxSelect{
     private static int dragInsertPos = -1;
     private static StatementElem pendingSingleDrag;
     private static float pendingSingleDragX, pendingSingleDragY;
+    private static long pendingSingleDragStartedNanos;
     private static boolean pendingSingleDragKeepsSelection;
     private static boolean singleStatementDrag;
     private static boolean singleStatementDragKeepsSelection;
+    private static int activePointer = -1;
 
     // 拖动期间保存的原始 child.y（用于恢复 layout() 的修改）
     private static float[] dragBaseYs = null;
@@ -178,6 +179,9 @@ public class BoxSelect{
     private static boolean initialized = false;
     private static InputListener captureListener;
     private static InputListener deleteKeyListener;
+    private static LogicDialog hiddenHookDialog;
+    private static LCanvas attachedCanvas;
+    private static WidgetGroup attachedStatements;
 
     // 反射缓存（vScrollBounds / vKnobBounds）
     private static Field vScrollBoundsField;
@@ -186,54 +190,25 @@ public class BoxSelect{
     // ===== 初始化 =====
 
     public static void init(){
-        Core.app.post(() -> {
-            LCanvas canvas = getCanvas();
-            if(canvas == null){
-                // canvas 还没准备好，下一帧重试
-                Core.app.post(() -> init());
-                return;
-            }
-            setup(canvas);
+        // The capture listener must exist before the first touch. Waiting for a canvas
+        // through Core.app.post lets the vanilla StatementElem consume that touch first.
+        installSceneListeners();
+
+        LCanvas canvas = getCanvas();
+        if(canvas != null){
+            attachCanvasExtras(canvas);
+        }
+
+        if(!initialized && captureListener != null){
             initialized = true;
             Log.info("[LogicAssist] BoxSelect initialized (event-driven mode).");
-
-            // 对话框关闭时重置状态（替代原 tick 轮询检测）
-            LogicDialog dialog = Vars.ui.logic;
-            if(dialog != null){
-                dialog.hidden(() -> {
-                    if(state != State.IDLE){
-                        resetState(canvas);
-                    }
-                });
-            }
-        });
-
-        // Delete/Backspace 键：事件驱动，不再轮询。
-        // 注册必须幂等：init() 在 canvas 就绪前会每帧重试，重复 addListener 会累积监听器
-        if(deleteKeyListener == null){
-            deleteKeyListener = new InputListener(){
-                @Override
-                public boolean keyDown(InputEvent event, KeyCode key){
-                    if(key != KeyCode.del && key != KeyCode.backspace) return false;
-                    LogicDialog dialog = Vars.ui.logic;
-                    if(dialog == null || !dialog.isShown()) return false;
-                    if(state != State.SELECTED || selected.isEmpty()) return false;
-                    LCanvas canvas = getCanvas();
-                    if(canvas != null){
-                        deleteSelected(canvas);
-                    }
-                    return false;
-                }
-            };
-            Core.scene.addListener(deleteKeyListener);
         }
     }
 
-    /** 注册 capture listener 和 overlay。
-     *  capture listener 加在 Core.scene 的 root 上（通过 addCaptureListener），
-     *  在事件捕获阶段（target 之前）执行，用 event.stop() 阻止原版 StatementElem 的 InputListener 收到事件。 */
-    private static void setup(LCanvas canvas){
-        // 注册 capture listener（只注册一次，跨对话框开关复用）
+    /** Installs scene-wide listeners without depending on a particular canvas instance. */
+    private static void installSceneListeners(){
+        if(Core.scene == null) return;
+
         if(captureListener == null){
             captureListener = new InputListener(){
                 @Override
@@ -251,42 +226,118 @@ public class BoxSelect{
                     handleTouchUp(event, x, y, pointer, button);
                 }
             };
+        }
+        if(!Core.scene.root.getCaptureListeners().contains(captureListener, true)){
             Core.scene.addCaptureListener(captureListener);
             Log.info("[LogicAssist] Capture listener registered.");
         }
 
-        // overlay 用于绘制框选框、高亮、插入指示器
-        overlay = new Element(){
-            @Override
-            public void draw(){
-                drawOverlay();
-            }
-        };
-        overlay.touchable = Touchable.disabled;
-        overlay.cullable = false;
-        overlay.visible = true;
-        Core.scene.add(overlay);
-        overlay.update(() -> {
-            // 不使用 visible 控制显示——visible=false 会导致 act() 不执行，
-            // update() 不会被调用，形成死锁。直接执行 setSize + toFront 即可。
-            overlay.setSize(Core.graphics.getWidth(), Core.graphics.getHeight());
-            // 只在需要绘制覆盖层时才 toFront，避免干扰 MindustryX 等第三方 UI 的层级
-            // SELECTED/IDLE 状态的高亮和滚动条改由 LogicCanvas.draw() 绘制，无需 toFront
-            if(state == State.SELECTING || state == State.DRAGGING_MOVE || state == State.DRAGGING_COPY){
-                overlay.toFront();
-            }
-
-            // 拖拽期间每帧重新计算插入指示器位置（滚轮滚动时 touchDragged 不触发）
-            if(state == State.DRAGGING_MOVE || state == State.DRAGGING_COPY){
-                LCanvas c = getCanvas();
-                if(c != null){
-                    float mx = Core.input.mouseX();
-                    float my = Core.input.mouseY();
-                    updateDrag(c, mx, my);
-                    autoScroll(c);
+        if(deleteKeyListener == null){
+            deleteKeyListener = new InputListener(){
+                @Override
+                public boolean keyDown(InputEvent event, KeyCode key){
+                    if(key != KeyCode.del && key != KeyCode.backspace) return false;
+                    LogicDialog dialog = Vars.ui.logic;
+                    if(dialog == null || !dialog.isShown()) return false;
+                    if(state != State.SELECTED || selected.isEmpty()) return false;
+                    LCanvas canvas = getCanvas();
+                    if(canvas != null){
+                        deleteSelected(canvas);
+                    }
+                    return false;
                 }
-            }
-        });
+            };
+        }
+        if(!Core.scene.root.getListeners().contains(deleteKeyListener, true)){
+            Core.scene.addListener(deleteKeyListener);
+        }
+    }
+
+    /** Adds the canvas-bound overlay and hidden callback once per active dialog. */
+    private static void attachCanvasExtras(LCanvas canvas){
+        if(canvas == null || Core.scene == null) return;
+        if(attachedCanvas != null && attachedCanvas != canvas){
+            resetState(attachedCanvas);
+        }
+        attachedCanvas = canvas;
+        attachedStatements = canvas.statements;
+
+        if(overlay == null){
+            overlay = new Element(){
+                @Override
+                public void draw(){
+                    drawOverlay();
+                }
+            };
+            overlay.touchable = Touchable.disabled;
+            overlay.cullable = false;
+            overlay.visible = true;
+            overlay.update(() -> {
+                // 不使用 visible 控制显示——visible=false 会导致 act() 不执行，
+                // update() 不会被调用，形成死锁。直接执行 setSize + toFront 即可。
+                overlay.setSize(Core.graphics.getWidth(), Core.graphics.getHeight());
+                // 只在需要绘制覆盖层时才 toFront，避免干扰 MindustryX 等第三方 UI 的层级
+                // SELECTED/IDLE 状态的高亮和滚动条改由 LogicCanvas.draw() 绘制，无需 toFront
+                if(state == State.SELECTING || state == State.DRAGGING_MOVE || state == State.DRAGGING_COPY){
+                    overlay.toFront();
+                }
+
+                // 拖拽期间每帧重新计算插入指示器位置（滚轮滚动时 touchDragged 不触发）
+                if(state == State.DRAGGING_MOVE || state == State.DRAGGING_COPY){
+                    LCanvas c = getCanvas();
+                    if(c != null){
+                        syncCanvasState(c);
+                        if(state == State.DRAGGING_MOVE || state == State.DRAGGING_COPY){
+                            float mx = Core.input.mouseX();
+                            float my = Core.input.mouseY();
+                            updateDrag(c, mx, my);
+                            autoScroll(c);
+                        }
+                    }
+                }
+            });
+        }
+        if(overlay.parent == null){
+            Core.scene.add(overlay);
+        }
+
+        LogicDialog dialog = Vars.ui.logic;
+        if(dialog != null && hiddenHookDialog != dialog){
+            hiddenHookDialog = dialog;
+            dialog.hidden(() -> {
+                // A stale dialog may hide after a replacement dialog is already active.
+                if(Vars.ui.logic != dialog) return;
+                LCanvas current = getCanvas();
+                resetState(current != null ? current : attachedCanvas);
+            });
+        }
+    }
+
+    /** Reconciles canvas identity before handling input, clearing stale block references. */
+    private static boolean syncCanvasState(LCanvas canvas){
+        if(canvas == null) return false;
+        if(attachedCanvas != null && (attachedCanvas != canvas || attachedStatements != canvas.statements)){
+            resetState(attachedCanvas);
+        }
+        attachedCanvas = canvas;
+        attachedStatements = canvas.statements;
+        return canvas.statements != null;
+    }
+
+    /** Called by SugarCanvas before/after load or rebuild replaces statement elements. */
+    public static void canvasWillChange(LCanvas canvas){
+        if(canvas == null) return;
+        if(state != State.IDLE && attachedCanvas != null){
+            resetState(attachedCanvas);
+        }
+        attachedCanvas = canvas;
+        attachedStatements = canvas.statements;
+    }
+
+    public static void canvasDidChange(LCanvas canvas){
+        if(canvas == null) return;
+        attachedCanvas = canvas;
+        attachedStatements = canvas.statements;
     }
 
     // ===== 事件处理（Capture 阶段，在 target 之前执行）=====
@@ -374,6 +425,9 @@ public class BoxSelect{
     private static boolean handleTouchDown(InputEvent event, float x, float y, int pointer, KeyCode button){
         LCanvas canvas = getCanvas();
         if(canvas == null || !shouldIntercept(canvas)) return false;
+        if(!syncCanvasState(canvas)) return false;
+        attachCanvasExtras(canvas);
+        if(activePointer != -1 && activePointer != pointer) return false;
 
         // 只处理鼠标左键和中键（中键原版用于复制单个积木）
         if(button != KeyCode.mouseLeft && button != KeyCode.mouseMiddle){
@@ -398,6 +452,7 @@ public class BoxSelect{
         // canvas 内的按钮：检查是否是选中积木的功能按钮
         if(isClickOnButton(target)){
             if(tryHijackButton(canvas, event, target)){
+                activePointer = pointer;
                 return true;
             }
             return false;
@@ -428,7 +483,9 @@ public class BoxSelect{
             float paneX = canvas.pane.x;
             float paneW = canvas.pane.getWidth();
             if(stageCoords.x > paneX + paneW - SCROLLBAR_WIDTH){
-                return handleScrollbarClick(canvas.pane, stageCoords.x, stageCoords.y);
+                boolean handled = handleScrollbarClick(canvas.pane, stageCoords.x, stageCoords.y);
+                if(handled) activePointer = pointer;
+                return handled;
             }
         }
 
@@ -452,6 +509,7 @@ public class BoxSelect{
                 selected.clear();
                 selected.add(clickedStmt);
                 startDrag(canvas, stageCoords.x, stageCoords.y, button);
+                activePointer = pointer;
                 event.stop();
                 return true;
             }
@@ -463,6 +521,7 @@ public class BoxSelect{
 
             // 普通点击先进入候选拖动状态。原版 StatementElem 会在 touchDown
             // 时立即 toFront()，所以必须延迟给它事件，才能让误触保持原顺序。
+            activePointer = pointer;
             if(!selected.isEmpty()){
                 clearSelection();
             }
@@ -472,6 +531,7 @@ public class BoxSelect{
         }
 
         if(onSelectedStatement){
+            activePointer = pointer;
             if(button == KeyCode.mouseMiddle){
                 startDrag(canvas, stageCoords.x, stageCoords.y, button);
                 event.stop();
@@ -484,6 +544,7 @@ public class BoxSelect{
         }
 
         // canvas 内的空白区点击 → 开始框选，拦截事件
+        activePointer = pointer;
         startBoxSelect(canvas, stageCoords.x, stageCoords.y);
         event.stop();
         return true;
@@ -491,13 +552,14 @@ public class BoxSelect{
 
     private static void handleTouchDragged(InputEvent event, float x, float y, int pointer){
         LCanvas canvas = getCanvas();
-        if(canvas == null || state == State.IDLE) return;
+        if(canvas == null || state == State.IDLE || pointer != activePointer) return;
+        if(!syncCanvasState(canvas)) return;
 
         float mx = x;
         float my = y;
 
         if(state == State.PENDING_SINGLE_DRAG){
-            if(!singleDragThresholdReached(canvas, mx, my)) return;
+            if(!singleDragThresholdReached(mx, my)) return;
 
             StatementElem statement = pendingSingleDrag;
             float startX = pendingSingleDragX;
@@ -528,9 +590,9 @@ public class BoxSelect{
             autoScroll(canvas);
         }else if(state == State.DRAGGING_MOVE || state == State.DRAGGING_COPY){
             updateDrag(canvas, mx, my);
-            float dx = Math.abs(mx - dragStartMouseX);
-            float dy = Math.abs(my - dragStartMouseY);
-            if(dx > MIN_DRAG_DIST || dy > MIN_DRAG_DIST){
+            float dx = mx - dragStartMouseX;
+            float dy = my - dragStartMouseY;
+            if(BoxSelectDragPolicy.moved(dx, dy)){
                 dragMoved = true;
             }
             // 拖动时也支持自动滚动
@@ -540,7 +602,17 @@ public class BoxSelect{
 
     private static void handleTouchUp(InputEvent event, float x, float y, int pointer, KeyCode button){
         LCanvas canvas = getCanvas();
-        if(canvas == null) return;
+        if(pointer != activePointer) return;
+        if(event.isTouchFocusCancel()){
+            resetState(canvas);
+            event.stop();
+            return;
+        }
+        if(canvas == null){
+            resetState(null);
+            return;
+        }
+        if(!syncCanvasState(canvas)) return;
 
         if(state == State.PENDING_SINGLE_DRAG){
             boolean keepsSelection = pendingSingleDragKeepsSelection;
@@ -582,6 +654,7 @@ public class BoxSelect{
         if(singleStatementDrag){
             finishSingleStatementDrag();
         }
+        activePointer = -1;
     }
 
     // ==================================================================
@@ -769,6 +842,7 @@ public class BoxSelect{
         pendingSingleDrag = statement;
         pendingSingleDragX = mx;
         pendingSingleDragY = my;
+        pendingSingleDragStartedNanos = Time.nanos();
         pendingSingleDragKeepsSelection = keepsSelection;
         state = State.PENDING_SINGLE_DRAG;
     }
@@ -777,21 +851,17 @@ public class BoxSelect{
         pendingSingleDrag = null;
         pendingSingleDragX = 0f;
         pendingSingleDragY = 0f;
+        pendingSingleDragStartedNanos = 0L;
         pendingSingleDragKeepsSelection = false;
     }
 
-    /** Require a deliberate movement before taking over the vanilla single-block drag. */
-    private static boolean singleDragThresholdReached(LCanvas canvas, float mx, float my){
+    /** Require a deliberate long press and movement before taking over vanilla dragging. */
+    private static boolean singleDragThresholdReached(float mx, float my){
         if(pendingSingleDrag == null) return false;
-
-        float width = pendingSingleDrag.getWidth();
-        if(width <= 0f) width = pendingSingleDrag.getPrefWidth();
-        if(width <= 0f) width = canvas.statements.getWidth();
-
-        float threshold = Math.max(MIN_DRAG_DIST, width * SINGLE_DRAG_WIDTH_RATIO);
+        long elapsed = Time.nanos() - pendingSingleDragStartedNanos;
         float dx = mx - pendingSingleDragX;
         float dy = my - pendingSingleDragY;
-        return dx * dx + dy * dy >= threshold * threshold;
+        return BoxSelectDragPolicy.singleDragReady(elapsed, dx, dy, Vars.mobile);
     }
 
     private static void finishSingleStatementDrag(){
@@ -813,11 +883,13 @@ public class BoxSelect{
     }
 
     private static void resetState(LCanvas canvas){
-        clearDraggingField(canvas);
-        // 兜底恢复紧凑布局（若拖动中对话框被关闭等场景）
-        setDragLayoutSpace(canvas, 0f);
-        restoreButtonIcons(canvas);
-        resetAllTranslations(canvas);
+        if(canvas != null){
+            clearDraggingField(canvas);
+            // 兜底恢复紧凑布局（若拖动中对话框被关闭等场景）
+            setDragLayoutSpace(canvas, 0f);
+            restoreButtonIcons(canvas);
+            if(canvas.statements != null) resetAllTranslations(canvas);
+        }
         dragBaseYs = null;
         dragYOffsets = null;
         clearPendingSingleDrag();
@@ -825,9 +897,9 @@ public class BoxSelect{
         singleStatementDragKeepsSelection = false;
         selected.clear();
         state = State.IDLE;
+        activePointer = -1;
         dragInsertPos = -1;
         dragMoved = false;
-        dragBaseYs = null;
         clipboardCopies = null;
         clipboardSize = 0;
         clipboardSources = null;

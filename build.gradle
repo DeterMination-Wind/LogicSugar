@@ -1,6 +1,6 @@
 apply plugin: "java"
 
-version = "3.0.0"
+version = "3.0.1"
 sourceSets{
     main.java.srcDirs = ["src"]
     test.java.srcDirs = ["test"]
@@ -70,8 +70,14 @@ tasks.register("crossLoaderTest", JavaExec){
     mainClass = "mindustry.logic.CrossLoaderAccessTest"
 }
 
+tasks.register("boxSelectTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.BoxSelectSelfTest"
+}
+
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, crossLoaderTest
+check.dependsOn selfTest, ifElseTest, decompileTest, crossLoaderTest, boxSelectTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which
