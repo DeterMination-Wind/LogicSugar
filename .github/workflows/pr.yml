@@ -57,4 +57,4 @@ jobs:
 
       - name: Compile and run LogicSugar checks
         working-directory: LogicSugar
-        run: ./gradlew --no-daemon check --stacktrace --console=plain
+        run: bash ./gradlew --no-daemon check --stacktrace --console=plain
