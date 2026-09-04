@@ -43,6 +43,7 @@ public final class LogicSugarSettings{
         table.pref(new LibraryButtonSetting("logicsugar.funclib"));
         addHideVarsPref(table);
         addBoxSelectPrefs(table);
+        addCompactCardsPref(table);
         if(includeJumpLines){
             logicsugar.assist.JumpLineColor.buildSettings(table);
         }
@@ -55,10 +56,19 @@ public final class LogicSugarSettings{
         });
     }
 
+    /** Checkbox for the compact card layout (zero spacing between statement cards). */
+    static void addCompactCardsPref(SettingsMenuDialog.SettingsTable table){
+        table.checkPref(mindustry.logic.SugarCanvas.settingCompactCards, true, b -> {
+            mindustry.logic.SugarCanvas.refreshLayoutSpace();
+        });
+    }
+
     /** Checkboxes for BoxSelect drag behavior (Ctrl+click copy and Ctrl+drag copy). */
     static void addBoxSelectPrefs(SettingsMenuDialog.SettingsTable table){
         table.checkPref(logicsugar.assist.BoxSelect.settingCtrlClickCopy, true);
         table.checkPref(logicsugar.assist.BoxSelect.settingCtrlDragCopy, true);
+        // 拖动时是否临时把积木间距扩到 10f。关闭可根治视野/虚拟块偏移，但往折叠语句拖语句会更"随机"。
+        table.checkPref(logicsugar.assist.BoxSelect.settingDragExpandSpacing, false);
     }
 
     /** Click-to-cycle picker for the function expansion mode. */

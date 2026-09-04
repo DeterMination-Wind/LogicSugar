@@ -21,6 +21,8 @@ import mindustry.graphics.*;
 import mindustry.logic.*;
 import mindustry.logic.LCanvas.*;
 import mindustry.logic.LStatements.*;
+import mindustry.logic.SugarStatements.BeginStatement;
+import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.ui.*;
 import mindustry.ui.dialogs.*;
 
@@ -72,6 +74,11 @@ public class BoxSelect{
     // ===== 设置键 =====
     public static final String settingCtrlClickCopy = "logicsugar.ctrlClickCopy";
     public static final String settingCtrlDragCopy = "logicsugar.ctrlDragCopy";
+    /** 拖动时是否把积木间距从 0f 临时扩到 10f。
+     *  开启（默认）：拖起来更宽松、方便观察，但 0f↔10f 切换会牵连视野滚动偏移（历史问题）。
+     *  关闭：拖动全程保持间距不变，无任何空间切换，视野/虚拟块偏移彻底消失；
+     *        缺点是往折叠语句里拖语句时，腾位空间按原间距计算，可能显得"随机放"。 */
+    public static final String settingDragExpandSpacing = "logicsugar.dragExpandSpacing";
 
     private static boolean ctrlClickCopyEnabled(){
         return Core.settings.getBool(settingCtrlClickCopy, true);
@@ -79,6 +86,12 @@ public class BoxSelect{
 
     private static boolean ctrlDragCopyEnabled(){
         return Core.settings.getBool(settingCtrlDragCopy, true);
+    }
+
+    /** 拖动时是否把间距临时扩到 10f（设置「拖动时扩展间距」，默认关闭）。
+     *  开启=0f↔10f 切换；关闭（默认）=跳过切换，根治视野/虚拟块偏移。 */
+    private static boolean dragExpandSpacingEnabled(){
+        return Core.settings.getBool(settingDragExpandSpacing, false);
     }
 
 // ===== 反射字段（包级私有，缓存 Field；缺失时按可选降级，不阻塞编辑器）=====
@@ -114,6 +127,8 @@ public class BoxSelect{
     private static void setDragLayoutSpace(LCanvas canvas, float space){
         try{
             dragLayoutSpaceField.setFloat(canvas.statements, space);
+            // 同步折叠隐藏语句的 space 抵消值，保证 layout() 里 getPrefHeight()+space=0 始终成立
+            SugarCanvas.SugarStatementElem.foldHiddenSpace = -space;
             // 高度变化需要双重 invalidate+validate（参考 finalizeLayout）：
             // 第一次 layout 用旧 height 执行并标记父节点，第二次用新 height 真正重排。
             canvas.statements.invalidate();
@@ -123,6 +138,13 @@ public class BoxSelect{
         }catch(Exception e){
             Log.warn("[LogicAssist] Failed to set layout space", e);
         }
+    }
+
+    /** 闲置（未拖拽）时的积木间距：紧凑开关开启时 0f，关闭时恢复原版 Scl.scl(10f)。
+     *  复用 SugarCanvas.currentIdleSpace 保持单一真相源，避免拖拽结束后打回硬编码 0f，
+     *  导致非紧凑模式关掉开关后拖一下又被重置成紧凑。 */
+    private static float idleLayoutSpace(){
+        return SugarCanvas.currentIdleSpace();
     }
 
     // ===== 状态 =====
@@ -165,6 +187,16 @@ public class BoxSelect{
     // 所有积木整体上移 10f×(N-i)。记录切换前后的 y 差，拖动时加回 translation，
     // 保证被拖积木锚定在按下点，避免鼠标相对积木偏移（blockend 等高小的块尤甚）。
     private static float[] dragYOffsets = null;
+
+    // 批量拖拽统一补偿：取"鼠标按下时所在积木"的 dragYOffsets 作为整组统一补偿量，
+    // 让被拖组内部间距与 dragBaseYs(10f 布局)一致，而非各自锚定 0f 紧凑布局（挤成一团）。
+    // 单积木/非紧凑模式此值为 0（无重排），行为与旧版完全一致。
+    private static float dragAnchorOffset = 0f;
+
+    // 本次拖拽是否切换过布局间距（0f↔10f）。startDrag 依据 dragExpandSpacingEnabled()
+    // 决定是否切换，结束路径依据此字段恢复，避免"开始依据"与"结束依据"不一致
+    // （若拖动期间设置被改动，space 可能停在不该停的值）。
+    private static boolean spaceSwitchedDuringDrag = false;
 
     // 插入指示器几何位置
     private static float indicatorX, indicatorY, indicatorW, indicatorH;
@@ -429,13 +461,20 @@ public class BoxSelect{
         attachCanvasExtras(canvas);
         if(activePointer != -1 && activePointer != pointer) return false;
 
+        // 右键：拖拽非 IDLE 时必须在 touchDown 拦截，防止穿透到原版 StatementElem
+        // 的 toFront()，否则批量拖拽中点右键，第一条选中的积木会被原版移到 list 末尾。
+        if(button == KeyCode.mouseRight){
+            if(state != State.IDLE && isDescendantOfCanvas(event.targetActor, canvas)){
+                event.stop();
+                return true;
+            }
+            return false;
+        }
+
         // 只处理鼠标左键和中键（中键原版用于复制单个积木）
         if(button != KeyCode.mouseLeft && button != KeyCode.mouseMiddle){
             return false;
         }
-
-        // 右键在 touchDown 不会被触发（mouseRight），但以防万一
-        if(button == KeyCode.mouseRight) return false;
 
         Vec2 stageCoords = Tmp.v1.set(x, y);
         Element target = event.targetActor;
@@ -508,6 +547,8 @@ public class BoxSelect{
             if(ctrlDown && ctrlClickCopyEnabled()){
                 selected.clear();
                 selected.add(clickedStmt);
+                // 折叠块头部单选也应作为整体拖动：补全 body+end，避免方案B 误拦
+                expandSelectionToFoldBody(canvas);
                 startDrag(canvas, stageCoords.x, stageCoords.y, button);
                 activePointer = pointer;
                 event.stop();
@@ -569,6 +610,8 @@ public class BoxSelect{
             if(!keepsSelection){
                 selected.clear();
                 selected.add(statement);
+                // 折叠块头部单拖应作为整体拖动：补全 body+end，避免方案B 误拦
+                expandSelectionToFoldBody(canvas);
             }
             singleStatementDrag = true;
             singleStatementDragKeepsSelection = keepsSelection;
@@ -606,6 +649,12 @@ public class BoxSelect{
         if(event.isTouchFocusCancel()){
             resetState(canvas);
             event.stop();
+            return;
+        }
+        // 右键 touchDown 拦截会注册 touchFocus，配套的 touchUp 必须过滤非左/中键，
+        // 否则右键松开会误触 executeDragMove/cancelDrag（左键仍按着，不能因右键松开而取消）。
+        // 放在 isTouchFocusCancel 之后：焦点取消事件的 button 值不确定，必须在其后过滤。
+        if(button != KeyCode.mouseLeft && button != KeyCode.mouseMiddle){
             return;
         }
         if(canvas == null){
@@ -821,6 +870,10 @@ public class BoxSelect{
 
         for(Element child : canvas.statements.getChildren()){
             if(!(child instanceof StatementElem)) continue;
+            // 跳过折叠隐藏的语句（visible=false）：它们不可见、不参与框选。
+            // 否则非紧凑模式下折叠块内部的 gap 会把隐藏 body 撑成一条线而被框选命中，
+            // 且折叠 body 的 getPrefHeight() 可能为负，几何相交判定会失真。
+            if(!child.visible) continue;
             float cx = child.x;
             float cy = child.y;
             float cw = child.getWidth();
@@ -828,6 +881,43 @@ public class BoxSelect{
             if(minX < cx + cw && maxX > cx && minY < cy + ch && maxY > cy){
                 selected.add((StatementElem)child);
             }
+        }
+        expandSelectionToFoldBody(canvas);
+    }
+
+    /** 结构补全：选中某个 BeginStatement（含其子类）后，自动把该块内部被隐藏的 body
+     *  （visible=false，框选时跳过）及 end（BlockEndStatement，若未选中）也纳入 selected，
+     *  使结构块（begin+body+end）作为整体参与选中/拖动，避免只搬 begin/end 而 body 遗留原地
+     *  导致结构撕裂、折叠释放。
+     *  ⚠️ 不检查 begin.collapsed：展开的语句块同样应整体补全（结构原子化），
+     *  保证选中 begin 头部拖动时配对的 body/end 跟随。
+     *  LinkedHashSet 幂等，重复调用不会重复添加。 */
+    private static void expandSelectionToFoldBody(LCanvas canvas){
+        if(selected.isEmpty()) return;
+        Seq<Element> children = canvas.statements.getChildren();
+        if(children.isEmpty()) return;
+
+        int startSize = selected.size();
+        for(Element child : children){
+            if(!(child instanceof StatementElem ste)) continue;
+            // 仅处理被选中的 begin，且其 body 处于折叠隐藏状态
+            if(!selected.contains(ste)) continue;
+            if(!(ste.st instanceof BeginStatement begin)) continue;
+            int endIdx = begin.destIndex;
+            if(endIdx < 0 || endIdx >= children.size) continue;
+            int beginIdx = children.indexOf(ste, true);
+            if(beginIdx < 0) continue;
+            // 补全区间 (beginIdx, endIdx) 内的隐藏 body，以及 end 本身（若未选中）
+            for(int i = beginIdx + 1; i <= endIdx; i++){
+                Element c = children.get(i);
+                if(c instanceof StatementElem && !selected.contains(c)){
+                    selected.add((StatementElem)c);
+                }
+            }
+        }
+        // 结构补全改变了选中集，需要同步刷新选中按钮/图标状态
+        if(selected.size() != startSize){
+            updateSelectedButtonIcons(canvas);
         }
     }
 
@@ -886,12 +976,15 @@ public class BoxSelect{
         if(canvas != null){
             clearDraggingField(canvas);
             // 兜底恢复紧凑布局（若拖动中对话框被关闭等场景）
-            setDragLayoutSpace(canvas, 0f);
+            // 仅在开启间距扩展时空间被切换过，此时才需要恢复；关闭时 space 从未变，跳过。
+            if(spaceSwitchedDuringDrag) setDragLayoutSpace(canvas, idleLayoutSpace());
             restoreButtonIcons(canvas);
             if(canvas.statements != null) resetAllTranslations(canvas);
         }
         dragBaseYs = null;
         dragYOffsets = null;
+        dragAnchorOffset = 0f;
+        spaceSwitchedDuringDrag = false;
         clearPendingSingleDrag();
         singleStatementDrag = false;
         singleStatementDragKeepsSelection = false;
@@ -908,6 +1001,15 @@ public class BoxSelect{
     // ===== 拖动 =====
 
     private static void startDrag(LCanvas canvas, float mx, float my, KeyCode button){
+        // 先清除原版 dragging 字段，避免任何残留影响本次判定
+        clearDraggingField(canvas);
+
+        // 方案B：拒绝拖拽"部分选中"的结构块。若选中集含孤立的 begin 或 end
+        // （配对端不在选中集内），拖动会把结构撕裂（body 悬空），这里直接不进入拖拽态。
+        if(isStructureSelectionIncomplete(canvas)){
+            Log.debug("[LogicAssist] Blocked drag: incomplete structure selection");
+            return;
+        }
         dragStartMouseX = mx;
         dragStartMouseY = my;
         Vec2 startLocal = canvas.statements.stageToLocalCoordinates(Tmp.v2.set(mx, my));
@@ -916,30 +1018,72 @@ public class BoxSelect{
         dragInsertPos = -1;
         dragMoved = false;
 
-        // 清除原版 dragging 字段，防止原版 layout 跳过错误积木
-        clearDraggingField(canvas);
-
-        // 切换布局前记录每个积木的 y（0f 间距布局），用于计算切换补偿。
-        // setDragLayoutSpace(10f) 会触发重排，所有积木上移 (N-i)×10f，
-        // 若不补偿，被拖积木相对鼠标锚点会整体偏移（blockend 等高小的块尤其明显）。
         Seq<Element> children = canvas.statements.getChildren();
-        float[] yBefore = new float[children.size];
-        for(int i = 0; i < children.size; i++){
-            yBefore[i] = children.get(i).y;
-        }
+        dragAnchorOffset = 0f;
+        dragYOffsets = null;
 
-        // 拖动期间把积木间距切到 10f（分得更开，方便操作），并立即重排，
-        // 让 DragLayout 高度/滚动条范围同步变大。结束拖动时恢复 0f。
-        setDragLayoutSpace(canvas, Scl.scl(10f));
+        // 可选：拖动时把积木间距从 0f 临时扩到 10f，让积木分得更开、方便观察与操作。
+        // 开启（需用户在设置里打开「拖动时扩展间距」，默认关闭）：0f↔10f 切换会触发
+        //              layout 重排 + 视野滚动偏移，需靠下面整套
+        //              dragYOffsets/dragAnchorOffset 补偿锚定（历史复杂问题）。
+        // 关闭（默认）：拖动全程保持间距不变，无任何空间切换，视野/虚拟块偏移彻底消失；
+        //       代价是往折叠语句里拖语句时腾位空间按原间距计算，可能显得随机。
+        if(dragExpandSpacingEnabled()){
+            spaceSwitchedDuringDrag = true;
+            // 切换布局前记录每个积木的 y（0f 间距布局），用于计算切换补偿。
+            // setDragLayoutSpace(10f) 会触发重排，所有积木上移 (N-i)×10f，
+            // 若不补偿，被拖积木相对鼠标锚点会整体偏移（blockend 等高小的块尤其明显）。
+            float[] yBefore = new float[children.size];
+            for(int i = 0; i < children.size; i++){
+                yBefore[i] = children.get(i).y;
+            }
 
-        // 保存所有积木的原始 y 坐标（layout() 会修改，拖动期间需要恢复）。
-        // 注意：必须在 setDragLayoutSpace 重排之后记录，基准才是 10f 间距的布局。
-        dragBaseYs = new float[children.size];
-        dragYOffsets = new float[children.size];
-        for(int i = 0; i < children.size; i++){
-            dragBaseYs[i] = children.get(i).y;
-            // 补偿 = 切换前位置 - 切换后位置：让被拖积木视觉上仍锚定在按下点
-            dragYOffsets[i] = yBefore[i] - dragBaseYs[i];
+            // 拖动期间把积木间距切到 10f（分得更开，方便操作），并立即重排，
+            // 让 DragLayout 高度/滚动条范围同步变大。结束拖动时恢复 0f。
+            setDragLayoutSpace(canvas, Scl.scl(10f));
+
+            // 保存所有积木的原始 y 坐标（layout() 会修改，拖动期间需要恢复）。
+            // 注意：必须在 setDragLayoutSpace 重排之后记录，基准才是 10f 间距的布局。
+            dragBaseYs = new float[children.size];
+            dragYOffsets = new float[children.size];
+            for(int i = 0; i < children.size; i++){
+                dragBaseYs[i] = children.get(i).y;
+                // 补偿 = 切换前位置 - 切换后位置：让被拖积木视觉上仍锚定在按下点
+                dragYOffsets[i] = yBefore[i] - dragBaseYs[i];
+            }
+
+            // 批量拖拽统一补偿：定位"鼠标按下时所在积木"，取其 dragYOffsets 作为整组统一偏移。
+            // 否则组内每块各自锚定 0f 紧凑布局，导致被拖组内部间距挤成 0f，
+            // 与腾位/指示器/非选中积木（都用 10f）不一致，批量拖拽时间距混乱。
+            int anchorIdx = -1;
+            for(int i = 0; i < children.size; i++){
+                float top = yBefore[i] + children.get(i).getHeight();
+                boolean isSelected = children.get(i) instanceof StatementElem && selected.contains(children.get(i));
+                if(dragStartLocalY >= yBefore[i] && dragStartLocalY <= top && isSelected){
+                    anchorIdx = i;
+                    break;
+                }
+            }
+            if(anchorIdx < 0){
+                // 兜底：选中组里最靠前的一块
+                for(int i = 0; i < children.size; i++){
+                    if(children.get(i) instanceof StatementElem && selected.contains(children.get(i))){
+                        anchorIdx = i;
+                        break;
+                    }
+                }
+            }
+            if(anchorIdx >= 0){
+                dragAnchorOffset = dragYOffsets[anchorIdx];
+            }
+        }else{
+            // 关闭间距扩展（默认）：不切换 space，积木保持当前布局。记录当前 y 作为拖动基准，
+            // 无任何补偿（dragYOffsets/dragAnchorOffset 均为 0），translation 只跟随纯鼠标位移。
+            spaceSwitchedDuringDrag = false;
+            dragBaseYs = new float[children.size];
+            for(int i = 0; i < children.size; i++){
+                dragBaseYs[i] = children.get(i).y;
+            }
         }
 
         // 拖动模式：dragMode 持久模式 + Ctrl/中键临时覆盖。
@@ -984,16 +1128,18 @@ public class BoxSelect{
             // 移动模式：紧凑排列非选中积木，消除选中积木原始位置占用的空间
             relayoutNonSelected(canvas);
             // 选中积木用 translation 跟随鼠标。
-            // 关键：translation.y 要加上布局切换补偿（dragYOffsets），
+            // 关键：translation.y 要加上布局切换补偿（dragAnchorOffset，整组统一），
             // 否则 setDragLayoutSpace(10f) 重排让积木上移后，视觉锚点不再在按下点，
             // 鼠标会跑到积木下侧甚至块外（blockend 等高小的块尤其明显）。
+            // 用整组统一的 dragAnchorOffset 而非各自 dragYOffsets[idx]：
+            //   - 组内间距与 dragBaseYs(10f 布局) 一致，与腾位/指示器/非选中积木统一
+            //   - 批量拖拽组内不再挤成 0f
             Vec2 localMouse = canvas.statements.stageToLocalCoordinates(Tmp.v2.set(mx, my));
             float dx = localMouse.x - dragStartLocalX;
             float dy = localMouse.y - dragStartLocalY;
             for(StatementElem elem : selected){
-                int idx = children.indexOf(elem, true);
-                float offsetY = dragYOffsets != null && idx >= 0 && idx < dragYOffsets.length ? dragYOffsets[idx] : 0f;
-                elem.setTranslation(dx, dy + offsetY);
+                if(!elem.visible) continue; // 隐藏折叠 body 不随鼠标位移（不可见，无需跟随）
+                elem.setTranslation(dx, dy + dragAnchorOffset);
             }
         }
         // 复制模式：原积木保持原位，预览由 drawCopyPreview() 绘制
@@ -1013,9 +1159,7 @@ public class BoxSelect{
                 float dx = localMouse.x - dragStartLocalX;
                 float dy = localMouse.y - dragStartLocalY;
                 for(StatementElem elem : selected){
-                    int idx = children.indexOf(elem, true);
-                    float offsetY = dragYOffsets != null && idx >= 0 && idx < dragYOffsets.length ? dragYOffsets[idx] : 0f;
-                    elem.setTranslation(dx, dy + offsetY);
+                    elem.setTranslation(dx, dy + dragAnchorOffset);
                 }
             }
             applyInsertShift(canvas);
@@ -1030,7 +1174,90 @@ public class BoxSelect{
         }
     }
 
+    // ===== 结构完整性校验（方案B：阻止部分选中拖拽） =====
+
+    /** 判断当前选中集里是否含有"不完整的结构块"——即某个被选中的 BeginStatement
+     *  或 BlockEndStatement，其配对端不在选中集内。若 such 不完整结构存在，返回 true，
+     *  以阻止拖拽，避免把 begin/body/end 撕裂。
+     *
+     *  判定口径（只针对"会被框选/点选所选中"的端点做配对校验，不做 body 全量要求，
+     *  避免误伤折叠块——折叠块 body 隐藏不可选，只要求 begin 与 end 成对即可）：
+     *   - 选中 BeginStatement b：要求其 destIndex 对应端（end）也在 selected。
+     *   - 选中 BlockEndStatement e：要求存在一个被选中的 BeginStatement，其 destIndex 指向 e。
+     */
+    private static boolean isStructureSelectionIncomplete(LCanvas canvas){
+        if(selected.isEmpty()) return false;
+        Seq<Element> children = canvas.statements.getChildren();
+        if(children.isEmpty()) return false;
+
+        for(Element child : children){
+            if(!(child instanceof StatementElem ste)) continue;
+            LStatement st = ste.st;
+            if(st instanceof BeginStatement begin){
+                if(!selected.contains(ste)) continue;
+                // begin 被选中：配对 end 必须在选中集内，否则结构不完整
+                int endIdx = begin.destIndex;
+                if(endIdx < 0 || endIdx >= children.size) return true; // 孤立 begin，无合法 end
+                Element end = children.get(endIdx);
+                if(!(end instanceof StatementElem) || !selected.contains(end)) return true;
+            }else if(st instanceof BlockEndStatement){
+                if(!selected.contains(ste)) continue;
+                // end 被选中：必须有配对的 begin 也在选中集内
+                int idx = children.indexOf(ste, true);
+                boolean paired = false;
+                for(Element c : children){
+                    if(c instanceof StatementElem se2 && se2.st instanceof BeginStatement b2
+                       && b2.destIndex == idx && selected.contains(se2)){
+                        paired = true;
+                        break;
+                    }
+                }
+                if(!paired) return true;
+            }
+        }
+        return false;
+    }
+
     // ===== 插入位置计算 =====
+
+    /** 把"可见语句相对索引"映射为 children 绝对索引（含折叠语句的占位）。
+     *  移动模式的 dragInsertPos 跳过折叠语句语义，而 executeDragMove 的 addChildAt
+     *  需要 children 真实索引。第 visibleIdx 个可见元素落在第几个 children 位置，
+     *  即往前累加折叠语句/不可见元素的个数。 */
+    private static int visibleIndexToAbsolute(Seq<Element> children, int visibleIdx){
+        int seen = 0;
+        for(int i = 0; i < children.size; i++){
+            if(seen >= visibleIdx) return i;
+            if(children.get(i).visible) seen++;
+        }
+        return children.size;
+    }
+
+    /** 判断 localY（DragLayout 本地坐标，向上为正）是否落在某个折叠块（Begin.collapsed）
+     *  的视觉区间内。若是，返回该折叠块 Begin 的绝对索引，否则返回 -1。
+     *  折叠块：Begin 可见（含头部），body 全部 visible=false 高度 0，end 紧贴。由于 body
+     *  隐藏 + 间距原本占据位置，折叠块在屏幕上其实是"Begin .. end"连续的一段，鼠标落在这段
+     *  区域内时不应插入其内部，否则会"拖进折叠区放第一条"。
+     *  注意：跳过"正在被拖拽的选中折叠块"——否则拖折叠块时鼠标始终落在该块区间内，
+     *  computeInsertPosition 恒返回该块之前的位置，导致只有原位置一个插入点。 */
+    private static int collapsedBlockContaining(Seq<Element> children, float localY){
+        for(int i = 0; i < children.size; i++){
+            Element elem = children.get(i);
+            if(!(elem instanceof StatementElem ste) || !(ste.st instanceof BeginStatement begin)) continue;
+            if(!begin.collapsed) continue;
+            // 跳过被拖拽的选中元素（该折叠块自身）：它是要被移动的，不作为落点拦截对象
+            if(selected.contains(ste)) continue;
+            int endIndex = begin.destIndex;
+            if(endIndex < 0 || endIndex >= children.size) continue;
+            Element end = children.get(endIndex);
+            // 折叠块视觉范围（底对齐向上）：begin 的上沿 到 end 的下沿。
+            float beginTop = elem.y + elem.translation.y + elem.getHeight();
+            float endBottom = end.y + end.translation.y;
+            // 若鼠标 y 落在 [endBottom, beginTop] 区间（即折叠块内部），返回 begin 索引。
+            if(localY <= beginTop && localY >= endBottom) return i;
+        }
+        return -1;
+    }
 
     private static int computeInsertPosition(LCanvas canvas, float stageY){
         Seq<Element> children = canvas.statements.getChildren();
@@ -1039,10 +1266,33 @@ public class BoxSelect{
         Vec2 local = canvas.statements.stageToLocalCoordinates(Tmp.v2.set(0, stageY));
         float localY = local.y;
 
+        // 硬禁止：若鼠标落在某个折叠块内部，落点强制锚定到该块之前（begin 之前），
+        // 无论移动还是复制，都不能插入折叠块内部——除非先展开折叠。
+        int blockBegin = collapsedBlockContaining(children, localY);
+        if(blockBegin >= 0){
+            if(state == State.DRAGGING_COPY){
+                // 复制模式返回值 = children 绝对索引：锚定到 begin（块之前的位置）
+                return blockBegin;
+            }else{
+                // 移动模式返回值 = 跳过选中+折叠后的相对索引：数到 blockBegin 之前的可见计数
+                int count = 0;
+                for(int i = 0; i < blockBegin; i++){
+                    Element child = children.get(i);
+                    if(child instanceof StatementElem && selected.contains(child)) continue;
+                    if(!child.visible) continue;
+                    count++;
+                }
+                return count;
+            }
+        }
+
         if(state == State.DRAGGING_COPY){
-            // 复制模式：遍历所有 children，用视觉位置（y + translation.y）计算
+            // 复制模式：遍历所有 children，用视觉位置（y + translation.y）计算。
+            // 跳过折叠隐藏的语句（visible=false）：它们不可见、高度为 0，不应成为落点目标，
+            // 否则拖拽会"落入"折叠块内部，显得随机放。返回的是 children 绝对索引。
             for(int i = 0; i < children.size; i++){
                 Element child = children.get(i);
+                if(!child.visible) continue;
                 float visualY = child.y + child.translation.y;
                 float centerLocalY = visualY + child.getHeight() / 2f;
                 if(localY > centerLocalY){
@@ -1052,10 +1302,13 @@ public class BoxSelect{
             return children.size;
         }
 
-        // 移动模式：跳过选中积木（它们已从原位移走），用视觉位置计算
+        // 移动模式：跳过选中积木（它们已从原位移走）和折叠语句，用视觉位置计算。
+        // dragInsertPos 语义 = 跳过选中积木后的相对索引，这里同样跳过折叠语句，
+        // 使其与 updateIndicatorGeometry / executeDragMove 的 nonSelected 集合口径一致。
         int nonSelectedCount = 0;
         for(Element child : children){
             if(child instanceof StatementElem && selected.contains(child)) continue;
+            if(!child.visible) continue;
             float visualY = child.y + child.translation.y;
             float centerLocalY = visualY + child.getHeight() / 2f;
             if(localY > centerLocalY){
@@ -1076,10 +1329,13 @@ public class BoxSelect{
         float space = getLayoutSpace(canvas);
 
         // 从顶部开始紧凑排列非选中积木（用 translation 表示相对于原始位置的偏移）
+        // 跳过折叠隐藏的语句（visible=false）：它们不可见、高度为 0，不参与紧凑排布，
+        // 也不占据 space 间隙——否则折叠区会产生隐形空隙，拖动落点错乱（随机放）。
         float compactY = 0; // 紧凑布局中的累积 y（从顶部开始）
         for(int i = 0; i < children.size; i++){
             Element e = children.get(i);
             if(e instanceof StatementElem && selected.contains(e)) continue;
+            if(!e.visible) continue;
             // 原始位置（从顶部开始）：totalHeight - originalYFromTop
             // 紧凑位置（从顶部开始）：compactY
             // translation = 紧凑位置 - 原始位置（在 DragLayout 本地坐标系中，y 向上为正）
@@ -1106,26 +1362,32 @@ public class BoxSelect{
         Seq<Element> children = canvas.statements.getChildren();
         float space = getLayoutSpace(canvas);
 
-        // 腾位量 = 所有选中积木高度 + 间距，减去末尾多余的一个间距
+        // 腾位量 = 所有可见选中积木高度 + 间距。每个被拖积木后都带一个间距隔开下方积木；
+        // 不再减去末尾间距，否则非紧凑模式(10f)下腾位不足，占位方块下方会挤成 0f。
+        // 跳过隐藏折叠 body（visible=false）：它们的 getHeight() 是负值（gap 归零），
+        // 若计入会拉低 shiftAmount 甚至使其 <= 0 而提前返回，导致无法腾位插入。
         float shiftAmount = 0;
         for(StatementElem elem : selected){
+            if(!elem.visible) continue;
             shiftAmount += elem.getHeight() + space;
         }
-        shiftAmount -= space;
         if(shiftAmount <= 0) return;
 
         if(state == State.DRAGGING_COPY){
-            // 复制模式：dragInsertPos 是绝对索引，移该索引及以下的积木
+            // 复制模式：dragInsertPos 是绝对索引，移该索引及以下的积木。
+            // 跳过折叠隐藏的语句：它们不可见，不腾位，保持折叠区域原样。
             for(int i = dragInsertPos; i < children.size; i++){
                 Element child = children.get(i);
+                if(!child.visible) continue;
                 child.setTranslation(child.translation.x, child.translation.y - shiftAmount);
             }
         }else{
-            // 移动模式：dragInsertPos 是非选中积木的相对索引，
-            // 需跳过选中积木找到对应绝对位置
+            // 移动模式：dragInsertPos 是非选中积木的相对索引（已跳过折叠语句，与
+            // computeInsertPosition 口径一致），跳过选中积木和折叠语句找到对应绝对位置。
             int nonSelectedSeen = 0;
             for(Element child : children){
                 if(child instanceof StatementElem && selected.contains(child)) continue;
+                if(!child.visible) continue;
                 if(nonSelectedSeen >= dragInsertPos){
                     child.setTranslation(child.translation.x, child.translation.y - shiftAmount);
                 }
@@ -1145,6 +1407,7 @@ public class BoxSelect{
 
         float totalH = 0;
         for(StatementElem elem : selected){
+            if(!elem.visible) continue; // 跳过隐藏折叠 body（负高度），否则指示器高度失真
             totalH += elem.getHeight() + space;
         }
         totalH -= space;
@@ -1166,10 +1429,12 @@ public class BoxSelect{
                 drawLocalX = before.x;
             }
         }else{
-            // 移动模式：用非选中 children 的视觉位置计算
+            // 移动模式：用非选中 children 的视觉位置计算。
+            // 跳过选中积木和折叠语句，与 computeInsertPosition 的 dragInsertPos 口径一致。
             List<Element> nonSelected = new ArrayList<>();
             for(Element child : children){
                 if(child instanceof StatementElem && selected.contains(child)) continue;
+                if(!child.visible) continue;
                 nonSelected.add(child);
             }
 
@@ -1335,6 +1600,7 @@ public class BoxSelect{
         float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE;
         float maxX = Float.MIN_VALUE, maxY = Float.MIN_VALUE;
         for(StatementElem elem : selected){
+            if(!elem.visible) continue; // 隐藏折叠 body 不显示，不纳入包围框
             Vec2 v = elem.localToStageCoordinates(Tmp.v1.set(0, 0));
             minX = Math.min(minX, v.x);
             minY = Math.min(minY, v.y);
@@ -1486,7 +1752,8 @@ public class BoxSelect{
         float dx = localMouse.x - dragStartLocalX;
         float dy = localMouse.y - dragStartLocalY;
 
-        drawElementsWithOffset(canvas, dx, dy, COPY_PREVIEW_ALPHA);
+        // 复制预览同样加 dragAnchorOffset，与移动模式锚定一致（批量复制时预览组内间距统一）
+        drawElementsWithOffset(canvas, dx, dy + dragAnchorOffset, COPY_PREVIEW_ALPHA);
     }
 
     /** 统一的绘制方法：保存矩阵 → 设置 translation → 临时修改 x/y → draw → finally 恢复
@@ -1504,6 +1771,9 @@ public class BoxSelect{
         Draw.alpha(alpha);
         try{
             for(StatementElem elem : selected){
+                // 跳过隐藏折叠 body（visible=false，负高度）：它们不可见，重画/预览时不应
+                // 绘制，否则拖折叠块会渲染出异常的虚拟块（负高度导致高度异常）。
+                if(!elem.visible) continue;
                 boolean oldCullable = elem.cullable;
                 elem.cullable = false;
                 elem.x += dx;
@@ -1528,11 +1798,14 @@ public class BoxSelect{
         clearDraggingField(canvas);
 
         // 拖动期间是 10f 间距，移动完成后恢复紧凑布局（滚动条同步缩回）
-        setDragLayoutSpace(canvas, 0f);
+        // 仅在开启间距扩展时空间被切换过，此时才需要恢复；关闭时跳过。
+        if(spaceSwitchedDuringDrag) setDragLayoutSpace(canvas, idleLayoutSpace());
 
         resetAllTranslations(canvas);
         dragBaseYs = null;
         dragYOffsets = null;
+        dragAnchorOffset = 0f;
+        spaceSwitchedDuringDrag = false;
 
         List<StatementElem> sorted = getSortedSelected(canvas);
         Seq<Element> children = canvas.statements.getChildren();
@@ -1542,7 +1815,9 @@ public class BoxSelect{
             elem.remove();
         }
 
-        int actualInsert = Math.max(0, Math.min(insertPos, children.size));
+        // insertPos 是"可见非选中"相对索引（跳过选中积木与折叠语句）。移除选中积木后，
+        // children 仍含折叠语句，需映射为 children 绝对索引，否则 addChildAt 位置错位。
+        int actualInsert = Math.max(0, Math.min(visibleIndexToAbsolute(children, insertPos), children.size));
 
         for(int i = 0; i < count; i++){
             canvas.statements.addChildAt(actualInsert + i, sorted.get(i));
@@ -1586,11 +1861,13 @@ public class BoxSelect{
         clearDraggingField(canvas);
 
         // 拖动期间是 10f 间距，复制完成后恢复紧凑布局（滚动条同步缩回）
-        setDragLayoutSpace(canvas, 0f);
+        if(spaceSwitchedDuringDrag) setDragLayoutSpace(canvas, idleLayoutSpace());
 
         resetAllTranslations(canvas);
         dragBaseYs = null;
         dragYOffsets = null;
+        dragAnchorOffset = 0f;
+        spaceSwitchedDuringDrag = false;
 
         if(clipboardCopies == null || clipboardCopies.isEmpty()){
             enterSelectedState(canvas);
@@ -1639,11 +1916,13 @@ public class BoxSelect{
         clearDraggingField(canvas);
 
         // 拖动期间是 10f 间距，取消后恢复紧凑布局（滚动条同步缩回）
-        setDragLayoutSpace(canvas, 0f);
+        if(spaceSwitchedDuringDrag) setDragLayoutSpace(canvas, idleLayoutSpace());
 
         resetAllTranslations(canvas);
         dragBaseYs = null;
         dragYOffsets = null;
+        dragAnchorOffset = 0f;
+        spaceSwitchedDuringDrag = false;
         clipboardCopies = null;
         clipboardSize = 0;
         clipboardSources = null;
@@ -1656,11 +1935,13 @@ public class BoxSelect{
     private static void deleteSelected(LCanvas canvas){
         clearDraggingField(canvas);
         // 兜底恢复紧凑布局（删除可从任何状态进入）
-        setDragLayoutSpace(canvas, 0f);
+        if(spaceSwitchedDuringDrag) setDragLayoutSpace(canvas, idleLayoutSpace());
 
         resetAllTranslations(canvas);
         dragBaseYs = null;
         dragYOffsets = null;
+        dragAnchorOffset = 0f;
+        spaceSwitchedDuringDrag = false;
 
         List<StatementElem> sorted = getSortedSelected(canvas);
         int count = sorted.size();
