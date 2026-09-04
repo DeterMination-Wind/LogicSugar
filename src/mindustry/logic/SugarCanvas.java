@@ -107,6 +107,7 @@ public class SugarCanvas extends LCanvas{
     @Override
     public void draw(){
         if(BoxSelect.isDragging()) BoxSelect.drawInsertIndicatorUnder(this);
+        hideFoldedJumpCurves();
         super.draw();
         JumpLineColor.patchAllCurves(this);
         if(!BoxSelect.isSelecting() && !BoxSelect.isDragging()){
@@ -115,6 +116,38 @@ public class SugarCanvas extends LCanvas{
             BoxSelect.drawHighlights(this);
             BoxSelect.drawColorScrollbar(this);
             Draw.trans(oldTrans);
+        }
+    }
+
+    /** 折叠块内部的语句被塌陷隐藏（visible=false）后，其 jump 跳转线的 JumpCurve 仍留在
+     *  jumps 层，且 JumpCurve.act() 每帧按塌陷后错乱的坐标重算 height != 0，导致跳转曲线
+     *  横穿整个屏幕。此处把"起点或终点不可见"的跳转线压平 height=0，让 JumpCurve.draw()
+     *  的 if(height == 0) return 生效，折叠时不再绘制这些横穿的跳转线。
+     *  在 super.draw() 之前调用（act 先于 draw，draw 里设 height=0 后 super.draw 才读到）。
+     *  注意：不能访问 game 侧 LCanvas$JumpButton.to（跨 classloader 非 public 字段，
+     *  抛 IllegalAccessError），须经 public 的 JumpStatement.dest 取目标。 */
+    private void hideFoldedJumpCurves(){
+        if(statements == null) return;
+        Group jumps = getJumpLayer(this);
+        if(jumps == null) return;
+        for(Element child : jumps.getChildren()){
+            if(!(child instanceof LCanvas.JumpCurve curve)) continue;
+            LCanvas.JumpButton button = curve.button;
+            if(button == null) continue;
+            LCanvas.StatementElem src = button.elem;
+            if(src == null) continue;
+            // 目标：JumpStatement.dest 是 public，可跨 classloader 访问；Begin 结构走
+            // StructureJumpCurve（target!=null 时不画），无需处理。
+            LCanvas.StatementElem dst = null;
+            if(src.st instanceof JumpStatement jump){
+                dst = jump.dest;
+            }
+            // 起点或终点任一处于折叠隐藏态（visible=false）→ 该线不绘制
+            if(!src.visible || (dst != null && !dst.visible)){
+                // height 是 Element 的 protected 字段，不能直接写；用 public setSize(0,0)
+                // 把 width/height 压为 0，JumpCurve.draw() 的 if(height == 0) return 生效。
+                curve.setSize(0, 0);
+            }
         }
     }
 
@@ -179,13 +212,51 @@ public class SugarCanvas extends LCanvas{
         installGuideLayer();
     }
 
+    /** Settings key for the compact card layout toggle. */
+    public static final String settingCompactCards = "logicsugar.compactCards";
+
+    /** Statement gap in design units used by the vanilla (non-compact) layout. */
+    private static final float vanillaSpace = 10f;
+
+    /** Whether the compact card layout is enabled. Defaults to on (preserves prior behavior). */
+    public static boolean compactCards(){
+        try{
+            return Core.settings.getBool(settingCompactCards, true);
+        }catch(Throwable t){
+            return true;
+        }
+    }
+
+    /** 当前闲置（未拖拽）时的积木间距来源：紧凑开关开启时 0f，关闭时恢复原版 Scl.scl(10f)。
+     *  单一真相源，供 setLayoutSpace 与 BoxSelect.idleLayoutSpace 复用，避免改一处漏一处。 */
+    public static float currentIdleSpace(){
+        return compactCards() ? 0f : Scl.scl(vanillaSpace);
+    }
+
     private void setLayoutSpace(){
         if(statements == null || spaceField == null) return;
         try{
-            spaceField.setFloat(statements, 0f);
+            // Compact removes the gap between statement cards entirely; non-compact restores
+            // the vanilla 10-unit spacing so cards read as separate blocks.
+            float space = currentIdleSpace();
+            spaceField.setFloat(statements, space);
+            // 让折叠隐藏语句的布局贡献与当前 space 匹配：折叠 body 返回 -space 抵消 space，
+            // 则 getPrefHeight()+space=0，折叠块内部不再撑出空隙。
+            SugarStatementElem.foldHiddenSpace = -space;
         }catch(IllegalAccessException exception){
             throw new RuntimeException("Unable to configure Logic Sugar layout", exception);
         }
+    }
+
+    /** Re-applies the compact/non-compact spacing to the currently open canvas, live. */
+    public static void refreshLayoutSpace(){
+        SugarCanvas canvas = current();
+        if(canvas == null) return;
+        canvas.setLayoutSpace();
+        SugarCanvas.markJumpHeightsDirty(canvas);
+        canvas.statements.invalidate();
+        canvas.statements.validate();
+        SugarCanvas.refreshJumpLayer(canvas);
     }
 
     private boolean isDragging(){
@@ -348,6 +419,11 @@ public class SugarCanvas extends LCanvas{
         boolean foldedHidden;
         boolean structureInvalid;
         float inset;
+        /** 折叠隐藏时用于抵消布局 space 的负值缓存。layout() 用 getPrefHeight()+space 累计高度，
+         *  折叠 body 隐藏后若仍贡献 space，会在 Begin 与 end 之间撑出空隙（非紧凑模式下尤其明显，
+         *  且该空隙可被框选命中）。此字段保存 -space，使折叠 body 贡献 getPrefHeight()+space=0。
+         *  public，便于 BoxSelect 在拖动切换 space 时同步。 */
+        public static float foldHiddenSpace = 0f;
 
         SugarStatementElem(LStatement statement){
             super(statement);
@@ -428,7 +504,9 @@ public class SugarCanvas extends LCanvas{
 
         @Override
         public float getPrefHeight(){
-            return foldedHidden ? 0f : super.getPrefHeight();
+            // 折叠隐藏语句：返回 -space 抵消布局里的 space，使 getPrefHeight()+space=0，
+            // 消除折叠块内部空隙（否则非紧凑模式下 Begin 与 end 之间会撑开一段可框选的空白）。
+            return foldedHidden ? foldHiddenSpace : super.getPrefHeight();
         }
 
         @Override
