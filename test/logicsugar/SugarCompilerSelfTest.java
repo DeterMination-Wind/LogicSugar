@@ -89,6 +89,9 @@ public class SugarCompilerSelfTest{
         oversizeStripsComments();
         libraryDamageHarness();
         librarySalvageRegressions();
+        shardedCarrierRoundTrip();
+        libCarrierSharded();
+        smallProgramUnsharded();
         System.out.println("LogicSugar compiler self-test passed.");
     }
 
@@ -792,6 +795,36 @@ public class SugarCompilerSelfTest{
             "mixed highlight wrong: " + mixed);
         String broken = ExprStatement.highlight("unit.");
         check(!broken.contains("[sky]"), "dangling dot should not highlight anything: " + broken);
+
+        // 配对括号同色，嵌套深度换色；空白仍按原表达式位置保留。
+        String nested = ExprStatement.highlight(" ( a + ( b * ( c ) ) ) ");
+        check(nested.equals(" [#66c2ff]([] [white]a[] [lightgray]+[] [#ffb45c]([] [white]b[] [lightgray]*[] [#79d98b]([] [white]c[] [#79d98b])[] [#ffb45c])[] [#66c2ff])[] "),
+            "nested brackets or whitespace were highlighted incorrectly: " + nested);
+
+        // 同一层的括号对使用连续调色板颜色并循环，函数名颜色保持 coral。
+        String siblings = ExprStatement.highlight("(a) + (b) + (c) + (d) + (e) + (f) + (g)");
+        String[] siblingColors = {"#66c2ff", "#ffb45c", "#79d98b", "#d58cff", "#ffe066", "#ff7f91", "#66c2ff"};
+        for(String color : siblingColors){
+            check(siblings.contains("[" + color + "]([]") && siblings.contains("[" + color + "])[]"),
+                "sibling bracket color did not cycle: " + siblings);
+        }
+        String call = ExprStatement.highlight("foo((a), max(1, 2))");
+        check(call.contains("[coral]foo[]") && call.contains("[coral]max[]"),
+            "function names lost their existing color: " + call);
+        check(call.contains("[#66c2ff](") && call.contains("[#66c2ff])[]")
+                && call.contains("[#ffb45c](") && call.contains("[#ffb45c])[]"),
+            "function-call brackets were not paired or nested correctly: " + call);
+
+        // 未配对的左、右括号都使用错误色，而不是暂定的彩虹色。
+        String missingRight = ExprStatement.highlight("(a");
+        String missingLeft = ExprStatement.highlight("a)");
+        check(missingRight.contains("[#ff5555]([]") && missingLeft.contains("[#ff5555])[]"),
+            "unmatched bracket did not use error color: " + missingRight + " / " + missingLeft);
+
+        // 词法失败仍返回原文，仅转义富文本方括号，且不向编辑器抛异常。
+        String fallback = "a[b]";
+        check(ExprStatement.highlight(fallback).equals("a[[b]]"),
+            "lexer fallback did not preserve escaped source text: " + ExprStatement.highlight(fallback));
     }
 
     private static void returnExprRedMark(){
@@ -1620,6 +1653,83 @@ public class SugarCompilerSelfTest{
             System.out.println("note: could not exceed the 16KB compressed limit with generated content; "
                 + "the oversize path was not exercised (strip/restore chain still verified)");
         }
+    }
+
+    // ===== sharded persistence carriers ===================================================
+
+    /** A sugar source whose encoded payload crosses carrierMaxChars must shard its carrier
+     *  into continuous __ls_sugar_N lines and still round-trip losslessly through restore,
+     *  isSugarProgram and verifyRestore. */
+    private static void shardedCarrierRoundTrip(){
+        // ~51KB of incompressible source (random string sets in a while loop): the encoded
+        // payload exceeds carrierMaxChars (60000), while the lowered stream plus the shard
+        // lines stays far below the instruction limit
+        Random random = new Random(0x5eed);
+        StringBuilder sugar = new StringBuilder("whilebegin true 101\n");
+        for(int i = 0; i < 100; i++){
+            sugar.append("set big").append(i).append(" \"");
+            for(int j = 0; j < 500; j++){
+                sugar.append("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".charAt(random.nextInt(62)));
+            }
+            sugar.append("\"\n");
+        }
+        sugar.append("blockend\n");
+        String source = sugar.toString();
+        String compiled = SugarCompiler.compile(source);
+        check(compiled.contains("set __ls_sugar_1 \""), "oversized sugar carrier was not sharded");
+        check(compiled.contains("set __ls_sugar_2 \""), "sugar shard 2 is missing");
+        check(!compiled.contains("set __ls_sugar \""), "single-carrier shape leaked into a sharded save");
+        check(SugarCompiler.isSugarProgram(compiled), "sharded carrier was not recognized as a sugar program");
+        String restored = SugarCompiler.restore(compiled);
+        check(restored.equals(source), "sharded carrier round-trip changed the sugar source");
+        check(SugarCompiler.verifyRestore(compiled, restored), "sharded-carrier program failed verification");
+
+        // a vanilla save keeps every shard line; restore must survive it (markers are dropped)
+        String vanillaSaved = LAssembler.write(LAssembler.read(compiled, false));
+        check(vanillaSaved.contains("set __ls_sugar_1 \"") && vanillaSaved.contains("set __ls_sugar_2 \""),
+            "a vanilla save lost a sugar shard");
+        check(SugarCompiler.restore(vanillaSaved).equals(source), "sugar was lost across a vanilla save of a sharded program");
+    }
+
+    /** A library subset large enough to shard must embed as continuous __ls_lib_N lines while
+     *  the small sugar payload keeps its single-carrier shape; libraryFromCode reassembles
+     *  the exact extracted subset and the program still verifies. */
+    private static void libCarrierSharded(){
+        Random random = new Random(0x5eed);
+        StringBuilder body = new StringBuilder();
+        for(int i = 0; i < 10; i++){
+            body.append("set chunk").append(i).append(" \"");
+            for(int j = 0; j < 5000; j++){
+                body.append("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".charAt(random.nextInt(62)));
+            }
+            body.append("\"\n");
+        }
+        String libraryText = "funcdef big a 11\n" + body + "blockend\n";
+        SugarFunctions.LibraryIndex library = SugarFunctions.buildLibrary(LAssembler.read(libraryText, true));
+        String extracted = SugarFunctions.extractLibrarySource(libraryText, new HashSet<>(List.of("big")));
+        String compiled = SugarCompiler.compile("funccall big \"1\" ~\nend\n",
+            SugarCompiler.FuncMode.normal, library, libraryText);
+        check(compiled.contains("set __ls_lib_1 \""), "oversized library carrier was not sharded");
+        check(compiled.contains("set __ls_lib_2 \""), "library shard 2 is missing");
+        check(!compiled.contains("set __ls_lib \""), "single-carrier shape leaked into a sharded library save");
+        check(compiled.contains("set __ls_sugar \""), "small sugar payload must keep the single-carrier shape");
+        String embedded = SugarCompiler.libraryFromCode(compiled);
+        check(embedded != null && embedded.equals(extracted), "sharded library carrier did not reassemble the extracted subset");
+        check(SugarCompiler.isSugarProgram(compiled), "sharded-library program was not recognized as a sugar program");
+        check(SugarCompiler.verifyRestore(compiled, SugarCompiler.restore(compiled)), "sharded-library program failed verification");
+    }
+
+    /** Hard compatibility: a payload within carrierMaxChars keeps the exact single-carrier
+     *  output that older LogicSugar versions and the verify gate rely on. */
+    private static void smallProgramUnsharded(){
+        String sugar = "whilebegin true 2\nset x 1\nblockend\n";
+        String compiled = SugarCompiler.compile(sugar);
+        check(compiled.contains("set __ls_sugar \""), "small program lost the single-carrier shape");
+        check(!compiled.contains("set __ls_sugar_1 \""), "small program was sharded");
+        check(!compiled.contains("set __ls_lib_1 \""), "small program produced a library shard");
+        check(SugarCompiler.restore(compiled).equals(sugar), "small program round-trip changed the source");
+        check(SugarCompiler.isSugarProgram(compiled), "small program was not recognized as a sugar program");
+        check(SugarCompiler.verifyRestore(compiled, SugarCompiler.restore(compiled)), "small program failed verification");
     }
 
     /** Vanilla-compatible normalization: comments dropped, label jumps folded into indices. */

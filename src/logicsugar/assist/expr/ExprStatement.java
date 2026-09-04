@@ -226,16 +226,49 @@ public class ExprStatement extends LStatement{
     }
 
     /** 把表达式转为带颜色标记的富文本，用于 Label 高亮显示。
-     *  复用 ExprCompiler.tokenize 分类着色，用 token.start 保留原始空白：
+     *  复用 ExprCompiler.tokenize 分类着色，用 token.start 保留原始空白；括号按配对、嵌套深度和同层兄弟循环着色：
      *  - 数字：金色
      *  - 函数名：珊瑚色（后跟左括号）
      *  - 变量名：白色
-     *  - 运算符/括号/逗号：浅灰 */
+     *  - 括号：彩虹色，未匹配括号为错误色
+     *  - 运算符/逗号：浅灰 */
     public static String highlight(String expr){
         if(expr == null || expr.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
         try{
             List<ExprCompiler.Token> tokens = ExprCompiler.tokenize(expr);
+            // 与结构引导线一致的六色调色板；每个深度从对应颜色开始，同层兄弟继续循环。
+            String[] bracketPalette = {"#66c2ff", "#ffb45c", "#79d98b", "#d58cff", "#ffe066", "#ff7f91"};
+            String unmatchedBracketColor = "#ff5555";
+            Map<Integer, Integer> bracketColors = new HashMap<>();
+            Map<Integer, Integer> nextSiblingColor = new HashMap<>();
+            Deque<Integer> openBrackets = new ArrayDeque<>();
+
+            // 先配对括号。每个括号组单独循环兄弟颜色，并让子括号从父括号的下一色开始，
+            // 因此配对括号同色、嵌套必换色、同层兄弟也会循环换色。
+            for(int i = 0; i < tokens.size(); i++){
+                ExprCompiler.Token tok = tokens.get(i);
+                if(tok.type == ExprCompiler.TokType.LPAREN){
+                    int parent = openBrackets.isEmpty() ? -1 : openBrackets.peek();
+                    int sibling = nextSiblingColor.getOrDefault(parent, 0);
+                    nextSiblingColor.put(parent, sibling + 1);
+                    int colorIndex = parent < 0
+                        ? Math.floorMod(sibling, bracketPalette.length)
+                        : Math.floorMod(bracketColors.get(parent) + sibling + 1, bracketPalette.length);
+                    bracketColors.put(i, colorIndex);
+                    openBrackets.push(i);
+                }else if(tok.type == ExprCompiler.TokType.RPAREN){
+                    if(openBrackets.isEmpty()){
+                        bracketColors.put(i, -1);
+                    }else{
+                        int openIndex = openBrackets.pop();
+                        bracketColors.put(i, bracketColors.get(openIndex));
+                    }
+                }
+            }
+            // 栈中剩余的左括号没有配对，覆盖其暂定颜色为错误色标记。
+            while(!openBrackets.isEmpty()) bracketColors.put(openBrackets.pop(), -1);
+
             int lastEnd = 0;
             for(int i = 0; i < tokens.size(); i++){
                 ExprCompiler.Token tok = tokens.get(i);
@@ -247,7 +280,11 @@ public class ExprStatement extends LStatement{
                 }
 
                 String color;
-                if(tok.type == ExprCompiler.TokType.NUM){
+                if(tok.type == ExprCompiler.TokType.LPAREN || tok.type == ExprCompiler.TokType.RPAREN){
+                    Integer bracketColor = bracketColors.get(i);
+                    color = bracketColor == null || bracketColor < 0
+                        ? unmatchedBracketColor : bracketPalette[bracketColor];
+                }else if(tok.type == ExprCompiler.TokType.NUM){
                     color = "goldenrod";
                 }else if(tok.type == ExprCompiler.TokType.IDENT){
                     boolean isFunc = (i + 1 < tokens.size()
@@ -269,7 +306,7 @@ public class ExprStatement extends LStatement{
                 sb.append(expr, lastEnd, expr.length());
             }
         }catch(Exception e){
-            // 解析失败，原样返回（转义 [ ]）
+            // 词法失败时原样返回（转义 [ ]），编辑态不能因中间输入抛异常。
             sb.setLength(0);
             sb.append(expr.replace("[", "[[").replace("]", "]]"));
         }

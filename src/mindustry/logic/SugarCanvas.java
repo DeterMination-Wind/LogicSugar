@@ -410,16 +410,13 @@ public class SugarCanvas extends LCanvas{
             // marginLeft() applies Scl.scl() itself, so inset must stay in design units here;
             // pre-scaling it would double-scale (visible at 200% UI scale).
             float unit = Core.graphics.isPortrait() ? 17f : 24f;
-            float minWidth = Core.graphics.isPortrait() ? 285f : 360f;
-            float maxInset = Math.max(0f, getWidth() / Scl.scl(1f) - minWidth);
-            // 缩进深度封顶：嵌套过深时不再继续增加缩进，避免内容区被挤到只剩
-            // minWidth 甚至更窄。语句内部文本/输入框不会自动换行，缩进无上限时
-            // 深嵌套会把行内容挤到无法阅读（横屏 900 宽下 22 层就达到 540 极限）。
-            // 封顶取 3 层：for 等宽语句的行尾按钮（EXPR/OP/折叠）在深缩进时会被
-            // 顶出屏幕，且 for 本身多行+行尾按钮，缩进 4 层（96px）已能把
-            // EXPR/OP 顶出可视区。3 层（横屏 72px）进一步收紧，保证行尾按钮可见。
-            float maxDepth = 3f;
-            float depthInset = Math.min(Math.max(0, structureDepth), maxDepth) * unit;
+            // The condition row uses two 85px fields, a 48px operator button and their padding.
+            // Keep enough room for that row plus the card's own padding, then derive the maximum
+            // inset from the actual card width instead of stopping at an arbitrary depth.
+            float minContentWidth = 260f;
+            float designWidth = getWidth() / Scl.scl(1f);
+            float maxInset = Math.max(0f, designWidth - minContentWidth);
+            float depthInset = Math.max(0, structureDepth) * unit;
             float nextInset = Math.min(depthInset, maxInset);
             if(Math.abs(inset - nextInset) > 0.1f){
                 inset = nextInset;
@@ -569,15 +566,19 @@ public class SugarCanvas extends LCanvas{
                 // must re-run invalidStatements, or stale red marking never refreshes.
                 if(elem.st instanceof IfBeginStatement ifBegin){
                     nextSignature = 31 * nextSignature + (ifBegin.expressionMode ? 1 : 0);
+                    nextSignature = 31 * nextSignature + (ifBegin.shortCircuitMode ? 1 : 0);
                     nextSignature = 31 * nextSignature + ifBegin.conditionExpr.hashCode();
                 }else if(elem.st instanceof ElseIfStatement elseIf){
                     nextSignature = 31 * nextSignature + (elseIf.expressionMode ? 1 : 0);
+                    nextSignature = 31 * nextSignature + (elseIf.shortCircuitMode ? 1 : 0);
                     nextSignature = 31 * nextSignature + elseIf.conditionExpr.hashCode();
                 }else if(elem.st instanceof WhileBeginStatement whileBegin){
                     nextSignature = 31 * nextSignature + (whileBegin.expressionMode ? 1 : 0);
+                    nextSignature = 31 * nextSignature + (whileBegin.shortCircuitMode ? 1 : 0);
                     nextSignature = 31 * nextSignature + whileBegin.conditionExpr.hashCode();
                 }else if(elem.st instanceof ForBeginStatement forBegin){
                     nextSignature = 31 * nextSignature + (forBegin.expressionMode ? 1 : 0);
+                    nextSignature = 31 * nextSignature + (forBegin.shortCircuitMode ? 1 : 0);
                     nextSignature = 31 * nextSignature + forBegin.conditionExpr.hashCode();
                 }
             }

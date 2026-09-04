@@ -81,8 +81,8 @@ public final class SugarStatements{
             return LCategory.control;
         }
 
-        /** {@link JumpStatement#addOp} with the value/compare fields narrowed to 85px, so the
-         *  for statement's single-row inline form fits the wide 900px card.
+        /** {@link JumpStatement#addOp} with the value/compare fields narrowed to 85px, so
+         *  condition rows remain usable after structure indentation is applied.
          *
          *  Must be an instance method on this subclass: {@code field} and {@code showSelect}
          *  are protected LStatement members, and at runtime the mod class loader is a
@@ -111,18 +111,21 @@ public final class SugarStatements{
             table.add(desc).padLeft(10).left().self(c -> hint(c, hintKey));
             return field(table, value, setter).width(85f).padRight(10).left();
         }
+
+        /** Ends the current layout row even when the canvas is using the wide form. */
+        protected void rowAlways(Table table){
+            table.row();
+        }
     }
 
     /**
-     * Shared condition editor for if/elif/for/while: the native three-part selector on the
-     * left, an EXPR/OP mode toggle on the right. The row colour follows the statement card
-     * every frame, so invalid-state red marking can never leave a stale snapshot behind.
+     * Shared condition editor for if/elif/for/while: the native three-part selector and the
+     * EXPR/OP mode toggle are placed on separate rows. The row colour follows the statement
+     * card every frame, so invalid-state red marking can never leave a stale snapshot behind.
      *
-     * @param compactCondition for statements whose inline (no-rows) form would overflow the
-     *                         900px card: uses narrower condition fields (85px like the
-     *                         vanilla {@code fields} helper instead of the 144px ones vanilla
-     *                         {@code addOp} reserves), and on narrow rowed cards (400px) also
-     *                         wraps the mode toggle onto its own row.
+     * @param compactCondition uses narrower condition fields (85px like the vanilla
+     *                         {@code fields} helper instead of the 144px ones vanilla
+     *                         {@code addOp} reserves).
      */
     private static void rebuildConditionEditor(LStatement owner, Table table, boolean expressionMode, String expr,
                                                Cons<String> setExpr, Runnable enterExpr, Runnable leaveExpr,
@@ -142,8 +145,11 @@ public final class SugarStatements{
         });
         if(expressionMode){
             table.add(new ExpressionEditor(expr, text("condition.expr.hint", "a > b && enabled"), setExpr))
-                .growX().fillX().pad(4f);
-            // 显示当前状态：Expr 模式下按钮显示 "Expr"，点击切回三段式
+                .colspan(3).growX().fillX().pad(4f);
+            // Keep the mode button on a separate row so a long expression never pushes it out.
+            table.row();
+            table.add().growX();
+            table.add().growX();
             table.button(b -> {
                 b.add(text("condition.expr", "Expr"));
                 b.clicked(() -> {
@@ -163,27 +169,19 @@ public final class SugarStatements{
                     rebuild.run();
                 }, value, setValue, compare, setCompare);
             }
-            if(compactCondition && LCanvas.useRows()){
-                // 窄屏（换行卡片）模式下三段条件几乎占满整行，切换按钮换行放置
-                table.row();
-                table.button(b -> {
-                    b.add(text("condition.expr.back", "op"));
-                    b.clicked(() -> {
-                        enterExpr.run();
-                        rebuild.run();
-                    });
-                }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(table.color);
-            }else{
-                table.add().growX();
-                // 显示当前状态：三段式模式下按钮显示 "op"，点击切换为表达式
-                table.button(b -> {
-                    b.add(text("condition.expr.back", "op"));
-                    b.clicked(() -> {
-                        enterExpr.run();
-                        rebuild.run();
-                    });
-                }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(table.color);
-            }
+
+            // The selector row is deliberately independent from the mode toggle row. This is
+            // also used on the wide canvas because nested statement cards have less width.
+            table.row();
+            table.add().growX();
+            table.add().growX();
+            table.button(b -> {
+                b.add(text("condition.expr.back", "op"));
+                b.clicked(() -> {
+                    enterExpr.run();
+                    rebuild.run();
+                });
+            }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(table.color);
         }
     }
 
@@ -214,6 +212,13 @@ public final class SugarStatements{
                 SugarCanvas.refreshCurrent();
             }).size(34f, 40f).pad(4f).tooltip(text("fold", "Fold block")).get();
             fold.update(() -> fold.getStyle().imageUp = collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen);
+        }
+
+        /** Places the fold action on its own row so it cannot be pushed outside the card. */
+        protected void foldControlRow(Table table){
+            rowAlways(table);
+            table.add().growX();
+            foldControl(table);
         }
 
         @Override
@@ -285,20 +290,23 @@ public final class SugarStatements{
         public ConditionOp op = ConditionOp.lessThanEq;
         /** When true, conditionExpr replaces the variable/operator/compare triplet. */
         public boolean expressionMode;
+        /** When true, the expression is lowered as short-circuit control flow instead of op land/or. */
+        public boolean shortCircuitMode;
         public String conditionExpr = "true";
 
         @Override
         public void build(Table table){
             fieldsHint(table, text("for.variable", "variable"), "for.variable", variable, value -> variable = value);
-            row(table);
+            rowAlways(table);
             fieldsHint(table, text("for.initial", "initial"), "for.initial", initial, value -> initial = value);
-            row(table);
+            rowAlways(table);
             fieldsHint(table, text("for.step", "step"), "for.step", step, value -> step = value);
-            row(table);
+            rowAlways(table);
             // 终止条件：描述 + 三段式（value op compare）或 Expr
             table.add(text("for.condition", "until")).padLeft(10).left().self(c -> hint(c, "for.condition"));
-            table.table(this::rebuildCondition).growX().fillX();
-            foldControl(table);
+            rowAlways(table);
+            table.table(this::rebuildCondition).colspan(2).growX().fillX();
+            foldControlRow(table);
         }
 
         private void rebuildCondition(Table table){
@@ -320,7 +328,8 @@ public final class SugarStatements{
         public void write(StringBuilder out){
             if(expressionMode){
                 out.append(collapsed ? "forbeginc " : "forbegin ").append(variable).append(' ')
-                    .append(optional(initial)).append(' ').append(optional(step)).append(" expr \"")
+                    .append(optional(initial)).append(' ').append(optional(step)).append(' ')
+                    .append(shortCircuitMode ? "exprsc \"" : "expr \"")
                     .append(conditionExpr).append("\" ").append(destIndex);
             }else{
                 out.append(collapsed ? "forbeginc " : "forbegin ").append(variable).append(' ').append(optional(initial)).append(' ').append(optional(step)).append(' ')
@@ -333,13 +342,16 @@ public final class SugarStatements{
         public String value = "true", compare = "false";
         public ConditionOp op = ConditionOp.notEqual;
         public boolean expressionMode;
+        /** When true, the expression is lowered as short-circuit control flow instead of op land/or. */
+        public boolean shortCircuitMode;
         public String conditionExpr = "true";
 
         @Override
         public void build(Table table){
             table.add(text("condition", "condition")).self(c -> hint(c, "while.condition"));
-            table.table(this::rebuildCondition).growX().fillX();
-            foldControl(table);
+            rowAlways(table);
+            table.table(this::rebuildCondition).colspan(2).growX().fillX();
+            foldControlRow(table);
         }
 
         private void rebuildCondition(Table table){
@@ -350,7 +362,7 @@ public final class SugarStatements{
                 op, result -> op = result,
                 value, result -> value = result,
                 compare, result -> compare = result,
-                false,
+                true,
                 () -> rebuildCondition(table));
         }
 
@@ -358,7 +370,8 @@ public final class SugarStatements{
         @Override public String typeName(){ return "WhileBegin"; }
         @Override public void write(StringBuilder out){
             if(expressionMode){
-                out.append(collapsed ? "whilebeginc " : "whilebegin ").append("expr \"")
+                out.append(collapsed ? "whilebeginc " : "whilebegin ")
+                    .append(shortCircuitMode ? "exprsc \"" : "expr \"")
                     .append(conditionExpr).append("\" ").append(destIndex);
             }else{
                 out.append(collapsed ? "whilebeginc " : "whilebegin ").append(value).append(' ').append(op.name()).append(' ').append(compare).append(' ').append(destIndex);
@@ -372,8 +385,9 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("switch.value", "switch")).self(c -> hint(c, "switch.value"));
-            field(table, value, result -> value = result);
-            foldControl(table);
+            rowAlways(table);
+            field(table, value, result -> value = result).width(85f);
+            foldControlRow(table);
         }
 
         @Override public String name(){ return text("switch.begin", "Switch Start"); }
@@ -395,15 +409,18 @@ public final class SugarStatements{
     public static class IfBeginStatement extends BeginStatement{
         public String value = "true", compare = "false";
         public ConditionOp op = ConditionOp.notEqual;
-        /** When true, conditionExpr replaces the native value/operator/compare triplet. */
+        /** When true, conditionExpr replaces the variable/operator/compare triplet. */
         public boolean expressionMode;
+        /** When true, the expression is lowered as short-circuit control flow instead of op land/or. */
+        public boolean shortCircuitMode;
         public String conditionExpr = "true";
 
         @Override
         public void build(Table table){
             table.add(text("if.condition", "if")).self(c -> hint(c, "if.condition"));
-            table.table(this::rebuildCondition).growX().fillX();
-            foldControl(table);
+            rowAlways(table);
+            table.table(this::rebuildCondition).colspan(2).growX().fillX();
+            foldControlRow(table);
         }
 
         private void rebuildCondition(Table table){
@@ -414,7 +431,7 @@ public final class SugarStatements{
                 op, result -> op = result,
                 value, result -> value = result,
                 compare, result -> compare = result,
-                false,
+                true,
                 () -> rebuildCondition(table));
         }
 
@@ -422,7 +439,8 @@ public final class SugarStatements{
         @Override public String typeName(){ return "IfBegin"; }
         @Override public void write(StringBuilder out){
             if(expressionMode){
-                out.append(collapsed ? "ifbeginc expr \"" : "ifbegin expr \"")
+                out.append(collapsed ? "ifbeginc " : "ifbegin ")
+                    .append(shortCircuitMode ? "exprsc \"" : "expr \"")
                     .append(conditionExpr).append("\" ").append(destIndex);
             }else{
                 out.append(collapsed ? "ifbeginc " : "ifbegin ").append(value).append(' ')
@@ -435,12 +453,15 @@ public final class SugarStatements{
         public String value = "true", compare = "false";
         public ConditionOp op = ConditionOp.notEqual;
         public boolean expressionMode;
+        /** When true, the expression is lowered as short-circuit control flow instead of op land/or. */
+        public boolean shortCircuitMode;
         public String conditionExpr = "true";
 
         @Override
         public void build(Table table){
             table.add(text("elif", "elif")).self(c -> hint(c, "elif"));
-            table.table(this::rebuildCondition).growX().fillX();
+            rowAlways(table);
+            table.table(this::rebuildCondition).colspan(2).growX().fillX();
         }
 
         private void rebuildCondition(Table table){
@@ -451,7 +472,7 @@ public final class SugarStatements{
                 op, result -> op = result,
                 value, result -> value = result,
                 compare, result -> compare = result,
-                false,
+                true,
                 () -> rebuildCondition(table));
         }
 
@@ -459,7 +480,8 @@ public final class SugarStatements{
         @Override public String typeName(){ return "ElseIf"; }
         @Override public void write(StringBuilder out){
             if(expressionMode){
-                out.append("elif expr \"").append(conditionExpr).append("\"");
+                out.append("elif ").append(shortCircuitMode ? "exprsc \"" : "expr \"")
+                    .append(conditionExpr).append("\"");
             }else{
                 out.append("elif ").append(value).append(' ').append(op.name()).append(' ').append(compare);
             }
@@ -480,12 +502,13 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("func.def", "func")).self(c -> hint(c, "func.def"));
+            rowAlways(table);
             field(table, name, value -> name = value).width(90f);
             table.add("(");
             TextField paramsField = field(table, params, value -> params = value).width(130f).get();
             paramsField.setMessageText(text("func.params.hint", "a,b"));
             table.add(")");
-            foldControl(table);
+            foldControlRow(table);
         }
 
         @Override public String name(){ return text("func.def", "Func Def"); }
@@ -507,14 +530,17 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("func.call", "call")).self(c -> hint(c, "func.call"));
+            rowAlways(table);
             field(table, name, value -> name = value).width(90f);
+            rowAlways(table);
             table.add("(");
             // 实参：完整表达式，高亮显示，点击进入编辑；
             // 空值时提示被调函数的参数列表（动态跟随函数名/参数变化），找不到或函数无参数时退回通用提示
             table.add(new ExpressionEditor(args, this::argsHint, value -> args = value))
                 .growX().padLeft(4f).padRight(2f);
             table.add(")");
-            table.add("=");
+            rowAlways(table);
+            table.add("=").padLeft(10f);
             field(table, result, value -> result = value).width(70f).padLeft(4f);
         }
 
@@ -600,8 +626,9 @@ public final class SugarStatements{
         }
         result.initial = optionalValue(tokens[2]);
         result.step = optionalValue(tokens[3]);
-if("expr".equals(tokens[4])){
+if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length() >= 2 && tokens[5].charAt(0) == '"'){
             result.expressionMode = true;
+            result.shortCircuitMode = "exprsc".equals(tokens[4]);
             result.conditionExpr = stripQuotes(tokens[5]);
             result.destIndex = parseDestIndex(tokens[6]);
         }else{
@@ -626,8 +653,9 @@ if("expr".equals(tokens[4])){
         WhileBeginStatement result = new WhileBeginStatement();
         // "whilebegin expr "<cond>" <destIndex>" — the quoted expression distinguishes it
         // from a legacy variable literally named "expr".
-        if("expr".equals(tokens[1]) && tokens[2].length() >= 2 && tokens[2].charAt(0) == '"'){
+        if(("expr".equals(tokens[1]) || "exprsc".equals(tokens[1])) && tokens[2].length() >= 2 && tokens[2].charAt(0) == '"'){
             result.expressionMode = true;
+            result.shortCircuitMode = "exprsc".equals(tokens[1]);
             result.conditionExpr = stripQuotes(tokens[2]);
             result.destIndex = parseDestIndex(tokens[3]);
         }else{
@@ -676,8 +704,9 @@ if("expr".equals(tokens[4])){
         // "ifbegin expr \"<cond>\" <destIndex>" — require the quoted expression so an old
         // save whose variable is literally named "expr" is not silently re-parsed as an
         // expression condition (e.g. "ifbegin expr lessThan 5 4").
-        if("expr".equals(tokens[1]) && tokens.length > 2 && tokens[2].length() >= 2 && tokens[2].charAt(0) == '"'){
+        if(("expr".equals(tokens[1]) || "exprsc".equals(tokens[1])) && tokens.length > 2 && tokens[2].length() >= 2 && tokens[2].charAt(0) == '"'){
             result.expressionMode = true;
+            result.shortCircuitMode = "exprsc".equals(tokens[1]);
             result.conditionExpr = stripQuotes(tokens[2]);
             result.destIndex = parseDestIndex(tokens[3]);
         }else{
@@ -696,8 +725,9 @@ if("expr".equals(tokens[4])){
         ElseIfStatement result = new ElseIfStatement();
         // Same quoted-expression guard as parseIfBegin: a variable named "expr" must not
         // be silently re-parsed as an expression condition.
-        if("expr".equals(tokens[1]) && tokens.length > 2 && tokens[2].length() >= 2 && tokens[2].charAt(0) == '"'){
+        if(("expr".equals(tokens[1]) || "exprsc".equals(tokens[1])) && tokens.length > 2 && tokens[2].length() >= 2 && tokens[2].charAt(0) == '"'){
             result.expressionMode = true;
+            result.shortCircuitMode = "exprsc".equals(tokens[1]);
             result.conditionExpr = stripQuotes(tokens[2]);
         }else{
             ConditionOp op = parseConditionOp(tokens[2]);

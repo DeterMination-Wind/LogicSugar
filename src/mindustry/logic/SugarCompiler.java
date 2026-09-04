@@ -36,11 +36,28 @@ public final class SugarCompiler{
 
     /** Persistence carrier prefixes: real "set" statements that survive the vanilla
      *  parse/save round trip (comment markers are dropped by it). The sugar carrier holds
-     *  the sugar source; the library carrier holds the used subset of the function library. */
+     *  the sugar source; the library carrier holds the used subset of the function library.
+     *
+     *  <p>Carriers come in two shapes. The single shape {@code set __ls_sugar "<encoded>"}
+     *  is byte-for-byte what every LogicSugar version has emitted and is used whenever the
+     *  encoded payload fits {@link #carrierMaxChars}, so small saves never change. A larger
+     *  payload is split into the sharded shape {@code set __ls_sugar_1 "<chunk>"},
+     *  {@code set __ls_sugar_2 "<chunk>"}, ... (the same scheme for {@code set __ls_lib_N
+     *  "..."}): consecutive shard numbers starting at 1, one "set" line per shard, every
+     *  chunk within the limit. Readers (restore, libraryFromCode, isSugarProgram) and the
+     *  decompiler strips accept exactly these shapes; a gap in the numbering or any other
+     *  suffix means the line is user data, not a shard.</p> */
     private static final String carrierSugarPrefix = "set __ls_sugar \"";
     private static final String carrierLibPrefix = "set __ls_lib \"";
+    /** Head of a sharded carrier line; the shard number and the quoted payload follow
+     *  ({@code set __ls_sugar_1 "..."}). Only purely numeric suffixes form a carrier, so a
+     *  variable called {@code __ls_sugar_1x} is never one. */
+    private static final String carrierSugarShardPrefix = "set __ls_sugar_";
+    private static final String carrierLibShardPrefix = "set __ls_lib_";
     /** LParser rejects string tokens longer than 65535 UTF bytes; staying well below that
-     *  keeps a stored program from ever making a vanilla client fail to open the editor. */
+     *  keeps a stored program from ever making a vanilla client fail to open the editor.
+     *  An encoded payload larger than this is split into shards of at most this many chars
+     *  instead of being dropped, which keeps every shard line under the LParser cap too. */
     private static final int carrierMaxChars = 60000;
 
     /** Function expansion mode. normal = shared @counter subroutine; inline = per-call copy. */
@@ -69,12 +86,17 @@ public final class SugarCompiler{
     private SugarCompiler(){}
 
     /** Extracts the sugar source from stored code. The persistence carrier is authoritative;
-     *  without one (v2.0.0 legacy programs) the comment marker block is used. */
+     *  without one (v2.0.0 legacy programs) the comment marker block is used. Scanning from
+     *  the end, a sharded carrier is assembled first (continuous {@code __ls_sugar_N}
+     *  numbering from 1 — any gap means "not a shard set"), then the single
+     *  {@code set __ls_sugar "..."} shape, then the marker block. */
     public static String restore(String code){
         String normalized = code.replace("\r\n", "\n");
         String[] lines = normalized.split("\n", -1);
         // Scan from the end: genuine carriers are always the last sugar-carrying lines, so a
         // user statement that happens to look like a carrier loses the race only in its favor.
+        String sharded = joinShardedCarrier(lines, carrierSugarShardPrefix);
+        if(sharded != null) return sharded;
         for(int i = lines.length - 1; i >= 0; i--){
             String line = lines[i];
             if(line.startsWith(carrierSugarPrefix) && line.endsWith("\"")){
@@ -102,10 +124,14 @@ public final class SugarCompiler{
     }
 
     /** Returns the library source embedded in stored code (the used subset the program was
-     *  compiled with), or null when the code carries no embedded library. */
+     *  compiled with), or null when the code carries no embedded library. Sharded
+     *  {@code __ls_lib_N} carriers are assembled first (continuous numbering from 1), then
+     *  the single {@code set __ls_lib "..."} shape; both scan from the end. */
     public static String libraryFromCode(String code){
         String normalized = code.replace("\r\n", "\n");
         String[] lines = normalized.split("\n", -1);
+        String sharded = joinShardedCarrier(lines, carrierLibShardPrefix);
+        if(sharded != null) return sharded;
         for(int i = lines.length - 1; i >= 0; i--){
             String line = lines[i];
             if(line.startsWith(carrierLibPrefix) && line.endsWith("\"")){
@@ -140,7 +166,7 @@ public final class SugarCompiler{
      * matching mode passes. A mismatch means the stored code was edited outside Logic Sugar.
      */
     public static boolean verifyRestore(String code, String restored){
-        if(!containsCarrier(code, carrierSugarPrefix)) return true;
+        if(!hasSugarCarrier(code)) return true;
         String libText = libraryFromCode(code);
         SugarFunctions.LibraryIndex embedded = null;
         String embeddedSource = null;
@@ -238,20 +264,45 @@ public final class SugarCompiler{
         // survive the vanilla parse/save round trip that drops the comment markers, and are
         // placed after them so lowered-code consumers (and the test helper) see the lowered
         // program untouched. They execute harmlessly every tick and count toward the limit.
-        StringBuilder carriers = new StringBuilder();
+        // A payload whose encoded form fits carrierMaxChars keeps the exact single-carrier
+        // line every previous version emitted; only a larger one is sharded (see
+        // appendCarrier), so small saves stay byte-identical.
+        String sugarPayload = sugar.replace("\r\n", "\n");
+        String libPayload = null;
         Set<String> usedLibrary = new HashSet<>();
         for(SugarFunctions.Function function : functions.hoistOrder()){
             if(function.library) usedLibrary.add(function.name);
         }
         if(libraryText != null && !libraryText.trim().isEmpty() && !usedLibrary.isEmpty()){
             String extracted = SugarFunctions.extractLibrarySource(libraryText, usedLibrary);
-            if(!extracted.isEmpty()) appendCarrier(carriers, carrierLibPrefix, extracted);
+            if(!extracted.isEmpty()) libPayload = extracted;
         }
-        appendCarrier(carriers, carrierSugarPrefix, sugar.replace("\r\n", "\n"));
+        StringBuilder carriers = new StringBuilder();
+        boolean anySharded = appendCarriers(carriers, libPayload, sugarPayload, true);
 
         // LAssembler.read silently truncates at LExecutor.maxInstructions lines, so the count
         // must be computed from the emitted text itself (one instruction per non-label line).
-        int instructionCount = countInstructions(new StringBuilder(lowered)) + countInstructions(carriers);
+        // Shard lines are ordinary statements and count one each; nothing here assumes the
+        // old single-line carrier shape.
+        int loweredCount = countInstructions(new StringBuilder(lowered));
+        int instructionCount = loweredCount + countInstructions(carriers);
+        if(instructionCount > LExecutor.maxInstructions && anySharded){
+            // Before sharding, an oversized payload was dropped with a warning instead of
+            // blocking the save. Keep that degradation when the extra shard lines would push
+            // the program past the executor limit: drop the sharded payloads (the lowered
+            // stream alone may still fit) rather than failing a save that used to succeed.
+            // A lowered stream that exceeds the limit on its own still throws below, exactly
+            // as before; sharding can only add lines, never remove them.
+            StringBuilder degraded = new StringBuilder();
+            appendCarriers(degraded, libPayload, sugarPayload, false);
+            int degradedCount = loweredCount + countInstructions(degraded);
+            if(degradedCount <= LExecutor.maxInstructions){
+                Log.warn("LogicSugar: carrier shards would exceed the instruction limit (@ statements, limit @); the source will not survive this save",
+                    instructionCount, LExecutor.maxInstructions);
+                carriers = degraded;
+                instructionCount = degradedCount;
+            }
+        }
         if(instructionCount > LExecutor.maxInstructions){
             String hint = mode == FuncMode.inline ? " Switch to normal mode to share function bodies." : "";
             throw new IllegalArgumentException("Compiled program has " + instructionCount + " instructions; maximum is " + LExecutor.maxInstructions + "." + hint);
@@ -332,30 +383,127 @@ public final class SugarCompiler{
         }
     }
 
-    private static void appendCarrier(StringBuilder out, String prefix, String text){
+    /** Appends the persistence carriers for the library and sugar payloads; returns whether
+     *  any payload exceeded the single-carrier limit (and was sharded, or dropped when
+     *  {@code allowSharding} is off). */
+    private static boolean appendCarriers(StringBuilder out, String libPayload, String sugarPayload, boolean allowSharding){
+        boolean oversize = false;
+        if(libPayload != null) oversize = appendCarrier(out, carrierLibPrefix, carrierLibShardPrefix, libPayload, allowSharding);
+        if(appendCarrier(out, carrierSugarPrefix, carrierSugarShardPrefix, sugarPayload, allowSharding)) oversize = true;
+        return oversize;
+    }
+
+    /** Appends one carrier as real "set" statements. A payload whose encoded form fits
+     *  {@link #carrierMaxChars} keeps the exact single-line shape every LogicSugar version
+     *  has emitted ({@code set <prefix>"<encoded>"}). A larger payload is split into
+     *  consecutive {@code set <shardPrefix>N "<chunk>"} shards numbered from 1, each chunk
+     *  within the limit, so every shard line stays under the LParser string cap; readers
+     *  reassemble them by the continuous numbering. With {@code allowSharding} off, an
+     *  oversized payload is skipped with a warning instead — the pre-sharding degradation,
+     *  still used when the shard lines themselves would overflow the instruction limit.
+     *  Returns whether the payload exceeded the single-carrier limit. */
+    private static boolean appendCarrier(StringBuilder out, String prefix, String shardPrefix, String text, boolean allowSharding){
         String encoded = encode(text);
         if(encoded.length() <= carrierMaxChars){
             out.append(prefix).append(encoded).append("\"\n");
-        }else{
+            return false;
+        }
+        if(!allowSharding){
             // The carrier must not be dropped silently: without it the saved program still
             // works, but the sugar source (and the library) can no longer be restored.
             Log.warn("LogicSugar: sugar text too large for the carrier (@ chars, limit @); the source will not survive this save",
                 encoded.length(), carrierMaxChars);
+            return true;
+        }
+        int shards = (encoded.length() + carrierMaxChars - 1) / carrierMaxChars;
+        for(int i = 0; i < shards; i++){
+            out.append(shardPrefix).append(i + 1).append(" \"")
+                .append(encoded, i * carrierMaxChars, Math.min((i + 1) * carrierMaxChars, encoded.length()))
+                .append("\"\n");
+        }
+        return true;
+    }
+
+    /** Joins a sharded carrier ({@code set <shardPrefix>N "<payload>"} lines). The last
+     *  shard-shaped line anchors the set; walking back over the contiguous run must produce
+     *  consecutive numbers down to 1 — a gap, a repeat or a damaged shard means this was
+     *  not a compiler-made shard set, and null is returned so the caller falls back to the
+     *  single-carrier shape. The encoded payloads are concatenated in number order and
+     *  decoded once: chunk boundaries always land on 4-char base64 groups, but a UTF-8
+     *  sequence could still straddle them, so the bytes must be joined before decoding. */
+    private static String joinShardedCarrier(String[] lines, String shardPrefix){
+        int anchor = -1, top = -1;
+        for(int i = lines.length - 1; i >= 0; i--){
+            String line = lines[i];
+            if(!line.endsWith("\"")) continue;
+            top = carrierShardNumber(line, shardPrefix);
+            if(top > 0){
+                anchor = i;
+                break;
+            }
+        }
+        if(anchor < 0) return null;
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        int number = top;
+        for(int i = anchor; i >= 0 && number >= 1; i--){
+            String line = lines[i];
+            if(!line.endsWith("\"") || carrierShardNumber(line, shardPrefix) != number) return null;
+            parts.add(line.substring(shardPayloadStart(line, shardPrefix), line.length() - 1));
+            number--;
+        }
+        if(number != 0) return null; // numbering did not run down to 1: gap, not a shard set
+        StringBuilder encoded = new StringBuilder();
+        for(int i = parts.size() - 1; i >= 0; i--) encoded.append(parts.get(i));
+        try{
+            return decode(encoded.toString());
+        }catch(Exception ignored){
+            return null; // damaged shards: fall back to the single-carrier shape
         }
     }
 
-    private static boolean containsCarrier(String code, String prefix){
-        String normalized = code.replace("\r\n", "\n");
-        String[] lines = normalized.split("\n", -1);
+    /** The shard number of a {@code set <shardPrefix>N "<payload>"} line, or -1 when the
+     *  line does not have the exact shape: the base prefix, a purely numeric suffix, then a
+     *  space and the opening quote of a non-empty payload. */
+    private static int carrierShardNumber(String line, String shardPrefix){
+        if(!line.startsWith(shardPrefix)) return -1;
+        int i = shardPrefix.length();
+        int number = 0, digits = 0;
+        while(i < line.length() && line.charAt(i) >= '0' && line.charAt(i) <= '9'){
+            number = number * 10 + (line.charAt(i) - '0');
+            digits++;
+            i++;
+        }
+        // the digit-run cap doubles as an overflow guard; shards start at 1
+        if(digits == 0 || digits > 6 || number <= 0) return -1;
+        if(i + 2 >= line.length() || line.charAt(i) != ' ' || line.charAt(i + 1) != '"') return -1;
+        return number;
+    }
+
+    /** Payload start index (just after the opening quote) of a line already validated by
+     *  {@link #carrierShardNumber}. */
+    private static int shardPayloadStart(String line, String shardPrefix){
+        int i = shardPrefix.length();
+        while(i < line.length() && line.charAt(i) >= '0' && line.charAt(i) <= '9') i++;
+        return i + 2; // skip the space and the opening quote
+    }
+
+    /** Whether stored code carries a sugar persistence carrier in either shape (single or
+     *  sharded). Line-level recognition like the old single-shape scan: the first
+     *  carrier-shaped line from the end decides, mirroring what restore() attempts first. */
+    private static boolean hasSugarCarrier(String code){
+        String[] lines = code.replace("\r\n", "\n").split("\n", -1);
         for(int i = lines.length - 1; i >= 0; i--){
-            if(lines[i].startsWith(prefix) && lines[i].endsWith("\"")) return true;
+            String line = lines[i];
+            if(!line.endsWith("\"")) continue;
+            if(line.startsWith(carrierSugarPrefix) || carrierShardNumber(line, carrierSugarShardPrefix) > 0) return true;
         }
         return false;
     }
 
-    /** Whether stored code was compiled by Logic Sugar (carries the persistence carrier). */
+    /** Whether stored code was compiled by Logic Sugar (carries the persistence carrier,
+     *  single or sharded). */
     public static boolean isSugarProgram(String code){
-        return code != null && containsCarrier(code, carrierSugarPrefix);
+        return code != null && hasSugarCarrier(code);
     }
 
     /** UTF-8 base64 via arc's coder (minSdk 21 forbids java.util.Base64). */

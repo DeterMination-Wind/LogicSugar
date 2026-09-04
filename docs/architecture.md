@@ -27,7 +27,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - 结构语句（`ifbegin` / `forbegin` / … / `blockend`）被 lowering 成 `jump` / `op` / 标签注释组合；`SugarStatement.build()` 返回 `NoopI`，结构语句本身不产生指令。
 - 函数由 `SugarFunctions.analyze` + `lower` 处理：本地函数（处理器内定义）与库函数走同一条管线。`FuncMode.normal` 生成共享 `@counter` 子程序（函数体 hoist 到程序尾部）；`FuncMode.inline` 按调用点展开副本，编译器临时名带 `__ls_i_<callId>_` 前缀。
 - `SwitchStrategy` 决定 `switch` 的下降形态：`auto` 在整数 case、值域跨度 ≤255 时按实际可执行指令成本在比较链与 `@counter` 跳转表之间二选一；`chainOnly` 恒用比较链（与 2.3.1 之前输出逐字节一致）。lowering 之后还有无条件跳转链穿线（`threadAlwaysJumpTargets`，带环检测）。
-- **持久化载体（carrier）**：Sugar 源码以 `set __ls_sugar "<base64>"` 载体行存回程序末尾，程序用到的库函数子集以 `set __ls_lib "<base64>"` 一并嵌入（跨机器可重编译）。载体是真实 `set` 语句，能挺过原版 parse/save 往返；单条载体不超过 60000 字符（LParser 字符串 token 上限 65535 UTF 字节以下）。v2.0.0 旧程序回退到注释标记块 `# @logic-sugar-v1 begin` / `# @logic-sugar-line ` / `# @logic-sugar-v1 end`。
+- **持久化载体（carrier）**：Sugar 源码以 `set __ls_sugar "<base64>"` 载体行存回程序末尾，程序用到的库函数子集以 `set __ls_lib "<base64>"` 一并嵌入（跨机器可重编译）。载体是真实 `set` 语句，能挺过原版 parse/save 往返；单条载体不超过 60000 字符（LParser 字符串 token 上限 65535 UTF 字节以下）。**载体分片**：编码后超限的载荷自动切分为连续编号的多条语句 `set __ls_sugar_1/2/…`（`__ls_lib_N` 同理），每片 ≤60000 字符，restore 侧按"从末尾锚定、向前连续递减到 1"重拼后一次 decode（避免劈开 UTF-8 序列）；≤ 阈值时保持单条形状字节不变。分片行计入指令预算，极端超限时重现旧行为（丢弃超限载体并告警）。v2.0.0 旧程序回退到注释标记块 `# @logic-sugar-v1 begin` / `# @logic-sugar-line ` / `# @logic-sugar-v1 end`。
 - 编译器保留前缀 `__ls_` 是用户不可用的命名空间；表达式临时变量用 `_0, _1, …` 栈式编号。
 
 ## 表达式子系统
@@ -52,10 +52,15 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 1. 先按原版规则解析输入；带有效载体（`SugarCompiler.isSugarProgram` + `verifyRestore`）的程序优先走载体无损路径。
 2. 载体过期（程序被外部编辑过）时剥掉载体变量，在裸指令流上重试推断。
-3. 结构恢复：`recoverFunctions()` + `parseMain()` 生成候选 Sugar 源。
-4. **安全门（必须保留）**：候选先重新编译，再与输入的规范化指令流比对（`SugarCompiler.matchesStoredStream`），比对通过才允许返回恢复结果。任何识别不了的内容回退为原样保留的 vanilla 语句（`matchedMode = "flat"`）。
+3. **CFG 分诊**：用 `MlogCFG`（零依赖控制流图 IR）扫描可达指令，出现"已知安全形状"之外的动态 `@counter` 写入（跳表派发 `op add @counter @counter x` 与 `set @counter __ls_*` 蹦床除外）即认定程序不可静态恢复，直接保留 vanilla 并注明位置——这类程序本来就会验证失败，分诊只是更快、更明确。
+4. 结构恢复：`recoverFunctions()` + `parseMain()` 生成候选 Sugar 源。函数区先过静态验证（区间外 jump 不得跳入、区间内 jump 不得跳出；嵌套调用前导跳向其他函数入口的 always 跳转豁免）。同一位置可能有多个候选帧（`tryFrames`），按 `RecoveryPredicate` 的 loss 排序取最优；贪心选择验证失败时，`backtrack()` 会在记录的决策点上逐个提升次优候选重试（有次数预算），每次仍走同一道门。
+5. **安全门（必须保留）**：候选先重新编译，再与输入的规范化指令流比对，比对通过才允许返回恢复结果。验证矩阵覆盖 FuncMode × SwitchStrategy 全部组合（`verify`）——程序可能在另一台机器、另一个 switch 策略设置下保存，不能因本机设置不同而误判。任何识别不了的内容回退为原样保留的 vanilla 语句（`matchedMode = "flat"`）。
 
 失败方向永远是"多显示原版代码"，绝不改写未知程序。新增恢复模式（跳转表、短路谓词等）一律放在这道门之后。
+
+短路守卫恢复（`tryShortCircuitFrames`）是这套机制的核心用户：`ShortCircuitCompiler` 的 lowering 是若干 `[条件 jump, fallback jump]` 原子对的连续拼接（内部续接标签都落在原子对起点），守卫解析器从对的目标关系重建布尔树（`parseGuardTree`，带换目标环检测的备忘递归），为同一片守卫区域同时给出 `if` / `while` / `for` 候选。由此单原子守卫、顶层 `!`、任意嵌套 `&&`/`||` 树以及 `whilebegin`/`forbegin` 的 `exprsc` 条件都能恢复，不再限于固定四指令布局。体内跳回 while 守卫头的 always 跳转就是 `continue` 的 lowering 形状，由循环上下文恢复为 `continue` 语句。
+
+辅助组件：`MlogCFG`（`cfgTest`）是反编译器共享的 CFG/数据流只读视图；`MlogLint`（`lintTest`，Bang logic_lint 风格）是 advisory 的编译后 MLog 静态检查器（未知 op、参数个数、对字面量赋值、自/越界跳转等，规则事实全部转录自 Mindustry-master 源码），当前独立于编译管线，供工具与测试使用。
 
 ## 跨类加载器访问约束（继承自 AGENTS.md）
 
@@ -75,14 +80,18 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 
+### 结构语句布局
+
+`SugarStatements` 中的 `For`、`If`、`While` 和 `ElseIf` 将条件标签、条件编辑器和 `OP/Expr` 切换分别放在安全行；`For` 的循环变量、初值、步长和 `until` 也各自换行，折叠按钮单独放在末行。这样嵌套卡片只增加垂直高度，不依赖横向滚动，也不会让行尾控件被结构缩进推出卡片。条件字段使用紧凑宽度，`SugarCanvas.SugarStatementElem` 则按卡片实际宽度计算可用缩进，避免使用固定嵌套层数上限。布局行为需在不同方向、UI scale、语言和 MindustryX LogicSupport 侧栏状态下手测。
+
 ## 目录速查
 
 ```text
 src/logicsugar/           模组侧：入口、设置、函数库、FunctionLibraryDialog
-src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter
+src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter、MlogLint
 src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ShortCircuitCompiler
 src/mindustry/logic/      与游戏同包名的扩展层：SugarCompiler、SugarDecompiler、SugarStatements、
-                          SugarCanvas、SugarLogicDialog、SugarFunctions、RecoveryPredicate
+                          SugarCanvas、SugarLogicDialog、SugarFunctions、RecoveryPredicate、MlogCFG
 test/                     与 src 同构的 main() 式自测（无 JUnit）
 assets/bundles/           bundle.properties / bundle_zh_CN / bundle_zh_TW（用户可见文案）
 ```

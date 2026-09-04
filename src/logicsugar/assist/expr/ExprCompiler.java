@@ -792,6 +792,9 @@ public class ExprCompiler{
                     right = "(" + right + ")";
             }
 
+            if(FUNC_BINARY_OPS.contains(b.op)){
+                return b.op + "(" + left + ", " + right + ")";
+            }
             return left + sym + right;
         }
 

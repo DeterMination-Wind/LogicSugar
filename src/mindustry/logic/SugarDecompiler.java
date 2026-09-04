@@ -1,6 +1,7 @@
 package mindustry.logic;
 
 import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ShortCircuitCompiler;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -106,10 +107,24 @@ public final class SugarDecompiler{
         }
 
         Program program = new Program(canonical);
+
+        // Dynamic @counter triage: a reachable @counter write outside the compiler's
+        // known-safe shapes is computed control flow (a computed jump). Structure recovery
+        // cannot represent it, so skip straight to the flat result such programs would
+        // degrade to anyway - this only skips doomed recovery work, it never changes the
+        // output of a program that would have recovered successfully.
+        int dynamicCounterWrite = firstDynamicCounterWrite(program);
+        if(dynamicCounterWrite >= 0){
+            notes.add("dynamic @counter write at instruction " + dynamicCounterWrite
+                + "; kept as vanilla mlog");
+            return new Result(canonical, true, "flat", 0, program.statements.size(), notes);
+        }
+
         Candidate candidate = new Candidate(program, notes);
+        List<Integer> decisions = new ArrayList<>();
         try{
             candidate.recoverFunctions();
-            candidate.parseMain();
+            candidate.parseMain(null, decisions);
         }catch(Throwable exception){
             notes.add("structure recovery stopped: " + message(exception));
             candidate.resetFlat();
@@ -118,11 +133,100 @@ public final class SugarDecompiler{
         String structured = candidate.emit();
         Verification verification = verify(structured, input, privileged);
         if(!verification.matched){
+            Result backtracked = backtrack(program, input, privileged, decisions, notes);
+            if(backtracked != null) return backtracked;
             notes.add("unstructured instructions were kept as vanilla mlog");
             return new Result(canonical, true, "flat", 0, program.statements.size(), notes);
         }
         return new Result(structured, true, verification.mode, candidate.structured,
             candidate.passthrough, notes);
+    }
+
+    /** Maximum promoted-alternative attempts after a failed greedy verification. */
+    private static final int MAX_VETO_RETRIES = 8;
+    /** Deepest alternative rank tried per decision point. */
+    private static final int MAX_VETO_RANK = 3;
+
+    /**
+     * Bounded backtracking after the greedy candidate failed the gate: the loss ranking can
+     * promote a shallow reading whose body then fails to recompile, even though a deeper
+     * candidate at the same position verifies.  Each attempt promotes one alternative at a
+     * single recorded decision point (greedy everywhere else) and must pass the same
+     * recompilation gate, so a promoted result can never be less faithful than the flat
+     * fallback it replaces.
+     */
+    private static Result backtrack(Program program, String input, boolean privileged,
+                                    List<Integer> decisions, List<String> notes){
+        int budget = MAX_VETO_RETRIES;
+        for(int rank = 1; rank <= MAX_VETO_RANK && budget > 0; rank++){
+            for(int decision : decisions){
+                if(budget-- <= 0) return null;
+                Candidate retry = new Candidate(program, new ArrayList<>());
+                try{
+                    retry.recoverFunctions();
+                    retry.parseMain(new RecoveryVeto(decision, rank), null);
+                    String structured = retry.emit();
+                    Verification verification = verify(structured, input, privileged);
+                    if(verification.matched){
+                        notes.add("greedy recovery failed verification; promoted an alternative "
+                            + "structure candidate at instruction " + decision);
+                        notes.addAll(retry.notes);
+                        return new Result(structured, true, verification.mode, retry.structured,
+                            retry.passthrough, notes);
+                    }
+                }catch(Throwable ignored){
+                    // The next decision point or rank may still verify.
+                }
+            }
+        }
+        return null;
+    }
+
+    // ===== Dynamic @counter triage =========================================================
+
+    /**
+     * Finds the first reachable instruction that writes {@code @counter} without one of the
+     * compiler's known-safe shapes, or -1 when every reachable write is known-safe.
+     *
+     * <p>Known-safe shapes (matched deliberately loose, so a shape the compiler might emit
+     * still walks the regular recovery flow instead of triaging to flat):</p>
+     * <ul>
+     *   <li>{@code op add @counter @counter <idx>} - the switch jump-table dispatch;</li>
+     *   <li>{@code set @counter <name>} with {@code name} starting {@code __ls_} - the
+     *       function-return trampolines ({@code set @counter __ls_func_<name>_ret}).</li>
+     * </ul>
+     *
+     * <p>Everything else (user variables, literals, {@code read} into {@code @counter}, any
+     * other destination-bearing kind) is a computed jump: the structured views cannot express
+     * it, so such programs would only burn recovery attempts before failing verification and
+     * falling back to the same flat result this triage returns directly. Unreachable writes
+     * are ignored: they execute never, and recovery of the surrounding dead region behaves
+     * exactly as before.</p>
+     */
+    private static int firstDynamicCounterWrite(Program program){
+        List<String[]> tokens = new ArrayList<>(program.statements.size());
+        for(Statement statement : program.statements) tokens.add(statement.tokens);
+        MlogCFG cfg = MlogCFG.build(tokens);
+        for(int i = 0; i < program.statements.size(); i++){
+            int block = cfg.blockAt(i);
+            if(block < 0 || !cfg.block(block).reachable) continue;
+            Statement statement = program.statements.get(i);
+            if(!MlogCFG.writesCounter(statement.tokens)) continue;
+            if(isKnownCounterShape(statement)) continue;
+            return i;
+        }
+        return -1;
+    }
+
+    /** Whether one {@code @counter}-writing statement is one of the compiler's own shapes. */
+    private static boolean isKnownCounterShape(Statement statement){
+        // Switch jump-table dispatch: op add @counter @counter <idx>.
+        if(statement.kind().equals("op") && statement.tokens.length >= 5
+            && statement.token(1).equals("add") && statement.token(2).equals("@counter")
+            && statement.token(3).equals("@counter")) return true;
+        // Compiler-internal return trampoline: set @counter __ls_*.
+        return statement.kind().equals("set") && statement.tokens.length >= 3
+            && statement.token(1).equals("@counter") && statement.token(2).startsWith("__ls_");
     }
 
     /**
@@ -158,23 +262,42 @@ public final class SugarDecompiler{
             if(line.equals("# @logic-sugar-v1 begin")){ marker = true; continue; }
             if(line.equals("# @logic-sugar-v1 end")){ marker = false; continue; }
             if(marker) continue;
-            if(line.startsWith("set __ls_sugar \"") || line.startsWith("set __ls_lib \"")) continue;
+            if(isCarrierLine(line)) continue;
             result.append(line).append('\n');
         }
         return result.toString();
     }
 
-    /** Drops persistence-carrier 'set' lines (stale sugar source + embedded library) from a
-     *  program that was recognized as LogicSugar-compiled but whose carrier failed
-     *  verification. Only reached after isSugarProgram, so ordinary hand-written programs
-     *  keep their carrier-looking variables untouched. */
+    /** Drops persistence-carrier 'set' lines (stale sugar source + embedded library, single
+     *  or sharded) from a program that was recognized as LogicSugar-compiled but whose
+     *  carrier failed verification. Only reached after isSugarProgram, so ordinary
+     *  hand-written programs keep their carrier-looking variables untouched. */
     private static String stripCarrierVariables(String code){
         StringBuilder result = new StringBuilder();
         for(String line : normalizeLineEndings(code).split("\n", -1)){
-            if(line.startsWith("set __ls_sugar \"") || line.startsWith("set __ls_lib \"")) continue;
+            if(isCarrierLine(line)) continue;
             result.append(line).append('\n');
         }
         return result.toString();
+    }
+
+    /** Whether the line is a persistence carrier in either shape: the single
+     *  {@code set __ls_sugar "..."} / {@code set __ls_lib "..."} form or a numbered shard
+     *  ({@code set __ls_sugar_1 "..."}). This must stay in lockstep with the shapes the
+     *  compiler emits, or the recompilation gate breaks for large (sharded) programs. */
+    private static boolean isCarrierLine(String line){
+        if(line.startsWith("set __ls_sugar \"") || line.startsWith("set __ls_lib \"")) return true;
+        return isShardedCarrierLine(line, "set __ls_sugar_") || isShardedCarrierLine(line, "set __ls_lib_");
+    }
+
+    /** Whether the line has the exact sharded-carrier head: the base prefix, at least one
+     *  digit, then a space and the opening quote of the payload — so a user variable like
+     *  {@code __ls_sugar_1x} is never treated as metadata. */
+    private static boolean isShardedCarrierLine(String line, String base){
+        if(!line.startsWith(base)) return false;
+        int i = base.length();
+        while(i < line.length() && line.charAt(i) >= '0' && line.charAt(i) <= '9') i++;
+        return i > base.length() && i + 1 < line.length() && line.charAt(i) == ' ' && line.charAt(i + 1) == '"';
     }
 
     private static String normalizeLineEndings(String code){
@@ -196,15 +319,21 @@ public final class SugarDecompiler{
             // so candidates compiled today may only match older artifacts after applying the
             // same idempotent pass to them.
             String threadedTarget = normalize(SugarCompiler.threadAlwaysJumpTargets(original), privileged);
+            // The lowering also depends on the switch strategy, which is a user setting: a
+            // program saved under a different setting must still verify, so the gate compiles
+            // every candidate across the full mode/strategy matrix instead of only the locally
+            // configured one. Compilation cost stays bounded (2 modes x 2 strategies).
             for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
-                try{
-                    String compiled = SugarCompiler.compile(candidate, mode);
-                    if(normalize(stripGeneratedMetadata(compiled), privileged).equals(target)
-                        || normalize(stripGeneratedMetadata(compiled), privileged).equals(threadedTarget)){
-                        return new Verification(true, mode.name());
+                for(SugarCompiler.SwitchStrategy strategy : SugarCompiler.SwitchStrategy.values()){
+                    try{
+                        String compiled = SugarCompiler.compile(candidate, mode, SugarFunctions.library(), null, strategy);
+                        String stripped = normalize(stripGeneratedMetadata(compiled), privileged);
+                        if(stripped.equals(target) || stripped.equals(threadedTarget)){
+                            return new Verification(true, mode.name() + "/" + strategy.name());
+                        }
+                    }catch(Throwable ignored){
+                        // Try the next mode/strategy combination.
                     }
-                }catch(Throwable ignored){
-                    // Try the other function mode.
                 }
             }
         }catch(Throwable ignored){
@@ -214,6 +343,10 @@ public final class SugarDecompiler{
     }
 
     private record Verification(boolean matched, String mode){}
+
+    /** Backtracking directive: at the decision point {@code cursor}, promote the
+     *  {@code rank}-th ranked candidate instead of the best-loss one. */
+    private record RecoveryVeto(int cursor, int rank){}
 
     /** Defensive re-registration for headless/self-test environments; the game mod path
      *  installs them at init via {@link SugarStatements#installParsers()} (idempotent). */
@@ -430,22 +563,36 @@ public final class SugarDecompiler{
 
     private static final class Condition{
         final boolean expression;
+        /** True only when the source condition was lowered as CFG short-circuit control flow. */
+        final boolean shortCircuit;
         final String text, value, operation, compare;
 
         Condition(String value, String operation, String compare){
             this.expression = false;
+            this.shortCircuit = false;
             this.text = "";
             this.value = value;
             this.operation = operation;
             this.compare = compare;
         }
 
-        Condition(String text){
+        Condition(String text){ this(text, false); }
+
+        Condition(String text, boolean shortCircuit){
             this.expression = true;
+            this.shortCircuit = shortCircuit;
             this.text = text;
             this.value = "";
             this.operation = "notEqual";
             this.compare = "0";
+        }
+
+        /** Bang-style loss used only to rank already verified recovery candidates. */
+        double recoveryLoss(){
+            if(!expression) return RecoveryPredicate.BASE_COST + 4.0;
+            return RecoveryPredicate.parseShortCircuit(text)
+                .map(predicate -> predicate.loss() + (shortCircuit ? 0.5 : 0.0))
+                .orElse(RecoveryPredicate.BASE_COST + 8.0);
         }
     }
 
@@ -455,7 +602,8 @@ public final class SugarDecompiler{
         IfItem(int from, int to, Condition condition){ super(from, to); this.condition = condition; }
         @Override void write(StringBuilder out, Emitter emitter){
             if(condition.expression){
-                out.append("ifbegin expr \"").append(escape(condition.text)).append("\" ");
+                out.append("ifbegin ").append(condition.shortCircuit ? "exprsc \"" : "expr \"")
+                    .append(escape(condition.text)).append("\" ");
             }else{
                 out.append("ifbegin ").append(condition.value).append(' ')
                     .append(condition.operation).append(' ').append(condition.compare).append(' ');
@@ -470,7 +618,8 @@ public final class SugarDecompiler{
         ElseIfItem(int from, int to, Condition condition){ super(from, to); this.condition = condition; }
         @Override void write(StringBuilder out, Emitter emitter){
             if(condition.expression){
-                out.append("elif expr \"").append(escape(condition.text)).append("\"\n");
+                out.append("elif ").append(condition.shortCircuit ? "exprsc \"" : "expr \"")
+                    .append(escape(condition.text)).append("\"\n");
             }else{
                 out.append("elif ").append(condition.value).append(' ')
                     .append(condition.operation).append(' ').append(condition.compare).append('\n');
@@ -491,7 +640,8 @@ public final class SugarDecompiler{
         WhileItem(int from, int to, Condition condition){ super(from, to); this.condition = condition; }
         @Override void write(StringBuilder out, Emitter emitter){
             if(condition.expression){
-                out.append("whilebegin expr \"").append(escape(condition.text)).append("\" ");
+                out.append("whilebegin ").append(condition.shortCircuit ? "exprsc \"" : "expr \"")
+                    .append(escape(condition.text)).append("\" ");
             }else{
                 out.append("whilebegin ").append(condition.value).append(' ')
                     .append(condition.operation).append(' ').append(condition.compare).append(' ');
@@ -517,7 +667,8 @@ public final class SugarDecompiler{
                 .append(initial.isEmpty() ? "~" : initial).append(' ')
                 .append(step.isEmpty() ? "~" : step).append(' ');
             if(condition.expression){
-                out.append("expr \"").append(escape(condition.text)).append("\" ");
+                out.append(condition.shortCircuit ? "exprsc \"" : "expr \"")
+                    .append(escape(condition.text)).append("\" ");
             }else{
                 out.append(condition.operation).append(' ').append(condition.compare).append(' ');
             }
@@ -597,7 +748,11 @@ public final class SugarDecompiler{
         }
     }
 
-    private record ConditionParse(int start, int jump, int body, int falseTarget, Condition condition){}
+    private record ConditionParse(int start, int jump, int body, int falseTarget, Condition condition){
+        int conditionEnd(){ return jump; }
+        int trueEntry(){ return body; }
+        int falseEntry(){ return falseTarget; }
+    }
 
     private static final class IfFrame{
         final List<ConditionParse> branches = new ArrayList<>();
@@ -614,10 +769,22 @@ public final class SugarDecompiler{
          *  at exit, while this optional target is accepted when recognizing BreakItem jumps. */
         int breakTarget = -1;
         String variable, initial, step, switchValue;
+        String shortCircuitExpression;
+        int shortCircuitBody = -1, shortCircuitFalse = -1;
         Condition condition;
         IfFrame ifFrame;
         List<Integer> caseTargets;
         List<String> caseValues;
+
+        double recoveryLoss(){
+            // A confirmed short-circuit layout is preferable to a coincidentally valid native
+            // decomposition: the latter can erase the fact that the right operand was conditional.
+            if(shortCircuitExpression != null) return -4.0 + RecoveryPredicate.parseShortCircuit(shortCircuitExpression)
+                .map(RecoveryPredicate.Predicate::loss).orElse(8.0);
+            if(ifFrame != null && !ifFrame.branches.isEmpty()) return ifFrame.branches.get(0).condition.recoveryLoss();
+            if(condition != null) return condition.recoveryLoss();
+            return RecoveryPredicate.BASE_COST + 2.0;
+        }
     }
 
     private static final class FunctionInfo{
@@ -648,6 +815,10 @@ public final class SugarDecompiler{
         final Map<Integer, CallSite> calls = new HashMap<>();
         final Set<Integer> claimed = new HashSet<>();
         final Set<Integer> hidden = new HashSet<>();
+        /** Active backtracking directive; null on the greedy pass. */
+        private RecoveryVeto veto;
+        /** Cursors where tryFrames faced more than one candidate (recorded on the greedy pass). */
+        private List<Integer> decisions;
         int structured, passthrough;
 
         Candidate(Program program, List<String> notes){ this.program = program; this.notes = notes; }
@@ -691,6 +862,24 @@ public final class SugarDecompiler{
                     return;
                 }
             }
+
+            // CFG closure over every zone (see functionZoneViolation): the compiler lowers a
+            // function body as a region crossed only by call-prelude jumps, so any other
+            // static jump across a zone boundary means the "function" is hand-written mlog
+            // mimicking the prelude/tail shapes. Following the overlapping-bodies precedent,
+            // one mimic shape abandons the whole recovery instead of structuring around it.
+            Map<Integer, Integer> preludeJumps = new HashMap<>();
+            for(int position : preludePositions){
+                String preludeName = functionNameFromReturn(program.statements.get(position).token(1));
+                Integer preludeEntry = preludeName == null ? null : entries.get(preludeName);
+                if(preludeEntry != null) preludeJumps.put(position + 2, preludeEntry);
+            }
+            String zoneViolation = functionZoneViolation(found, preludeJumps);
+            if(zoneViolation != null){
+                notes.add(zoneViolation);
+                return;
+            }
+
             functions.addAll(found);
             for(FunctionInfo function : functions){
                 for(int i = function.entry; i < function.zoneEnd(); i++) claimed.add(i);
@@ -715,6 +904,47 @@ public final class SugarDecompiler{
                     for(int i = site.from; i <= site.to; i++) claimed.add(i);
                 }
             }
+        }
+
+        /**
+         * Static-jump closure over every recovered function zone {@code [entry, zoneEnd)}.
+         * The lowering invariants being checked: a function zone is entered only by a call
+         * prelude's leading {@code jump <entry> always} (which may sit in main or, for a
+         * nested call, inside another body's zone) and left only by the final
+         * {@code set @counter <ret>} trampoline falling through. Any other static jump across
+         * a zone boundary means the detected "function" is hand-written mlog that merely
+         * mimics the prelude/tail shapes — recovering around it would claim statements whose
+         * control flow the structured view cannot represent.
+         *
+         * <p>{@code preludeJumps} maps a prelude jump index to the entry of its own function;
+         * those jumps are the only legal boundary crossings (their target equals the entry by
+         * construction of {@code preludePositions}). Threaded switch break/default edges are
+         * never misjudged: they live in main and target {@code __ls_end}, which lies outside
+         * every zone.</p>
+         *
+         * @return a note describing the first violation, or null when every zone is closed;
+         *         on violation the caller abandons function recovery entirely (the flat
+         *         fallback keeps the program byte-identical behind recompilation verification)
+         */
+        private String functionZoneViolation(List<FunctionInfo> found, Map<Integer, Integer> preludeJumps){
+            for(FunctionInfo function : found){
+                int zoneEnd = function.zoneEnd();
+                for(int i = 0; i < program.statements.size(); i++){
+                    Statement statement = program.statements.get(i);
+                    if(!statement.isJump() || statement.target < 0) continue;
+                    boolean insideZone = i >= function.entry && i < zoneEnd;
+                    boolean targetsZone = statement.target >= function.entry && statement.target < zoneEnd;
+                    if(insideZone == targetsZone) continue;
+                    if(preludeJumps.getOrDefault(i, -1) == statement.target) continue;
+                    if(!insideZone){
+                        return "jump at instruction " + i + " enters function " + function.name
+                            + "'s body; function recovery skipped";
+                    }
+                    return "jump at instruction " + i + " leaves function " + function.name
+                        + "'s body; function recovery skipped";
+                }
+            }
+            return null;
         }
 
         /** Binds call arguments by scanning backwards from the @counter prelude for consecutive
@@ -814,7 +1044,9 @@ public final class SugarDecompiler{
             return true;
         }
 
-        void parseMain(){
+        void parseMain(RecoveryVeto veto, List<Integer> decisionLog){
+            this.veto = veto;
+            this.decisions = decisionLog;
             parseRange(0, program.statements.size(), null);
             for(FunctionInfo function : functions) emitFunction(function);
         }
@@ -943,15 +1175,46 @@ public final class SugarDecompiler{
          *  exact same instruction stream as its whilebegin form; trying for first would
          *  rewrite every while into a degenerate forbegin. An explicit initializer cannot be
          *  claimed by while at all (readCondition rejects 'set' heads), so real for-loops
-         *  still recover as for either way. Any wrong guess is caught by recompilation
-         *  verification. */
+         *  still recover as for either way. Short-circuit guards contribute if/while/for
+         *  candidates for every boolean tree their pairs can express. Any wrong guess is
+         *  caught by recompilation verification. */
         private Frame tryFrames(int at, int limit){
+            List<Frame> candidates = new ArrayList<>();
             Frame frame = trySwitchTable(at, limit);
-            if(frame == null) frame = trySwitch(at, limit);
-            if(frame == null) frame = tryWhile(at, limit);
-            if(frame == null) frame = tryFor(at, limit);
-            if(frame == null) frame = tryIf(at, limit);
-            return frame;
+            if(frame != null) candidates.add(frame);
+            frame = trySwitch(at, limit);
+            if(frame != null) candidates.add(frame);
+            candidates.addAll(tryShortCircuitFrames(at, limit));
+            frame = tryWhile(at, limit);
+            if(frame != null) candidates.add(frame);
+            frame = tryFor(at, limit);
+            if(frame != null) candidates.add(frame);
+            frame = tryIf(at, limit);
+            if(frame != null) candidates.add(frame);
+            if(candidates.isEmpty()) return null;
+            candidates.sort((left, right) -> {
+                int score = Double.compare(left.recoveryLoss(), right.recoveryLoss());
+                if(score != 0) return score;
+                // Equal-loss candidates resolve by structural specificity: a loop or switch
+                // frame explains a back edge / dispatch that an if frame would leave behind
+                // as raw jumps inside its body.
+                int kind = Integer.compare(kindRank(left.kind), kindRank(right.kind));
+                return kind != 0 ? kind : Integer.compare(left.start, right.start);
+            });
+            int index = 0;
+            if(veto != null && veto.cursor() == at) index = Math.min(veto.rank(), candidates.size() - 1);
+            if(decisions != null && candidates.size() > 1) decisions.add(at);
+            return candidates.get(index);
+        }
+
+        /** Specificity tiebreak for equally-lossy candidates. */
+        private static int kindRank(Frame.Kind kind){
+            return switch(kind){
+                case FOR -> 0;
+                case WHILE -> 1;
+                case SWITCH -> 2;
+                case IF -> 3;
+            };
         }
 
         /**
@@ -1149,12 +1412,14 @@ public final class SugarDecompiler{
                     ConditionParse first = chain.branches.get(0);
                     IfItem header = new IfItem(first.start, first.jump, first.condition);
                     items.add(header);
-                    parseRange(first.jump + 1, chain.bodyEnds.get(0), parent);
+                    int firstBody = first.condition.shortCircuit ? first.body : first.jump + 1;
+                    parseRange(firstBody, chain.bodyEnds.get(0), parent);
                     for(int i = 1; i < chain.branches.size(); i++){
                         ConditionParse branch = chain.branches.get(i);
                         items.add(new ElseIfItem(branch.start, branch.jump, branch.condition));
                         structured++;
-                        parseRange(branch.jump + 1, chain.bodyEnds.get(i), parent);
+                        int bodyStart = branch.condition.shortCircuit ? branch.body : branch.jump + 1;
+                        parseRange(bodyStart, chain.bodyEnds.get(i), parent);
                     }
                     if(chain.hasElse){
                         items.add(new ElseItem(chain.elseMarker));
@@ -1167,6 +1432,250 @@ public final class SugarDecompiler{
                     structured++;
                 }
             }
+        }
+
+        /** Maximum number of [conditional, fallback] atom pairs accepted in one lowered guard.
+         *  Bounds the tree search; realistic conditions stay far below it. */
+        private static final int MAX_GUARD_PAIRS = 8;
+
+        /**
+         * Recovers every structure shape a lowered short-circuit guard can support.  The
+         * ShortCircuitCompiler lowering is a concatenation of [conditional jump, fallback jump]
+         * atom pairs whose internal continuation labels are pair starts, so a guard of k pairs
+         * occupies exactly [guardAt, guardAt + 2k) with the true branch entering at its end.
+         * The boolean tree is rebuilt from the pair destinations alone, then offered as if,
+         * while and for candidates; recompilation verification stays the final authority.
+         */
+        private List<Frame> tryShortCircuitFrames(int at, int limit){
+            List<Frame> frames = new ArrayList<>();
+            int guardAt = at;
+            String variable = null, initial = null;
+            if(isInitialSet(at) && at + 1 < limit){
+                // A for-loop initializer.  Only a loop frame may consume it (and starts here);
+                // if the region turns out to be an if, the flat-set path re-enters at the guard.
+                guardAt = at + 1;
+                variable = program.statements.get(at).token(1);
+                initial = program.statements.get(at).token(2);
+            }
+            int scanned = countGuardPairs(guardAt, limit);
+            if(scanned <= 0) return frames;
+            GuardSearch search = new GuardSearch(new HashMap<>(), new HashSet<>());
+            for(int pairs = 1; pairs <= scanned; pairs++){
+                int body = guardAt + 2 * pairs;
+                if(body >= limit) break;
+                // Root-destination candidates: every guard target beyond the body entry.  All
+                // internal continuation labels are pair starts strictly inside the region, so
+                // the enclosing false target is the only outer destination besides the body.
+                Set<Integer> falseCandidates = new TreeSet<>();
+                for(int p = 0; p < pairs; p++){
+                    Statement cond = program.statements.get(guardAt + 2 * p);
+                    Statement fallback = program.statements.get(guardAt + 2 * p + 1);
+                    if(cond.target > body && cond.target <= limit) falseCandidates.add(cond.target);
+                    if(fallback.target > body && fallback.target <= limit) falseCandidates.add(fallback.target);
+                }
+                for(int falseTarget : falseCandidates){
+                    RecoveryPredicate.Predicate tree = parseGuardTree(guardAt, 0, pairs, body, falseTarget, search);
+                    if(tree == null) continue;
+                    if(variable == null){
+                        frames.add(shortCircuitIfFrame(guardAt, pairs, falseTarget, tree, limit));
+                        Frame loop = shortCircuitWhileFrame(guardAt, pairs, falseTarget, tree, limit);
+                        if(loop != null) frames.add(loop);
+                    }else{
+                        Frame loop = shortCircuitForFrame(at, guardAt, pairs, falseTarget, tree, limit, variable, initial);
+                        if(loop != null) frames.add(loop);
+                    }
+                }
+            }
+            return frames;
+        }
+
+        /** Counts the leading [conditional, fallback] pairs of a lowered guard region. */
+        private int countGuardPairs(int guardAt, int limit){
+            int pairs = 0;
+            while(pairs < MAX_GUARD_PAIRS){
+                int cond = guardAt + 2 * pairs;
+                int fallback = cond + 1;
+                if(fallback >= limit || fallback >= program.statements.size()) break;
+                if(!program.statements.get(cond).isConditional()
+                    || !program.statements.get(fallback).isAlways()) break;
+                pairs++;
+            }
+            return pairs;
+        }
+
+        /** Memoization key: pair range plus the two control-flow destinations. */
+        private record GuardKey(int first, int last, int trueTarget, int falseTarget){}
+
+        /** Memoized search state.  {@code active} holds in-progress keys: a top-level Not can
+         *  make the same pair range re-enter itself with swapped destinations, and that cycle
+         *  must return "no tree" instead of recursing forever. */
+        private record GuardSearch(Map<GuardKey, RecoveryPredicate.Predicate> memo,
+                                   Set<GuardKey> active){}
+
+        /**
+         * Rebuilds the boolean tree lowered into pairs [first, last) with the given root
+         * destinations, or null when no tree matches.  Mirrors the ShortCircuitCompiler
+         * emission order: an And emits its left side with the true edge on an internal
+         * continuation, an Or emits its left side with the false edge on one, and in both
+         * cases the continuation is the pair start immediately after the left side.  A Not
+         * node swaps destinations without emitting anything.
+         */
+        private RecoveryPredicate.Predicate parseGuardTree(int guardAt, int first, int last, int trueTarget,
+                                                           int falseTarget, GuardSearch search){
+            GuardKey key = new GuardKey(first, last, trueTarget, falseTarget);
+            if(search.memo().containsKey(key)) return search.memo().get(key);
+            if(!search.active().add(key)) return null;
+            RecoveryPredicate.Predicate result = computeGuardTree(guardAt, first, last, trueTarget, falseTarget, search);
+            search.active().remove(key);
+            search.memo().put(key, result);
+            return result;
+        }
+
+        private RecoveryPredicate.Predicate computeGuardTree(int guardAt, int first, int last, int trueTarget,
+                                                             int falseTarget, GuardSearch search){
+            Statement cond = program.statements.get(guardAt + 2 * first);
+            Statement fallback = program.statements.get(guardAt + 2 * first + 1);
+            RecoveryPredicate.Predicate atom = guardAtom(cond);
+            if(last - first == 1){
+                if(atom == null) return null;
+                if(cond.target == trueTarget && fallback.target == falseTarget) return atom;
+                if(trueTarget != falseTarget && cond.target == falseTarget && fallback.target == trueTarget){
+                    return new RecoveryPredicate.Not(atom);
+                }
+                return null;
+            }
+            if(atom == null) return null;
+            for(int split = first + 1; split < last; split++){
+                int label = guardAt + 2 * split;
+                RecoveryPredicate.Predicate left = parseGuardTree(guardAt, first, split, label, falseTarget, search);
+                if(left != null){
+                    RecoveryPredicate.Predicate right = parseGuardTree(guardAt, split, last, trueTarget, falseTarget, search);
+                    if(right != null) return new RecoveryPredicate.And(left, right, RecoveryPredicate.EvaluationMode.SHORT_CIRCUIT);
+                }
+                left = parseGuardTree(guardAt, first, split, trueTarget, label, search);
+                if(left != null){
+                    RecoveryPredicate.Predicate right = parseGuardTree(guardAt, split, last, trueTarget, falseTarget, search);
+                    if(right != null) return new RecoveryPredicate.Or(left, right, RecoveryPredicate.EvaluationMode.SHORT_CIRCUIT);
+                }
+            }
+            if(trueTarget != falseTarget){
+                RecoveryPredicate.Predicate inner = parseGuardTree(guardAt, first, last, falseTarget, trueTarget, search);
+                if(inner != null) return new RecoveryPredicate.Not(inner);
+            }
+            return null;
+        }
+
+        /** The comparison atom lowered by one guard pair, or null when the operation is not a
+         *  vanilla jump comparison. */
+        private static RecoveryPredicate.Predicate guardAtom(Statement cond){
+            if(!cond.isConditional()) return null;
+            ShortCircuitCompiler.Comparison comparison = ShortCircuitCompiler.Comparison.tryParse(cond.token(2)).orElse(null);
+            if(comparison == null) return null;
+            return new RecoveryPredicate.Atom(comparison.operation(), cond.token(3), cond.token(4),
+                RecoveryPredicate.EvaluationMode.SHORT_CIRCUIT);
+        }
+
+        /** Builds the if candidate for one parsed guard tree.  An always jump immediately
+         *  before the false target is the elif/else boundary: the structured else lowering
+         *  regenerates it, so the body ends there.  Otherwise the body falls through into the
+         *  false target, which is then also the structural exit. */
+        private Frame shortCircuitIfFrame(int guardAt, int pairs, int falseTarget,
+                                          RecoveryPredicate.Predicate tree, int limit){
+            int body = guardAt + 2 * pairs;
+            String text = tree.print();
+            Frame frame = new Frame();
+            frame.kind = Frame.Kind.IF;
+            frame.start = guardAt;
+            IfFrame chain = new IfFrame();
+            chain.branches.add(new ConditionParse(guardAt, body - 1, body, falseTarget, new Condition(text, true)));
+            Statement boundary = program.statements.get(falseTarget - 1);
+            if(boundary.isAlways() && boundary.target > falseTarget && boundary.target <= limit){
+                chain.bodyEnds.add(falseTarget - 1);
+                chain.exit = boundary.target;
+                chain.hasElse = true;
+                chain.elseMarker = falseTarget - 1;
+                chain.elseStart = falseTarget;
+                chain.elseEnd = chain.exit;
+            }else{
+                chain.bodyEnds.add(falseTarget);
+                chain.exit = falseTarget;
+            }
+            frame.resume = chain.exit;
+            frame.exit = chain.exit;
+            frame.shortCircuitExpression = text;
+            frame.shortCircuitBody = body;
+            frame.shortCircuitFalse = falseTarget;
+            frame.ifFrame = chain;
+            return frame;
+        }
+
+        /** Builds the while candidate: the body ends at the back edge, which must re-enter the
+         *  guard head; the structured blockend regenerates that jump.  Interior jumps into the
+         *  guard head are legitimate {@code continue} statements (that is exactly how the
+         *  continue lowering targets a whilebegin), so the loop context recovers them and the
+         *  recompilation gate decides. */
+        private Frame shortCircuitWhileFrame(int guardAt, int pairs, int falseTarget,
+                                             RecoveryPredicate.Predicate tree, int limit){
+            int body = guardAt + 2 * pairs;
+            if(falseTarget > limit) return null;
+            int back = falseTarget - 1;
+            if(back < body) return null;
+            Statement backJump = program.statements.get(back);
+            if(!backJump.isAlways() || backJump.target != guardAt) return null;
+            String text = tree.print();
+            Frame frame = new Frame();
+            frame.kind = Frame.Kind.WHILE;
+            frame.start = guardAt;
+            frame.bodyStart = body;
+            frame.bodyEnd = back;
+            frame.exit = falseTarget;
+            frame.resume = falseTarget;
+            frame.continueTarget = guardAt;
+            frame.condition = new Condition(text, true);
+            frame.shortCircuitExpression = text;
+            frame.shortCircuitBody = body;
+            frame.shortCircuitFalse = falseTarget;
+            return frame;
+        }
+
+        /** Builds the for candidate over an initializer plus guard: the loop variable comes
+         *  from the initializer (an expression condition cannot name it), and an increment in
+         *  front of the back edge becomes the step. */
+        private Frame shortCircuitForFrame(int at, int guardAt, int pairs, int falseTarget,
+                                           RecoveryPredicate.Predicate tree, int limit,
+                                           String variable, String initial){
+            int body = guardAt + 2 * pairs;
+            if(falseTarget > limit) return null;
+            int back = falseTarget - 1;
+            if(back < body) return null;
+            Statement backJump = program.statements.get(back);
+            if(!backJump.isAlways() || backJump.target != guardAt) return null;
+            String step = "";
+            int bodyEnd = back;
+            if(back - 1 >= body){
+                Statement increment = program.statements.get(back - 1);
+                if(isIncrement(increment, variable)){
+                    step = increment.token(4);
+                    bodyEnd = back - 1;
+                }
+            }
+            String text = tree.print();
+            Frame frame = new Frame();
+            frame.kind = Frame.Kind.FOR;
+            frame.start = at;
+            frame.bodyStart = body;
+            frame.bodyEnd = bodyEnd;
+            frame.exit = falseTarget;
+            frame.resume = falseTarget;
+            frame.continueTarget = step.isEmpty() ? back : bodyEnd;
+            frame.variable = variable;
+            frame.initial = initial;
+            frame.step = step;
+            frame.condition = new Condition(text, true);
+            frame.shortCircuitExpression = text;
+            frame.shortCircuitBody = body;
+            frame.shortCircuitFalse = falseTarget;
+            return frame;
         }
 
         private Frame trySwitch(int at, int limit){
@@ -1190,8 +1699,12 @@ public final class SugarDecompiler{
             if(!defaultJump.isAlways()) return null;
             int exit = defaultJump.target;
             if(exit <= cursor || exit > limit || targets.get(0) != cursor + 1) return null;
-            for(int i = 0; i + 1 < targets.size(); i++) if(targets.get(i) >= targets.get(i + 1)) return null;
-            for(int target : targets) if(target <= cursor || target >= exit) return null;
+            // Case targets may repeat: adjacent zero-length labels (case 5 / case 6 sharing a
+            // body) lower to consecutive chain entries with the same target, and recover as
+            // empty-bodied case labels. Trailing empty cases collapse onto the exit position
+            // itself, so only a strictly-later target is unstructured.
+            for(int i = 0; i + 1 < targets.size(); i++) if(targets.get(i) > targets.get(i + 1)) return null;
+            for(int target : targets) if(target <= cursor || target > exit) return null;
             Frame frame = new Frame();
             frame.kind = Frame.Kind.SWITCH;
             frame.start = at; frame.exit = exit; frame.resume = exit;
@@ -1340,53 +1853,133 @@ public final class SugarDecompiler{
                 return new ConditionParse(start, start, direct.target, direct.target,
                     new Condition(direct.token(3), lowered.name(), direct.token(4)));
             }
-            if(!isChainStatement(direct) || !isPrivateDestination(direct)) return null;
-            List<ExprCompiler.Line> lines = new ArrayList<>();
+            if(!isChainStatement(direct)) return null;
+            return readEagerCondition(start, limit);
+        }
+
+        /**
+         * Reads a straight-line value condition from ordinary mlog.  The old implementation
+         * required the compiler-private {@code __ls_cond_*} namespace; vanilla programs are
+         * allowed to choose their own temporary names, so we prove the same def-use shape before
+         * folding it.  A destination written by the chain must not be observed after the gate,
+         * and no jump may enter the middle of the producer chain.  This keeps the rewrite from
+         * hiding a user-visible assignment while still accepting hand-written temporary names.
+         */
+        private ConditionParse readEagerCondition(int start, int limit){
+            List<Statement> producers = new ArrayList<>();
             int cursor = start;
-            while(cursor < limit && isChainStatement(program.statements.get(cursor))
-                && isPrivateDestination(program.statements.get(cursor))){
-                lines.add(toExprLine(program.statements.get(cursor)));
+            while(cursor < limit && isChainStatement(program.statements.get(cursor))){
+                Statement producer = program.statements.get(cursor);
+                if(!validChainStatement(producer)) return null;
+                producers.add(producer);
                 cursor++;
             }
-            if(cursor >= limit) return null;
-            Statement jump = program.statements.get(cursor);
-            if(!jump.isConditional() || !jump.token(3).startsWith("__ls_cond_") || !jump.token(4).equals("0")) return null;
-            String expression = rebuildPrivate(lines);
+            if(producers.isEmpty() || cursor >= limit) return null;
+            Statement gate = program.statements.get(cursor);
+            if(!gate.isConditional() || !gate.token(4).equals("0")
+                || (!gate.token(2).equals("equal") && !gate.token(2).equals("notEqual"))) return null;
+
+            Set<String> destinations = new HashSet<>();
+            Map<String, Integer> firstDefinition = new HashMap<>();
+            for(int i = 0; i < producers.size(); i++){
+                String destination = chainDestination(producers.get(i));
+                if(destination == null || destination.equals("@counter")) return null;
+                destinations.add(destination);
+                firstDefinition.putIfAbsent(destination, start + i);
+            }
+            String root = gate.token(3);
+            if(!destinations.contains(root) || !root.equals(chainDestination(producers.get(producers.size() - 1)))) return null;
+
+            // An operand may refer to a chain destination only after that name has been defined.
+            // Otherwise it is an external value which would be accidentally alpha-renamed.
+            for(int i = 0; i < producers.size(); i++){
+                Statement producer = producers.get(i);
+                for(String operand : chainOperands(producer)){
+                    Integer definition = firstDefinition.get(operand);
+                    if(definition != null && definition > start + i) return null;
+                }
+            }
+
+            // Preserve all observable uses before the chain, but reject any use after the gate;
+            // the latter would observe a value that the structured condition hides.
+            for(int i = cursor + 1; i < program.statements.size(); i++){
+                if(statementMentionsAny(program.statements.get(i), destinations)) return null;
+            }
+            // A jump to the first producer is a legitimate loop back edge.  A jump to any later
+            // producer would make the expression region non-linear and is not safe to fold.
+            for(Statement statement : program.statements){
+                if(statement.target > start && statement.target <= cursor) return null;
+            }
+
+            String expression = rebuildEager(producers);
             if(expression == null) return null;
-            if(!jump.token(2).equals("equal") && !jump.token(2).equals("notEqual")) return null;
-            return new ConditionParse(start, cursor, cursor + 1, jump.target, new Condition(expression));
+            return new ConditionParse(start, cursor, cursor + 1, gate.target,
+                new Condition(expression));
+        }
+
+        private String rebuildEager(List<Statement> producers){
+            Map<String, String> names = new HashMap<>();
+            Set<String> occupied = new HashSet<>();
+            for(Statement producer : producers){
+                occupied.addAll(chainOperands(producer));
+                occupied.add(chainDestination(producer));
+            }
+            int next = 0;
+            for(Statement producer : producers){
+                String destination = chainDestination(producer);
+                if(!names.containsKey(destination)){
+                    while(occupied.contains("_" + next)) next++;
+                    names.put(destination, "_" + next++);
+                }
+            }
+
+            List<ExprCompiler.Line> lines = new ArrayList<>();
+            for(Statement producer : producers){
+                String dest = names.get(chainDestination(producer));
+                if(producer.kind().equals("sensor")){
+                    lines.add(new ExprCompiler.SensorLine(dest,
+                        names.getOrDefault(producer.token(2), producer.token(2)), producer.token(3)));
+                }else{
+                    lines.add(new ExprCompiler.OpLine(producer.token(1), dest,
+                        names.getOrDefault(producer.token(3), producer.token(3)),
+                        names.getOrDefault(producer.token(4), producer.token(4))));
+                }
+            }
+            return lines.isEmpty() ? null : rebuild(lines);
+        }
+
+        private static boolean validChainStatement(Statement statement){
+            return statement.kind().equals("sensor") && statement.tokens.length >= 4
+                || statement.kind().equals("op") && statement.tokens.length >= 5;
+        }
+
+        private static String chainDestination(Statement statement){
+            if(statement.kind().equals("sensor")) return statement.token(1);
+            if(statement.kind().equals("op")) return statement.token(2);
+            return null;
+        }
+
+        private static List<String> chainOperands(Statement statement){
+            if(statement.kind().equals("sensor")) return List.of(statement.token(2));
+            if(statement.kind().equals("op")) return List.of(statement.token(3), statement.token(4));
+            return List.of();
+        }
+
+        private static boolean statementMentionsAny(Statement statement, Set<String> names){
+            for(String token : statement.tokens) if(names.contains(token)) return true;
+            return false;
         }
 
         private String rebuildPrivate(List<ExprCompiler.Line> original){
-            Map<String, String> names = new HashMap<>();
-            List<ExprCompiler.Line> lines = new ArrayList<>();
-            int next = 0;
+            List<Statement> producers = new ArrayList<>();
             for(ExprCompiler.Line line : original){
                 if(line instanceof ExprCompiler.SensorLine sensor){
-                    String dest = privateTemp(sensor.dest, names, next);
-                    next = names.size();
-                    String a = privateTemp(sensor.a, names, next);
-                    next = names.size();
-                    String b = privateTemp(sensor.b, names, next);
-                    next = names.size();
-                    lines.add(new ExprCompiler.SensorLine(dest, a, b));
+                    producers.add(new Statement(new String[]{"sensor", sensor.dest, sensor.a, sensor.b}));
                 }else if(line instanceof ExprCompiler.OpLine op){
-                    String dest = privateTemp(op.dest, names, next);
-                    next = names.size();
-                    String a = privateTemp(op.a, names, next);
-                    next = names.size();
-                    String b = privateTemp(op.b, names, next);
-                    next = names.size();
-                    lines.add(new ExprCompiler.OpLine(op.op, dest, a, b));
+                    producers.add(new Statement(new String[]{"op", op.op, op.dest, op.a, op.b}));
                 }
             }
-            if(lines.isEmpty()) return null;
-            return rebuild(lines);
-        }
-
-        private String privateTemp(String value, Map<String, String> names, int next){
-            if(!value.startsWith("__ls_cond_")) return value;
-            return names.computeIfAbsent(value, k -> "_" + names.size());
+            return rebuildEager(producers);
         }
 
         private static boolean isPrivateDestination(Statement s){

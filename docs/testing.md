@@ -4,17 +4,19 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 
 ## 自动化任务
 
-`build.gradle` 注册了七个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了九个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
-| `selfTest` | `logicsugar.SugarCompilerSelfTest` | 编译器主回归：嵌套结构 round-trip、非法结构报错、语义错误定位、`break`/`continue` 就近退出、if/elif 链、注释往返、生成代码优化与 `@counter` 保护、`SwitchStrategy`（auto/chainOnly）公式与语义网格、跳转链穿线、表达式 `op` 链往返、函数（参数绑定、void/早退、返回值、嵌套/前向/循环内调用、临时名空间）、引号转义 |
+| `selfTest` | `logicsugar.SugarCompilerSelfTest` | 编译器主回归：嵌套结构 round-trip、非法结构报错、语义错误定位、`break`/`continue` 就近退出、if/elif 链、注释往返、生成代码优化与 `@counter` 保护、`SwitchStrategy`（auto/chainOnly）公式与语义网格、跳转链穿线、表达式 `op` 链往返、函数（参数绑定、void/早退、返回值、嵌套/前向/循环内调用、临时名空间）、引号转义、载体分片（大源码 `__ls_sugar_N`/`__ls_lib_N` 分片还原、小程序单条形状回归） |
 | `ifElseTest` | `mindustry.logic.IfElseCompileTest` | `if` / `elif` / `else` / `while` 三段式条件的 lowering 冒烟（负分支取反、标签、出口跳转） |
-| `decompileTest` | `mindustry.logic.SugarDecompilerTest` | 反编译恢复：vanilla 程序保持原样、各结构恢复 round-trip、跳转表识别、陈旧载体回退推断、短路谓词恢复、不支持的模式保持 flat、引号/转义、坏输入不崩 |
+| `decompileTest` | `mindustry.logic.SugarDecompilerTest` | 反编译恢复：vanilla 程序保持原样、各结构恢复 round-trip、跳转表识别、陈旧载体回退推断、短路守卫重建布尔树（单原子 / 顶层 `!` / 嵌套 `&&`\|\|` / 左深链 / `whilebegin`/`forbegin` 的 `exprsc` / `continue` 内部回边）、贪心候选失败后的回溯提升、验证矩阵（chainOnly 保存的程序在 auto 默认设置下仍验证）、动态 `@counter` 分诊保持 flat、函数区杂散跳转验证、不支持的模式保持 flat、引号/转义、坏输入不崩 |
 | `recoveryPredicateTest` | `mindustry.logic.RecoveryPredicateTest` | 谓词树模型：比较运算精确取反、`strictEqual` 不做有损取反、德摩根、优先级打印、求值方式影响代价 |
 | `shortCircuitTest` | `logicsugar.ShortCircuitCompilerTest` | `&&` / `||` 下降为条件 `jump`：操作数顺序、OR 续接标签、嵌套括号、`===` 取反不丢精度、坏谓词拒绝 |
 | `crossLoaderTest` | `mindustry.logic.CrossLoaderAccessTest` | 以 child-first 加载器复现"模组类与游戏类分属不同运行时包"的拓扑，断言子类访问受保护成员的模式不抛 `IllegalAccessError` |
 | `boxSelectTest` | `logicsugar.assist.BoxSelectSelfTest` | 框选拖动策略纯函数：移动端 430ms 长按、桌面 8px slop、斜向/纵向阈值、边界含等 |
+| `cfgTest` | `mindustry.logic.MlogCFGTest` | 零依赖 CFG IR：leader 划分、条件/always 跳转边、可达性、支配树、自然循环与回边、多入口形态不误报、越界 jump 不崩、`@counter` 写入与 reads/writes 提取 |
+| `lintTest` | `logicsugar.MlogLintTest` | Mlog 静态检查（advisory）：unknown-op（名单转录自 LogicOp）、参数个数（经 LogicIO 双端核对）、对字面量赋值、自跳转/越界跳转、坏 jump 形状、未知指令 INFO；干净程序零误报 |
 
 ```powershell
 .\gradlew.bat check        # 全部
@@ -39,5 +41,6 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 3. **双视图**：Original / Sugar 视图切换正常，切换前未保存修改有保护。
 4. **函数库**：设置入口打开函数库编辑、保存；把 `functions.txt` 改坏后重进，确认按函数抢救且警告可见。
 5. **编辑器辅助**：框选（桌面 Ctrl+点击/拖动复制；移动端长按拖动）、跳转线着色、`__ls_*` 变量在 MindustryX 变量浏览器中隐藏、表达式语句错误标红。
-6. **双形态设置**：独立安装时出现 `Logic Sugar` 设置分类；并入 Neon 后设置项只出现在 Neon 总设置页，无重复分类。
-7. **安卓包**：安装 `build/libs/LogicSugar-v<version>.jar`（含 `classes.dex`）于安卓设备，确认能加载并打开逻辑编辑器。
+6. **嵌套布局**：横屏/竖屏及 UI scale 100%/150%/200% 下，展开 1/2/3/4/6 层嵌套 `For`；确认 `variable`、`initial`、`step`、`until`、条件控件、`OP/Expr` 和折叠按钮均在卡片内可见且可点击。切换 MindustryX LogicSupport 侧栏显示/隐藏并重复检查；同时覆盖简体中文、繁体中文和 English。
+7. **双形态设置**：独立安装时出现 `Logic Sugar` 设置分类；并入 Neon 后设置项只出现在 Neon 总设置页，无重复分类。
+8. **安卓包**：安装 `build/libs/LogicSugar-v<version>.jar`（含 `classes.dex`）于安卓设备，确认能加载并打开逻辑编辑器。

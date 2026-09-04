@@ -2,6 +2,7 @@ package mindustry.logic;
 
 import arc.struct.Seq;
 import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ShortCircuitCompiler;
 import mindustry.logic.LStatements.GetLinkStatement;
 import mindustry.logic.LStatements.InvalidStatement;
 import mindustry.logic.LStatements.JumpStatement;
@@ -1083,6 +1084,7 @@ public final class SugarFunctions{
                 copy.compare = ifBegin.compare;
                 copy.op = ifBegin.op;
                 copy.expressionMode = true;
+                copy.shortCircuitMode = ifBegin.shortCircuitMode;
                 copy.conditionExpr = rewriteExpression(ifBegin.conditionExpr, map);
                 copy.destIndex = ifBegin.destIndex;
                 rewritten.add(copy);
@@ -1094,6 +1096,7 @@ public final class SugarFunctions{
                 copy.compare = elseIf.compare;
                 copy.op = elseIf.op;
                 copy.expressionMode = true;
+                copy.shortCircuitMode = elseIf.shortCircuitMode;
                 copy.conditionExpr = rewriteExpression(elseIf.conditionExpr, map);
                 rewritten.add(copy);
                 continue;
@@ -1104,6 +1107,7 @@ public final class SugarFunctions{
                 copy.compare = whileBegin.compare;
                 copy.op = whileBegin.op;
                 copy.expressionMode = true;
+                copy.shortCircuitMode = whileBegin.shortCircuitMode;
                 copy.conditionExpr = rewriteExpression(whileBegin.conditionExpr, map);
                 copy.destIndex = whileBegin.destIndex;
                 rewritten.add(copy);
@@ -1117,6 +1121,7 @@ public final class SugarFunctions{
                 copy.compare = forBegin.compare;
                 copy.op = forBegin.op;
                 copy.expressionMode = true;
+                copy.shortCircuitMode = forBegin.shortCircuitMode;
                 copy.conditionExpr = rewriteExpression(forBegin.conditionExpr, map);
                 copy.destIndex = forBegin.destIndex;
                 rewritten.add(copy);
@@ -1282,24 +1287,42 @@ public final class SugarFunctions{
                 if(!begin.initial.isEmpty()) out.append("set ").append(begin.variable).append(' ').append(begin.initial).append('\n');
                 out.append(label(prefix, "for_check_", i)).append(":\n");
                 if(begin.expressionMode){
-                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
-                    out.append("jump ").append(label(prefix, "for_body_", i)).append(" notEqual ").append(condition).append(" 0\n");
+                    String bodyLabel = label(prefix, "for_body_", i);
+                    String exitLabel = label(prefix, "stmt_", begin.destIndex + 1);
+                    if(begin.shortCircuitMode){
+                        emitShortCircuitCondition(begin.conditionExpr, prefix, i, bodyLabel, exitLabel, out);
+                        out.append(bodyLabel).append(":\n");
+                    }else{
+                        String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
+                        out.append("jump ").append(bodyLabel).append(" notEqual ").append(condition).append(" 0\n");
+                    }
                 }else{
                     out.append("jump ").append(label(prefix, "for_body_", i)).append(' ').append(begin.op.name()).append(' ')
                         .append(begin.variable).append(' ').append(begin.compare).append('\n');
                 }
-                out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
-                out.append(label(prefix, "for_body_", i)).append(":\n");
+                if(!begin.shortCircuitMode || !begin.expressionMode){
+                    out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
+                    out.append(label(prefix, "for_body_", i)).append(":\n");
+                }
             }else if(statement instanceof WhileBeginStatement begin){
                 if(begin.expressionMode){
-                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
-                    out.append("jump ").append(label(prefix, "while_body_", i)).append(" notEqual ").append(condition).append(" 0\n");
+                    String bodyLabel = label(prefix, "while_body_", i);
+                    String exitLabel = label(prefix, "stmt_", begin.destIndex + 1);
+                    if(begin.shortCircuitMode){
+                        emitShortCircuitCondition(begin.conditionExpr, prefix, i, bodyLabel, exitLabel, out);
+                        out.append(bodyLabel).append(":\n");
+                    }else{
+                        String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
+                        out.append("jump ").append(bodyLabel).append(" notEqual ").append(condition).append(" 0\n");
+                        out.append("jump ").append(exitLabel).append(" always x false\n");
+                        out.append(bodyLabel).append(":\n");
+                    }
                 }else{
                     out.append("jump ").append(label(prefix, "while_body_", i)).append(' ').append(begin.op.name()).append(' ')
                         .append(begin.value).append(' ').append(begin.compare).append('\n');
+                    out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
+                    out.append(label(prefix, "while_body_", i)).append(":\n");
                 }
-                out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
-                out.append(label(prefix, "while_body_", i)).append(":\n");
             }else if(statement instanceof SwitchBeginStatement begin){
                 emitSwitch(statements, i, begin, switchOwner, prefix, strategy, out);
             }else if(statement instanceof CaseStatement){
@@ -1310,8 +1333,14 @@ public final class SugarFunctions{
                     ? label(prefix, "if_branch_", nextBranch[i])
                     : label(prefix, "stmt_", begin.destIndex + 1);
                 if(begin.expressionMode){
-                    String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
-                    out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
+                    if(begin.shortCircuitMode){
+                        String bodyLabel = label(prefix, "if_body_", i);
+                        emitShortCircuitCondition(begin.conditionExpr, prefix, i, bodyLabel, target, out);
+                        out.append(bodyLabel).append(":\n");
+                    }else{
+                        String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
+                        out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
+                    }
                 }else{
                     ConditionOp negated = negate(begin.op);
                     if(negated != null){
@@ -1329,8 +1358,14 @@ public final class SugarFunctions{
                     ? label(prefix, "if_branch_", nextBranch[i])
                     : label(prefix, "stmt_", end + 1);
                 if(item.expressionMode){
-                    String condition = emitConditionExpression(item.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
-                    out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
+                    if(item.shortCircuitMode){
+                        String bodyLabel = label(prefix, "if_body_", i);
+                        emitShortCircuitCondition(item.conditionExpr, prefix, i, bodyLabel, target, out);
+                        out.append(bodyLabel).append(":\n");
+                    }else{
+                        String condition = emitConditionExpression(item.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
+                        out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
+                    }
                 }else{
                     ConditionOp negated = negate(item.op);
                     if(negated != null){
@@ -1390,6 +1425,20 @@ public final class SugarFunctions{
             }
         }
         if(statementLabels[statements.size]) out.append(label(prefix, "stmt_", statements.size)).append(":\n");
+    }
+
+    /** Emits a short-circuit predicate without materializing an eager land/or temporary. */
+    private static void emitShortCircuitCondition(String expression, String prefix, int statementIndex,
+                                                  String trueLabel, String falseLabel, StringBuilder out){
+        ShortCircuitCompiler.Predicate predicate;
+        try{
+            predicate = ShortCircuitCompiler.parse(expression);
+        }catch(RuntimeException exception){
+            throw new IllegalArgumentException("Invalid short-circuit condition expression '" + expression + "': " + exception.getMessage());
+        }
+        String labelPrefix = "__ls_" + prefix.replace('-', '_') + "sc_" + statementIndex + "_";
+        ShortCircuitCompiler.emitPredicate(predicate, trueLabel, falseLabel, out,
+            ShortCircuitCompiler.labels(labelPrefix));
     }
 
     /** Compiles an if/elif expression into a compiler-private boolean temporary. */

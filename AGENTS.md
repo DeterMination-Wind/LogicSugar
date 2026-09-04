@@ -8,7 +8,8 @@ this file only adds what is specific to this project.
 ## Build & Test
 
 ```powershell
-cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, crossLoaderTest
+cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, recoveryPredicateTest,
+                                      # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 
@@ -43,7 +44,13 @@ game classes load through the app loader. Same package name, **different runtime
 the normalized instruction stream against the input (`verify`). Anything unrecognized falls
 back to raw vanilla statements. When touching recovery logic, keep every new pattern behind
 that gate; failure direction must always be "show more vanilla code", never "rewrite unknown
-programs".
+programs". Two properties of the gate are load-bearing:
+
+- `verify` compiles each candidate across the full FuncMode x SwitchStrategy matrix, because
+  the program may have been saved under different user settings.
+- `backtrack` (bounded retries that promote an alternative candidate at one decision point)
+  runs only after the greedy candidate failed verification, and every promoted result must
+  pass the same gate.
 
 ## Docs
 
