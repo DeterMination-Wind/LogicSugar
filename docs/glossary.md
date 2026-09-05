@@ -27,6 +27,15 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 ### SwitchStrategy（分派策略）
 `switch` 的下降形态。`auto` = 整数 case 且值域跨度 ≤255 时按可执行指令成本在比较链与跳转表间二选一；`chainOnly` = 恒用比较链（与 2.3.1 之前输出逐字节一致）。设置项 `logicsugar.switchStrategy`。
 
+### AssertEmit（调试断言构建）
+断言卡片的编译开关（设置项 `logicsugar.assertEmit`）。`strip`（默认）把断言编译掉，mlog 保持原版可解析；`emit` 把断言写回为真实自定义指令——原版客户端会把这些行降级为 InvalidStatement 占位（断言静默失效），只在调试时开启。
+
+### 断言语句集（assertions）
+移植自 cardillan/MlogAssertions 的七条运行时检查指令（`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`error`/`log`/`breakpoint`），线格式逐字节兼容：断言失败程序在失败行自旋并由 `ProcessorStatus` 显示消息，`breakpoint` 暂停游戏。与 MlogAssertions 并存时按"先到先得"跳过重复 opcode 注册。
+
+### 线格式（wire format）
+自定义指令在 token 流中的精确形状（opcode 拼写、参数顺序、引号约定）。断言语句集的线格式必须与 MlogAssertions/Mindcode 保持逐字节一致，由 `assertTest` 钉住；任何一侧漂移都会破坏互操作。
+
 ### 跳转表（jump table）
 `switch` 的一种下降结果：先做上下界守卫，再用 `op add @counter @counter` 按槽位分派；越界与空洞槽走默认路径。非整数或跨度过大的 case 集合自动回退比较链。
 

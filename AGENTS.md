@@ -9,7 +9,8 @@ this file only adds what is specific to this project.
 
 ```powershell
 cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, recoveryPredicateTest,
-                                      # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest
+                                      # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
+                                      # instructionLimitTest, varClipboardTest, processorStatusTest, assertTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 
@@ -77,8 +78,9 @@ Neon aggregate mod. The dual form is handled entirely by `LogicSugarMod`:
 - `public static boolean bekBundled` is set by the Neon host. When `true`,
   `LogicSugarSettings.setup(...)` is skipped so the mod-owned `@logicsugar.settings`
   category never registers; the host calls `bekBuildSettings(SettingsTable)` instead,
-  which currently aggregates func mode, the function-library entry, hide-vars, box-select
-  and jump-line-coloring rows. Do not re-add a self-registered category, and do not move
+  which currently aggregates func mode, the assert-emit toggle, the function-library entry,
+  the instruction-limit slider, the processor-status sliders, hide-vars, box-select and
+  jump-line-coloring rows. Do not re-add a self-registered category, and do not move
   `SwitchStrategySetting` into `bekBuildSettings` without updating Neon's sync assertions.
 - No other code path branches on the aggregate form: behavior, compilation output and
   persistence are identical in both forms.

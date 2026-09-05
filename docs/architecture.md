@@ -7,8 +7,8 @@
 LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（id `ls`）。两种形态共用同一套代码，由主类上的静态标记切换：
 
 - `logicsugar.LogicSugarMod#bekBundled`：宿主（Neon）注入时置 `true`。
-- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、函数库入口、隐藏内部变量、框选、跳转线着色）。
-- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、函数库入口、隐藏变量、框选与跳转线着色；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
+- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试断言构建、函数库入口、指令上限、处理器状态、隐藏内部变量、框选、跳转线着色）。
+- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、指令上限滑杆、处理器状态滑杆、隐藏变量、框选与跳转线着色；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
 
 除设置入口外，两种形态的行为完全一致；不存在单独的聚合分支代码。
 
@@ -39,6 +39,15 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - `ExprHook`：把 `ExprStatement` 注入语句列表，并在 `SugarCanvas.load()/save()` 中执行 `foldAll()/unfoldAll()`。
 - `ShortCircuitCompiler`：把 `&&` / `||` 谓词下降为条件 `jump`，按控制流顺序发射（不产生先行求值的布尔临时变量）；不依赖任何 Mindustry 类，便于在编译期与反编译恢复两侧复用。`whilebegin exprsc …` 等带 `c` 后缀的解析变体对应"折叠式表达式条件"（collapsed）。
 - `RecoveryPredicate`：无依赖的谓词树模型（`EAGER` / `SHORT_CIRCUIT` / `UNKNOWN` 求值方式、loss/score 度量），供恢复代码在触碰游戏 API 之前构建与打分候选。
+
+## 断言子系统（调试构建）
+
+`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions（线格式逐字节兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：七条自定义指令 `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `error` / `log` / `breakpoint`，断言失败时程序在失败行自旋（`counter` 回退 + `yield`），消息由 `ProcessorStatus` 绘制在处理器上方；`breakpoint` 暂停游戏并清空全部 accumulator。
+
+- **双身份序列化**：卡片 `write()` 直接输出指令 token，既是编辑器卡片也是 mlog 指令行；空槽位按 LogicSugar 惯例写 `~` 保持定长 token（上游无此约定，仅空字段场景降级）。
+- **AssertEmit 开关**（设置项 `logicsugar.assertEmit`，默认 `strip`）：`strip` 把断言编译掉——sugar（含断言）随载体保存，mlog 保持原版可解析；`emit`（调试构建）把断言写回为真实指令，**原版客户端会将其降级为 InvalidStatement 占位**（程序能跑但断言静默失效），因此只在调试时开启。这是"产物必须原版兼容"硬约束唯一的显式 opt-in 例外。
+- **共存去重**：注册时若 `LAssembler.customParsers` 已有同名 opcode（如 MlogAssertions 先加载），整组跳过，不重复加面板卡片、不覆盖他人解析器。注意 MlogAssertions 后加载时会覆盖解析器并追加自己的卡片，两 mod 并存时面板可能出现两套卡片，属上游行为。
+- **验证门**：候选或原始程序含断言时，verify 矩阵扩展为 FuncMode × SwitchStrategy × AssertEmit；无断言程序维持 2×2，编译成本不涨。`ProcessorStatus` 的地图扫描跳过断言指令（消息生命周期归指令自身管）。
 
 ## 函数与全局函数库
 
@@ -78,6 +87,9 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 框选/批量操作 | `assist.BoxSelect` + `BoxSelectDragPolicy` | capture 监听器事件驱动；拖动阈值为纯函数（8px slop、移动端 430ms 长按）便于自测 |
 | 跳转线着色 | `assist.JumpLineColor` | 按目标着色三模式：关闭 / 分散色 / 积木色 |
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
+| 复制变量/打印缓冲 | `assist.VarClipboard` | SugarLogicDialog 按钮行，全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示按钮 |
+| 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；设置三滑杆（阈值 0 关闭 / 每帧扫描数 / 警告特效） |
+| 指令上限覆盖 | `assist.InstructionLimit` | 客户端改 `LExecutor.maxInstructions`（1000→2000）；字段为 final 时设置行隐藏 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 
 ### 结构语句布局
@@ -88,10 +100,11 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ```text
 src/logicsugar/           模组侧：入口、设置、函数库、FunctionLibraryDialog
-src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter、MlogLint
+src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter、MlogLint、
+                          VarClipboard、ProcessorStatus、InstructionLimit、AssertInstructions
 src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ShortCircuitCompiler
 src/mindustry/logic/      与游戏同包名的扩展层：SugarCompiler、SugarDecompiler、SugarStatements、
-                          SugarCanvas、SugarLogicDialog、SugarFunctions、RecoveryPredicate、MlogCFG
+                          SugarAsserts、SugarCanvas、SugarLogicDialog、SugarFunctions、RecoveryPredicate、MlogCFG
 test/                     与 src 同构的 main() 式自测（无 JUnit）
 assets/bundles/           bundle.properties / bundle_zh_CN / bundle_zh_TW（用户可见文案）
 ```
@@ -100,7 +113,7 @@ assets/bundles/           bundle.properties / bundle_zh_CN / bundle_zh_TW（用�
 
 ## 设计约束（务必保持）
 
-- 产物 mlog 必须原版兼容：无本模组的客户端能运行、能重开编辑器。
+- 产物 mlog 必须原版兼容：无本模组的客户端能运行、能重开编辑器。唯一例外是显式开启的调试断言构建（AssertEmit=emit），其局限必须在文档与设置描述中说清。
 - 用户可见文案一律走 `logicsugar.*` bundle key，不硬编码。
 - 受保护游戏成员访问只走子类实例方法或反射（见上），静态辅助代码只用 public 游戏 API。
 - 反编译恢复必须留在重编译/规范化流比对门后，失败方向是"多显示原版代码"。
