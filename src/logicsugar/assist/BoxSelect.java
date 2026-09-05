@@ -127,8 +127,8 @@ public class BoxSelect{
     private static void setDragLayoutSpace(LCanvas canvas, float space){
         try{
             dragLayoutSpaceField.setFloat(canvas.statements, space);
-            // 同步折叠隐藏语句的 space 抵消值，保证 layout() 里 getPrefHeight()+space=0 始终成立
-            SugarCanvas.SugarStatementElem.foldHiddenSpace = -space;
+            // 同步所有折叠隐藏语句的 space 抵消值，保证 layout() 里 getPrefHeight()+space=0 始终成立
+            SugarCanvas.syncFoldHiddenSpace(canvas, space);
             // 高度变化需要双重 invalidate+validate（参考 finalizeLayout）：
             // 第一次 layout 用旧 height 执行并标记父节点，第二次用新 height 真正重排。
             canvas.statements.invalidate();
