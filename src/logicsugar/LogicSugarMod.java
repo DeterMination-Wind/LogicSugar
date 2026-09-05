@@ -98,6 +98,7 @@ public class LogicSugarMod extends Mod{
     /** Host (Neon) settings aggregation: function mode, library entry and jump line coloring. */
     public void bekBuildSettings(SettingsMenuDialog.SettingsTable table){
         table.pref(new LogicSugarSettings.FuncModeSetting(LogicSugarSettings.settingFuncMode, "normal"));
+        table.pref(new LogicSugarSettings.AssertEmitSetting(LogicSugarSettings.settingAssertEmit, "strip"));
         table.pref(new LogicSugarSettings.LibraryButtonSetting("logicsugar.funclib"));
         LogicSugarSettings.addInstructionLimitPref(table);
         LogicSugarSettings.addProcessorStatusPrefs(table);
