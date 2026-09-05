@@ -217,6 +217,11 @@ public final class ProcessorStatus{
 
         if(ix >= 0 && ix < instructions.length){
             LExecutor.LInstruction instruction = instructions[ix];
+            if(instruction instanceof AssertInstructions.AssertInstruction){
+                // assertion instructions own their message lifecycle; a scan that saw
+                // "not a stop/wait" would wipe the failure message every frame
+                return;
+            }
             if(instruction instanceof LExecutor.StopI){
                 setMessage(block, () -> Core.bundle.format("logicsugar.stoppedAt", ix));
                 return;

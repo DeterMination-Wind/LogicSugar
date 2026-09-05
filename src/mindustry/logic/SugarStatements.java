@@ -56,6 +56,8 @@ public final class SugarStatements{
         LAssembler.customParsers.put("forend", tokens -> new SugarStatements.BlockEndStatement());
         LAssembler.customParsers.put("whileend", tokens -> new SugarStatements.BlockEndStatement());
         LAssembler.customParsers.put("switchend", tokens -> new SugarStatements.BlockEndStatement());
+
+        SugarAsserts.installParsers();
     }
 
     private static String optional(String value){
