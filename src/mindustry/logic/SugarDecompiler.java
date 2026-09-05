@@ -319,20 +319,27 @@ public final class SugarDecompiler{
             // so candidates compiled today may only match older artifacts after applying the
             // same idempotent pass to them.
             String threadedTarget = normalize(SugarCompiler.threadAlwaysJumpTargets(original), privileged);
-            // The lowering also depends on the switch strategy, which is a user setting: a
-            // program saved under a different setting must still verify, so the gate compiles
-            // every candidate across the full mode/strategy matrix instead of only the locally
-            // configured one. Compilation cost stays bounded (2 modes x 2 strategies).
+            // The lowering also depends on the switch strategy and the assert-emit shape,
+            // which are user settings: a program saved under different settings must still
+            // verify, so the gate compiles every candidate across the full matrix instead of
+            // only the locally configured one. The assert-emit dimension only matters for
+            // candidates containing assertion cards (2 modes x 2 strategies otherwise).
+            boolean hasAsserts = SugarAsserts.containsAssertStatements(candidate)
+                || SugarAsserts.containsAssertStatements(original);
+            SugarCompiler.AssertEmit[] emitShapes = hasAsserts
+                ? SugarCompiler.AssertEmit.values() : new SugarCompiler.AssertEmit[]{SugarCompiler.AssertEmit.strip};
             for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
                 for(SugarCompiler.SwitchStrategy strategy : SugarCompiler.SwitchStrategy.values()){
-                    try{
-                        String compiled = SugarCompiler.compile(candidate, mode, SugarFunctions.library(), null, strategy);
-                        String stripped = normalize(stripGeneratedMetadata(compiled), privileged);
-                        if(stripped.equals(target) || stripped.equals(threadedTarget)){
-                            return new Verification(true, mode.name() + "/" + strategy.name());
+                    for(SugarCompiler.AssertEmit emit : emitShapes){
+                        try{
+                            String compiled = SugarCompiler.compile(candidate, mode, SugarFunctions.library(), null, strategy, emit);
+                            String stripped = normalize(stripGeneratedMetadata(compiled), privileged);
+                            if(stripped.equals(target) || stripped.equals(threadedTarget)){
+                                return new Verification(true, mode.name() + "/" + strategy.name() + "/" + emit.name());
+                            }
+                        }catch(Throwable ignored){
+                            // Try the next matrix combination.
                         }
-                    }catch(Throwable ignored){
-                        // Try the next mode/strategy combination.
                     }
                 }
             }

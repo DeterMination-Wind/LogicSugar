@@ -23,6 +23,7 @@ public class SugarAssertsTest{
         stripModeKeepsMlogVanilla();
         emitModeWritesInstructions();
         verifyRestoreAcceptsBothBuildShapes();
+        decompileDebugBuildRoundTrip();
         System.out.println("LogicSugar SugarAsserts self-test passed.");
     }
 
@@ -143,6 +144,32 @@ public class SugarAssertsTest{
         // a program WITHOUT assertions keeps the single-shape verification (no emit needed)
         String plain = "set x 1\nop add y x 1\n";
         check(SugarCompiler.verifyRestore(SugarCompiler.compile(plain), plain), "plain build verification broke");
+    }
+
+    private static void decompileDebugBuildRoundTrip(){
+        String sugar = "set x 1\nassertequals 0 x \"x is 0\"\nop add y x 1\n";
+        String debug = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
+        // strip markers + carriers to force the recovery path: the naked instruction stream
+        // is what the decompiler must reconstruct (and re-verify) assertions included
+        SugarDecompiler.Result result = SugarDecompiler.decompile(stripGenerated(debug));
+        check(result.verified, "debug build did not survive the recovery gate: " + result.notes);
+        check(result.sugar.contains("assertequals 0 x"), "assert card lost in recovery: " + result.sugar);
+        check(result.sugar.contains("op add y x 1"), "regular statements lost in recovery: " + result.sugar);
+    }
+
+    /** Removes the marker block and carrier lines so the decompiler works from the naked
+     *  instruction stream (same helper as SugarDecompilerTest). */
+    private static String stripGenerated(String code){
+        StringBuilder out = new StringBuilder();
+        boolean marker = false;
+        for(String line : code.replace("\r\n", "\n").split("\n", -1)){
+            if(line.equals("# @logic-sugar-v1 begin")){ marker = true; continue; }
+            if(line.equals("# @logic-sugar-v1 end")){ marker = false; continue; }
+            if(marker || line.startsWith("set __ls_sugar \"") || line.startsWith("set __ls_lib \"")) continue;
+            out.append(line).append('\n');
+        }
+        return out.toString();
     }
 
     // ===== helpers =====
