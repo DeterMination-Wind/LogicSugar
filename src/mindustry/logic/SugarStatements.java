@@ -137,9 +137,8 @@ public final class SugarStatements{
      * EXPR/OP mode toggle stay on the same row. The row colour follows the statement card
      * every frame, so invalid-state red marking can never leave a stale snapshot behind.
      *
-     * @param compactCondition uses narrower condition fields (85px like the vanilla
-     *                         {@code fields} helper instead of the 144px ones vanilla
-     *                         {@code addOp} reserves).
+     * @param compactCondition uses narrower condition fields (75px instead of the
+     *                         144px ones vanilla {@code addOp} reserves).
      */
     private static void rebuildConditionEditor(LStatement owner, Table table, boolean expressionMode, String expr,
                                                Cons<String> setExpr, Runnable enterExpr, Runnable leaveExpr,
@@ -216,7 +215,8 @@ public final class SugarStatements{
             fold.update(() -> fold.getStyle().imageUp = collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen);
         }
 
-        /** Places the fold action on its own row so it cannot be pushed outside the card. */
+        /** Adds the fold control at the end of the current row; row breaks are decided by
+         *  the statement layout (e.g. For's fixed two-row grouping). */
         protected void foldControlRow(Table table){
             foldControl(table);
         }
