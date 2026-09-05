@@ -81,7 +81,7 @@ public final class SugarStatements{
             return LCategory.control;
         }
 
-        /** {@link JumpStatement#addOp} with the value/compare fields narrowed to 85px, so
+        /** {@link JumpStatement#addOp} with the value/compare fields narrowed to 75px, so
          *  condition rows remain usable after structure indentation is applied.
          *
          *  Must be an instance method on this subclass: {@code field} and {@code showSelect}
@@ -90,7 +90,7 @@ public final class SugarStatements{
          *  helper throws IllegalAccessError (see AGENTS.md). Subclass access stays legal. */
         public void addCompactOp(Table t, ConditionOp op, Cons<ConditionOp> setOp,
                                  String value, Cons<String> setValue, String compare, Cons<String> setCompare){
-            if(op != ConditionOp.always) field(t, value, setValue).width(85f).pad(2f);
+            if(op != ConditionOp.always) field(t, value, setValue).width(75f).pad(2f);
 
             t.button(b -> {
                 b.add(op.symbol);
@@ -98,7 +98,7 @@ public final class SugarStatements{
             }, Styles.logict, () -> {
             }).size(op == ConditionOp.always ? 80f : 48f, 40f).pad(4f).color(t.color);
 
-            if(op != ConditionOp.always) field(t, compare, setCompare).width(85f).pad(2f);
+            if(op != ConditionOp.always) field(t, compare, setCompare).width(75f).pad(2f);
         }
 
         /** Attaches a vanilla-style hover hint to a parameter label (bundle key: logicsugar.hint.<key>). */
@@ -106,26 +106,39 @@ public final class SugarStatements{
             LCanvas.tooltip(cell, "logicsugar.hint." + key);
         }
 
-        /** Label + input row with a hover hint on the label, like vanilla fields(). */
+        /** Label + input grouped into one nested cell, preventing sibling fields from expanding
+         *  each other's columns in the compact For layout. */
         protected Cell<TextField> fieldsHint(Table table, String desc, String hintKey, String value, Cons<String> setter){
-            table.add(desc).padLeft(10).left().self(c -> hint(c, hintKey));
-            return field(table, value, setter).width(85f).padRight(10).left();
-        }
-
-        /** Ends the current layout row even when the canvas is using the wide form. */
-        protected void rowAlways(Table table){
-            table.row();
+            Cell<TextField>[] result = new Cell[]{null};
+            table.table(inner -> {
+                inner.left();
+                Color target = elem == null ? Pal.logicControl : elem.color;
+                inner.setColor(target);
+                inner.add(desc).padLeft(10).left().self(c -> hint(c, hintKey));
+                // 输入框略收窄(85→65)，使窄屏下三个"标签+输入框"组连同右侧条件不超出卡片；
+                // 同时收紧组间 padRight(10→6)。仅作用于 For 前置区，不影响其他语句。
+                result[0] = field(inner, value, setter).width(65f).padRight(6).left();
+                TextField input = result[0].get();
+                input.setColor(target);
+                // 跟随语句卡片状态（正常蓝色/无效红色），不能依赖父 Table 的初始化颜色：
+                // table.table(Cons) 回调执行时外层 Cell.color 还没应用，table.color 仍可能是白色。
+                inner.update(() -> {
+                    Color current = elem == null ? Pal.logicControl : elem.color;
+                    inner.setColor(current);
+                    input.setColor(current);
+                });
+            }).left();
+            return result[0];
         }
     }
 
     /**
      * Shared condition editor for if/elif/for/while: the native three-part selector and the
-     * EXPR/OP mode toggle are placed on separate rows. The row colour follows the statement
-     * card every frame, so invalid-state red marking can never leave a stale snapshot behind.
+     * EXPR/OP mode toggle stay on the same row. The row colour follows the statement card
+     * every frame, so invalid-state red marking can never leave a stale snapshot behind.
      *
-     * @param compactCondition uses narrower condition fields (85px like the vanilla
-     *                         {@code fields} helper instead of the 144px ones vanilla
-     *                         {@code addOp} reserves).
+     * @param compactCondition uses narrower condition fields (75px instead of the
+     *                         144px ones vanilla {@code addOp} reserves).
      */
     private static void rebuildConditionEditor(LStatement owner, Table table, boolean expressionMode, String expr,
                                                Cons<String> setExpr, Runnable enterExpr, Runnable leaveExpr,
@@ -145,11 +158,8 @@ public final class SugarStatements{
         });
         if(expressionMode){
             table.add(new ExpressionEditor(expr, text("condition.expr.hint", "a > b && enabled"), setExpr))
-                .colspan(3).growX().fillX().pad(4f);
-            // Keep the mode button on a separate row so a long expression never pushes it out.
-            table.row();
-            table.add().growX();
-            table.add().growX();
+                .growX().fillX().pad(4f);
+            // 显示当前状态：Expr 模式下按钮显示 "Expr"，点击切回三段式
             table.button(b -> {
                 b.add(text("condition.expr", "Expr"));
                 b.clicked(() -> {
@@ -169,12 +179,7 @@ public final class SugarStatements{
                     rebuild.run();
                 }, value, setValue, compare, setCompare);
             }
-
-            // The selector row is deliberately independent from the mode toggle row. This is
-            // also used on the wide canvas because nested statement cards have less width.
-            table.row();
-            table.add().growX();
-            table.add().growX();
+            // 条件三段式与 op 切换按钮始终保持在同一行；语句块层只负责 For 的固定分组换行。
             table.button(b -> {
                 b.add(text("condition.expr.back", "op"));
                 b.clicked(() -> {
@@ -184,10 +189,6 @@ public final class SugarStatements{
             }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(table.color);
         }
     }
-
-    /** {@link JumpStatement#addOp} with the value/compare fields narrowed to 85px lives on
-     *  {@link SugarStatement#addCompactOp}: it must run inside the subclass context, see the
-     *  classloader note there and in AGENTS.md. */
 
     public abstract static class BeginStatement extends SugarStatement{
         public transient StatementElem dest;
@@ -214,10 +215,9 @@ public final class SugarStatements{
             fold.update(() -> fold.getStyle().imageUp = collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen);
         }
 
-        /** Places the fold action on its own row so it cannot be pushed outside the card. */
+        /** Adds the fold control at the end of the current row; row breaks are decided by
+         *  the statement layout (e.g. For's fixed two-row grouping). */
         protected void foldControlRow(Table table){
-            rowAlways(table);
-            table.add().growX();
             foldControl(table);
         }
 
@@ -296,17 +296,31 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
+            // 先把前半行和后半行分成独立的子表格，避免条件控件的 growX 参与前面
+            // 字段列宽分配。宽屏合并为一行，窄屏只在步长后换一次行。
+            table.table(content -> {
+                content.left();
+                if(LCanvas.useRows()){
+                    content.table(this::buildForPrefix).left();
+                    content.row();
+                    content.table(this::buildForCondition).growX().fillX().left();
+                }else{
+                    buildForPrefix(content);
+                    buildForCondition(content);
+                }
+            }).growX().fillX().left();
+        }
+
+        private void buildForPrefix(Table table){
             fieldsHint(table, text("for.variable", "variable"), "for.variable", variable, value -> variable = value);
-            rowAlways(table);
             fieldsHint(table, text("for.initial", "initial"), "for.initial", initial, value -> initial = value);
-            rowAlways(table);
             fieldsHint(table, text("for.step", "step"), "for.step", step, value -> step = value);
-            rowAlways(table);
-            // 终止条件：描述 + 三段式（value op compare）或 Expr
+        }
+
+        private void buildForCondition(Table table){
             table.add(text("for.condition", "until")).padLeft(10).left().self(c -> hint(c, "for.condition"));
-            rowAlways(table);
-            table.table(this::rebuildCondition).colspan(2).growX().fillX();
-            foldControlRow(table);
+            table.table(this::rebuildCondition).growX().fillX().left();
+            foldControl(table);
         }
 
         private void rebuildCondition(Table table){
@@ -349,8 +363,7 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("condition", "condition")).self(c -> hint(c, "while.condition"));
-            rowAlways(table);
-            table.table(this::rebuildCondition).colspan(2).growX().fillX();
+            table.table(this::rebuildCondition).growX().fillX();
             foldControlRow(table);
         }
 
@@ -385,7 +398,6 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("switch.value", "switch")).self(c -> hint(c, "switch.value"));
-            rowAlways(table);
             field(table, value, result -> value = result).width(85f);
             foldControlRow(table);
         }
@@ -418,8 +430,7 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("if.condition", "if")).self(c -> hint(c, "if.condition"));
-            rowAlways(table);
-            table.table(this::rebuildCondition).colspan(2).growX().fillX();
+            table.table(this::rebuildCondition).growX().fillX();
             foldControlRow(table);
         }
 
@@ -460,8 +471,7 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("elif", "elif")).self(c -> hint(c, "elif"));
-            rowAlways(table);
-            table.table(this::rebuildCondition).colspan(2).growX().fillX();
+            table.table(this::rebuildCondition).growX().fillX();
         }
 
         private void rebuildCondition(Table table){
@@ -502,7 +512,6 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("func.def", "func")).self(c -> hint(c, "func.def"));
-            rowAlways(table);
             field(table, name, value -> name = value).width(90f);
             table.add("(");
             TextField paramsField = field(table, params, value -> params = value).width(130f).get();
@@ -530,17 +539,14 @@ public final class SugarStatements{
         @Override
         public void build(Table table){
             table.add(text("func.call", "call")).self(c -> hint(c, "func.call"));
-            rowAlways(table);
             field(table, name, value -> name = value).width(90f);
-            rowAlways(table);
             table.add("(");
             // 实参：完整表达式，高亮显示，点击进入编辑；
             // 空值时提示被调函数的参数列表（动态跟随函数名/参数变化），找不到或函数无参数时退回通用提示
             table.add(new ExpressionEditor(args, this::argsHint, value -> args = value))
                 .growX().padLeft(4f).padRight(2f);
             table.add(")");
-            rowAlways(table);
-            table.add("=").padLeft(10f);
+            table.add("=");
             field(table, result, value -> result = value).width(70f).padLeft(4f);
         }
 

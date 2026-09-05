@@ -233,6 +233,19 @@ public class SugarCanvas extends LCanvas{
         return compactCards() ? 0f : Scl.scl(vanillaSpace);
     }
 
+    /** Re-applies the fold-height compensation to every statement in the active Sugar canvas.
+     *  The value is per element rather than static so separate canvas instances cannot overwrite
+     *  one another's layout state. */
+    public static void syncFoldHiddenSpace(LCanvas canvas, float space){
+        if(!(canvas instanceof SugarCanvas sugar) || sugar.statements == null) return;
+        float compensation = -space;
+        for(Element child : sugar.statements.getChildren()){
+            if(child instanceof SugarStatementElem elem){
+                elem.foldHiddenSpace = compensation;
+            }
+        }
+    }
+
     private void setLayoutSpace(){
         if(statements == null || spaceField == null) return;
         try{
@@ -240,9 +253,8 @@ public class SugarCanvas extends LCanvas{
             // the vanilla 10-unit spacing so cards read as separate blocks.
             float space = currentIdleSpace();
             spaceField.setFloat(statements, space);
-            // 让折叠隐藏语句的布局贡献与当前 space 匹配：折叠 body 返回 -space 抵消 space，
-            // 则 getPrefHeight()+space=0，折叠块内部不再撑出空隙。
-            SugarStatementElem.foldHiddenSpace = -space;
+            // 让每个折叠隐藏元素使用与当前 DragLayout 相同的 space 抵消值。
+            syncFoldHiddenSpace(this, space);
         }catch(IllegalAccessException exception){
             throw new RuntimeException("Unable to configure Logic Sugar layout", exception);
         }
@@ -419,14 +431,11 @@ public class SugarCanvas extends LCanvas{
         boolean foldedHidden;
         boolean structureInvalid;
         float inset;
-        /** 折叠隐藏时用于抵消布局 space 的负值缓存。layout() 用 getPrefHeight()+space 累计高度，
-         *  折叠 body 隐藏后若仍贡献 space，会在 Begin 与 end 之间撑出空隙（非紧凑模式下尤其明显，
-         *  且该空隙可被框选命中）。此字段保存 -space，使折叠 body 贡献 getPrefHeight()+space=0。
-         *  public，便于 BoxSelect 在拖动切换 space 时同步。 */
-        public static float foldHiddenSpace = 0f;
+        float foldHiddenSpace;
 
         SugarStatementElem(LStatement statement){
             super(statement);
+            foldHiddenSpace = -currentIdleSpace();
             background(new InsetDrawable(this, Tex.whitePane));
             update(this::refreshInset);
             if(statement instanceof BlockEndStatement && getCells().size > 1){
@@ -486,10 +495,9 @@ public class SugarCanvas extends LCanvas{
             // marginLeft() applies Scl.scl() itself, so inset must stay in design units here;
             // pre-scaling it would double-scale (visible at 200% UI scale).
             float unit = Core.graphics.isPortrait() ? 17f : 24f;
-            // The condition row uses two 85px fields, a 48px operator button and their padding.
-            // Keep enough room for that row plus the card's own padding, then derive the maximum
-            // inset from the actual card width instead of stopping at an arbitrary depth.
-            float minContentWidth = 260f;
+            // Keep enough room for the condition row and the trailing mode/fold controls even
+            // in deeply nested cards; the inset must not consume that control area.
+            float minContentWidth = 360f;
             float designWidth = getWidth() / Scl.scl(1f);
             float maxInset = Math.max(0f, designWidth - minContentWidth);
             float depthInset = Math.max(0, structureDepth) * unit;
