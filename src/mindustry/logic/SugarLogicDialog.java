@@ -92,6 +92,10 @@ public class SugarLogicDialog extends LogicDialog{
         discardButton = buttons.button("@logicsugar.funclib.discard", Icon.cancel, this::discardLibraryChanges).get();
         discardButton.name = "funclib-discard";
         discardButton.visible = false;
+        // vanilla LogicDialog registers shown(setup), and setup() rebuilds the button row
+        // (clearChildren) on EVERY show — wiping anything added outside it. Re-append the
+        // Sugar-owned buttons after each rebuild; find() guards make it idempotent.
+        shown(this::installSugarButtons);
         update(() -> {
             installEditHook();
             menuScanTimer += Time.delta;
@@ -101,6 +105,19 @@ public class SugarLogicDialog extends LogicDialog{
                 installOriginalView();
             }
         });
+    }
+
+    /** Re-appends the Sugar-owned buttons after vanilla {@code setup()} has rebuilt the row. */
+    private void installSugarButtons(){
+        if(buttons.find("funclib") == null){
+            buttons.button("@logicsugar.funclib.open", Icon.book, () -> new FunctionLibraryDialog().show()).name("funclib");
+        }
+        if(buttons.find("funclib-discard") == null){
+            discardButton = buttons.button("@logicsugar.funclib.discard", Icon.cancel, this::discardLibraryChanges).get();
+            discardButton.name = "funclib-discard";
+        }
+        // show() sets this before super.show() fires the shown callbacks, so re-apply it here
+        discardButton.visible = executor == null;
     }
 
     private void installEditHook(){
