@@ -20,6 +20,9 @@ public class SugarAssertsTest{
         emptyFieldsKeepTokenCount();
         parseFailureIsACleanError();
         containsAssertStatementsScansLines();
+        stripModeKeepsMlogVanilla();
+        emitModeWritesInstructions();
+        verifyRestoreAcceptsBothBuildShapes();
         System.out.println("LogicSugar SugarAsserts self-test passed.");
     }
 
@@ -102,6 +105,44 @@ public class SugarAssertsTest{
         check(!SugarAsserts.containsAssertStatements("set x 1\nop add y x 1"), "plain program flagged");
         check(!SugarAsserts.containsAssertStatements("assertx nonsense"), "similar opcode prefix flagged");
         check(!SugarAsserts.containsAssertStatements(null), "null flagged");
+    }
+
+    // ===== compile behavior =====
+
+    private static void stripModeKeepsMlogVanilla(){
+        String sugar = "set x 1\nassertequals 0 x \"x is 0\"\nop add y x 1\n";
+        String compiled = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
+        // the marker comment block echoes the sugar source; the executable mlog is what
+        // remains after stripping it (vanilla parses/keeps only instructions + carriers)
+        String mlog = SugarCompiler.stripMarkers(compiled);
+        check(!mlog.contains("assertequals"), "strip mode leaked the assert instruction into mlog");
+        check(mlog.contains("op add y x 1"), "strip mode dropped regular instructions");
+        check(SugarCompiler.isSugarProgram(compiled), "carrier missing after strip compile");
+        String restored = SugarCompiler.restore(compiled);
+        check(restored.contains("assertequals 0 x"), "carrier lost the assert statement");
+    }
+
+    private static void emitModeWritesInstructions(){
+        String sugar = "set x 1\nassertequals 0 x \"x is 0\"\n";
+        String compiled = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
+        String mlog = SugarCompiler.stripMarkers(compiled);
+        check(mlog.contains("assertequals 0 x \"x is 0\""), "emit mode did not write the assert instruction");
+        check(mlog.contains("set x 1"), "emit mode dropped regular instructions");
+    }
+
+    private static void verifyRestoreAcceptsBothBuildShapes(){
+        String sugar = "set x 1\nassertequals 0 x \"x is 0\"\n";
+        String debug = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
+        check(SugarCompiler.verifyRestore(debug, sugar), "debug build failed carrier verification");
+        String stripped = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
+        check(SugarCompiler.verifyRestore(stripped, sugar), "strip build failed carrier verification");
+        // a program WITHOUT assertions keeps the single-shape verification (no emit needed)
+        String plain = "set x 1\nop add y x 1\n";
+        check(SugarCompiler.verifyRestore(SugarCompiler.compile(plain), plain), "plain build verification broke");
     }
 
     // ===== helpers =====

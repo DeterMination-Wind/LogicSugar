@@ -83,6 +83,20 @@ public final class SugarCompiler{
         }
     }
 
+    /** What happens to assertion statements (SugarAsserts) at lowering time. strip (the
+     *  default) compiles them away: the sugar — assertions included — lives in the
+     *  persistence carrier and the saved mlog stays vanilla-parseable. emit (debug build)
+     *  writes them as real custom instructions, which vanilla clients degrade to
+     *  InvalidStatement placeholders. */
+    public enum AssertEmit{
+        strip, emit;
+
+        public static AssertEmit parse(String value){
+            if("emit".equalsIgnoreCase(value)) return emit;
+            return strip;
+        }
+    }
+
     private SugarCompiler(){}
 
     /** Extracts the sugar source from stored code. The persistence carrier is authoritative;
@@ -178,14 +192,21 @@ public final class SugarCompiler{
             }
         }
         for(FuncMode mode : FuncMode.values()){
-            try{
-                String recompiled = compile(restored, mode, embedded, embeddedSource);
-                // Threaded current output against either the stored stream (saved by this
-                // version) or the same stream normalized through the idempotent threading
-                // pass (pre-2.3.1 saves were lowered without it).
-                if(matchesStoredStream(recompiled, code)) return true;
-            }catch(RuntimeException ignored){
-                // one mode may legitimately fail (e.g. inline blowup); the other may match
+            // Programs saved as debug builds carry assert instructions in the stored stream;
+            // recompiling with the local (possibly strip) setting would drop them and fail
+            // the comparison, so both emit shapes are tried for assertion-bearing sugar.
+            AssertEmit[] emitShapes = SugarAsserts.containsAssertStatements(restored)
+                ? AssertEmit.values() : new AssertEmit[]{AssertEmit.strip};
+            for(AssertEmit emit : emitShapes){
+                try{
+                    String recompiled = compile(restored, mode, embedded, embeddedSource, currentStrategy(), emit);
+                    // Threaded current output against either the stored stream (saved by this
+                    // version) or the same stream normalized through the idempotent threading
+                    // pass (pre-2.3.1 saves were lowered without it).
+                    if(matchesStoredStream(recompiled, code)) return true;
+                }catch(RuntimeException ignored){
+                    // one mode may legitimately fail (e.g. inline blowup); the other may match
+                }
             }
         }
         return false;
@@ -221,9 +242,15 @@ public final class SugarCompiler{
     /** Compiles against an explicit library and its text with an explicit switch strategy.
      *  The library text is used to embed the used subset into the output
      *  ({@code set __ls_lib "..."}), so other machines can recompile the program without
-     *  the local library file. */
+     *  the local library file. Assertion statements follow the user's assert-emit setting. */
     public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
                                  SwitchStrategy switchStrategy){
+        return compile(sugar, mode, library, libraryText, switchStrategy, currentAssertEmit());
+    }
+
+    /** Compiles with an explicit switch strategy and assertion emission shape. */
+    public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
+                                 SwitchStrategy switchStrategy, AssertEmit assertEmit){
         Seq<LStatement> statements = LAssembler.read(sugar, true);
         if(!containsSugar(statements)) return sugar;
 
@@ -233,7 +260,7 @@ public final class SugarCompiler{
         StringBuilder out = new StringBuilder();
         SugarFunctions.CallIds ids = new SugarFunctions.CallIds();
         if(mode == FuncMode.normal){
-            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy);
+            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
             java.util.List<SugarFunctions.Function> hoisted = functions.hoistOrder();
             if(!hoisted.isEmpty()){
                 // Normal-mode function bodies sit right after the main program. A call site's
@@ -244,14 +271,14 @@ public final class SugarCompiler{
                 out.append("jump __ls_end always x false\n");
                 for(SugarFunctions.Function function : hoisted){
                     out.append(function.entryName()).append(":\n");
-                    SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name, switchStrategy);
+                    SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name, switchStrategy, assertEmit);
                     out.append(function.exitName()).append(":\n");
                     out.append("set @counter ").append(function.retName()).append('\n');
                 }
                 out.append("__ls_end:\n");
             }
         }else{
-            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy);
+            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
         }
 
         // Jump-thread the lowered label text (before marker/carriers): a jump whose target
@@ -667,9 +694,23 @@ public final class SugarCompiler{
         return SwitchStrategy.auto;
     }
 
+    /** The user-selected assertion emission shape (strip when settings are unavailable). */
+    public static AssertEmit currentAssertEmit(){
+        try{
+            if(Core.settings != null){
+                return AssertEmit.parse(Core.settings.getString("logicsugar.assertEmit", "strip"));
+            }
+        }catch(Exception ignored){
+            // settings unavailable (e.g. self-test environment): fall back to strip
+        }
+        return AssertEmit.strip;
+    }
+
     private static boolean containsSugar(Seq<LStatement> statements){
+        // every LogicSugar-owned card (SugarStatements structures, SugarAsserts assertions)
+        // descends from SugarStatement; vanilla statements never do
         for(LStatement statement : statements){
-            if(statement.getClass().getEnclosingClass() == SugarStatements.class) return true;
+            if(statement instanceof SugarStatements.SugarStatement) return true;
         }
         return false;
     }

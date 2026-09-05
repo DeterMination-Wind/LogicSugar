@@ -1257,7 +1257,8 @@ public final class SugarFunctions{
      * mode, {@code __ls_i_<id>_} per inline copy). Call sites expand recursively.
      */
     public static void lower(Seq<LStatement> statements, String prefix, FunctionSet functions, FuncMode mode,
-                             StringBuilder out, CallIds ids, String funcName, SugarCompiler.SwitchStrategy strategy){
+                             StringBuilder out, CallIds ids, String funcName, SugarCompiler.SwitchStrategy strategy,
+                             SugarCompiler.AssertEmit assertEmit){
         int[] switchOwner = switchOwners(statements);
         int[] breakOwner = breakOwners(statements);
         int[] continueOwner = continueOwners(statements);
@@ -1293,7 +1294,7 @@ public final class SugarFunctions{
                         emitShortCircuitCondition(begin.conditionExpr, prefix, i, bodyLabel, exitLabel, out);
                         out.append(bodyLabel).append(":\n");
                     }else{
-                        String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
+                        String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy, assertEmit);
                         out.append("jump ").append(bodyLabel).append(" notEqual ").append(condition).append(" 0\n");
                     }
                 }else{
@@ -1312,7 +1313,7 @@ public final class SugarFunctions{
                         emitShortCircuitCondition(begin.conditionExpr, prefix, i, bodyLabel, exitLabel, out);
                         out.append(bodyLabel).append(":\n");
                     }else{
-                        String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
+                        String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy, assertEmit);
                         out.append("jump ").append(bodyLabel).append(" notEqual ").append(condition).append(" 0\n");
                         out.append("jump ").append(exitLabel).append(" always x false\n");
                         out.append(bodyLabel).append(":\n");
@@ -1338,7 +1339,7 @@ public final class SugarFunctions{
                         emitShortCircuitCondition(begin.conditionExpr, prefix, i, bodyLabel, target, out);
                         out.append(bodyLabel).append(":\n");
                     }else{
-                        String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
+                        String condition = emitConditionExpression(begin.conditionExpr, prefix, i, out, functions, mode, ids, strategy, assertEmit);
                         out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
                     }
                 }else{
@@ -1363,7 +1364,7 @@ public final class SugarFunctions{
                         emitShortCircuitCondition(item.conditionExpr, prefix, i, bodyLabel, target, out);
                         out.append(bodyLabel).append(":\n");
                     }else{
-                        String condition = emitConditionExpression(item.conditionExpr, prefix, i, out, functions, mode, ids, strategy);
+                        String condition = emitConditionExpression(item.conditionExpr, prefix, i, out, functions, mode, ids, strategy, assertEmit);
                         out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
                     }
                 }else{
@@ -1413,12 +1414,20 @@ public final class SugarFunctions{
                         .append(jump.value).append(' ').append(jump.compare).append('\n');
                 }
             }else if(statement instanceof FuncCallStatement call){
-                expandCall(call, functions, mode, out, ids, strategy);
+                expandCall(call, functions, mode, out, ids, strategy, assertEmit);
             }else if(statement instanceof ReturnStatement){
                 if(funcName == null) throw error("return", i, "is outside a function");
-                emitReturn((ReturnStatement)statement, prefix, mode, out, funcName, functions, ids, strategy);
+                emitReturn((ReturnStatement)statement, prefix, mode, out, funcName, functions, ids, strategy, assertEmit);
             }else if(statement instanceof FuncDefStatement){
                 throw error("funcdef", i, "cannot be lowered; function definitions are expanded at call sites");
+            }else if(statement instanceof SugarAsserts.AssertCard){
+                // debug builds (emit) pass assertion instructions through as real custom
+                // instructions; the default (strip) compiles them away so the saved mlog
+                // stays vanilla-parseable — the sugar lives in the persistence carrier
+                if(assertEmit == SugarCompiler.AssertEmit.emit){
+                    statement.write(out);
+                    out.append('\n');
+                }
             }else{
                 statement.write(out);
                 out.append('\n');
@@ -1444,7 +1453,7 @@ public final class SugarFunctions{
     /** Compiles an if/elif expression into a compiler-private boolean temporary. */
     private static String emitConditionExpression(String expression, String prefix, int statementIndex, StringBuilder out,
                                                   FunctionSet functions, FuncMode mode, CallIds ids,
-                                                  SugarCompiler.SwitchStrategy strategy){
+                                                  SugarCompiler.SwitchStrategy strategy, SugarCompiler.AssertEmit assertEmit){
         List<ExprCompiler.Line> ops;
         String base = "__ls_cond_" + prefix.replace('-', '_') + statementIndex;
         String dest = base;
@@ -1470,7 +1479,7 @@ public final class SugarFunctions{
                 }
                 stmt.args = args.toString();
                 stmt.result = renameConditionTemp(call.dest, prefix, statementIndex);
-                expandCall(stmt, functions, mode, out, ids, strategy);
+                expandCall(stmt, functions, mode, out, ids, strategy, assertEmit);
             }else{
                 ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
                 String a = renameConditionTemp(op.a, prefix, statementIndex);
@@ -1491,7 +1500,7 @@ public final class SugarFunctions{
     }
 
     private static void emitReturn(ReturnStatement ret, String prefix, FuncMode mode, StringBuilder out, String funcName,
-                                   FunctionSet functions, CallIds ids, SugarCompiler.SwitchStrategy strategy){
+                                   FunctionSet functions, CallIds ids, SugarCompiler.SwitchStrategy strategy, SugarCompiler.AssertEmit assertEmit){
         if(!ret.expr.isEmpty()){
             try{
                 List<ExprCompiler.Line> ops = ExprCompiler.compile("__ls_func_" + funcName + "_result", ret.expr);
@@ -1506,7 +1515,7 @@ public final class SugarFunctions{
                         }
                         stmt.args = args.toString();
                         stmt.result = renameReturnTemp(call.dest, funcName);
-                        expandCall(stmt, functions, mode, out, ids, strategy);
+                        expandCall(stmt, functions, mode, out, ids, strategy, assertEmit);
                     }else if(line instanceof ExprCompiler.SensorLine sensor){
                         out.append("sensor ").append(renameReturnTemp(sensor.dest, funcName)).append(' ')
                             .append(renameReturnTemp(sensor.a, funcName)).append(' ')
@@ -1544,7 +1553,7 @@ public final class SugarFunctions{
 
     /** Expands one call site. */
     private static void expandCall(FuncCallStatement call, FunctionSet functions, FuncMode mode, StringBuilder out, CallIds ids,
-                                   SugarCompiler.SwitchStrategy strategy){
+                                   SugarCompiler.SwitchStrategy strategy, SugarCompiler.AssertEmit assertEmit){
         Function target = functions.resolve(call.name);
         if(target == null){
             throw new IllegalArgumentException("call to undefined function '" + call.name + "'");
@@ -1554,9 +1563,9 @@ public final class SugarFunctions{
             int id = ids.next();
             String prefix = "i_" + id + "_";
             for(int k = 0; k < args.size(); k++){
-                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids, strategy);
+                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids, strategy, assertEmit);
             }
-            lower(target.body, prefix, functions, mode, out, ids, target.name, strategy);
+            lower(target.body, prefix, functions, mode, out, ids, target.name, strategy, assertEmit);
             // Value returns jump here so the caller-side result copy still runs;
             // void returns and jumps to the function end skip it via the exit label.
             out.append("__ls_").append(prefix).append("ret:\n");
@@ -1566,7 +1575,7 @@ public final class SugarFunctions{
             out.append("__ls_").append(prefix).append("exit:\n");
         }else{
             for(int k = 0; k < args.size(); k++){
-                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids, strategy);
+                emitArg(out, args.get(k), target.bindingName(k), functions, mode, ids, strategy, assertEmit);
             }
             out.append("set ").append(target.retName()).append(" @counter\n");
             out.append("op add ").append(target.retName()).append(' ').append(target.retName()).append(" 2\n");
@@ -1579,17 +1588,17 @@ public final class SugarFunctions{
 
     /** 展开表达式链中的一行函数调用（CallLine 的实参已是编译后的值名）。 */
     private static void expandCallLine(ExprCompiler.CallLine call, FunctionSet functions, FuncMode mode, StringBuilder out, CallIds ids,
-                                       SugarCompiler.SwitchStrategy strategy){
+                                       SugarCompiler.SwitchStrategy strategy, SugarCompiler.AssertEmit assertEmit){
         FuncCallStatement stmt = new FuncCallStatement();
         stmt.name = call.name;
         stmt.args = call.args;
         stmt.result = call.dest;
-        expandCall(stmt, functions, mode, out, ids, strategy);
+        expandCall(stmt, functions, mode, out, ids, strategy, assertEmit);
     }
 
     /** Compiles one argument expression and binds it to the parameter. */
     private static void emitArg(StringBuilder out, String arg, String param, FunctionSet functions, FuncMode mode, CallIds ids,
-                                SugarCompiler.SwitchStrategy strategy){
+                                SugarCompiler.SwitchStrategy strategy, SugarCompiler.AssertEmit assertEmit){
         List<ExprCompiler.Line> ops;
         try{
             ops = ExprCompiler.compile("_0", arg);
@@ -1603,7 +1612,7 @@ public final class SugarFunctions{
         }
         for(ExprCompiler.Line line : ops){
             if(line instanceof ExprCompiler.CallLine call){
-                expandCallLine(call, functions, mode, out, ids, strategy);
+                expandCallLine(call, functions, mode, out, ids, strategy, assertEmit);
             }else{
                 out.append(line.toText()).append('\n');
             }
