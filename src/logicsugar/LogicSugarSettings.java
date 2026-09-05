@@ -41,6 +41,7 @@ public final class LogicSugarSettings{
         table.pref(new FuncModeSetting(settingFuncMode, "normal"));
         table.pref(new SwitchStrategySetting(settingSwitchStrategy, "auto"));
         table.pref(new LibraryButtonSetting("logicsugar.funclib"));
+        addInstructionLimitPref(table);
         addHideVarsPref(table);
         addBoxSelectPrefs(table);
         addCompactCardsPref(table);
@@ -54,6 +55,20 @@ public final class LogicSugarSettings{
         table.checkPref(logicsugar.assist.VarDisplayFilter.settingHideVars, true, b -> {
             if(b) logicsugar.assist.VarDisplayFilter.applyToAll();
         });
+    }
+
+    /** Slider for the client-side instruction limit override; hidden when the game field is final. */
+    static void addInstructionLimitPref(SettingsMenuDialog.SettingsTable table){
+        if(!logicsugar.assist.InstructionLimit.canOverride()) return;
+        table.sliderPref(logicsugar.assist.InstructionLimit.settingMaxInstructions,
+            logicsugar.assist.InstructionLimit.defaultLimit,
+            logicsugar.assist.InstructionLimit.minLimit,
+            logicsugar.assist.InstructionLimit.maxLimit,
+            logicsugar.assist.InstructionLimit.step,
+            i -> {
+                logicsugar.assist.InstructionLimit.apply(i);
+                return Integer.toString(i);
+            });
     }
 
     /** Checkbox for the compact card layout (zero spacing between statement cards). */
