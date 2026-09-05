@@ -42,6 +42,7 @@ public final class LogicSugarSettings{
         table.pref(new SwitchStrategySetting(settingSwitchStrategy, "auto"));
         table.pref(new LibraryButtonSetting("logicsugar.funclib"));
         addInstructionLimitPref(table);
+        addProcessorStatusPrefs(table);
         addHideVarsPref(table);
         addBoxSelectPrefs(table);
         addCompactCardsPref(table);
@@ -84,6 +85,24 @@ public final class LogicSugarSettings{
         table.checkPref(logicsugar.assist.BoxSelect.settingCtrlDragCopy, true);
         // 拖动时是否临时把积木间距扩到 10f。关闭可根治视野/虚拟块偏移，但往折叠语句拖语句会更"随机"。
         table.checkPref(logicsugar.assist.BoxSelect.settingDragExpandSpacing, false);
+    }
+
+    /** Sliders for the processor status overlay (wait threshold, scan rate, warn effects). */
+    static void addProcessorStatusPrefs(SettingsMenuDialog.SettingsTable table){
+        table.sliderPref("logicsugar.waitIndication", 1000, 0, 10000, 500, i -> {
+            logicsugar.assist.ProcessorStatus.minWaitMillis = i;
+            return i == 0 ? Core.bundle.get("logicsugar.off", "off") : (i / 1000.0) + "s";
+        });
+        table.sliderPref("logicsugar.processorScan", 50, 5, 200, 5, i -> {
+            logicsugar.assist.ProcessorStatus.scanPerTick = i;
+            return Integer.toString(i);
+        });
+        table.sliderPref("logicsugar.warnEffect", 0, -5, 60, 5, i -> {
+            logicsugar.assist.ProcessorStatus.warnEffectFrequency = i;
+            return i < 0 ? Core.bundle.get("logicsugar.warn.never", "never")
+                : i == 0 ? Core.bundle.get("logicsugar.warn.once", "once")
+                : Core.bundle.format("logicsugar.warn.every", i);
+        });
     }
 
     /** Click-to-cycle picker for the function expansion mode. */
