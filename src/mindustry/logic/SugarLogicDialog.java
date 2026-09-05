@@ -118,6 +118,9 @@ public class SugarLogicDialog extends LogicDialog{
         }
         // show() sets this before super.show() fires the shown callbacks, so re-apply it here
         discardButton.visible = executor == null;
+        // processor-inspection copy buttons (variables dump + print buffer); no-op in
+        // library-file editing sessions where there is no processor to inspect
+        logicsugar.assist.VarClipboard.addButtons(buttons, this);
     }
 
     private void installEditHook(){
