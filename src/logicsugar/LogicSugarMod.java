@@ -14,7 +14,6 @@ import mindustry.logic.SugarStatements;
 import mindustry.mod.Mod;
 import mindustry.ui.dialogs.SettingsMenuDialog;
 import logicsugar.assist.BoxSelect;
-import logicsugar.assist.InstructionLimit;
 import logicsugar.assist.JumpLineColor;
 import logicsugar.assist.ProcessorStatus;
 import logicsugar.assist.VarDisplayFilter;
@@ -43,7 +42,6 @@ public class LogicSugarMod extends Mod{
                 BoxSelect.init();
                 ExprHook.init();
                 VarDisplayFilter.init();
-                InstructionLimit.init();
                 ProcessorStatus.init();
                 ProcessorStatus.applySettings();
                 // When bundled into Neon, every settings row is registered through
@@ -101,7 +99,6 @@ public class LogicSugarMod extends Mod{
         table.pref(new LogicSugarSettings.FuncModeSetting(LogicSugarSettings.settingFuncMode, "normal"));
         table.pref(new LogicSugarSettings.AssertEmitSetting(LogicSugarSettings.settingAssertEmit, "strip"));
         table.pref(new LogicSugarSettings.LibraryButtonSetting("logicsugar.funclib"));
-        LogicSugarSettings.addInstructionLimitPref(table);
         LogicSugarSettings.addProcessorStatusPrefs(table);
         LogicSugarSettings.addHideVarsPref(table);
         LogicSugarSettings.addBoxSelectPrefs(table);
