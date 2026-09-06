@@ -46,6 +46,16 @@ Logic Sugar 面向希望让逻辑更易读、更易修改、更易分享的 Mind
 
 输出的 `build/libs/LogicSugar-v<版本>.jar` 是一个同时支持桌面与 Android 的跨平台 JAR；普通的 `build` 任务同样会触发 deploy。
 
+## 致谢
+
+Logic Sugar 的部分设计与实现受益于以下项目，感谢这些作者的付出：
+
+- [MlogAssertions](https://github.com/cardillan/MlogAssertions)（MIT）—— 断言系统直接移植自该项目，语句格式与其保持兼容，Mindcode 生成的断言代码可直接在 Logic Sugar 中打开。
+- [Mindcode](https://github.com/cardillan/mindcode)（MIT）—— 表达式子系统（Expr）的部分思路来源于此。
+- [mindustry_logic_bang_lang](https://github.com/A4-Tacks/mindustry_logic_bang_lang)（GPL-3.0）—— 反编译系统与静态检查的思路参考（跳转链穿线、logic_lint 风格检查）。
+- [logic-assist](https://github.com/nosbhghggg/logic-assist)（GPL-3.0）—— 跳转线按目标着色的思路来源。
+- [MI2-Utilities](https://github.com/BlackDeluxeCat/MI2-Utilities)（GPL-3.0）—— 开发过程中的思路参考。
+
 ## 许可证
 
 本项目基于 [GNU GPL v3](LICENSE) 许可证开源。

@@ -50,6 +50,16 @@ Produces `build/libs/LogicSugar-v<version>.jar`, a cross-platform JAR for deskto
 
 Classified project documentation (architecture, development, release, testing, glossary) lives in [docs/README.md](docs/README.md).
 
+## Acknowledgments
+
+Parts of Logic Sugar build on the work of these projects — thank you to their authors:
+
+- [MlogAssertions](https://github.com/cardillan/MlogAssertions) (MIT) — the assertion system is ported from this project with a compatible statement format, so Mindcode-generated assertion code opens directly in Logic Sugar.
+- [Mindcode](https://github.com/cardillan/mindcode) (MIT) — parts of the expression subsystem (Expr) draw on its ideas.
+- [mindustry_logic_bang_lang](https://github.com/A4-Tacks/mindustry_logic_bang_lang) (GPL-3.0) — ideas for the decompiler and static checking (always-jump-chain threading, logic_lint-style checks).
+- [logic-assist](https://github.com/nosbhghggg/logic-assist) (GPL-3.0) — the idea of coloring jump lines by their destination.
+- [MI2-Utilities](https://github.com/BlackDeluxeCat/MI2-Utilities) (GPL-3.0) — a source of inspiration during development.
+
 ## License
 
 Licensed under the [GNU GPL v3](LICENSE).
