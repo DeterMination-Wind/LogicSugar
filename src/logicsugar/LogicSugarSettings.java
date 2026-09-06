@@ -108,7 +108,10 @@ public final class LogicSugarSettings{
         @Override
         public void add(SettingsMenuDialog.SettingsTable table){
             // single-cell row: the settings table is a grid, so splitting title/control
-            // into two cells would get pushed right past the panel by the wide vanilla rows
+            // into two cells would get pushed right past the panel by the wide vanilla rows.
+            // The button uses minWidth, never a fixed width: the value label (e.g. English
+            // "auto (table when cheaper)") is wider than any fixed width would allow, and a
+            // fixed cell made the label overflow onto the title text.
             addDesc(table.table(box -> {
                 box.left();
                 box.add(title).padRight(12f).padLeft(4f);
@@ -117,7 +120,7 @@ public final class LogicSugarSettings{
                     Core.settings.put(name, current);
                     button.clearChildren();
                     button.add(label());
-                }).size(150f, 44f).get();
+                }).minWidth(150f).height(44f).get();
             }).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().left().padTop(4f).get());
             table.row();
         }
@@ -143,7 +146,10 @@ public final class LogicSugarSettings{
         @Override
         public void add(SettingsMenuDialog.SettingsTable table){
             // single-cell row: the settings table is a grid, so splitting title/control
-            // into two cells would get pushed right past the panel by the wide vanilla rows
+            // into two cells would get pushed right past the panel by the wide vanilla rows.
+            // The button uses minWidth, never a fixed width: the value label (e.g. English
+            // "auto (table when cheaper)") is wider than any fixed width would allow, and a
+            // fixed cell made the label overflow onto the title text.
             addDesc(table.table(box -> {
                 box.left();
                 box.add(title).padRight(12f).padLeft(4f);
@@ -153,7 +159,7 @@ public final class LogicSugarSettings{
                     Core.settings.put(name, current);
                     button.clearChildren();
                     button.add(label());
-                }).size(150f, 44f).get();
+                }).minWidth(150f).height(44f).get();
             }).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().left().padTop(4f).get());
             table.row();
         }
@@ -178,7 +184,10 @@ public final class LogicSugarSettings{
         @Override
         public void add(SettingsMenuDialog.SettingsTable table){
             // single-cell row: the settings table is a grid, so splitting title/control
-            // into two cells would get pushed right past the panel by the wide vanilla rows
+            // into two cells would get pushed right past the panel by the wide vanilla rows.
+            // The button uses minWidth, never a fixed width: the value label (e.g. English
+            // "auto (table when cheaper)") is wider than any fixed width would allow, and a
+            // fixed cell made the label overflow onto the title text.
             addDesc(table.table(box -> {
                 box.left();
                 box.add(title).padRight(12f).padLeft(4f);
@@ -188,7 +197,7 @@ public final class LogicSugarSettings{
                     Core.settings.put(name, current);
                     button.clearChildren();
                     button.add(label());
-                }).size(150f, 44f).get();
+                }).minWidth(150f).height(44f).get();
             }).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().left().padTop(4f).get());
             table.row();
         }
