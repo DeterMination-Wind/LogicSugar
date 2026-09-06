@@ -4,6 +4,7 @@ import arc.Core;
 import arc.struct.Seq;
 import arc.util.Log;
 import arc.util.serialization.Base64Coder;
+import mindustry.Vars;
 import mindustry.logic.LExecutor;
 import mindustry.logic.SugarStatements.BeginStatement;
 import mindustry.logic.SugarStatements.BlockEndStatement;
@@ -694,8 +695,14 @@ public final class SugarCompiler{
         return SwitchStrategy.auto;
     }
 
-    /** The user-selected assertion emission shape (strip when settings are unavailable). */
+    /** The user-selected assertion emission shape (strip when settings are unavailable).
+     *  Hard project requirement: multiplayer saves must stay vanilla-parseable, and emitted
+     *  assert instructions degrade to InvalidStatement on vanilla clients — so debug builds
+     *  only exist in single-player/editor sessions (net inactive). The explicit
+     *  {@code compile(..., AssertEmit)} overload bypasses this gate on purpose: it is used
+     *  by the verification matrix and self-tests, never by the save path. */
     public static AssertEmit currentAssertEmit(){
+        if(Vars.net != null && Vars.net.active()) return AssertEmit.strip;
         try{
             if(Core.settings != null){
                 return AssertEmit.parse(Core.settings.getString("logicsugar.assertEmit", "strip"));
