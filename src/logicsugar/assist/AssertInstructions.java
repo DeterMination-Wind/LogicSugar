@@ -10,6 +10,7 @@ import mindustry.gen.Building;
 import mindustry.logic.ConditionOp;
 import mindustry.logic.LExecutor;
 import mindustry.logic.LVar;
+import mindustry.logic.SugarAsserts.AssertDataType;
 import mindustry.logic.SugarAsserts.AssertOp;
 import mindustry.logic.SugarAsserts.AssertionType;
 import mindustry.world.blocks.logic.LogicBlock.LogicBuild;
@@ -154,6 +155,40 @@ public final class AssertInstructions{
                     exec.textBuffer.setLength(flushIndex);
                     ProcessorStatus.reset((LogicBuild)building);
                 }
+            }
+        }
+    }
+
+    /** Asserts the runtime data type of a value (number / string / content / building /
+     *  unit / team / null). The failure message automatically appends which type was
+     *  expected and what the value actually holds, using the same taxonomy as the game's
+     *  variable panel — e.g. "Assertion failed: … (expected unit, got null)". */
+    public static class AssertTypeI implements LExecutor.LInstruction, AssertInstruction{
+        public LVar value;
+        public AssertDataType type = AssertDataType.number;
+        public LVar message;
+
+        public AssertTypeI(LVar value, AssertDataType type, LVar message){
+            this.value = value;
+            this.type = type;
+            this.message = message;
+        }
+
+        public AssertTypeI(){
+        }
+
+        @Override
+        public final void run(LExecutor exec){
+            Building building = exec.thisv.building();
+
+            if(type.matches(value)){
+                ProcessorStatus.reset((LogicBuild)building);
+            }else{
+                ProcessorStatus.setMessage((LogicBuild)building, () ->
+                    "Assertion failed: " + print(message) + " (expected " + type.token()
+                        + ", got " + AssertDataType.actualType(value) + ")");
+                exec.counter.numval--;
+                exec.yield = true;
             }
         }
     }

@@ -42,7 +42,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ## 断言子系统（调试构建）
 
-`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions（线格式逐字节兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：七条自定义指令 `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `error` / `log` / `breakpoint`，断言失败时程序在失败行自旋（`counter` 回退 + `yield`），消息由 `ProcessorStatus` 绘制在处理器上方；`breakpoint` 暂停游戏并清空全部 accumulator。
+`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions（线格式逐字节兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：八条自定义指令 `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `asserttype` / `error` / `log` / `breakpoint`，断言失败时程序在失败行自旋（`counter` 回退 + `yield`），消息由 `ProcessorStatus` 绘制在处理器上方；`breakpoint` 暂停游戏并清空全部 accumulator。
 
 - **双身份序列化**：卡片 `write()` 直接输出指令 token，既是编辑器卡片也是 mlog 指令行；空槽位按 LogicSugar 惯例写 `~` 保持定长 token（上游无此约定，仅空字段场景降级）。
 - **AssertEmit 开关**（设置项 `logicsugar.assertEmit`，默认 `strip`，**仅单机/编辑器生效**）：`strip` 把断言编译掉——sugar（含断言）随载体保存，mlog 保持原版可解析；`emit`（调试构建）把断言写回为真实指令，**原版客户端会将其降级为 InvalidStatement 占位**（程序能跑但断言静默失效）。联机会话（`Vars.net.active()`，已连接或自建）下 `currentAssertEmit()` 一律强制 `strip`——兼容底线在代码层强制，不依赖用户自觉；显式 `compile(..., AssertEmit)` 重载仅供验证矩阵与自测使用。

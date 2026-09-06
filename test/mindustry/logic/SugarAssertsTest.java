@@ -24,6 +24,7 @@ public class SugarAssertsTest{
         emitModeWritesInstructions();
         verifyRestoreAcceptsBothBuildShapes();
         decompileDebugBuildRoundTrip();
+        assertTypeRoundTripAndClassification();
         System.out.println("LogicSugar SugarAsserts self-test passed.");
     }
 
@@ -156,6 +157,48 @@ public class SugarAssertsTest{
         check(result.verified, "debug build did not survive the recovery gate: " + result.notes);
         check(result.sugar.contains("assertequals 0 x"), "assert card lost in recovery: " + result.sugar);
         check(result.sugar.contains("op add y x 1"), "regular statements lost in recovery: " + result.sugar);
+    }
+
+    /** asserttype is a LogicSugar extension (no MlogAssertions counterpart): the wire
+     *  format and the runtime value classification are pinned here. */
+    private static void assertTypeRoundTripAndClassification(){
+        SugarAsserts.AssertTypeCard card =
+            (SugarAsserts.AssertTypeCard)parseOne("asserttype @unit unit \"should be a unit\"");
+        check(card.value.equals("@unit") && card.type == SugarAsserts.AssertDataType.unit,
+            "asserttype fields not parsed");
+        checkLine("asserttype @unit unit \"should be a unit\"", writeOne(card));
+
+        // none is spelled "null" on the wire (reserved word in Java)
+        SugarAsserts.AssertTypeCard noneCard = (SugarAsserts.AssertTypeCard)parseOne("asserttype x null ~");
+        check(noneCard.type == SugarAsserts.AssertDataType.none, "wire token 'null' not parsed as none");
+        checkLine("asserttype x null ~", writeOne(noneCard));
+
+        // runtime classification (the taxonomy the failure message shows)
+        check(SugarAsserts.AssertDataType.number.matches(num("n", 1.5)), "number not matched");
+        check(!SugarAsserts.AssertDataType.number.matches(objectVar("s", "frog")), "string matched as number");
+        check(SugarAsserts.AssertDataType.none.matches(objectVar("n", null)), "null not matched");
+        check(SugarAsserts.AssertDataType.string.matches(objectVar("s", "frog")), "string not matched");
+        check(SugarAsserts.AssertDataType.team.matches(objectVar("t", mindustry.game.Team.derelict)), "team not matched");
+        check(SugarAsserts.AssertDataType.actualType(num("n", 1.5)).equals("number"), "actual type of a number");
+        check(SugarAsserts.AssertDataType.actualType(objectVar("n", null)).equals("null"), "actual type of null");
+        check(SugarAsserts.AssertDataType.actualType(objectVar("s", "frog")).equals("string"), "actual type of a string");
+        check(SugarAsserts.AssertDataType.actualType(objectVar("t", mindustry.game.Team.derelict)).equals("team"), "actual type of a team");
+        check(SugarAsserts.AssertDataType.actualType(objectVar("e", ConditionOp.equal)).equals("enum"), "actual type of an enum");
+        check(SugarAsserts.AssertDataType.actualType(objectVar("o", new Object())).equals("unknown"), "actual type of an unknown object");
+    }
+
+    private static LVar objectVar(String name, Object value){
+        LVar var = new LVar(name);
+        var.isobj = true;
+        var.objval = value;
+        return var;
+    }
+
+    private static LVar num(String name, double value){
+        LVar var = new LVar(name);
+        var.isobj = false;
+        var.numval = value;
+        return var;
     }
 
     /** Removes the marker block and carrier lines so the decompiler works from the naked

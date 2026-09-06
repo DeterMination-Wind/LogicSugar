@@ -8,7 +8,11 @@ import arc.graphics.Color;
 import arc.scene.ui.layout.Table;
 import arc.util.Log;
 import mindustry.gen.Icon;
+import mindustry.gen.Building;
 import mindustry.gen.LogicIO;
+import mindustry.gen.Unit;
+import mindustry.game.Team;
+import mindustry.ctype.Content;
 import mindustry.logic.LExecutor.LInstruction;
 import mindustry.logic.SugarStatements.SugarStatement;
 import mindustry.ui.Styles;
@@ -50,6 +54,7 @@ public final class SugarAsserts{
         register(AssertEqualsCard::new, AssertEqualsCard.opcode, SugarAsserts::parseAssertEquals);
         register(AssertFlushCard::new, AssertFlushCard.opcode, SugarAsserts::parseAssertFlush);
         register(AssertPrintsCard::new, AssertPrintsCard.opcode, SugarAsserts::parseAssertPrints);
+        register(AssertTypeCard::new, AssertTypeCard.opcode, SugarAsserts::parseAssertType);
         register(ErrorCard::new, ErrorCard.opcode, SugarAsserts::parseError);
         register(LogCard::new, LogCard.opcode, SugarAsserts::parseLog);
         register(BreakpointCard::new, BreakpointCard.opcode, SugarAsserts::parseBreakpoint);
@@ -69,7 +74,7 @@ public final class SugarAsserts{
      *  decide whether the assert-emit dimension matters for a program. */
     public static final String[] opcodes = {
         AssertBoundsCard.opcode, AssertEqualsCard.opcode, AssertFlushCard.opcode,
-        AssertPrintsCard.opcode, ErrorCard.opcode, LogCard.opcode, BreakpointCard.opcode
+        AssertPrintsCard.opcode, AssertTypeCard.opcode, ErrorCard.opcode, LogCard.opcode, BreakpointCard.opcode
     };
 
     /** Whether a sugar source line starts with one of the assertion opcodes (cheap scan
@@ -265,6 +270,47 @@ public final class SugarAsserts{
         }
     }
 
+    /** Checks that a variable currently holds a value of the expected runtime data type.
+     *  LogicSugar-original (no MlogAssertions/Mindcode counterpart): their clients degrade
+     *  this instruction to a placeholder, which only ever matters for shared debug builds. */
+    public static class AssertTypeCard extends AssertCard{
+        public static final String opcode = "asserttype";
+        public String value = "value";
+        public AssertDataType type = AssertDataType.number;
+        public String message = "\"value should hold the expected data type\"";
+
+        @Override
+        public void build(Table table){
+            table.add(text("asserts.value", "value")).padLeft(4);
+            field(table, value, s -> value = s).width(110f).pad(2f);
+            table.add(text("asserts.istype", "is of type")).padLeft(8);
+            table.button(b -> {
+                b.add(type.display());
+                b.clicked(() -> showSelect(b, AssertDataType.all, type, o -> {
+                    type = o;
+                    build(table);
+                }));
+            }, Styles.logict, () -> {}).size(96f, 40f).pad(4f).color(table.color);
+            table.row();
+            table.add(text("asserts.message", "message")).padLeft(4);
+            field(table, message, s -> message = s).width(0f).growX().pad(2f);
+        }
+
+        @Override public String name(){ return text("asserts.type.card", "Assert Type"); }
+        @Override public String typeName(){ return "AssertType"; }
+
+        @Override
+        public LInstruction build(LAssembler builder){
+            return new logicsugar.assist.AssertInstructions.AssertTypeI(builder.var(value), type, builder.var(message));
+        }
+
+        @Override
+        public void write(StringBuilder out){
+            out.append(opcode).append(' ').append(optional(value)).append(' ')
+                .append(type.token()).append(' ').append(optional(message));
+        }
+    }
+
     /** Shared editor/serializer for {@code error} and {@code log}: a message plus nine
      *  parameter slots. The message may reference params via {@code [[1]}..{@code [[9]};
      *  unused non-null params are appended after it. */
@@ -433,6 +479,14 @@ public final class SugarAsserts{
         return result;
     }
 
+    public static LStatement parseAssertType(String[] tokens){
+        AssertTypeCard result = new AssertTypeCard();
+        result.value = optionalValue(tokens[1]);
+        result.type = AssertDataType.parse(tokens[2]);
+        result.message = optionalValue(tokens[3]);
+        return result;
+    }
+
     public static LStatement parseError(String[] tokens){
         ErrorCard result = new ErrorCard();
         result.readTokens(tokens);
@@ -465,6 +519,71 @@ public final class SugarAsserts{
 
     private static String optionalValue(String value){
         return value == null || value.equals("~") ? "" : value;
+    }
+
+    /** Runtime data types an {@link AssertTypeCard} can assert, mirroring the
+     *  classification the game itself shows for logic variables. {@code none} is spelled
+     *  {@code null} on the wire ({@code null} is a reserved word in Java). */
+    public enum AssertDataType{
+        number("number"), string("string"), content("content"), building("building"),
+        unit("unit"), team("team"), none("null"),
+        ;
+
+        public static final AssertDataType[] all = values();
+
+        private final String token;
+
+        AssertDataType(String token){
+            this.token = token;
+        }
+
+        /** The wire-format token; the type select button shows the localized label. */
+        public String token(){
+            return token;
+        }
+
+        /** Localized label for the type select button (falls back to the wire token). */
+        public String display(){
+            return Core.bundle.get("logicsugar.asserts.datatype." + token, token);
+        }
+
+        public boolean matches(LVar var){
+            if(this == none) return var.isobj && var.objval == null;
+            if(this == number) return !var.isobj;
+            if(!var.isobj) return false;
+            Object o = var.objval;
+            return switch(this){
+                case string -> o instanceof String;
+                case content -> o instanceof Content;
+                case building -> o instanceof Building;
+                case unit -> o instanceof Unit;
+                case team -> o instanceof Team;
+                default -> false;
+            };
+        }
+
+        /** The classification a failure message shows for the actual value — the same
+         *  taxonomy the game's own variable panel uses (number/null/string/content/
+         *  building/unit/team/enum/unknown), so "expected unit, got null" reads exactly
+         *  like the editor would describe the variable. */
+        public static String actualType(LVar var){
+            if(!var.isobj) return "number";
+            if(var.objval == null) return "null";
+            if(var.objval instanceof String) return "string";
+            if(var.objval instanceof Content) return "content";
+            if(var.objval instanceof Building) return "building";
+            if(var.objval instanceof Unit) return "unit";
+            if(var.objval instanceof Team) return "team";
+            if(var.objval instanceof Enum<?>) return "enum";
+            return "unknown";
+        }
+
+        public static AssertDataType parse(String token){
+            for(AssertDataType type : all){
+                if(type.token.equals(token)) return type;
+            }
+            throw new IllegalArgumentException("Invalid asserttype data type: '" + token + "'");
+        }
     }
 
     public enum AssertionType{
