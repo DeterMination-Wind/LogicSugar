@@ -7,6 +7,7 @@ public class InstructionLimitSelfTest{
         fieldIsOverridableOnTargetBuilds();
         applyWritesStaticField();
         applyIgnoresWhenNotOverridable();
+        multiplayerAlwaysUsesVanillaLimit();
         System.out.println("LogicSugar InstructionLimit self-test passed.");
     }
 
@@ -34,6 +35,19 @@ public class InstructionLimitSelfTest{
         check(overridable ? LExecutor.maxInstructions == 1234 : LExecutor.maxInstructions != 1234,
             "apply() wrote the field despite the override guard");
         InstructionLimit.apply(InstructionLimit.defaultLimit);
+    }
+
+    private static void multiplayerAlwaysUsesVanillaLimit(){
+        // hard project requirement: in multiplayer (connected or hosting) the vanilla limit
+        // wins regardless of the slider, so saves stay vanilla-parseable everywhere
+        check(InstructionLimit.effectiveLimit(2000, true) == InstructionLimit.defaultLimit,
+            "multiplayer session did not clamp to the vanilla limit");
+        check(InstructionLimit.effectiveLimit(1500, true) == InstructionLimit.defaultLimit,
+            "multiplayer clamp only engaged above the default");
+        check(InstructionLimit.effectiveLimit(2000, false) == 2000,
+            "single-player setting was ignored");
+        check(InstructionLimit.effectiveLimit(InstructionLimit.defaultLimit, true) == InstructionLimit.defaultLimit,
+            "vanilla default itself was distorted in multiplayer");
     }
 
     private static boolean isFinal(){
