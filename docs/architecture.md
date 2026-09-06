@@ -45,7 +45,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 `mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions（线格式逐字节兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：七条自定义指令 `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `error` / `log` / `breakpoint`，断言失败时程序在失败行自旋（`counter` 回退 + `yield`），消息由 `ProcessorStatus` 绘制在处理器上方；`breakpoint` 暂停游戏并清空全部 accumulator。
 
 - **双身份序列化**：卡片 `write()` 直接输出指令 token，既是编辑器卡片也是 mlog 指令行；空槽位按 LogicSugar 惯例写 `~` 保持定长 token（上游无此约定，仅空字段场景降级）。
-- **AssertEmit 开关**（设置项 `logicsugar.assertEmit`，默认 `strip`）：`strip` 把断言编译掉——sugar（含断言）随载体保存，mlog 保持原版可解析；`emit`（调试构建）把断言写回为真实指令，**原版客户端会将其降级为 InvalidStatement 占位**（程序能跑但断言静默失效），因此只在调试时开启。这是"产物必须原版兼容"硬约束唯一的显式 opt-in 例外。
+- **AssertEmit 开关**（设置项 `logicsugar.assertEmit`，默认 `strip`，**仅单机/编辑器生效**）：`strip` 把断言编译掉——sugar（含断言）随载体保存，mlog 保持原版可解析；`emit`（调试构建）把断言写回为真实指令，**原版客户端会将其降级为 InvalidStatement 占位**（程序能跑但断言静默失效）。联机会话（`Vars.net.active()`，已连接或自建）下 `currentAssertEmit()` 一律强制 `strip`——兼容底线在代码层强制，不依赖用户自觉；显式 `compile(..., AssertEmit)` 重载仅供验证矩阵与自测使用。
 - **共存去重**：注册时若 `LAssembler.customParsers` 已有同名 opcode（如 MlogAssertions 先加载），整组跳过，不重复加面板卡片、不覆盖他人解析器。注意 MlogAssertions 后加载时会覆盖解析器并追加自己的卡片，两 mod 并存时面板可能出现两套卡片，属上游行为。
 - **验证门**：候选或原始程序含断言时，verify 矩阵扩展为 FuncMode × SwitchStrategy × AssertEmit；无断言程序维持 2×2，编译成本不涨。`ProcessorStatus` 的地图扫描跳过断言指令（消息生命周期归指令自身管）。
 
@@ -89,7 +89,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
 | 复制变量/打印缓冲 | `assist.VarClipboard` | SugarLogicDialog 按钮行，全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示按钮 |
 | 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；设置三滑杆（阈值 0 关闭 / 每帧扫描数 / 警告特效） |
-| 指令上限覆盖 | `assist.InstructionLimit` | 客户端改 `LExecutor.maxInstructions`（1000→2000）；字段为 final 时设置行隐藏 |
+| 指令上限覆盖 | `assist.InstructionLimit` | **仅单机/编辑器生效**：联机会话强制回落原版 1000（原版解析器按静态上限截断、跨界 label jump 会清空处理器）；单机改 `LExecutor.maxInstructions`（1000→2000），字段为 final 时设置行隐藏 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 
 ### 结构语句布局
@@ -113,7 +113,7 @@ assets/bundles/           bundle.properties / bundle_zh_CN / bundle_zh_TW（用�
 
 ## 设计约束（务必保持）
 
-- 产物 mlog 必须原版兼容：无本模组的客户端能运行、能重开编辑器。唯一例外是显式开启的调试断言构建（AssertEmit=emit），其局限必须在文档与设置描述中说清。
+- **兼容底线（项目所有者明文要求）：多人联机环境下必须兼容原版客户端**——保存到处理器的代码在任何原版客户端上都要能解析、能运行，优先级高于一切新功能。调试类功能（指令上限覆盖、AssertEmit=emit）只在单机/编辑器（`!Vars.net.active()`）生效，联机会话一律回落原版行为，门禁在代码层强制（`InstructionLimit.sessionAllows` / `SugarCompiler.currentAssertEmit`）。残余风险：单机创建的越界内容若分享到多人环境，原版客户端仍会截断/清空/静默降级，代码无法阻止分享，只能靠设置描述与文档讲清。
 - 用户可见文案一律走 `logicsugar.*` bundle key，不硬编码。
 - 受保护游戏成员访问只走子类实例方法或反射（见上），静态辅助代码只用 public 游戏 API。
 - 反编译恢复必须留在重编译/规范化流比对门后，失败方向是"多显示原版代码"。
