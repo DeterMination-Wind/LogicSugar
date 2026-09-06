@@ -116,7 +116,7 @@ public final class SugarAsserts{
         @Override
         public void build(Table table){
             table.add(text("asserts.value", "value of")).padLeft(4);
-            field(table, value, s -> value = s).width(65f).pad(2f);
+            field(table, value, s -> value = s).width(85f).pad(2f);
             table.button(b -> {
                 b.add(type.name());
                 b.clicked(() -> showSelect(b, AssertionType.all, type, o -> {
@@ -126,10 +126,10 @@ public final class SugarAsserts{
             }, Styles.logict, () -> {}).size(96f, 40f).pad(4f).color(table.color);
             if(type == AssertionType.multiple){
                 table.add(text("asserts.of", "of"));
-                field(table, multiple, s -> multiple = s).width(50f).pad(2f);
+                field(table, multiple, s -> multiple = s).width(70f).pad(2f);
             }
             table.add(text("asserts.bounds", "bounds")).padLeft(8);
-            field(table, min, s -> min = s).width(50f).pad(2f);
+            field(table, min, s -> min = s).width(70f).pad(2f);
             opButton(table, opMin, o -> {
                 opMin = o;
                 build(table);
@@ -139,10 +139,10 @@ public final class SugarAsserts{
                 opMax = o;
                 build(table);
             });
-            field(table, max, s -> max = s).width(50f).pad(2f);
+            field(table, max, s -> max = s).width(70f).pad(2f);
             table.row();
             table.add(text("asserts.message", "message")).padLeft(4);
-            field(table, message, s -> message = s).growX().pad(2f);
+            field(table, message, s -> message = s).width(0f).growX().pad(2f);
         }
 
         private void opButton(Table table, AssertOp op, Cons<AssertOp> setter){
@@ -179,11 +179,14 @@ public final class SugarAsserts{
         @Override
         public void build(Table table){
             table.add(text("asserts.expected", "expected")).padLeft(4);
-            field(table, expected, s -> expected = s).width(85f).pad(2f);
+            field(table, expected, s -> expected = s).width(110f).pad(2f);
             table.add(text("asserts.actual", "actual")).padLeft(8);
-            field(table, actual, s -> actual = s).width(85f).pad(2f);
-            table.add(text("asserts.message", "message")).padLeft(8);
-            field(table, message, s -> message = s).growX().pad(2f);
+            field(table, actual, s -> actual = s).width(110f).pad(2f);
+            table.row();
+            table.add(text("asserts.message", "message")).padLeft(4);
+            // width(0) releases the field() helper's 144px cell cap so growX can actually
+            // stretch the trailing field to the card edge (vanilla trailing-field pattern)
+            field(table, message, s -> message = s).width(0f).growX().pad(2f);
         }
 
         @Override public String name(){ return text("asserts.equals.card", "Assert Equals"); }
@@ -210,7 +213,7 @@ public final class SugarAsserts{
         @Override
         public void build(Table table){
             table.add(text("asserts.position", "position")).padLeft(4);
-            field(table, position, s -> position = s).width(85f).pad(2f);
+            field(table, position, s -> position = s).width(110f).pad(2f);
         }
 
         @Override public String name(){ return text("asserts.flush.card", "Assert Flush"); }
@@ -238,11 +241,12 @@ public final class SugarAsserts{
         @Override
         public void build(Table table){
             table.add(text("asserts.position", "position")).padLeft(4);
-            field(table, position, s -> position = s).width(85f).pad(2f);
+            field(table, position, s -> position = s).width(110f).pad(2f);
             table.add(text("asserts.expected", "expected")).padLeft(8);
-            field(table, expected, s -> expected = s).width(85f).pad(2f);
-            table.add(text("asserts.message", "message")).padLeft(8);
-            field(table, message, s -> message = s).growX().pad(2f);
+            field(table, expected, s -> expected = s).width(110f).pad(2f);
+            table.row();
+            table.add(text("asserts.message", "message")).padLeft(4);
+            field(table, message, s -> message = s).width(0f).growX().pad(2f);
         }
 
         @Override public String name(){ return text("asserts.prints.card", "Assert Prints"); }
@@ -290,7 +294,7 @@ public final class SugarAsserts{
                     }));
                 }, Styles.logict, () -> {}).size(80f, 40f).pad(4f).color(table.color);
             }
-            field(table, params[0], s -> params[0] = s).growX().pad(2f);
+            field(table, params[0], s -> params[0] = s).width(0f).growX().pad(2f);
             table.row();
             for(int i = 1; i < params.length; i++){
                 final int index = i;
