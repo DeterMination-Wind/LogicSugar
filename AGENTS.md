@@ -10,10 +10,11 @@ this file only adds what is specific to this project.
 **LogicSugar 的硬底线：多人联机环境下必须兼容原版客户端。** 保存到处理器的代码在任何
 原版客户端上都要能解析、能运行；这是整个 mod 的存在前提，优先级高于一切新功能。
 
-- **调试类功能只在单机启用**：凡是会改变保存产物语义的功能（目前是 指令上限覆盖
-  `InstructionLimit` 与 调试断言构建 `AssertEmit=emit`），必须在代码层限定为
-  `!Vars.net.active()`（单机/编辑器）才生效——联机（已连接或自建）一律回落原版行为。
-  纯展示类功能（如处理器状态指示、变量复制按钮）不产生存档差异，不受此限。
+- **调试类功能只在单机启用**：凡是会改变保存产物语义的功能（目前是调试断言构建
+  `AssertEmit=emit`），必须在代码层限定为 `!Vars.net.active()`（单机/编辑器）才生效——
+  联机（已连接或自建）一律回落原版行为。纯展示类功能（如处理器状态指示、变量复制按钮）
+  不产生存档差异，不受此限。不提供改变指令预算的能力：指令上限覆盖曾试做后被移除
+  （commit ea97e00），保存产物恒 ≤1000 条是硬不变式，勿再引入。
 - **残余风险必须写进文档**：单机里创建的越界内容（>1000 条程序、带 assert 指令的调试
   构建）若之后被分享到多人环境，原版客户端仍会截断/清空/静默降级——代码无法阻止分享，
   只能靠设置描述与文档把后果讲清（见 bundle 的 maxInstructions/assertEmit 描述）。
@@ -25,7 +26,7 @@ this file only adds what is specific to this project.
 ```powershell
 cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, recoveryPredicateTest,
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
-                                      # instructionLimitTest, varClipboardTest, processorStatusTest, assertTest
+                                      # varClipboardTest, processorStatusTest, assertTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 

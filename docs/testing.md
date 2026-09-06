@@ -17,7 +17,6 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `boxSelectTest` | `logicsugar.assist.BoxSelectSelfTest` | 框选拖动策略纯函数：移动端 430ms 长按、桌面 8px slop、斜向/纵向阈值、边界含等 |
 | `cfgTest` | `mindustry.logic.MlogCFGTest` | 零依赖 CFG IR：leader 划分、条件/always 跳转边、可达性、支配树、自然循环与回边、多入口形态不误报、越界 jump 不崩、`@counter` 写入与 reads/writes 提取 |
 | `lintTest` | `logicsugar.MlogLintTest` | Mlog 静态检查（advisory）：unknown-op（名单转录自 LogicOp）、参数个数（经 LogicIO 双端核对）、对字面量赋值、自跳转/越界跳转、坏 jump 形状、未知指令 INFO；干净程序零误报 |
-| `instructionLimitTest` | `logicsugar.assist.InstructionLimitSelfTest` | 指令上限覆盖：canOverride 反射守卫与真实字段修饰一致、apply 写入/还原静态字段、守卫阻断路径 |
 | `varClipboardTest` | `logicsugar.assist.VarClipboardSelfTest` | 变量导出 TSV 格式：表头、按名排序、全精度数字、对象值走 PrintI 格式化（字符串原样、null） |
 | `processorStatusTest` | `logicsugar.assist.ProcessorStatusSelfTest` | 状态指示纯函数：wait 阈值含等判定、阈值 0 关闭、扫描预算分数进位与 1.5×perTick 下限 |
 | `assertTest` | `mindustry.logic.SugarAssertsTest` | 断言语句集：与 MlogAssertions 逐字节线格式、write/parse 往返幂等、`~` 占位定长 token、坏枚举干净报错、strip/emit 编译行为、verifyRestore 双形态、调试构建反编译 round-trip |
@@ -27,7 +26,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前十三个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前十二个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 
@@ -50,6 +49,5 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 8. **安卓包**：安装 `build/libs/LogicSugar-v<version>.jar`（含 `classes.dex`）于安卓设备，确认能加载并打开逻辑编辑器。
 9. **对话框按钮**：打开处理器编辑器两次以上——函数库入口、复制变量、复制打印缓冲按钮每次都在（vanilla `setup()` 每次 show 重建按钮行）；点复制变量得到按名排序的 TSV；函数库会话中两个复制按钮不出现。
 10. **处理器状态指示**：造一个 `stop` 结尾的程序和一个长 `wait` 程序，确认停止处理器上方显示「已停在第 N 条」、长 wait 画进度圆环；把等待阈值滑到 0 后圆环消失；处理器极多的地图无可见卡顿。
-11. **指令上限**：把上限滑杆调到 2000，编译一个 1000~2000 条之间的程序确认能保存；调回 1000 后同样程序报超限。
-12. **断言（调试构建）**：关闭「调试断言构建」时保存含断言的程序，产物 mlog 无 `assert*` 行且无模组客户端可正常打开；开启后保存，断言失败在地图上显示消息且程序原地自旋，`breakpoint` 命中时游戏暂停；重开编辑器断言卡片完整。与 MlogAssertions 并存装时无重复注册报错。
-13. **联机门禁（兼容底线）**：把指令上限滑到 2000、断言构建设为 emit，然后加入或自建一个多人游戏——此时保存任何程序，产物必须 ≤1000 条且不含 `assert*` 行（与原版客户端互开无异常）；回到单机重新载入地图后，两项设置恢复生效。原版客户端实测打开单机创建的 >1000 条程序会截断/清空（已知残余风险，设置描述已写明）。
+11. **断言（调试构建）**：关闭「调试断言构建」时保存含断言的程序，产物 mlog 无 `assert*` 行且无模组客户端可正常打开；开启后保存，断言失败在地图上显示消息且程序原地自旋，`breakpoint` 命中时游戏暂停；重开编辑器断言卡片完整。与 MlogAssertions 并存装时无重复注册报错。
+12. **联机门禁（兼容底线）**：把断言构建设为 emit，然后加入或自建一个多人游戏——此时保存任何程序，产物必须 ≤1000 条且不含 `assert*` 行（与原版客户端互开无异常）；回到单机重新载入地图后，emit 设置恢复生效。指令上限覆盖功能已移除，保存产物恒 ≤1000 条。

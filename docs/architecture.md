@@ -7,8 +7,8 @@
 LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（id `ls`）。两种形态共用同一套代码，由主类上的静态标记切换：
 
 - `logicsugar.LogicSugarMod#bekBundled`：宿主（Neon）注入时置 `true`。
-- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试断言构建、函数库入口、指令上限、处理器状态、隐藏内部变量、框选、跳转线着色）。
-- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、指令上限滑杆、处理器状态滑杆、隐藏变量、框选与跳转线着色；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
+- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试断言构建、函数库入口、处理器状态、隐藏内部变量、框选、跳转线着色）。
+- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、处理器状态滑杆、隐藏变量、框选与跳转线着色；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
 
 除设置入口外，两种形态的行为完全一致；不存在单独的聚合分支代码。
 
@@ -89,7 +89,6 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
 | 复制变量/打印缓冲 | `assist.VarClipboard` | SugarLogicDialog 按钮行，全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示按钮 |
 | 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；设置三滑杆（阈值 0 关闭 / 每帧扫描数 / 警告特效） |
-| 指令上限覆盖 | `assist.InstructionLimit` | **仅单机/编辑器生效**：联机会话强制回落原版 1000（原版解析器按静态上限截断、跨界 label jump 会清空处理器）；单机改 `LExecutor.maxInstructions`（1000→2000），字段为 final 时设置行隐藏 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 
 ### 结构语句布局
@@ -101,7 +100,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 ```text
 src/logicsugar/           模组侧：入口、设置、函数库、FunctionLibraryDialog
 src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter、MlogLint、
-                          VarClipboard、ProcessorStatus、InstructionLimit、AssertInstructions
+                          VarClipboard、ProcessorStatus、AssertInstructions
 src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ShortCircuitCompiler
 src/mindustry/logic/      与游戏同包名的扩展层：SugarCompiler、SugarDecompiler、SugarStatements、
                           SugarAsserts、SugarCanvas、SugarLogicDialog、SugarFunctions、RecoveryPredicate、MlogCFG
@@ -113,7 +112,7 @@ assets/bundles/           bundle.properties / bundle_zh_CN / bundle_zh_TW（用�
 
 ## 设计约束（务必保持）
 
-- **兼容底线（项目所有者明文要求）：多人联机环境下必须兼容原版客户端**——保存到处理器的代码在任何原版客户端上都要能解析、能运行，优先级高于一切新功能。调试类功能（指令上限覆盖、AssertEmit=emit）只在单机/编辑器（`!Vars.net.active()`）生效，联机会话一律回落原版行为，门禁在代码层强制（`InstructionLimit.sessionAllows` / `SugarCompiler.currentAssertEmit`）。残余风险：单机创建的越界内容若分享到多人环境，原版客户端仍会截断/清空/静默降级，代码无法阻止分享，只能靠设置描述与文档讲清。
+- **兼容底线（项目所有者明文要求）：多人联机环境下必须兼容原版客户端**——保存到处理器的代码在任何原版客户端上都要能解析、能运行，优先级高于一切新功能。调试类功能（目前是 AssertEmit=emit）只在单机/编辑器（`!Vars.net.active()`）生效，联机会话一律回落原版行为，门禁在代码层强制（`SugarCompiler.currentAssertEmit`）。不提供改变指令预算的能力：指令上限覆盖曾试做后被移除（保存产物恒 ≤1000 条是硬不变式）。残余风险：单机创建的调试构建若分享到多人环境，原版客户端仍会静默降级，代码无法阻止分享，只能靠设置描述与文档讲清。
 - 用户可见文案一律走 `logicsugar.*` bundle key，不硬编码。
 - 受保护游戏成员访问只走子类实例方法或反射（见上），静态辅助代码只用 public 游戏 API。
 - 反编译恢复必须留在重编译/规范化流比对门后，失败方向是"多显示原版代码"。
