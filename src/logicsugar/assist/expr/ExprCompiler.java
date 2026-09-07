@@ -127,6 +127,8 @@ public class ExprCompiler{
     static class Binary extends Node{ final String op; final Node l,r; Binary(String o,Node a,Node b){op=o;l=a;r=b;} }
     /** 成员访问：unit.Health → sensor。base 可以是任意值表达式，prop 是属性名。 */
     static class Member extends Node{ final Node base; final String prop; Member(Node b,String p){base=b;prop=p;} }
+    /** 数组下标：buf[i] → read。base 必须是已声明数组的名字（经注册表解析），index 是逻辑下标。 */
+    static class Index extends Node{ final Node base; final Node index; Index(Node b,Node i){base=b;index=i;} }
     /** 用户函数调用：foo(a, b)。名字不是数学函数时生成，校验推迟到调用方。 */
     static class Call extends Node{ final String name; final List<Node> args; Call(String n,List<Node> a){name=n;args=a;} }
 
@@ -192,6 +194,34 @@ public class ExprCompiler{
         }
     }
 
+    /**
+     * read 指令行：read <dest> <memory> <address>（数组下标读）。与 SensorLine 同理继承
+     * OpLine（op="read"、dest=结果、a=内存块、b=地址），lineDest() 等下游零改动；
+     * 4 参调用点（compile 收尾改名、emitCondition/Return、unfoldAll）按类分支处理。
+     * 逆向（折叠）仅在注册表把 memory 解析到已声明数组时进行——用户手写的普通 read
+     * 不会被误折，纯原版 mlog 不受影响。
+     */
+    public static class ReadLine extends OpLine{
+        public ReadLine(String dest, String memory, String address){
+            super("read", dest, memory, address);
+        }
+        @Override public String toText(){
+            return "read " + dest + " " + a + " " + b;
+        }
+    }
+
+    /** write 指令行：write <value> <memory> <address>（数组下标赋值）。没有 dest：
+     *  作为赋值链的终结行，逆向走 {@link #rebuildAssignment}。 */
+    public static class WriteLine extends Line{
+        public final String value, memory, address;
+        public WriteLine(String value, String memory, String address){
+            this.value = value; this.memory = memory; this.address = address;
+        }
+        @Override public String toText(){
+            return "write " + value + " " + memory + " " + address;
+        }
+    }
+
     // ===== 异常 =====
     public static class ParseException extends RuntimeException{
         public ParseException(String msg){ super(msg); }
@@ -208,8 +238,9 @@ public class ExprCompiler{
     }
 
     static final String[] MULTI_OPS = {"===", ">>>", "<=", ">=", "==", "!=", "<<", ">>", "%%", "//", "&&", "||"};
-    /** "." 是成员访问符（a.b）；小数点在前面的数字分支处理（.5、1.5），互不冲突 */
-    static final String[] SINGLE_OPS = {"+", "-", "*", "/", "%", "^", "<", ">", "&", "|", "~", "!", "(", ")", ",", "."};
+    /** "." 是成员访问符（a.b）；小数点在前面的数字分支处理（.5、1.5），互不冲突。
+     *  "[" "]" 是数组下标符（buf[i]），解析进 Index 节点后按注册表编译为 read/write。 */
+    static final String[] SINGLE_OPS = {"+", "-", "*", "/", "%", "^", "<", ">", "&", "|", "~", "!", "(", ")", ",", ".", "[", "]"};
 
     static List<Token> tokenize(String expr){
         List<Token> tokens = new ArrayList<>();
@@ -433,13 +464,21 @@ public class ExprCompiler{
                 throw new ParseException(msg("la.err.unexpected_token", tok.text));
             }
 
-            // 后置成员访问：unit.Health、unit.type.id、cos(a).Health
-            while(isOp(".")){
-                next();
-                if(peek().type != TokType.IDENT)
-                    throw new ParseException(msg("la.err.expected_member"));
-                String prop = next().text;
-                base = new Member(base, prop);
+            // 后置成员访问与数组下标：unit.Health、unit.type.id、cos(a).Health、buf[i]、a.b[0]
+            while(isOp(".") || isOp("[")){
+                if(isOp(".")){
+                    next();
+                    if(peek().type != TokType.IDENT)
+                        throw new ParseException(msg("la.err.expected_member"));
+                    base = new Member(base, next().text);
+                }else{
+                    next();
+                    Node subscript = parseExpr();
+                    if(!isOp("]"))
+                        throw new ParseException(msg("la.err.expected_rbracket"));
+                    next();
+                    base = new Index(base, subscript);
+                }
             }
             return base;
         }
@@ -492,6 +531,22 @@ public class ExprCompiler{
         Parser parser = new Parser(tokens, checker);
         Node ast = parser.parse();
 
+        // 下标赋值：dest 文本形如 arr[<下标表达式>] 时走写路径（write 指令）。仅当 dest
+        // 含 '[' 才尝试解析——普通变量名（含命名空间里的怪名字）保持既有语义不变。
+        if(dest != null && dest.indexOf('[') >= 0){
+            Node target;
+            try{
+                target = new Parser(tokenize(dest), checker).parse();
+            }catch(ParseException e){
+                throw e;
+            }catch(Exception e){
+                throw new ParseException(msg("la.err.assign_target", dest));
+            }
+            if(!(target instanceof Index))
+                throw new ParseException(msg("la.err.assign_target", dest));
+            return compileAssignment((Index)target, ast);
+        }
+
         List<Line> ops = new ArrayList<>();
         TempStack temps = new TempStack();
         String result = compileNode(ast, ops, temps);
@@ -507,6 +562,8 @@ public class ExprCompiler{
                 if(last instanceof SensorLine){
                     SensorLine sl = (SensorLine)last;
                     ops.set(ops.size() - 1, new SensorLine(dest, sl.a, sl.b));
+                }else if(last instanceof ReadLine read){
+                    ops.set(ops.size() - 1, new ReadLine(dest, read.a, read.b));
                 }else if(last instanceof OpLine opLine){
                     ops.set(ops.size() - 1, new OpLine(opLine.op, dest, opLine.a, opLine.b));
                 }else if(last instanceof CallLine callLine){
@@ -522,6 +579,62 @@ public class ExprCompiler{
         return ops;
     }
 
+    /** 下标赋值写路径：先编译 value 表达式，再编译下标并计算地址（base + idx），
+     *  产出 write <value> <memory> <address>。 */
+    private static List<Line> compileAssignment(Index target, Node valueAst){
+        List<Line> ops = new ArrayList<>();
+        TempStack temps = new TempStack();
+        String value = compileNode(valueAst, ops, temps);
+        String[] memoryAddress = emitArrayAddress(target, ops, temps);
+        ops.add(new WriteLine(value, memoryAddress[0], memoryAddress[1]));
+        return ops;
+    }
+
+    /**
+     * 解析下标目标的数组信息并发射地址计算，返回 {memory, address}。
+     * 规则：base==0 且下标为字面量 → 地址=下标字面量；base==0 且非字面量 → 地址=下标本身；
+     * base&gt;0 且字面量 → 地址折叠为 base+下标字面量；否则先 {@code op add _t <base> <下标>}。
+     * 注册表存在且非空时做严格校验（未声明数组名、字面量下标越界都报错）；
+     * 注册表缺失/为空（语法校验场景）退化为按普通变量名发射 read/write，不做检查。
+     */
+    private static String[] emitArrayAddress(Index ix, List<Line> ops, TempStack temps){
+        if(!(ix.base instanceof Var))
+            throw new ParseException(msg("la.err.array_base_var"));
+        String name = ((Var)ix.base).name;
+        ArrayRegistry registry = ArrayRegistry.active();
+        boolean strict = registry != null && !registry.isEmpty();
+        ArrayRegistry.ArrayInfo info = strict ? registry.get(name) : null;
+        if(strict && info == null)
+            throw new ParseException(msg("la.err.array_unknown", name));
+
+        Long literal = literalValue(ix.index);
+        if(literal != null){
+            if(info != null && !info.inRange(literal))
+                throw new ParseException(msg("la.err.array_index_oob", name, formatNum(literal), info.size));
+            long address = info == null ? literal : info.addressOf(literal);
+            return new String[]{info == null ? name : info.memory, formatNum(address)};
+        }
+        String subscript = compileNode(ix.index, ops, temps);
+        int base = info == null ? 0 : info.base;
+        if(base == 0) return new String[]{info == null ? name : info.memory, subscript};
+        String temp = temps.alloc(subscript);
+        ops.add(new OpLine("add", temp, String.valueOf(base), subscript));
+        return new String[]{info == null ? name : info.memory, temp};
+    }
+
+    /** 常量折叠裸字面量下标：Num 或 -Num（整数），其余返回 null。 */
+    static Long literalValue(Node node){
+        if(node instanceof Num){
+            double val = ((Num)node).val;
+            return val == Math.rint(val) ? (long)val : null;
+        }
+        if(node instanceof Unary && ((Unary)node).op.equals("neg") && ((Unary)node).operand instanceof Num){
+            double val = ((Num)((Unary)node).operand).val;
+            return val == Math.rint(val) ? -(long)val : null;
+        }
+        return null;
+    }
+
     static String compileNode(Node node, List<Line> ops, TempStack temps){
         if(node instanceof Num) return formatNum(((Num)node).val);
         if(node instanceof Var) return ((Var)node).name;
@@ -535,6 +648,14 @@ public class ExprCompiler{
             }
             String temp = temps.fresh();
             ops.add(new CallLine(c.name, args.toString(), temp));
+            return temp;
+        }
+
+        if(node instanceof Index){
+            // 数组下标读：地址计算 → read <tmp> <memory> <address>
+            String[] memoryAddress = emitArrayAddress((Index)node, ops, temps);
+            String temp = temps.fresh();
+            ops.add(new ReadLine(temp, memoryAddress[0], memoryAddress[1]));
             return temp;
         }
 
@@ -585,24 +706,164 @@ public class ExprCompiler{
      */
     public static String rebuild(List<Line> ops){
         if(ops == null || ops.isEmpty()) return null;
+        Map<Line, ArrayFold> folds = resolveArrayFolds(ops);
 
         // 从最后一条开始（dest 为目标变量，非临时变量）
         Line root = ops.get(ops.size() - 1);
-        Node expr = opToNode(root);
+        Node expr = opToNode(root, folds);
         if(expr == null) return null;
 
         // 向前遍历，替换临时变量引用
         for(int i = ops.size() - 2; i >= 0; i--){
             Line op = ops.get(i);
+            // base>0 数组的地址加法行已被消费：物理地址临时不再进入表达式
+            if(folds != null && folds.get(op) == ArrayFold.CONSUMED) continue;
             String dest = lineDest(op);
             if(dest != null && isTemp(dest)){
-                Node sub = opToNode(op);
+                Node sub = opToNode(op, folds);
                 if(sub == null) return null;
                 expr = substituteTemp(expr, dest, sub);
             }
         }
 
         return nodeToString(expr);
+    }
+
+    /**
+     * 重建下标赋值链（最后一条为 {@link WriteLine}）：返回 {dest 文本, value 表达式文本}，
+     * 例如 {"buf[i + 1]", "a + b"}；注册表缺失、memory 未命中或无法无损重建时返回 null。
+     */
+    public static String[] rebuildAssignment(List<Line> ops){
+        if(ops == null || ops.isEmpty()) return null;
+        Line last = ops.get(ops.size() - 1);
+        if(!(last instanceof WriteLine)) return null;
+        Map<Line, ArrayFold> folds = resolveArrayFolds(ops);
+        if(folds == null) return null;
+        ArrayFold fold = folds.get(last);
+        if(fold == null || fold == ArrayFold.CONSUMED) return null;
+        Node dest = new Index(new Var(fold.info.name), operandToNode(fold.indexOperand));
+        Node value = operandToNode(((WriteLine)last).value);
+        for(int i = ops.size() - 2; i >= 0; i--){
+            Line line = ops.get(i);
+            if(folds.get(line) == ArrayFold.CONSUMED) continue;
+            String temp = lineDest(line);
+            if(temp != null && isTemp(temp)){
+                Node sub = opToNode(line, folds);
+                if(sub == null) return null;
+                dest = substituteTemp(dest, temp, sub);
+                value = substituteTemp(value, temp, sub);
+            }
+        }
+        return new String[]{nodeToString(dest), nodeToString(value)};
+    }
+
+    /** 一条 read/write 行折叠时解析到的数组与"逻辑下标操作数"。CONSUMED 标记被消费的
+     *  base 加法定义行（其 dest 是物理地址临时，不进入表达式，也不再参与替换）。 */
+    static final class ArrayFold{
+        static final ArrayFold CONSUMED = new ArrayFold(null, null);
+        final ArrayRegistry.ArrayInfo info;
+        final String indexOperand;
+        ArrayFold(ArrayRegistry.ArrayInfo info, String indexOperand){
+            this.info = info;
+            this.indexOperand = indexOperand;
+        }
+    }
+
+    /**
+     * 解析链中所有 read/write 行的数组归属——仅当注册表存在且 memory 操作数命中已声明
+     * 数组时（用户手写的普通 read/write 与纯原版 mlog 不受影响）。解析规则：
+     * <ul>
+     *   <li>地址为整数字面量 → 归属区间 [base, base+size) 包含该地址的数组，下标=地址-base；
+     *       越界地址不折叠（避免折出下次编译报错的卡片）；</li>
+     *   <li>地址非字面量 → 回溯最近一条 {@code op add _t <base> <下标>} 定义行（base 与某数组
+     *       相等），下标取其加法操作数（加法前的旧值），并把该定义行标记为 CONSUMED——
+     *       这样 {@code buf[i]} 折回后重编译的指令流与原链一致；</li>
+     *   <li>无 base 加法定义 → 仅当该内存块上恰有一个 base==0 数组时，下标=地址本身。</li>
+     * </ul>
+     */
+    private static Map<Line, ArrayFold> resolveArrayFolds(List<Line> ops){
+        ArrayRegistry registry = ArrayRegistry.active();
+        if(registry == null || registry.isEmpty()) return null;
+        Map<Line, ArrayFold> folds = null;
+        for(int p = 0; p < ops.size(); p++){
+            Line line = ops.get(p);
+            String memory, address;
+            if(line instanceof ReadLine read){
+                memory = read.a;
+                address = read.b;
+            }else if(line instanceof WriteLine write){
+                memory = write.memory;
+                address = write.address;
+            }else{
+                continue;
+            }
+            ArrayRegistry.ArrayInfo info = null;
+            String indexOperand = null;
+            int consumedAdd = -1;
+            Long literal = ArrayRegistry.parseIntLiteral(address);
+            if(literal != null){
+                for(ArrayRegistry.ArrayInfo candidate : registry.byMemory(memory)){
+                    if(candidate.base <= literal && literal < candidate.base + candidate.size){
+                        info = candidate;
+                        break;
+                    }
+                }
+                if(info == null) continue;
+                long index = literal - info.base;
+                if(index < 0 || index >= info.size) continue;
+                indexOperand = formatNum(index);
+            }else{
+                for(int j = p - 1; j >= 0; j--){
+                    Line def = ops.get(j);
+                    if(!(def instanceof OpLine opdef) || !opdef.op.equals("add") || !opdef.dest.equals(address)) continue;
+                    Long baseA = ArrayRegistry.parseIntLiteral(opdef.a);
+                    Long baseB = baseA == null ? ArrayRegistry.parseIntLiteral(opdef.b) : null;
+                    ArrayRegistry.ArrayInfo byA = baseA == null ? null : findByBase(registry, memory, baseA);
+                    ArrayRegistry.ArrayInfo byB = byA == null && baseB != null ? findByBase(registry, memory, baseB) : null;
+                    if(byA != null){
+                        info = byA;
+                        indexOperand = opdef.b;
+                        consumedAdd = j;
+                        break;
+                    }
+                    if(byB != null){
+                        info = byB;
+                        indexOperand = opdef.a;
+                        consumedAdd = j;
+                        break;
+                    }
+                }
+                if(info == null){
+                    ArrayRegistry.ArrayInfo zero = null;
+                    for(ArrayRegistry.ArrayInfo candidate : registry.byMemory(memory)){
+                        if(candidate.base == 0){
+                            if(zero != null){ zero = null; break; }
+                            zero = candidate;
+                        }
+                    }
+                    if(zero == null) continue;
+                    info = zero;
+                    indexOperand = address;
+                }
+            }
+            if(folds == null) folds = new IdentityHashMap<>();
+            folds.put(line, new ArrayFold(info, indexOperand));
+            if(consumedAdd >= 0) folds.put(ops.get(consumedAdd), ArrayFold.CONSUMED);
+        }
+        return folds;
+    }
+
+    /** 按 base 在同一内存块上找唯一数组；不唯一或 base 非法时返回 null。 */
+    private static ArrayRegistry.ArrayInfo findByBase(ArrayRegistry registry, String memory, Long base){
+        if(base == null || base < 0 || base > Integer.MAX_VALUE) return null;
+        ArrayRegistry.ArrayInfo found = null;
+        for(ArrayRegistry.ArrayInfo candidate : registry.byMemory(memory)){
+            if(candidate.base == base){
+                if(found != null) return null;
+                found = candidate;
+            }
+        }
+        return found;
     }
 
     /** 行写入的变量名（op/sensor 的 dest、funccall 的 result），null 表示不写变量 */
@@ -612,8 +873,9 @@ public class ExprCompiler{
         return null;
     }
 
-    /** 将一条指令转为 AST 节点，包含简化规则 */
-    static Node opToNode(Line op){
+    /** 将一条指令转为 AST 节点，包含简化规则。folds 是 {@link #resolveArrayFolds} 的解析结果
+     *  （可为 null）：read 行仅在命中已声明数组时折回 Index 节点，否则保持原样不折叠。 */
+    static Node opToNode(Line op, Map<Line, ArrayFold> folds){
         // funccall → 函数调用节点（foo(a, b)）
         if(op instanceof CallLine call){
             List<Node> args = new ArrayList<>();
@@ -623,6 +885,12 @@ public class ExprCompiler{
             return new Call(call.name, args);
         }
         if(!(op instanceof OpLine opLine)) return null;
+        // read 指令行 → 数组下标节点（buf[i]）；未命中注册表（含手写 read）返回 null 不折叠
+        if(op instanceof ReadLine read){
+            ArrayFold fold = folds == null ? null : folds.get(read);
+            if(fold == null || fold == ArrayFold.CONSUMED) return null;
+            return new Index(new Var(fold.info.name), operandToNode(fold.indexOperand));
+        }
         // sensor 指令 → 成员访问节点（unit.Health）
         if(op instanceof SensorLine){
             return new Member(operandToNode(opLine.a), memberDisplay(opLine.b));
@@ -680,6 +948,9 @@ public class ExprCompiler{
             }
             out.add(new CallSite(c.name, args.toString()));
             for(Node arg : c.args) collectCallNodes(arg, out);
+        }else if(node instanceof Index){
+            collectCallNodes(((Index)node).base, out);
+            collectCallNodes(((Index)node).index, out);
         }else if(node instanceof Member){
             collectCallNodes(((Member)node).base, out);
         }else if(node instanceof Unary){
@@ -704,6 +975,12 @@ public class ExprCompiler{
             return ((Var)node).name.equals(tempName) ? replacement : node;
         }
         if(node instanceof Num) return node;
+        if(node instanceof Index){
+            Index ix = (Index)node;
+            return new Index(
+                substituteTemp(ix.base, tempName, replacement),
+                substituteTemp(ix.index, tempName, replacement));
+        }
         if(node instanceof Member){
             Member m = (Member)node;
             return new Member(substituteTemp(m.base, tempName, replacement), m.prop);
@@ -741,6 +1018,16 @@ public class ExprCompiler{
                 out.append(nodeToString(c.args.get(i)));
             }
             return out.append(')').toString();
+        }
+
+        if(node instanceof Index){
+            Index ix = (Index)node;
+            String base = nodeToString(ix.base);
+            // 下标基底是复合表达式时加括号（当前编译只产 Var 基底，此处兜底）
+            if(ix.base instanceof Binary || ix.base instanceof Unary){
+                base = "(" + base + ")";
+            }
+            return base + "[" + nodeToString(ix.index) + "]";
         }
 
         if(node instanceof Member){

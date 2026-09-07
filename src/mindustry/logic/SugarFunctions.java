@@ -1420,6 +1420,11 @@ public final class SugarFunctions{
                 emitReturn((ReturnStatement)statement, prefix, mode, out, funcName, functions, ids, strategy, assertEmit);
             }else if(statement instanceof FuncDefStatement){
                 throw error("funcdef", i, "cannot be lowered; function definitions are expanded at call sites");
+            }else if(statement instanceof SugarStatements.ArrayStatement){
+                // 数组声明卡是纯编译期元数据：不产出任何 mlog 行（产物保持纯原版指令，
+                // 无 LogicSugar 的 customParsers 的客户端也能解析）。注册表元数据已由
+                // SugarCompiler.compile 在 lower 前登记，指向声明位置的 jump 仍会得到
+                // 前置的 stmt_ 标签，等于落到下一条语句。
             }else if(statement instanceof SugarAsserts.AssertCard){
                 // debug builds (emit) pass assertion instructions through as real custom
                 // instructions; the default (strip) compiles them away so the saved mlog
@@ -1468,6 +1473,13 @@ public final class SugarFunctions{
                 String b = renameConditionTemp(sensor.b, prefix, statementIndex);
                 String d = renameConditionTemp(sensor.dest, prefix, statementIndex);
                 out.append("sensor ").append(d).append(' ').append(a).append(' ').append(b).append('\n');
+            }else if(line instanceof ExprCompiler.ReadLine read){
+                // 数组下标读：read 是 3 操作数指令（不是 op），dest 与地址里的 temp
+                // 都要进入条件命名空间（memory 变量名不重命名）
+                String a = renameConditionTemp(read.a, prefix, statementIndex);
+                String b = renameConditionTemp(read.b, prefix, statementIndex);
+                String d = renameConditionTemp(read.dest, prefix, statementIndex);
+                out.append("read ").append(d).append(' ').append(a).append(' ').append(b).append('\n');
             }else if(line instanceof ExprCompiler.CallLine call){
                 // 函数调用展开：实参与结果 temp 都要进入条件命名空间
                 FuncCallStatement stmt = new FuncCallStatement();
@@ -1520,6 +1532,11 @@ public final class SugarFunctions{
                         out.append("sensor ").append(renameReturnTemp(sensor.dest, funcName)).append(' ')
                             .append(renameReturnTemp(sensor.a, funcName)).append(' ')
                             .append(renameReturnTemp(sensor.b, funcName)).append('\n');
+                    }else if(line instanceof ExprCompiler.ReadLine read){
+                        // 数组下标读是 3 操作数指令（不是 op）：dest/地址 temp 进入函数命名空间
+                        out.append("read ").append(renameReturnTemp(read.dest, funcName)).append(' ')
+                            .append(renameReturnTemp(read.a, funcName)).append(' ')
+                            .append(renameReturnTemp(read.b, funcName)).append('\n');
                     }else{
                         ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
                         out.append("op ").append(op.op).append(' ')

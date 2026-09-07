@@ -23,6 +23,9 @@ import java.util.List;
 public final class SugarStatements{
     private SugarStatements(){}
 
+    /** Settings key for localized card titles (checkbox registered in LogicSugarSettings). */
+    public static final String settingLocalizeCards = "logicsugar.localizeCards";
+
     private static boolean parsersInstalled;
 
     /** Registers every Sugar token parser into {@code LAssembler.customParsers}. This is the
@@ -51,6 +54,7 @@ public final class SugarStatements{
         LAssembler.customParsers.put("funcdefc", tokens -> SugarStatements.parseFuncDef(tokens, true));
         LAssembler.customParsers.put("funccall", SugarStatements::parseFuncCall);
         LAssembler.customParsers.put("return", SugarStatements::parseReturn);
+        LAssembler.customParsers.put("array", SugarStatements::parseArray);
 
         // Read-only compatibility for markers produced by the first development version.
         LAssembler.customParsers.put("forend", tokens -> new SugarStatements.BlockEndStatement());
@@ -70,6 +74,20 @@ public final class SugarStatements{
 
     private static String text(String key, String fallback){
         return Core.bundle.get("logicsugar." + key, fallback);
+    }
+
+    /** Whether Sugar card titles render in the game language (setting
+     *  {@link #settingLocalizeCards}, default on). Read live, so toggling it applies the
+     *  next time the logic editor is opened — no settings refresh callback needed. */
+    public static boolean cardsLocalized(){
+        return Core.settings.getBool(settingLocalizeCards, true);
+    }
+
+    /** {@link #text} for card titles only ({@code name()} overrides): returns the
+     *  untranslated English fallback while card-title localization is switched off. Public
+     *  because the {@link SugarAsserts} card titles share the same policy. */
+    public static String cardText(String key, String fallback){
+        return cardsLocalized() ? text(key, fallback) : fallback;
     }
 
     public abstract static class SugarStatement extends LStatement{
@@ -337,7 +355,7 @@ public final class SugarStatements{
                 () -> rebuildCondition(table));
         }
 
-        @Override public String name(){ return text("for.begin", "For Begin"); }
+        @Override public String name(){ return cardText("for.begin", "For Begin"); }
         @Override public String typeName(){ return "ForBegin"; }
 
         @Override
@@ -381,7 +399,7 @@ public final class SugarStatements{
                 () -> rebuildCondition(table));
         }
 
-        @Override public String name(){ return text("while.begin", "While Begin"); }
+        @Override public String name(){ return cardText("while.begin", "While Begin"); }
         @Override public String typeName(){ return "WhileBegin"; }
         @Override public void write(StringBuilder out){
             if(expressionMode){
@@ -404,7 +422,7 @@ public final class SugarStatements{
             foldControlRow(table);
         }
 
-        @Override public String name(){ return text("switch.begin", "Switch Start"); }
+        @Override public String name(){ return cardText("switch.begin", "Switch Start"); }
         @Override public String typeName(){ return "SwitchBegin"; }
         @Override public void write(StringBuilder out){ out.append(collapsed ? "switchbeginc " : "switchbegin ").append(value).append(' ').append(destIndex); }
     }
@@ -415,7 +433,7 @@ public final class SugarStatements{
             table.add(text("case.value", "case")).self(c -> hint(c, "case"));
             field(table, value, result -> value = result);
         }
-        @Override public String name(){ return text("case", "Case"); }
+        @Override public String name(){ return cardText("case", "Case"); }
         @Override public String typeName(){ return "Case"; }
         @Override public void write(StringBuilder out){ out.append("case ").append(value); }
     }
@@ -448,7 +466,7 @@ public final class SugarStatements{
                 () -> rebuildCondition(table));
         }
 
-        @Override public String name(){ return text("if.begin", "If Begin"); }
+        @Override public String name(){ return cardText("if.begin", "If Begin"); }
         @Override public String typeName(){ return "IfBegin"; }
         @Override public void write(StringBuilder out){
             if(expressionMode){
@@ -488,7 +506,7 @@ public final class SugarStatements{
                 () -> rebuildCondition(table));
         }
 
-        @Override public String name(){ return text("elif", "Elif"); }
+        @Override public String name(){ return cardText("elif", "Elif"); }
         @Override public String typeName(){ return "ElseIf"; }
         @Override public void write(StringBuilder out){
             if(expressionMode){
@@ -502,7 +520,7 @@ public final class SugarStatements{
 
     public static class ElseStatement extends SugarStatement{
         @Override public void build(Table table){}
-        @Override public String name(){ return text("else", "Else"); }
+        @Override public String name(){ return cardText("else", "Else"); }
         @Override public String typeName(){ return "Else"; }
         @Override public void write(StringBuilder out){ out.append("else"); }
     }
@@ -522,7 +540,7 @@ public final class SugarStatements{
             foldControlRow(table);
         }
 
-        @Override public String name(){ return text("func.def", "Func Def"); }
+        @Override public String name(){ return cardText("func.def", "Func Def"); }
         @Override public String typeName(){ return "FuncDef"; }
 
         @Override
@@ -565,7 +583,7 @@ public final class SugarStatements{
             return params == null ? fallback : String.join(", ", params);
         }
 
-        @Override public String name(){ return text("func.call", "Func Call"); }
+        @Override public String name(){ return cardText("func.call", "Func Call"); }
         @Override public String typeName(){ return "FuncCall"; }
 
         @Override
@@ -589,7 +607,7 @@ public final class SugarStatements{
                 .growX().padLeft(4f);
         }
 
-        @Override public String name(){ return text("func.return", "Return"); }
+        @Override public String name(){ return cardText("func.return", "Return"); }
         @Override public String typeName(){ return "Return"; }
 
         @Override
@@ -601,16 +619,53 @@ public final class SugarStatements{
         }
     }
 
+    /** 数组声明卡：把内存块的一段地址登记为命名数组（纯编译期元数据）。卡片本身
+     *  不产出任何 mlog 行（lower 时剥离，编译产物保持纯原版指令）；表达式下标
+     *  {@code buf[i]} / {@code buf[i] = x} 经 {@link logicsugar.assist.expr.ArrayRegistry}
+     *  解析为原版 {@code read}/{@code write}。v0 仅支持整数字面量的 base/size。 */
+    public static class ArrayStatement extends SugarStatement{
+        /** 表达式中使用的数组名。 */
+        public String array = "buf";
+        /** 承载数据的内存块变量名（如 cell1）。 */
+        public String memory = "cell1";
+        /** 数组起始物理地址（非负整数字面量）。 */
+        public String base = "0";
+        /** 数组容量（≥1 整数字面量）。 */
+        public String size = "8";
+
+        @Override
+        public void build(Table table){
+            table.add(text("array.card", "Array")).self(c -> hint(c, "array.name"));
+            field(table, array, value -> array = value).width(70f);
+            table.add(text("array.memory", "mem")).self(c -> hint(c, "array.memory"));
+            field(table, memory, value -> memory = value).width(70f);
+            table.add(text("array.base", "base")).self(c -> hint(c, "array.base"));
+            field(table, base, value -> base = value).width(45f);
+            table.add(text("array.size", "size")).self(c -> hint(c, "array.size"));
+            field(table, size, value -> size = value).width(45f);
+        }
+
+        @Override public String name(){ return cardText("array.card", "Array"); }
+        @Override public String typeName(){ return "Array"; }
+
+        @Override
+        public void write(StringBuilder out){
+            // 固定 token 数（空槽位 "~" 占位）：LParser 复用静态 token 数组，缺尾 token 无法与残值区分
+            out.append("array ").append(optional(array)).append(' ').append(optional(memory)).append(' ')
+                .append(optional(base)).append(' ').append(optional(size));
+        }
+    }
+
     public static class BreakStatement extends SugarStatement{
         @Override public void build(Table table){}
-        @Override public String name(){ return text("break", "Break"); }
+        @Override public String name(){ return cardText("break", "Break"); }
         @Override public String typeName(){ return "Break"; }
         @Override public void write(StringBuilder out){ out.append("break"); }
     }
 
     public static class ContinueStatement extends SugarStatement{
         @Override public void build(Table table){}
-        @Override public String name(){ return text("continue", "Continue"); }
+        @Override public String name(){ return cardText("continue", "Continue"); }
         @Override public String typeName(){ return "Continue"; }
         @Override public void write(StringBuilder out){ out.append("continue"); }
     }
@@ -781,6 +836,21 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
     public static LStatement parseReturn(String[] tokens){
         ReturnStatement result = new ReturnStatement();
         result.expr = unescapeQuoted(stripQuotes(tokens[1]));
+        return result;
+    }
+
+    public static LStatement parseArray(String[] tokens){
+        ArrayStatement result = new ArrayStatement();
+        result.array = optionalValue(tokens[1]);
+        if(result.array.isEmpty()){
+            throw new IllegalArgumentException("Invalid array statement: missing array name");
+        }
+        result.memory = optionalValue(tokens[2]);
+        if(result.memory.isEmpty()){
+            throw new IllegalArgumentException("Invalid array statement: missing memory cell");
+        }
+        result.base = optionalValue(tokens[3]);
+        result.size = optionalValue(tokens[4]);
         return result;
     }
 

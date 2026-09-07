@@ -61,6 +61,23 @@ public class ExprHook{
         Seq<Element> children = canvas.statements.getChildren();
         if(children.isEmpty()) return;
 
+        // 先把卡片当前 UI 值写回字段，再快照数组声明；否则刚编辑过的 base/size
+        // 可能仍使用旧注册表，导致保存时地址换算与标红结果滞后一拍。
+        saveUIAll(canvas);
+        // 数组注册表快照：折叠全程用同一份宽松口径的画布注册表（画布内容在折叠过程中
+        // 会变，逐次重查既不一致也浪费）；画布上没有任何数组卡时用空注册表，阻止
+        // ArrayRegistry.active() 反复回退到画布探测。finally 恢复，异常不泄漏上下文。
+        ArrayRegistry snapshot = ArrayRegistry.canvasRegistry(canvas);
+        ArrayRegistry previousArrays = ArrayRegistry.enter(snapshot == null ? ArrayRegistry.empty() : snapshot);
+        try{
+            foldAllInContext(canvas, children);
+        }finally{
+            ArrayRegistry.restore(previousArrays);
+        }
+    }
+
+    /** 折叠主体（调用方已进入数组注册表上下文）。 */
+    private static void foldAllInContext(LCanvas canvas, Seq<Element> children){
         saveUIAll(canvas);
 
         boolean changed = false;
@@ -106,6 +123,21 @@ public class ExprHook{
                         j++;
                         break;
                     }
+                }else if(st instanceof ReadStatement read && isArrayMemory(read.target)){
+                    // 注册表命中的 read 行入链（数组下标读）：read _0 cell1 i 参与折叠，
+                    // 经 opToNode 折回 buf[i]。用户手写的普通 read（memory 未命中注册表）
+                    // 不受影响；read 的 dest 非 temp 时它是链的最后一行。
+                    ops.add(new ExprCompiler.ReadLine(read.output, read.target, read.address));
+                    if(!ExprCompiler.isTemp(read.output)){
+                        j++;
+                        break;
+                    }
+                }else if(st instanceof WriteStatement write && isArrayMemory(write.target)){
+                    // 注册表命中的 write 行：下标赋值的终结行（没有 dest），链到此为止。
+                    // 整条链（含地址计算 op add）交给 rebuildAssignment 折回 buf[i] = value。
+                    ops.add(new ExprCompiler.WriteLine(write.input, write.target, write.address));
+                    j++;
+                    break;
                 }else{
                     break;
                 }
@@ -113,7 +145,12 @@ public class ExprHook{
             }
 
             int chainLen = j - i;
-            if(chainLen >= 2){
+            // 链首是注册表命中的 read/write 时单行也尝试折叠（unfold 后 x = buf[3]、
+            // buf[2] = 5 各只有一行，fold 必须能还原，否则表达式卡保存一次就永久丢失）；
+            // 普通 op 链保持 >= 2 的既有门槛。
+            boolean arrayEdge = ops.get(0) instanceof ExprCompiler.ReadLine
+                || ops.get(0) instanceof ExprCompiler.WriteLine;
+            if(chainLen >= 2 || (chainLen == 1 && arrayEdge)){
                 // 安全检查：若有 jump 指向链中间 [i+1, i+chainLen-1]，放弃折叠。
                 // 场景：别人没装插件时写的 jump 指向 op 链中间，折叠会改变语义。
                 // 指向链首 i 是允许的，折叠后仍指向 expr 积木。
@@ -122,10 +159,23 @@ public class ExprHook{
                     i = j; // 跳过整条链，不折叠
                     continue;
                 }
-                String expr = ExprCompiler.rebuild(ops);
+                String expr = null;
+                String dest = null;
+                ExprCompiler.Line last = ops.get(ops.size() - 1);
+                if(last instanceof ExprCompiler.WriteLine){
+                    // 下标赋值链：write <value> <memory> <address> 结尾 → dest=buf[i], expr=value
+                    String[] pair = ExprCompiler.rebuildAssignment(ops);
+                    if(pair != null){
+                        dest = pair[0];
+                        expr = pair[1];
+                    }
+                }else{
+                    expr = ExprCompiler.rebuild(ops);
+                    if(expr != null){
+                        dest = ExprCompiler.lineDest(last);
+                    }
+                }
                 if(expr != null){
-                    String dest = ExprCompiler.lineDest(ops.get(ops.size() - 1));
-
                     ExprStatement exprStmt = new ExprStatement();
                     exprStmt.dest = dest == null ? "result" : dest;
                     exprStmt.expr = expr;
@@ -162,14 +212,25 @@ public class ExprHook{
     // ===== 展开：ExprStatement → op 链 =====
 
     /** 语句能否作为表达式链的节点：op 语句、type 为 @LAccess 常量的 sensor 语句、
-     *  实参为纯值的 funccall 语句。 */
+     *  实参为纯值的 funccall 语句、memory 命中数组注册表的 read/write 语句（链首）。 */
     private static boolean isChainLine(LStatement st){
         if(st instanceof OperationStatement) return true;
         if(st instanceof SensorStatement sensor){
             return sensor.type.startsWith("@") && ExprCompiler.resolveMember(sensor.type) != null;
         }
         if(st instanceof FuncCallStatement call) return isFoldableCall(call);
+        // read/write 行只有在注册表把 memory 解析到已声明数组时才入链：
+        // 用户手写的普通 read/write 与纯原版 mlog（无声明卡）不受影响
+        if(st instanceof ReadStatement read) return isArrayMemory(read.target);
+        if(st instanceof WriteStatement write) return isArrayMemory(write.target);
         return false;
+    }
+
+    /** memory 变量名是否承载了当前注册表中的数组（宽松口径画布注册表）。 */
+    private static boolean isArrayMemory(String memory){
+        if(memory == null || memory.isEmpty()) return false;
+        ArrayRegistry registry = ArrayRegistry.active();
+        return registry != null && !registry.isEmpty() && !registry.byMemory(memory).isEmpty();
     }
 
     /** funccall 的实参必须是纯值（temp/变量/数字，无逗号无括号），否则无法无损重建表达式。 */
@@ -203,6 +264,22 @@ public class ExprHook{
         Seq<Element> children = canvas.statements.getChildren();
         if(children.isEmpty()) return;
 
+        // 先把卡片当前 UI 值写回字段，再快照数组声明；否则刚编辑过的 base/size
+        // 可能仍使用旧注册表，导致展开时地址换算滞后一拍。
+        saveUIAll(canvas);
+        // 与 foldAll 相同的注册表快照：展开时 buf[i] 表达式的地址换算、越界检查都要
+        // 对着同一份声明表（保存拦截的严格口径由 write()/compile 阶段负责）
+        ArrayRegistry snapshot = ArrayRegistry.canvasRegistry(canvas);
+        ArrayRegistry previousArrays = ArrayRegistry.enter(snapshot == null ? ArrayRegistry.empty() : snapshot);
+        try{
+            unfoldAllInContext(canvas, children);
+        }finally{
+            ArrayRegistry.restore(previousArrays);
+        }
+    }
+
+    /** 展开主体（调用方已进入数组注册表上下文）。 */
+    private static void unfoldAllInContext(LCanvas canvas, Seq<Element> children){
         saveUIAll(canvas);
 
         boolean changed = false;
@@ -244,6 +321,21 @@ public class ExprHook{
                     st.name = call.name;
                     st.args = call.args;
                     st.result = call.dest;
+                    canvas.addAt(i + k, st);
+                }else if(line instanceof ExprCompiler.ReadLine read){
+                    // 数组下标读展开为原版 read 卡（read <output> <target> <address>），
+                    // 保存的文本是纯原版指令
+                    ReadStatement st = new ReadStatement();
+                    st.output = read.dest;
+                    st.target = read.a;
+                    st.address = read.b;
+                    canvas.addAt(i + k, st);
+                }else if(line instanceof ExprCompiler.WriteLine write){
+                    // 下标赋值展开为原版 write 卡（write <input> <target> <address>）
+                    WriteStatement st = new WriteStatement();
+                    st.input = write.value;
+                    st.target = write.memory;
+                    st.address = write.address;
                     canvas.addAt(i + k, st);
                 }else{
                     ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;

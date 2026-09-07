@@ -118,8 +118,20 @@ tasks.register("assertTest", JavaExec){
     mainClass = "mindustry.logic.SugarAssertsTest"
 }
 
+tasks.register("assertTypeTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "mindustry.logic.AssertTypeTest"
+}
+
+tasks.register("arrayTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "mindustry.logic.ArraySugarTest"
+}
+
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, assertTest
+check.dependsOn selfTest, ifElseTest, decompileTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, assertTest, assertTypeTest, arrayTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

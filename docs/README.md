@@ -18,7 +18,7 @@ LogicSugar 的分类文档。文档以中文为主，功能名保留英文本名
 ```text
 docs/
 |-- README.md            本页：文档导航
-|-- architecture.md      架构总览：双形态、编译器/反编译器、表达式子系统、跨类加载器约束
+|-- architecture.md      架构总览：双形态、编译器/反编译器、表达式子系统、跨类加载器约束、上游版本适配笔记
 |-- development.md       开发指南：环境、构建命令、代码风格、调试建议
 |-- release.md           版本与发布：版本号体系、构建产物链、Release 资产安全
 |-- testing.md           测试指南：JavaExec 自测任务、新增测试约定、手测清单

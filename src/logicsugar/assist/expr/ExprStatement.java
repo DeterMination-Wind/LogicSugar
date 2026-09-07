@@ -344,6 +344,14 @@ public class ExprStatement extends LStatement{
             // sensor to from type → SenseI(from, to, type)
             return new SenseI(builder.var(sensor.a), builder.var(sensor.dest), builder.var(sensor.b));
         }
+        if(first instanceof ExprCompiler.ReadLine read){
+            // read dest memory address → ReadI(target=memory, position=address, output=dest)
+            return new ReadI(builder.var(read.a), builder.var(read.b), builder.var(read.dest));
+        }
+        if(first instanceof ExprCompiler.WriteLine write){
+            // write value memory address → WriteI(target=memory, position=address, value=input)
+            return new WriteI(builder.var(write.memory), builder.var(write.address), builder.var(write.value));
+        }
         if(first instanceof ExprCompiler.CallLine){
             // 函数调用无法映射为单条原版指令：该路径本不该出现（正常流程先 unfold）
             throw new IllegalArgumentException("expression contains a function call and cannot execute directly");

@@ -19,6 +19,7 @@ Logic Sugar improves the Mindustry logic editing experience for people who want 
 - **Expressions as conditions** — the condition of `if` / `elif` / `while` / `for` (Expr mode) accepts a full expression like `hp < 25 && !shielded`.
 - **One-line expression statements** — write `result = (a + b) * 2`; it expands to equivalent instructions on save, folds back on reopen, and invalid expressions are marked red on the spot.
 - **Expressions anywhere a value goes** — assignments, function arguments, `return` values, and member access like `@unit.@health`.
+- **Arrays** — the `array` card names a range of a memory block (base + size) so expressions can use subscripts like `buf[i]` and `buf[i] = 5`; they compile to plain vanilla `read` / `write` instructions and fold back into the expression card on reopen.
 - **Functions** — define functions with parameters, call them and return values; normal (subroutine) and inline modes switchable in settings.
 - **Global function library** — shared by every processor, edited inside the processor editor, validated and saved automatically on close, and self-repairing if the file gets corrupted.
 - **Structure recovery** — open a plain mlog program and recover its `if` / `for` / `while` / `switch` / function structures automatically; only fully verified parts are recovered, everything else stays untouched.

@@ -36,7 +36,8 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - `ExprCompiler`：表达式字符串 ↔ `op` 语句链的双向转换。临时变量统一 `_0, _1, …`、一次写一次读形成线性链，是逆向重建的前提。
 - `ExprStatement`：表达式语句卡片，折叠态显示 `dest = expr`，`write()` 输出 `op` 链文本（保证保存结果仍是标准 mlog），编译错误当场标红。
-- `ExprHook`：把 `ExprStatement` 注入语句列表，并在 `SugarCanvas.load()/save()` 中执行 `foldAll()/unfoldAll()`。
+- `ExprHook`：把 `ExprStatement` 注入语句列表，并在 `SugarCanvas.load()/save()` 中执行 `foldAll()/unfoldAll()`；折叠/展开全程固定在同一份画布数组注册表上（`ArrayRegistry.enter/restore`），`foldAll` 额外把注册表命中的原版 `read`/`write` 行作为链节点参与折叠（`rebuildAssignment` 折回 `buf[i] = x` 赋值卡）。
+- `ArrayRegistry`：`array` 声明卡的编译期注册表（程序级，静态上下文 enter/restore 传递）。数组是纯 sugar 抽象——卡片 lower 时剥离，下标 `buf[i]` 按声明区间（内存块 + [base, base+size)）换算物理地址发射原版 `read`/`write`；严格口径（编译路径）拒绝重名/同内存块重叠/非法字面量，宽松口径（编辑器路径）供折叠与标红使用。v0 仅支持整数字面量的 base/size；纯原版 mlog 无声明卡时不做数组推断，`read`/`write` 原样保留。
 - `ShortCircuitCompiler`：把 `&&` / `||` 谓词下降为条件 `jump`，按控制流顺序发射（不产生先行求值的布尔临时变量）；不依赖任何 Mindustry 类，便于在编译期与反编译恢复两侧复用。`whilebegin exprsc …` 等带 `c` 后缀的解析变体对应"折叠式表达式条件"（collapsed）。
 - `RecoveryPredicate`：无依赖的谓词树模型（`EAGER` / `SHORT_CIRCUIT` / `UNKNOWN` 求值方式、loss/score 度量），供恢复代码在触碰游戏 API 之前构建与打分候选。
 
@@ -95,13 +96,57 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 `SugarStatements` 中的 `For`、`If`、`While` 和 `ElseIf` 将条件标签、条件编辑器和 `OP/Expr` 切换分别放在安全行；`For` 的循环变量、初值、步长和 `until` 也各自换行，折叠按钮单独放在末行。这样嵌套卡片只增加垂直高度，不依赖横向滚动，也不会让行尾控件被结构缩进推出卡片。条件字段使用紧凑宽度，`SugarCanvas.SugarStatementElem` 则按卡片实际宽度计算可用缩进，避免使用固定嵌套层数上限。布局行为需在不同方向、UI scale、语言和 MindustryX LogicSupport 侧栏状态下手测。
 
+## 上游版本适配笔记（v155.4 → v160 前瞻）
+
+LogicSugar 编译与测试钉在上游 Mindustry v155.4（`build.gradle` 的 `mindustryVersion`，`mod.json` 的 `minGameVersion: "155"`）。本节记录上游（Anuken/Mindustry）v159.4 之后、面向 v160 的 Logic 相关改动（基于 Mindustry-master 工作区核实，区间 `894bab4ecd..c81d0eb025`，2026-08-26 ~ 09-05），每条给出上游变化、对 LogicSugar 的影响与适配时机。本节涉及的 `mindustry.logic.*` 成员访问结论必须与 `AGENTS.md` 保持一致，冲突时以 `AGENTS.md` 为准。
+
+### 内存对象存储（上游 #12459，fac33d08d）
+
+- **上游变化**：`MemoryBlock` 改为双数组（数字数组 + 对象数组 + 哨兵），logic 的 `read` / `write` 可存取对象（单位、方块等）；存档经 `TypeIO.writeObject` 序列化并带 version 迁移（旧存档全按数字读回）。**行为变化：越界 `read` 从返回 NaN 改为返回 null**。
+- **影响/风险**：v155.4 的内存 cell 只存数字、越界 `read` 返回 NaN，LogicSugar 的产物与测试目前都建立在这套语义上（`assertTypeTest` 已为「内存对象存储」场景预留 number/对象分型）。`MlogLint` 当前只做 token 形状检查、不涉及内存语义；未来若加入内存/类型检查，必须按 `minGameVersion` 区分「越界=NaN（旧语义）」与「越界=null（新语义）」两套规则。
+- **适配动作**：现在无需改动。升级 `minGameVersion` 时：复查内存相关文档与测试的 NaN 假设，为 `MlogLint` 的内存/类型规则引入按版本分叉的语义。
+
+### LAccess cleanup（b9189a5570 + 023a4ff1）
+
+- **上游变化**：`LAccess.isPrivileged()` 方法删除，改为公共字段 `privileged`。
+- **影响/风险**：LogicSugar 当前未引用 `LAccess.isPrivileged()`；`ExprCompiler` 依赖的 `LAccess.senseable` 列表内容未变——升级无 API 风险。注意区分：`SugarCanvas` / `BoxSelect` 里自有同名 `isPrivileged()` 辅助方法读的是 `LCanvas.privileged`（反射），`SugarLogicDialog` 读的是 `LogicDialog.privileged`，均与 `LAccess` 无关，不受此次 cleanup 影响。
+- **适配动作**：现在无需改动；升级时无需调整任何反射目标。
+
+### 新逻辑规则与 marker 控制
+
+- **上游变化**：新增规则 `unitLight`（`set rule unitLight <bool>`，`LogicRule.unitLight`），开关单位灯光；marker 新增 `light` 控制（`LMarkerControl.light`）；world/minimap 的参数标签 "true/false" 改名 "truefalse"（纯 UI bundle key 变化）。
+- **影响/风险**：均为新增枚举项/规则项，不改既有 opcode 与线格式；`truefalse` 改名只影响上游自身 UI 文案。Sugar 保存产物是原版可解析的 mlog，这类新字面量经原版 parse/save 往返即可携带。
+- **适配动作**：现在无需改动；升级后新规则与新 marker 控制自动可用。
+
+### 逻辑语句本地化（上游 #12158 + #12569）
+
+- **上游变化**：新增设置 `logiclocalization`（默认开）；`LStatement` 增加 `bundle()` / `localizedName()` / `statementKey()`，卡片标题、语句菜单与搜索文案走 bundle，约定键 `instruction.<statementKey小写>`。
+- **影响/风险**：LogicSugar 自身的卡片本地化走 `logicsugar.*` 键并新增设置 `logicsugar.localizeCards`（另一任务并行实现），键名与上游约定对齐：三份 bundle 的 `instruction.*` 键以此为准。升级时需确认上游 `logiclocalization` 与 `logicsugar.localizeCards` 两层开关叠加后行为符合预期。
+- **适配动作**：现在：保持 `instruction.<statementKey小写>` 键名约定一致。升级时：复查两层本地化开关的叠加行为。
+
+### 无新 opcode 与逻辑显示器修复
+
+- **上游变化**：`LogicIO` 无改动（无新 opcode）；`logicids.dat` 仅新增 target-dummy 方块条目（既有内容逻辑 ID 的稳定映射不受影响）；逻辑显示器修复：拼接大屏统一 `rootDisplay.buffer`（#12514）、图源屏强制刷新（#12418）。
+- **影响/风险**：线格式稳定，Sugar 载体、反编译器与断言线格式均不受影响。
+- **适配动作**：无需动作。
+
+### 升级 checklist
+
+bump 到新上游版本时按序执行：
+
+1. `build.gradle` bump `mindustryVersion`，同步 CI 检出的 Mindustry 固定 commit 与 [development.md](development.md) / [release.md](release.md) 的版本表述；按需 bump `mod.json` 的 `minGameVersion`。
+2. 在 `Mindustry-master` 工作区重建配套 `Mindustry.jar`（`desktop:dist`，需配套 Arc 检出）。
+3. `./gradlew check` 全绿；重点盯 `crossLoaderTest`（跨类加载器访问模式）、`lintTest`、`assertTypeTest`（内存 number/对象分型）。
+4. 逐条核对上文各节标记为「升级时做」的适配动作：MlogLint 内存/越界语义按新版本分叉、`instruction.*` 键与上游 `statementKey()` 约定仍对齐、上游成员签名变化未破坏既有反射目标。
+5. 按 [testing.md](testing.md) 的手测清单上游戏验证（卡片渲染、本地化开关），并按工作区默认模式产出 `构建/LogicSugar/LogicSugar-dev.jar` 做本地确认。
+
 ## 目录速查
 
 ```text
 src/logicsugar/           模组侧：入口、设置、函数库、FunctionLibraryDialog
 src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter、MlogLint、
                           VarClipboard、ProcessorStatus、AssertInstructions
-src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ShortCircuitCompiler
+src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ArrayRegistry、ShortCircuitCompiler
 src/mindustry/logic/      与游戏同包名的扩展层：SugarCompiler、SugarDecompiler、SugarStatements、
                           SugarAsserts、SugarCanvas、SugarLogicDialog、SugarFunctions、RecoveryPredicate、MlogCFG
 test/                     与 src 同构的 main() 式自测（无 JUnit）

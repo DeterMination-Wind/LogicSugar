@@ -821,10 +821,15 @@ public class SugarCompilerSelfTest{
         check(missingRight.contains("[#ff5555]([]") && missingLeft.contains("[#ff5555])[]"),
             "unmatched bracket did not use error color: " + missingRight + " / " + missingLeft);
 
-        // 词法失败仍返回原文，仅转义富文本方括号，且不向编辑器抛异常。
-        String fallback = "a[b]";
-        check(ExprStatement.highlight(fallback).equals("a[[b]]"),
-            "lexer fallback did not preserve escaped source text: " + ExprStatement.highlight(fallback));
+        // 数组下标是合法表达式：方括号参与词法高亮，同时仍需转义富文本方括号。
+        String array = "a[b]";
+        String arrayHighlight = ExprStatement.highlight(array);
+        check(arrayHighlight.contains("[white]a[]")
+                && arrayHighlight.contains("[white]b[]")
+                && arrayHighlight.contains("[lightgray]")
+                && arrayHighlight.contains("[[")
+                && arrayHighlight.contains("]]"),
+            "array brackets were not highlighted or escaped: " + arrayHighlight);
     }
 
     private static void returnExprRedMark(){

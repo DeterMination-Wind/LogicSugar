@@ -70,6 +70,12 @@ public final class SugarAsserts{
         return Core.bundle.get("logicsugar." + key, fallback);
     }
 
+    /** Card titles follow the same localization toggle as the control-flow cards
+     *  ({@link SugarStatements#cardsLocalized()}); non-title labels stay always localized. */
+    private static String cardText(String key, String fallback){
+        return SugarStatements.cardText(key, fallback);
+    }
+
     /** The assertion opcodes this class owns; the compiler and the decompiler use this to
      *  decide whether the assert-emit dimension matters for a program. */
     public static final String[] opcodes = {
@@ -157,7 +163,7 @@ public final class SugarAsserts{
             }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(table.color);
         }
 
-        @Override public String name(){ return text("asserts.bounds.card", "Assert Bounds"); }
+        @Override public String name(){ return cardText("asserts.bounds.card", "Assert Bounds"); }
         @Override public String typeName(){ return "AssertBounds"; }
 
         @Override
@@ -194,7 +200,7 @@ public final class SugarAsserts{
             field(table, message, s -> message = s).width(0f).growX().pad(2f);
         }
 
-        @Override public String name(){ return text("asserts.equals.card", "Assert Equals"); }
+        @Override public String name(){ return cardText("asserts.equals.card", "Assert Equals"); }
         @Override public String typeName(){ return "AssertEquals"; }
 
         @Override
@@ -221,7 +227,7 @@ public final class SugarAsserts{
             field(table, position, s -> position = s).width(110f).pad(2f);
         }
 
-        @Override public String name(){ return text("asserts.flush.card", "Assert Flush"); }
+        @Override public String name(){ return cardText("asserts.flush.card", "Assert Flush"); }
         @Override public String typeName(){ return "AssertFlush"; }
 
         @Override
@@ -254,7 +260,7 @@ public final class SugarAsserts{
             field(table, message, s -> message = s).width(0f).growX().pad(2f);
         }
 
-        @Override public String name(){ return text("asserts.prints.card", "Assert Prints"); }
+        @Override public String name(){ return cardText("asserts.prints.card", "Assert Prints"); }
         @Override public String typeName(){ return "AssertPrints"; }
 
         @Override
@@ -296,7 +302,7 @@ public final class SugarAsserts{
             field(table, message, s -> message = s).width(0f).growX().pad(2f);
         }
 
-        @Override public String name(){ return text("asserts.type.card", "Assert Type"); }
+        @Override public String name(){ return cardText("asserts.type.card", "Assert Type"); }
         @Override public String typeName(){ return "AssertType"; }
 
         @Override
@@ -381,7 +387,7 @@ public final class SugarAsserts{
             super(opcode, false, "Runtime error");
         }
 
-        @Override public String name(){ return text("asserts.error.card", "Error"); }
+        @Override public String name(){ return cardText("asserts.error.card", "Error"); }
         @Override public String typeName(){ return "Error"; }
 
         @Override
@@ -398,7 +404,7 @@ public final class SugarAsserts{
             super(opcode, true, "Logging a message");
         }
 
-        @Override public String name(){ return text("asserts.log.card", "Log"); }
+        @Override public String name(){ return cardText("asserts.log.card", "Log"); }
         @Override public String typeName(){ return "Log"; }
 
         @Override
@@ -423,7 +429,7 @@ public final class SugarAsserts{
             }, value, s -> value = s, compare, s -> compare = s);
         }
 
-        @Override public String name(){ return text("asserts.breakpoint.card", "Breakpoint"); }
+        @Override public String name(){ return cardText("asserts.breakpoint.card", "Breakpoint"); }
         @Override public String typeName(){ return "Breakpoint"; }
 
         @Override

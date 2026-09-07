@@ -89,6 +89,7 @@ public class LogicSugarMod extends Mod{
         LogicIO.allStatements.add(SugarStatements.FuncDefStatement::new);
         LogicIO.allStatements.add(SugarStatements.FuncCallStatement::new);
         LogicIO.allStatements.add(SugarStatements.ReturnStatement::new);
+        LogicIO.allStatements.add(SugarStatements.ArrayStatement::new);
 
         // single registration point shared with the decompiler preflight and the self-tests
         SugarStatements.installParsers();

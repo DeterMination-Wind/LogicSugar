@@ -20,6 +20,7 @@ import mindustry.logic.SugarStatements.IfBeginStatement;
 import mindustry.logic.SugarStatements.ReturnStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
 import mindustry.logic.SugarStatements.WhileBeginStatement;
+import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
 
 import java.nio.charset.StandardCharsets;
@@ -258,88 +259,104 @@ public final class SugarCompiler{
         validatePairs(statements);
         SugarFunctions.FunctionSet functions = SugarFunctions.analyze(statements, library);
 
-        StringBuilder out = new StringBuilder();
-        SugarFunctions.CallIds ids = new SugarFunctions.CallIds();
-        if(mode == FuncMode.normal){
-            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
-            java.util.List<SugarFunctions.Function> hoisted = functions.hoistOrder();
-            if(!hoisted.isEmpty()){
-                // Normal-mode function bodies sit right after the main program. A call site's
-                // return point (the `set <result> <retName>` after its jump) is inside main;
-                // once main runs past it, the instruction stream would fall through into the
-                // shared function body and re-execute it every tick (caller variables like
-                // <result> keep incrementing). Jump past all bodies at the end of main.
-                out.append("jump __ls_end always x false\n");
-                for(SugarFunctions.Function function : hoisted){
-                    out.append(function.entryName()).append(":\n");
-                    SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name, switchStrategy, assertEmit);
-                    out.append(function.exitName()).append(":\n");
-                    out.append("set @counter ").append(function.retName()).append('\n');
+        // Array declaration cards → program-level registry: the compile-time basis for
+        // resolving `buf[i]` in condition/return/argument expressions (and for the editor's
+        // fold/unfold when no explicit context is active). Strict validation (duplicates,
+        // overlapping ranges, illegal literals) runs before lowering and aborts the compile.
+        // The function-name set is local funcdefs plus library functions; array names must
+        // not shadow them. The registry is installed as a static compile-time context
+        // (same pattern as currentAssertEmit) and popped in finally, so lower()/throwing
+        // paths and the recompile inside verifyRestore() always see a consistent table.
+        Set<String> functionNames = new HashSet<>(functions.functions.keySet());
+        if(functions.library != null) functionNames.addAll(functions.library.functions.keySet());
+        ArrayRegistry arrays = ArrayRegistry.compileRegistry(statements, functionNames);
+        ArrayRegistry previousArrays = ArrayRegistry.enter(arrays);
+        try{
+            StringBuilder out = new StringBuilder();
+            SugarFunctions.CallIds ids = new SugarFunctions.CallIds();
+            if(mode == FuncMode.normal){
+                SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
+                java.util.List<SugarFunctions.Function> hoisted = functions.hoistOrder();
+                if(!hoisted.isEmpty()){
+                    // Normal-mode function bodies sit right after the main program. A call site's
+                    // return point (the `set <result> <retName>` after its jump) is inside main;
+                    // once main runs past it, the instruction stream would fall through into the
+                    // shared function body and re-execute it every tick (caller variables like
+                    // <result> keep incrementing). Jump past all bodies at the end of main.
+                    out.append("jump __ls_end always x false\n");
+                    for(SugarFunctions.Function function : hoisted){
+                        out.append(function.entryName()).append(":\n");
+                        SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name, switchStrategy, assertEmit);
+                        out.append(function.exitName()).append(":\n");
+                        out.append("set @counter ").append(function.retName()).append('\n');
+                    }
+                    out.append("__ls_end:\n");
                 }
-                out.append("__ls_end:\n");
+            }else{
+                SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
             }
-        }else{
-            SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
-        }
 
-        // Jump-thread the lowered label text (before marker/carriers): a jump whose target
-        // label is immediately followed by another unconditional jump now points at the
-        // final destination directly. Semantics-preserving; merges stacked structure-exit
-        // defaults and jump-table hole rows that would otherwise hop twice at runtime.
-        String lowered = threadAlwaysJumpTargets(out.toString());
+            // Jump-thread the lowered label text (before marker/carriers): a jump whose target
+            // label is immediately followed by another unconditional jump now points at the
+            // final destination directly. Semantics-preserving; merges stacked structure-exit
+            // defaults and jump-table hole rows that would otherwise hop twice at runtime.
+            String lowered = threadAlwaysJumpTargets(out.toString());
 
-        // Persistence carriers: real "set" statements appended after the marker block. They
-        // survive the vanilla parse/save round trip that drops the comment markers, and are
-        // placed after them so lowered-code consumers (and the test helper) see the lowered
-        // program untouched. They execute harmlessly every tick and count toward the limit.
-        // A payload whose encoded form fits carrierMaxChars keeps the exact single-carrier
-        // line every previous version emitted; only a larger one is sharded (see
-        // appendCarrier), so small saves stay byte-identical.
-        String sugarPayload = sugar.replace("\r\n", "\n");
-        String libPayload = null;
-        Set<String> usedLibrary = new HashSet<>();
-        for(SugarFunctions.Function function : functions.hoistOrder()){
-            if(function.library) usedLibrary.add(function.name);
-        }
-        if(libraryText != null && !libraryText.trim().isEmpty() && !usedLibrary.isEmpty()){
-            String extracted = SugarFunctions.extractLibrarySource(libraryText, usedLibrary);
-            if(!extracted.isEmpty()) libPayload = extracted;
-        }
-        StringBuilder carriers = new StringBuilder();
-        boolean anySharded = appendCarriers(carriers, libPayload, sugarPayload, true);
-
-        // LAssembler.read silently truncates at LExecutor.maxInstructions lines, so the count
-        // must be computed from the emitted text itself (one instruction per non-label line).
-        // Shard lines are ordinary statements and count one each; nothing here assumes the
-        // old single-line carrier shape.
-        int loweredCount = countInstructions(new StringBuilder(lowered));
-        int instructionCount = loweredCount + countInstructions(carriers);
-        if(instructionCount > LExecutor.maxInstructions && anySharded){
-            // Before sharding, an oversized payload was dropped with a warning instead of
-            // blocking the save. Keep that degradation when the extra shard lines would push
-            // the program past the executor limit: drop the sharded payloads (the lowered
-            // stream alone may still fit) rather than failing a save that used to succeed.
-            // A lowered stream that exceeds the limit on its own still throws below, exactly
-            // as before; sharding can only add lines, never remove them.
-            StringBuilder degraded = new StringBuilder();
-            appendCarriers(degraded, libPayload, sugarPayload, false);
-            int degradedCount = loweredCount + countInstructions(degraded);
-            if(degradedCount <= LExecutor.maxInstructions){
-                Log.warn("LogicSugar: carrier shards would exceed the instruction limit (@ statements, limit @); the source will not survive this save",
-                    instructionCount, LExecutor.maxInstructions);
-                carriers = degraded;
-                instructionCount = degradedCount;
+            // Persistence carriers: real "set" statements appended after the marker block. They
+            // survive the vanilla parse/save round trip that drops the comment markers, and are
+            // placed after them so lowered-code consumers (and the test helper) see the lowered
+            // program untouched. They execute harmlessly every tick and count toward the limit.
+            // A payload whose encoded form fits carrierMaxChars keeps the exact single-carrier
+            // line every previous version emitted; only a larger one is sharded (see
+            // appendCarrier), so small saves stay byte-identical.
+            String sugarPayload = sugar.replace("\r\n", "\n");
+            String libPayload = null;
+            Set<String> usedLibrary = new HashSet<>();
+            for(SugarFunctions.Function function : functions.hoistOrder()){
+                if(function.library) usedLibrary.add(function.name);
             }
-        }
-        if(instructionCount > LExecutor.maxInstructions){
-            String hint = mode == FuncMode.inline ? " Switch to normal mode to share function bodies." : "";
-            throw new IllegalArgumentException("Compiled program has " + instructionCount + " instructions; maximum is " + LExecutor.maxInstructions + "." + hint);
-        }
+            if(libraryText != null && !libraryText.trim().isEmpty() && !usedLibrary.isEmpty()){
+                String extracted = SugarFunctions.extractLibrarySource(libraryText, usedLibrary);
+                if(!extracted.isEmpty()) libPayload = extracted;
+            }
+            StringBuilder carriers = new StringBuilder();
+            boolean anySharded = appendCarriers(carriers, libPayload, sugarPayload, true);
 
-        StringBuilder result = new StringBuilder(lowered);
-        appendMarker(result, sugar);
-        result.append(carriers);
-        return result.toString();
+            // LAssembler.read silently truncates at LExecutor.maxInstructions lines, so the count
+            // must be computed from the emitted text itself (one instruction per non-label line).
+            // Shard lines are ordinary statements and count one each; nothing here assumes the
+            // old single-line carrier shape.
+            int loweredCount = countInstructions(new StringBuilder(lowered));
+            int instructionCount = loweredCount + countInstructions(carriers);
+            if(instructionCount > LExecutor.maxInstructions && anySharded){
+                // Before sharding, an oversized payload was dropped with a warning instead of
+                // blocking the save. Keep that degradation when the extra shard lines would push
+                // the program past the executor limit: drop the sharded payloads (the lowered
+                // stream alone may still fit) rather than failing a save that used to succeed.
+                // A lowered stream that exceeds the limit on its own still throws below, exactly
+                // as before; sharding can only add lines, never remove them.
+                StringBuilder degraded = new StringBuilder();
+                appendCarriers(degraded, libPayload, sugarPayload, false);
+                int degradedCount = loweredCount + countInstructions(degraded);
+                if(degradedCount <= LExecutor.maxInstructions){
+                    Log.warn("LogicSugar: carrier shards would exceed the instruction limit (@ statements, limit @); the source will not survive this save",
+                        instructionCount, LExecutor.maxInstructions);
+                    carriers = degraded;
+                    instructionCount = degradedCount;
+                }
+            }
+            if(instructionCount > LExecutor.maxInstructions){
+                String hint = mode == FuncMode.inline ? " Switch to normal mode to share function bodies." : "";
+                throw new IllegalArgumentException("Compiled program has " + instructionCount + " instructions; maximum is " + LExecutor.maxInstructions + "." + hint);
+            }
+
+            StringBuilder result = new StringBuilder(lowered);
+            appendMarker(result, sugar);
+            result.append(carriers);
+            return result.toString();
+        }finally{
+            ArrayRegistry.restore(previousArrays);
+        }
     }
 
     /** The merged library for editing a stored program: embedded functions first, then
@@ -649,6 +666,12 @@ public final class SugarCompiler{
                 }
             }
         }
+
+        // array 声明卡的字段级问题（重名/同内存块区间重叠/非法 base/size/与函数重名）在
+        // 编辑期同步标红；严格校验仍由编译路径（compileRegistry）拦截保存
+        Set<String> arrayReservedNames = new HashSet<>(local);
+        if(library != null) arrayReservedNames.addAll(library.functions.keySet());
+        ArrayRegistry.markInvalidStatements(statements, invalid, arrayReservedNames);
         return invalid;
     }
 

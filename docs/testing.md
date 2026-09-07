@@ -4,7 +4,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 
 ## 自动化任务
 
-`build.gradle` 注册了九个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了十四个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -20,13 +20,15 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `varClipboardTest` | `logicsugar.assist.VarClipboardSelfTest` | 变量导出 TSV 格式：表头、按名排序、全精度数字、对象值走 PrintI 格式化（字符串原样、null） |
 | `processorStatusTest` | `logicsugar.assist.ProcessorStatusSelfTest` | 状态指示纯函数：wait 阈值含等判定、阈值 0 关闭、扫描预算分数进位与 1.5×perTick 下限 |
 | `assertTest` | `mindustry.logic.SugarAssertsTest` | 断言语句集：与 MlogAssertions 逐字节线格式、write/parse 往返幂等、`~` 占位定长 token、坏枚举干净报错、strip/emit 编译行为、verifyRestore 双形态、调试构建反编译 round-trip |
+| `assertTypeTest` | `mindustry.logic.AssertTypeTest` | `asserttype` 卡（LogicSugar 原生语句）：emit 编译产物行格式与定长 token、emit 行 re-parse/assemble 出 `AssertTypeI` 的接线、strip 模式零泄漏且载体保留、verifyRestore 双形态、`AssertDataType.matches` 语义矩阵（number/null 对象/string/content/building/unit/team 互斥），并钉住未来「内存对象存储」（上游 #12459）场景的 number/对象分型 |
+| `arrayTest` | `mindustry.logic.ArraySugarTest` | `array` 声明卡与 `buf[i]` 下标：字面量/变量下标的 `read` 精确行（地址 = base + 下标，base>0 先 `op add`）、下标赋值 `write` 行、越界字面量与未声明名报错、无注册表时退化为普通发射（纯原版不受影响）、严格校验（重名/同内存块重叠/非法 base/size）、声明卡不产行且载体往返、条件表达式 lowering 出 `read` 行、产物纯原版、unfold→fold 折回表达式且再编译流一致 |
 
 ```powershell
 .\gradlew.bat check        # 全部
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前十二个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前十四个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 
@@ -51,3 +53,4 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 10. **处理器状态指示**：造一个 `stop` 结尾的程序和一个长 `wait` 程序，确认停止处理器上方显示「已停在第 N 条」、长 wait 画进度圆环；把等待阈值滑到 0 后圆环消失；处理器极多的地图无可见卡顿。
 11. **断言（调试构建）**：关闭「调试断言构建」时保存含断言的程序，产物 mlog 无 `assert*` 行且无模组客户端可正常打开；开启后保存，断言失败在地图上显示消息且程序原地自旋，`breakpoint` 命中时游戏暂停；重开编辑器断言卡片完整。与 MlogAssertions 并存装时无重复注册报错。
 12. **联机门禁（兼容底线）**：把断言构建设为 emit，然后加入或自建一个多人游戏——此时保存任何程序，产物必须 ≤1000 条且不含 `assert*` 行（与原版客户端互开无异常）；回到单机重新载入地图后，emit 设置恢复生效。指令上限覆盖功能已移除，保存产物恒 ≤1000 条。
+13. **数组**：放一张 `array` 卡（如 `buf` / `cell1` / base 0 / size 8），写 `x = buf[i] * 2` 与 `buf[i] = 5`，保存后重开表达式卡折回、产物只有原版 `read`/`write` 行；重名或同内存块重叠的声明卡标红且保存被拦截；无模组客户端能运行同一程序。
