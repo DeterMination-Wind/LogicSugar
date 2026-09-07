@@ -31,7 +31,7 @@ Logic Sugar improves the Mindustry logic editing experience for people who want 
 
 ## Install
 
-Requires **Mindustry v155 or later** (desktop or Android). Download the universal JAR from [Releases](https://github.com/DeterMination-Wind/LogicSugar/releases) — a single file for both platforms — drop it into Mindustry's mods directory, enable it in the in-game mods list, then open the logic processor editor.
+This BE pre-release requires **Mindustry BE build 27771 or later** (desktop or Android). It is not intended for the regular stable Mindustry release. Download the universal JAR from [Releases](https://github.com/DeterMination-Wind/LogicSugar/releases) — a single file for both platforms — drop it into Mindustry's mods directory, enable it in the in-game mods list, then open the logic processor editor.
 
 ## Build
 

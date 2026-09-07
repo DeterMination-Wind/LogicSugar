@@ -4,8 +4,8 @@
 
 ## 环境
 
-- **JDK 17**（`build.gradle` 设定 `options.release = 17`，与 Mindustry v155 运行时一致）。CI 用 Temurin 17。
-- **Mindustry 依赖**：编译与测试都指向工作区本地构建产物 `../Mindustry-master/desktop/build/libs/Mindustry.jar`（`compileOnly` + `testImplementation`）。本地没有该 jar 时无法编译；CI 的做法是检出 Mindustry `v155.4` 固定 commit 先跑 `desktop:dist`（同时需要配套 Arc 检出）。
+- **JDK 17**（`build.gradle` 设定 `options.release = 17`，与 Mindustry BE 27771 运行时一致）。CI 用 Temurin 17。
+- **Mindustry 依赖**：编译与测试都指向工作区本地构建产物 `../Mindustry-master/desktop/build/libs/Mindustry.jar`（`compileOnly` + `testImplementation`）。本地没有该 jar 时无法编译；本次 BE 发布使用 Mindustry BE 27771 桌面构建验证；后续 CI/稳定线版本以对应分支固定 commit 为准。
 - **Android 打包**（只有要出 dex 时才需要）：本地 Android SDK 的 D8 与至少一个 platform 的 `android.jar`，按 `D8_PATH` → `ANDROID_SDK_ROOT` / `ANDROID_HOME` 顺序探测；缺失时 `dexAndroid` 直接失败。
 - `gradle.properties` 给 Gradle JVM 加了 `jdk.compiler` 多个包的 `--add-exports` 与 `--illegal-access=permit`，属环境基础设施，勿随意删减。
 - Windows 下命令用 PowerShell（`.\gradlew.bat …`）；CI 在 Linux 上用 `bash ./gradlew`。
@@ -13,7 +13,7 @@
 ## 常用命令
 
 ```powershell
-# 全部自测（十二个 JavaExec 任务，接线见 testing.md）
+# 全部自测（十四个 JavaExec 任务，接线见 testing.md）
 .\gradlew.bat check
 
 # 单跑某个自测任务

@@ -8,7 +8,7 @@ LogicSugar 的版本号体系、本地构建产物链与发布资产规则。原
 - `mod.json` 是运行时身份：发布态为 `name: "LogicSugar"`、`version` 与 build.gradle 一致。
 - **本地开发态**（工作区默认约定，见上级 `codex/AGENTS.md` 的 Mod Task Default Mode）：`mod.json` 临时改为 `name: "LogicSugar-dev"`、`version: "0.0.0"`，只出 `构建/LogicSugar/LogicSugar-dev.jar` 本地测试产物，不做发布打包。切回发布身份时两处要同步改回。
 - 历史版本沿 `v<主>.<次>.<补丁>` 线演进（`release_notes_v2.1.4.md` 起到 `release_notes_v3.0.1.md`），每个已发布版本配一份双语 `release_notes_v<版本>.md`（中文 + English）。`release_notes_v2.3.1-dev.md` 属于本地开发验证说明，未对应 Release。
-- 要求 **Mindustry v155+**（`mod.json` 的 `minGameVersion: "155"`）。
+- 要求 **Mindustry BE 27771+**（`mod.json` 的 `minGameVersion: "27771"`）。本次 `v4.1.0-be.27771` 为 BE 预发布版本，不面向普通稳定版。
 
 ## 构建产物链
 
@@ -56,4 +56,4 @@ Mindustry 游戏内安装器取 Release API 返回的**第一个 `.jar`**，且�
 
 ## CI
 
-`.github/workflows/pr.yml` 是仓库内唯一的 workflow：PR 与 main 推送触发，ubuntu + Temurin 17，检出 Mindustry `v155.4` 固定 commit（及配套 Arc）先构建 `desktop:dist`，再跑 `bash ./gradlew --no-daemon check`。它只做检查，不产出也不上传任何发布资产。
+`.github/workflows/pr.yml` 是仓库内唯一的 workflow：PR 与 main 推送触发，ubuntu + Temurin 17，检查使用的 Mindustry 版本以 workflow 中固定的对应 commit 为准；本次 BE 发布已使用 Mindustry BE 27771 本地验证，再跑 `bash ./gradlew --no-daemon check`。它只做检查，不产出也不上传任何发布资产。
