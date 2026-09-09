@@ -9,6 +9,9 @@ import mindustry.gen.*;
 import mindustry.logic.*;
 import mindustry.logic.LCanvas.*;
 import mindustry.logic.LStatements.*;
+import mindustry.logic.SugarAsserts.AssertBoundsCard;
+import mindustry.logic.SugarAsserts.AssertOp;
+import mindustry.logic.SugarAsserts.AssertionType;
 import mindustry.logic.SugarStatements.BeginStatement;
 import mindustry.logic.SugarStatements.FuncCallStatement;
 
@@ -95,6 +98,13 @@ public class ExprHook{
                 if(!(children.get(j) instanceof StatementElem)) break;
                 StatementElem elem = (StatementElem)children.get(j);
                 LStatement st = elem.st;
+                if(st instanceof AssertBoundsCard && isAutoAssert(st)){
+                    // 自动断言卡随链生成（位于下标计算之后、read/write 之前）：作为链内
+                    // 透明元素跳过——不进入 ops，但折叠时随链一起移除，下次展开按折回后的
+                    // 表达式重建。用户手写断言卡不是链元素（链在此断开）。
+                    j++;
+                    continue;
+                }
                 if(st instanceof OperationStatement opStmt){
                     ops.add(new ExprCompiler.OpLine(
                         opStmt.op.name(), opStmt.dest, opStmt.a, opStmt.b));
@@ -145,6 +155,11 @@ public class ExprHook{
             }
 
             int chainLen = j - i;
+            // 整条链只有自动断言卡（无指令行）时无事可做
+            if(ops.isEmpty()){
+                i = j;
+                continue;
+            }
             // 链首是注册表命中的 read/write 时单行也尝试折叠（unfold 后 x = buf[3]、
             // buf[2] = 5 各只有一行，fold 必须能还原，否则表达式卡保存一次就永久丢失）；
             // 普通 op 链保持 >= 2 的既有门槛。
@@ -155,6 +170,7 @@ public class ExprHook{
                 // 场景：别人没装插件时写的 jump 指向 op 链中间，折叠会改变语义。
                 // 指向链首 i 是允许的，折叠后仍指向 expr 积木。
                 // 链内临时变量被链外语句读取时同样放弃（折叠会删除这些变量，值也会变）。
+                // 链内的自动断言卡随链移除（下次展开重建），不参与链外读取判定。
                 if(hasJumpInRange(canvas, i + 1, i + chainLen - 1) || hasExternalReads(children, i, j, ops)){
                     i = j; // 跳过整条链，不折叠
                     continue;
@@ -173,6 +189,13 @@ public class ExprHook{
                     expr = ExprCompiler.rebuild(ops);
                     if(expr != null){
                         dest = ExprCompiler.lineDest(last);
+                    }
+                }
+                if(expr != null){
+                    // 折回安全门：数组/矩阵折回结果重新编译后必须与原链指令流逐行一致，
+                    // 否则保持原样（宁可少折回也不能折错；链内没有数组折叠时该门恒通过）。
+                    if(!ExprCompiler.verifyArrayFold(ops, dest, expr, ExprStatement.functionChecker())){
+                        expr = null;
                     }
                 }
                 if(expr != null){
@@ -212,13 +235,17 @@ public class ExprHook{
     // ===== 展开：ExprStatement → op 链 =====
 
     /** 语句能否作为表达式链的节点：op 语句、type 为 @LAccess 常量的 sensor 语句、
-     *  实参为纯值的 funccall 语句、memory 命中数组注册表的 read/write 语句（链首）。 */
+     *  实参为纯值的 funccall 语句、memory 命中数组注册表的 read/write 语句（链首）、
+     *  以及展开时随链生成的自动越界断言卡（链内透明元素，折叠时一并移除）。 */
     private static boolean isChainLine(LStatement st){
         if(st instanceof OperationStatement) return true;
         if(st instanceof SensorStatement sensor){
             return sensor.type.startsWith("@") && ExprCompiler.resolveMember(sensor.type) != null;
         }
         if(st instanceof FuncCallStatement call) return isFoldableCall(call);
+        // 自动断言卡随链生成：作为链元素参与折叠（不产出 ops，但会被移除并重建）。
+        // 用户手写的断言卡不是链元素，链在它之前断开。
+        if(st instanceof AssertBoundsCard) return isAutoAssert(st);
         // read/write 行只有在注册表把 memory 解析到已声明数组时才入链：
         // 用户手写的普通 read/write 与纯原版 mlog（无声明卡）不受影响
         if(st instanceof ReadStatement read) return isArrayMemory(read.target);
@@ -282,6 +309,10 @@ public class ExprHook{
     private static void unfoldAllInContext(LCanvas canvas, Seq<Element> children){
         saveUIAll(canvas);
 
+        // 越界断言只在 emit 调试构建（单机）下展开成 assertBounds 卡；strip 模式与联机
+        // 恒不插入（currentAssertEmit() 已含联机门禁）。
+        boolean emitAsserts = SugarCompiler.currentAssertEmit() == SugarCompiler.AssertEmit.emit;
+
         boolean changed = false;
         for(int i = 0; i < children.size; i++){
             if(!(children.get(i) instanceof StatementElem)) continue;
@@ -295,61 +326,28 @@ public class ExprHook{
                 // 与 ExprStatement.write()/SugarLogicDialog 预检同口径：使用 functionChecker
                 // 校验函数名，否则未定义函数会被展开成 will-fail 的 funccall（编译时才报错），
                 // 与编辑期标红、保存拦截的行为不一致。
-                ops = ExprCompiler.compile(exprStmt.dest, exprStmt.expr, ExprStatement.functionChecker());
+                ops = ExprCompiler.compile(exprStmt.dest, exprStmt.expr, ExprStatement.functionChecker(), emitAsserts);
             }catch(Exception e){
                 // 编译失败：保留 ExprStatement 不展开，write() 会输出 lastOps
                 // 避免 unfold→fold 循环用 lastOps 重建 ExprStatement 覆盖错误的 expr
                 continue;
             }
 
-            int chainLen = ops.size();
+            // 插入点之前的连续自动断言卡（画布顺序）：重复展开时等价的断言行不再插入
+            List<LStatement> preceding = new ArrayList<>();
+            for(int k = i - 1; k >= 0; k--){
+                if(!(children.get(k) instanceof StatementElem prev) || !isAutoAssert(prev.st)) break;
+                preceding.add(0, prev.st);
+            }
+            List<LStatement> statements = toStatements(ops, preceding, emitAsserts);
 
             elem.remove();
-
-            for(int k = 0; k < chainLen; k++){
-                ExprCompiler.Line line = ops.get(k);
-                if(line instanceof ExprCompiler.SensorLine sensor){
-                    SensorStatement st = new SensorStatement();
-                    st.to = sensor.dest;
-                    st.from = sensor.a;
-                    st.type = sensor.b;
-                    canvas.addAt(i + k, st);
-                }else if(line instanceof ExprCompiler.CallLine call){
-                    // 函数调用展开为 funccall 语句（result 绑定临时变量），
-                    // 编译管线（analyze/expandCall）对 funccall 已有完整支持
-                    FuncCallStatement st = new FuncCallStatement();
-                    st.name = call.name;
-                    st.args = call.args;
-                    st.result = call.dest;
-                    canvas.addAt(i + k, st);
-                }else if(line instanceof ExprCompiler.ReadLine read){
-                    // 数组下标读展开为原版 read 卡（read <output> <target> <address>），
-                    // 保存的文本是纯原版指令
-                    ReadStatement st = new ReadStatement();
-                    st.output = read.dest;
-                    st.target = read.a;
-                    st.address = read.b;
-                    canvas.addAt(i + k, st);
-                }else if(line instanceof ExprCompiler.WriteLine write){
-                    // 下标赋值展开为原版 write 卡（write <input> <target> <address>）
-                    WriteStatement st = new WriteStatement();
-                    st.input = write.value;
-                    st.target = write.memory;
-                    st.address = write.address;
-                    canvas.addAt(i + k, st);
-                }else{
-                    ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
-                    OperationStatement st = new OperationStatement();
-                    st.op = LogicOp.valueOf(op.op);
-                    st.dest = op.dest;
-                    st.a = op.a;
-                    st.b = op.b;
-                    canvas.addAt(i + k, st);
-                }
+            for(int k = 0; k < statements.size(); k++){
+                canvas.addAt(i + k, statements.get(k));
             }
 
             changed = true;
-            i += chainLen - 1;
+            i += statements.size() - 1;
         }
 
         if(changed){
@@ -359,6 +357,168 @@ public class ExprHook{
             SugarCanvas.markJumpHeightsDirty(canvas);
             Log.debug("[LogicAssist] Expression statements unfolded");
         }
+    }
+
+    // ===== 展开产物：Line 链 → 画布语句（含自动越界断言） =====
+
+    /** 自动插入的越界断言卡消息前缀。用于两处识别：展开时避免重复插入、折叠时清理
+     *  由表达式生成的断言卡（用户手写的断言卡没有该前缀，永远不动）。 */
+    public static final String AUTO_ASSERT_PREFIX = "ls-auto: ";
+
+    /**
+     * 把表达式链（{@link ExprCompiler#compile} 的产物）转成画布语句序列。
+     *
+     * <p>{@link ExprCompiler.AssertBoundsLine} 只在 {@code emit}（单机调试构建）下转成
+     * {@link AssertBoundsCard}，线格式与 F1 的 lower 路径一致（消息带
+     * {@link #AUTO_ASSERT_PREFIX} 前缀）；{@code emit=false}（strip 模式 / 联机）时断言行
+     * 被丢弃。断言卡按原行位置插入，因此始终位于对应 read/write 之前。</p>
+     *
+     * <p>幂等：{@code preceding} 是插入点之前的画布语句（画布顺序，可为 null）。若其尾部
+     * 已有的自动断言卡与链首连续的断言行逐一等价，则这些断言行不再重复插入——重复展开
+     * （展开 → 折叠 → 再展开）不会产生重复卡片。</p>
+     */
+    public static List<LStatement> toStatements(List<ExprCompiler.Line> ops, List<LStatement> preceding, boolean emit){
+        List<LStatement> result = new ArrayList<>(ops.size());
+        List<LStatement> existing = emit ? trailingAutoAsserts(preceding) : Collections.<LStatement>emptyList();
+        int existingIndex = 0;
+        boolean leading = true; // 只有链首连续的断言行才可能与插入点之前的卡片对应
+        for(ExprCompiler.Line line : ops){
+            if(line instanceof ExprCompiler.AssertBoundsLine bounds){
+                if(!emit) continue;
+                if(leading && existingIndex < existing.size()
+                    && equivalentAssert(existing.get(existingIndex), bounds)){
+                    existingIndex++;
+                    continue; // 画布上已有等价自动断言（上次展开插入）→ 不重复插入
+                }
+                result.add(autoAssertCard(bounds));
+                continue;
+            }
+            leading = false;
+            LStatement statement = statementFor(line);
+            if(statement != null) result.add(statement);
+        }
+        return result;
+    }
+
+    /** 一条指令行 → 原版画布语句；未知 RawLine 返回 null（编辑期防御，不崩溃）。 */
+    private static LStatement statementFor(ExprCompiler.Line line){
+        if(line instanceof ExprCompiler.SensorLine sensor){
+            SensorStatement st = new SensorStatement();
+            st.to = sensor.dest;
+            st.from = sensor.a;
+            st.type = sensor.b;
+            return st;
+        }
+        if(line instanceof ExprCompiler.CallLine call){
+            // 函数调用展开为 funccall 语句（result 绑定临时变量），
+            // 编译管线（analyze/expandCall）对 funccall 已有完整支持
+            FuncCallStatement st = new FuncCallStatement();
+            st.name = call.name;
+            st.args = call.args;
+            st.result = call.dest;
+            return st;
+        }
+        if(line instanceof ExprCompiler.ReadLine read){
+            // 数组下标读展开为原版 read 卡（read <output> <target> <address>），
+            // 保存的文本是纯原版指令
+            ReadStatement st = new ReadStatement();
+            st.output = read.dest;
+            st.target = read.a;
+            st.address = read.b;
+            return st;
+        }
+        if(line instanceof ExprCompiler.WriteLine write){
+            // 下标赋值展开为原版 write 卡（write <input> <target> <address>）
+            WriteStatement st = new WriteStatement();
+            st.input = write.value;
+            st.target = write.memory;
+            st.address = write.address;
+            return st;
+        }
+        if(line instanceof ExprCompiler.RawLine){
+            return null; // 非断言 RawLine（当前不存在）：编辑器路径跳过，不崩溃
+        }
+        ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
+        OperationStatement st = new OperationStatement();
+        st.op = LogicOp.valueOf(op.op);
+        st.dest = op.dest;
+        st.a = op.a;
+        st.b = op.b;
+        return st;
+    }
+
+    /** 断言行 → 自动断言卡（消息加固定前缀；枚举解析失败时退回默认值，绝不抛错）。 */
+    private static AssertBoundsCard autoAssertCard(ExprCompiler.AssertBoundsLine line){
+        AssertBoundsCard card = new AssertBoundsCard();
+        card.type = parseAssertionType(line.type);
+        card.multiple = optionalValue(line.multiple);
+        card.min = optionalValue(line.min);
+        card.opMin = parseAssertOp(line.opMin);
+        card.value = optionalValue(line.value);
+        card.opMax = parseAssertOp(line.opMax);
+        card.max = optionalValue(line.max);
+        card.message = autoMessage(line.message);
+        return card;
+    }
+
+    private static AssertionType parseAssertionType(String token){
+        try{
+            return AssertionType.valueOf(token);
+        }catch(Exception e){
+            return AssertionType.integer;
+        }
+    }
+
+    private static AssertOp parseAssertOp(String token){
+        try{
+            return AssertOp.valueOf(token);
+        }catch(Exception e){
+            return AssertOp.lessThanEq;
+        }
+    }
+
+    /** 自动断言的消息：在引号内加固定前缀（write/read 往返后仍可识别）。 */
+    private static String autoMessage(String message){
+        if(message == null || message.isEmpty()) return "\"" + AUTO_ASSERT_PREFIX.trim() + "\"";
+        if(message.startsWith("\"")) return "\"" + AUTO_ASSERT_PREFIX + message.substring(1);
+        return AUTO_ASSERT_PREFIX + message;
+    }
+
+    /** 卡片是否是本钩子自动插入的越界断言卡（消息带 {@link #AUTO_ASSERT_PREFIX}）。 */
+    public static boolean isAutoAssert(LStatement statement){
+        return statement instanceof AssertBoundsCard card
+            && card.message != null
+            && card.message.startsWith("\"" + AUTO_ASSERT_PREFIX);
+    }
+
+    /** 列表尾部连续的自动断言卡（画布顺序）。 */
+    public static List<LStatement> trailingAutoAsserts(List<LStatement> statements){
+        if(statements == null || statements.isEmpty()) return Collections.emptyList();
+        int from = statements.size();
+        while(from > 0 && isAutoAssert(statements.get(from - 1))) from--;
+        return new ArrayList<>(statements.subList(from, statements.size()));
+    }
+
+    /** 画布上的自动断言卡与链首断言行是否等价（字段逐项比较，空槽 "~" 归一化）。 */
+    private static boolean equivalentAssert(LStatement statement, ExprCompiler.AssertBoundsLine line){
+        if(!(statement instanceof AssertBoundsCard card) || !isAutoAssert(card)) return false;
+        return card.type.name().equals(line.type)
+            && sameOptional(card.multiple, line.multiple)
+            && sameOptional(card.min, line.min)
+            && card.opMin.name().equals(line.opMin)
+            && sameOptional(card.value, line.value)
+            && card.opMax.name().equals(line.opMax)
+            && sameOptional(card.max, line.max)
+            && card.message.equals(autoMessage(line.message));
+    }
+
+    /** 空槽归一化比较：null/""/"~" 视为同一个"无值"槽（write/read 往返会丢掉 "~"）。 */
+    private static boolean sameOptional(String a, String b){
+        return optionalValue(a).equals(optionalValue(b));
+    }
+
+    private static String optionalValue(String value){
+        return value == null || value.isEmpty() || value.equals("~") ? "" : value;
     }
 
     // ===== 目标索引调整 =====
@@ -394,18 +554,31 @@ public class ExprHook{
     }
 
     /** 检查链外语句是否读取了链内临时变量（折叠会删除这些临时变量）。
-     *  保守实现：用序列化文本做标识符边界匹配，宁可少折叠也不改变语义。 */
-    private static boolean hasExternalReads(Seq<Element> children, int chainStart, int chainEnd, List<ExprCompiler.Line> ops){
+     *  保守实现：用序列化文本做标识符边界匹配，宁可少折叠也不改变语义。
+     *  链内的自动断言卡属于链范围（{@code [chainStart, chainEnd)}），不算链外读取。 */
+    private static boolean hasExternalReads(Seq<Element> children, int chainStart, int chainEnd,
+                                            List<ExprCompiler.Line> ops){
+        List<LStatement> statements = new ArrayList<>(children.size);
+        for(Element child : children){
+            statements.add(child instanceof StatementElem elem ? elem.st : null);
+        }
+        return hasExternalReads(statements, chainStart, chainEnd, ops);
+    }
+
+    /** 链外读取检查（语句列表口径，画布遍历与自测共用；null 表示非语句元素）。
+     *  链内临时变量被链外语句引用时折叠会删除这些变量、值也会变，必须放弃折叠。 */
+    public static boolean hasExternalReads(List<LStatement> statements, int chainStart, int chainEnd,
+                                           List<ExprCompiler.Line> ops){
         Set<String> temps = new HashSet<>();
         for(int k = 0; k < ops.size() - 1; k++){ // 链内被后续 op 消费的临时变量
             String dest = ExprCompiler.lineDest(ops.get(k));
             if(dest != null) temps.add(dest);
         }
         if(temps.isEmpty()) return false;
-        for(int idx = 0; idx < children.size; idx++){
+        for(int idx = 0; idx < statements.size(); idx++){
             if(idx >= chainStart && idx < chainEnd) continue;
-            if(!(children.get(idx) instanceof StatementElem)) continue;
-            LStatement st = ((StatementElem)children.get(idx)).st;
+            LStatement st = statements.get(idx);
+            if(st == null) continue;
             StringBuilder text = new StringBuilder();
             st.write(text);
             for(String temp : temps){

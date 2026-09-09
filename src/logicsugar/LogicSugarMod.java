@@ -17,6 +17,14 @@ import logicsugar.assist.BoxSelect;
 import logicsugar.assist.JumpLineColor;
 import logicsugar.assist.ProcessorStatus;
 import logicsugar.assist.VarDisplayFilter;
+import logicsugar.assist.data.ArrayBulkModule;
+import logicsugar.assist.data.BitsetModule;
+import logicsugar.assist.data.ChainModule;
+import logicsugar.assist.data.ContainerModule;
+import logicsugar.assist.data.DataModules;
+import logicsugar.assist.data.ListHeapModule;
+import logicsugar.assist.data.MapModule;
+import logicsugar.assist.data.RecordModule;
 import logicsugar.assist.expr.ExprHook;
 
 import static arc.Events.on;
@@ -90,9 +98,25 @@ public class LogicSugarMod extends Mod{
         LogicIO.allStatements.add(SugarStatements.FuncCallStatement::new);
         LogicIO.allStatements.add(SugarStatements.ReturnStatement::new);
         LogicIO.allStatements.add(SugarStatements.ArrayStatement::new);
+        LogicIO.allStatements.add(SugarStatements.MatrixStatement::new);
+        LogicIO.allStatements.add(SugarStatements.ArrayInitStatement::new);
+
+        // Data subsystem modules (F2 framework): registering a module installs its
+        // expression intrinsics provider (needed before the first compile/editor use);
+        // registerParsers() below installs the declaration-card parsers. Both are
+        // idempotent, so a repeated init() cannot duplicate palette entries or parsers.
+        DataModules.register(new ArrayBulkModule());
+        DataModules.register(new RecordModule());
+        DataModules.register(new ContainerModule());
+        DataModules.register(new BitsetModule());
+        DataModules.register(new MapModule());
+        DataModules.register(new ListHeapModule());
+        DataModules.register(new ChainModule());
 
         // single registration point shared with the decompiler preflight and the self-tests
         SugarStatements.installParsers();
+        // record/stack/queue/bitset/map/list/heap/chain declaration cards + parsers
+        DataModules.registerParsers();
     }
 
     /** Host (Neon) settings aggregation: function mode, library entry and jump line coloring. */

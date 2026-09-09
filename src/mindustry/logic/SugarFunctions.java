@@ -1,7 +1,10 @@
 package mindustry.logic;
 
 import arc.struct.Seq;
+import logicsugar.assist.data.DataModules;
+import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ExprIntrinsics;
 import logicsugar.assist.expr.ShortCircuitCompiler;
 import mindustry.logic.LStatements.GetLinkStatement;
 import mindustry.logic.LStatements.InvalidStatement;
@@ -340,6 +343,16 @@ public final class SugarFunctions{
      * only; library bodies may only call other library functions.
      */
     public static LibraryIndex buildLibrary(Seq<LStatement> statements){
+        return buildLibrary(statements, false);
+    }
+
+    /**
+     * {@link #buildLibrary(Seq)} with an internal escape hatch: {@code allowReserved} admits
+     * the {@code __ls_} prefix so data-subsystem modules can inject builtin functions
+     * ({@code __ls_builtin_*}). User-facing library parsing must keep it false — a user
+     * function with a compiler-reserved name can collide with generated labels/variables.
+     */
+    public static LibraryIndex buildLibrary(Seq<LStatement> statements, boolean allowReserved){
         LibraryIndex index = new LibraryIndex();
         int n = statements.size;
         if(n == 0) return index;
@@ -411,7 +424,7 @@ public final class SugarFunctions{
 
         for(int i = 0; i < n; i++){
             if(endOf[i] < 0) continue;
-            Function function = buildFunction(statements, i, endOf[i], true);
+            Function function = buildFunction(statements, i, endOf[i], true, allowReserved);
             if(index.functions.containsKey(function.name)){
                 throw error("funcdef", i, "duplicate function name '" + function.name + "'");
             }
@@ -471,6 +484,41 @@ public final class SugarFunctions{
             prepBody(function);
         }
         return index;
+    }
+
+    /**
+     * Merges the injected builtin library (data-subsystem modules) into the user library used
+     * for one compile. Each builtin text is a self-contained one-function library and is parsed
+     * on its own — funcdef/blockend indices are local to their text, so concatenating them
+     * before parsing would break the block references. Builtin names use the reserved
+     * {@code __ls_} prefix, so they can never shadow a user function; user functions are copied
+     * first and win on any (impossible) collision. The merged index is compile-only:
+     * {@link #extractLibrarySource} still runs on the pure user text, so builtins never reach
+     * the {@code __ls_lib} carrier.
+     */
+    public static LibraryIndex withBuiltins(LibraryIndex user, List<String> builtinSugar){
+        if(builtinSugar == null || builtinSugar.isEmpty()) return user;
+        LibraryIndex merged = new LibraryIndex();
+        if(user != null){
+            merged.functions.putAll(user.functions);
+            merged.damaged = user.damaged;
+            merged.warnings = new ArrayList<>(user.warnings);
+        }
+        for(String part : builtinSugar){
+            if(part == null || part.trim().isEmpty()) continue;
+            LibraryIndex index;
+            try{
+                // 内置函数名使用保留的 __ls_builtin_ 前缀，走 allowReserved 内部通道
+                index = buildLibrary(LAssembler.read(part.trim(), true), true);
+            }catch(IllegalArgumentException e){
+                throw new IllegalArgumentException("internal error: the injected builtin library is invalid (" + e.getMessage() + ")");
+            }
+            if(index.functions.isEmpty()){
+                throw new IllegalArgumentException("internal error: an injected builtin library text has no function definition");
+            }
+            merged.functions.putAll(index.functions);
+        }
+        return merged;
     }
 
     /**
@@ -809,6 +857,11 @@ public final class SugarFunctions{
                 return function.params.isEmpty() ? null : function.params;
             }
         }
+        // F2: injected builtin functions (visible to editor hints, never in the user library)
+        List<String> builtin = DataModules.builtinParams(name);
+        if(builtin != null){
+            return builtin.isEmpty() ? null : builtin;
+        }
         return null;
     }
 
@@ -817,11 +870,16 @@ public final class SugarFunctions{
      *  statements are aliased into {@code function.body}, so the input Seq must not be analyzed
      *  again (sanitizedLibrary re-reads it after a failed buildLibrary for exactly this reason). */
     private static Function buildFunction(Seq<LStatement> statements, int s, int e, boolean library){
+        return buildFunction(statements, s, e, library, false);
+    }
+
+    /** @param allowReserved admits {@code __ls_*} function/parameter names (injected builtins). */
+    private static Function buildFunction(Seq<LStatement> statements, int s, int e, boolean library, boolean allowReserved){
         FuncDefStatement def = (FuncDefStatement)statements.get(s);
         Function function = new Function(def.name, library);
-        validateName(def.name, "function");
+        validateName(def.name, "function", allowReserved);
         for(String param : parseParams(def.params)){
-            validateName(param, "parameter");
+            validateName(param, "parameter", allowReserved);
             if(function.params.contains(param)){
                 throw error("funcdef", s, "duplicate parameter '" + param + "' in function '" + def.name + "'");
             }
@@ -901,6 +959,19 @@ public final class SugarFunctions{
 
     private static void registerExprCalls(String expr, Function owner, FunctionSet set, int index){
         for(ExprCompiler.CallSite site : ExprCompiler.collectCalls(expr)){
+            int argc = splitArgs(site.args).size();
+            // F2: intrinsic call sites are not user calls. Register the injected builtin
+            // functions they will expand to (during lowering, too late for reachability), so
+            // NORMAL mode hoists exactly the bodies that are actually used. A user function of
+            // the same name resolves above and takes the normal path.
+            if(set.resolve(site.name) == null && ExprIntrinsics.isIntrinsic(site.name)){
+                for(String callee : ExprIntrinsics.calleesOf(site.name, argc)){
+                    if(set.resolve(callee) != null){
+                        (owner == null ? set.mainCalls : owner.callees).add(callee);
+                    }
+                }
+                continue;
+            }
             FuncCallStatement stmt = new FuncCallStatement();
             stmt.name = site.name;
             stmt.args = site.args;
@@ -924,10 +995,14 @@ public final class SugarFunctions{
     }
 
     private static void validateName(String name, String kind){
+        validateName(name, kind, false);
+    }
+
+    private static void validateName(String name, String kind, boolean allowReserved){
         if(!isIdentifier(name)){
             throw new IllegalArgumentException("'" + name + "' is not a valid " + kind + " name (letters, digits and underscores only)");
         }
-        if(name.startsWith(reservedPrefix)){
+        if(!allowReserved && name.startsWith(reservedPrefix)){
             throw new IllegalArgumentException("'" + name + "' uses the reserved '" + reservedPrefix + "' prefix");
         }
     }
@@ -1425,6 +1500,14 @@ public final class SugarFunctions{
                 // 无 LogicSugar 的 customParsers 的客户端也能解析）。注册表元数据已由
                 // SugarCompiler.compile 在 lower 前登记，指向声明位置的 jump 仍会得到
                 // 前置的 stmt_ 标签，等于落到下一条语句。
+            }else if(statement instanceof SugarStatements.MatrixStatement){
+                // 矩阵声明卡同理：纯编译期元数据，不产出指令（m[i][j] 由表达式层换算）
+            }else if(statement instanceof SugarStatements.ArrayInitStatement init){
+                // 数组初始化卡：卡片位置即初始化位置，只发射原版 write 行（~ 槽跳过）
+                emitArrayInit(init, out);
+            }else if(statement instanceof logicsugar.assist.data.DataDeclaration){
+                // F2: 数据子系统的声明卡（record/stack/queue/...）是纯编译期元数据：
+                // 不产出任何 mlog 行，注册表元数据由 DataModules.collectAll 在 lower 前建立
             }else if(statement instanceof SugarAsserts.AssertCard){
                 // debug builds (emit) pass assertion instructions through as real custom
                 // instructions; the default (strip) compiles them away so the saved mlog
@@ -1439,6 +1522,22 @@ public final class SugarFunctions{
             }
         }
         if(statementLabels[statements.size]) out.append(label(prefix, "stmt_", statements.size)).append(":\n");
+    }
+
+    /** 数组初始化卡（{@code arrayinit}）lowering：卡片位置发射 write <v> <memory> <base+k>，
+     *  空槽跳过。严格校验（数组已声明、槽位不越界、值必须是数字字面量）已在
+     *  {@link ArrayRegistry#compileRegistry} 完成，这里只做防御性兜底。 */
+    private static void emitArrayInit(SugarStatements.ArrayInitStatement init, StringBuilder out){
+        ArrayRegistry registry = ArrayRegistry.active();
+        ArrayRegistry.ArrayInfo info = registry == null ? null : registry.get(init.array);
+        if(info == null){
+            throw new IllegalArgumentException("arrayinit references undeclared array '" + init.array + "'");
+        }
+        for(int k = 0; k < init.values.length; k++){
+            String value = init.values[k];
+            if(value == null || value.isEmpty() || value.equals("~")) continue;
+            out.append("write ").append(value).append(' ').append(info.memory).append(' ').append((long)info.base + k).append('\n');
+        }
     }
 
     /** Emits a short-circuit predicate without materializing an eager land/or temporary. */
@@ -1463,7 +1562,7 @@ public final class SugarFunctions{
         String base = "__ls_cond_" + prefix.replace('-', '_') + statementIndex;
         String dest = base;
         try{
-            ops = ExprCompiler.compile(dest, expression);
+            ops = ExprCompiler.compile(dest, expression, null, assertEmit == SugarCompiler.AssertEmit.emit);
         }catch(Exception e){
             throw new IllegalArgumentException("Invalid condition expression '" + expression + "': " + e.getMessage());
         }
@@ -1492,6 +1591,12 @@ public final class SugarFunctions{
                 stmt.args = args.toString();
                 stmt.result = renameConditionTemp(call.dest, prefix, statementIndex);
                 expandCall(stmt, functions, mode, out, ids, strategy, assertEmit);
+            }else if(line instanceof ExprCompiler.AssertBoundsLine bounds){
+                // emit 调试构建的数组/矩阵越界断言：断言操作数也要进入条件命名空间，
+                // 否则断言检查的是其它表达式链留下的裸 _0
+                out.append(bounds.withValue(renameConditionTemp(bounds.value, prefix, statementIndex)).toText()).append('\n');
+            }else if(line instanceof ExprCompiler.RawLine raw){
+                out.append(raw.toText()).append('\n');
             }else{
                 ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
                 String a = renameConditionTemp(op.a, prefix, statementIndex);
@@ -1515,7 +1620,8 @@ public final class SugarFunctions{
                                    FunctionSet functions, CallIds ids, SugarCompiler.SwitchStrategy strategy, SugarCompiler.AssertEmit assertEmit){
         if(!ret.expr.isEmpty()){
             try{
-                List<ExprCompiler.Line> ops = ExprCompiler.compile("__ls_func_" + funcName + "_result", ret.expr);
+                List<ExprCompiler.Line> ops = ExprCompiler.compile("__ls_func_" + funcName + "_result", ret.expr,
+                    null, assertEmit == SugarCompiler.AssertEmit.emit);
                 for(ExprCompiler.Line line : ops){
                     if(line instanceof ExprCompiler.CallLine call){
                         FuncCallStatement stmt = new FuncCallStatement();
@@ -1537,6 +1643,11 @@ public final class SugarFunctions{
                         out.append("read ").append(renameReturnTemp(read.dest, funcName)).append(' ')
                             .append(renameReturnTemp(read.a, funcName)).append(' ')
                             .append(renameReturnTemp(read.b, funcName)).append('\n');
+                    }else if(line instanceof ExprCompiler.AssertBoundsLine bounds){
+                        // emit 调试构建的越界断言：断言操作数同样进入函数临时变量命名空间
+                        out.append(bounds.withValue(renameReturnTemp(bounds.value, funcName)).toText()).append('\n');
+                    }else if(line instanceof ExprCompiler.RawLine raw){
+                        out.append(raw.toText()).append('\n');
                     }else{
                         ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
                         out.append("op ").append(op.op).append(' ')
@@ -1618,7 +1729,7 @@ public final class SugarFunctions{
                                 SugarCompiler.SwitchStrategy strategy, SugarCompiler.AssertEmit assertEmit){
         List<ExprCompiler.Line> ops;
         try{
-            ops = ExprCompiler.compile("_0", arg);
+            ops = ExprCompiler.compile("_0", arg, null, assertEmit == SugarCompiler.AssertEmit.emit);
         }catch(Exception e){
             throw new IllegalArgumentException("Invalid argument expression '" + arg + "': " + e.getMessage());
         }

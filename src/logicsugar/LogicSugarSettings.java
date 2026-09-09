@@ -82,15 +82,24 @@ public final class LogicSugarSettings{
         table.checkPref(logicsugar.assist.BoxSelect.settingDragExpandSpacing, false);
     }
 
-    /** Sliders for the processor status overlay (wait threshold, scan rate, warn effects). */
+    /** Sliders for the processor status overlay (wait threshold, scan rate, warn effects)
+     *  plus the breakpoint behavior switches (upstream v0.8.2). */
     static void addProcessorStatusPrefs(SettingsMenuDialog.SettingsTable table){
+        table.checkPref("logicsugar.disableBreakpoints", false,
+            b -> logicsugar.assist.ProcessorStatus.disableBreakpoints = b);
+        table.checkPref("logicsugar.assertsAreBreakpoints", false,
+            b -> logicsugar.assist.ProcessorStatus.assertsAreBreakpoints = b);
+        table.checkPref("logicsugar.detachCameraOnBreakpoint", true,
+            b -> logicsugar.assist.ProcessorStatus.detachCameraOnBreakpoint = b);
         table.sliderPref("logicsugar.waitIndication", 1000, 0, 10000, 500, i -> {
             logicsugar.assist.ProcessorStatus.minWaitMillis = i;
             return i == 0 ? Core.bundle.get("logicsugar.off", "off") : (i / 1000.0) + "s";
         });
-        table.sliderPref("logicsugar.processorScan", 50, 5, 200, 5, i -> {
-            logicsugar.assist.ProcessorStatus.scanPerTick = i;
-            return Integer.toString(i);
+        // stored value is the step index into ProcessorStatus.UPDATES_PER_TICK
+        table.sliderPref("logicsugar.processorScan", 4, 0, logicsugar.assist.ProcessorStatus.UPDATES_PER_TICK.length - 1, i -> {
+            int value = logicsugar.assist.ProcessorStatus.updatesPerTick(i);
+            logicsugar.assist.ProcessorStatus.scanPerTick = value;
+            return Integer.toString(value);
         });
         table.sliderPref("logicsugar.warnEffect", 0, -5, 60, 5, i -> {
             logicsugar.assist.ProcessorStatus.warnEffectFrequency = i;

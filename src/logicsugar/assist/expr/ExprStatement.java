@@ -61,11 +61,14 @@ public class ExprStatement extends LStatement{
         }
     }
 
-    /** 编辑期函数名校验：本地 funcdef + 库函数（数学函数由 ExprCompiler 内置处理）。 */
+    /** 编辑期函数名校验：本地 funcdef + 库函数 + 数据子系统 intrinsic（数学函数由 ExprCompiler 内置处理）。 */
     public static ExprCompiler.FunctionChecker functionChecker(){
         Set<String> names = new HashSet<>();
         SugarFunctions.LibraryIndex library = SugarFunctions.library();
         if(library != null) names.addAll(library.functions.keySet());
+        // F2: 数据模块的表达式函数名（sum/avg/count/... 以及 record 成员等）在编辑器里合法
+        names.addAll(ExprIntrinsics.intrinsicNames());
+        names.addAll(logicsugar.assist.data.DataModules.builtinFunctionNames());
         SugarCanvas canvas = SugarCanvas.current();
         if(canvas != null && canvas.statements != null){
             for(arc.scene.Element child : canvas.statements.getChildren()){
@@ -338,8 +341,19 @@ public class ExprStatement extends LStatement{
         if(ops == null || ops.isEmpty()){
             return new OpI(LogicOp.add, builder.var(dest), builder.var("0"), builder.var(dest));
         }
-        // 返回第一条指令，后续指令在 write() 中输出为文本
-        ExprCompiler.Line first = ops.get(0);
+        // 返回第一条可执行指令，后续指令在 write() 中输出为文本。
+        // RawLine（数组/矩阵越界断言等非 op 行）没有可映射的 LInstruction，跳过；
+        // 编辑器/预览路径不产生断言行，这里只是让 Line 列表对未知行保持健壮。
+        ExprCompiler.Line first = null;
+        for(ExprCompiler.Line line : ops){
+            if(!(line instanceof ExprCompiler.RawLine)){
+                first = line;
+                break;
+            }
+        }
+        if(first == null){
+            return new NoopI();
+        }
         if(first instanceof ExprCompiler.SensorLine sensor){
             // sensor to from type → SenseI(from, to, type)
             return new SenseI(builder.var(sensor.a), builder.var(sensor.dest), builder.var(sensor.b));

@@ -3,10 +3,6 @@ package logicsugar.assist;
 import arc.Core;
 import arc.graphics.Color;
 import arc.util.Log;
-import mindustry.Vars;
-import mindustry.content.Fx;
-import mindustry.core.GameState;
-import mindustry.gen.Building;
 import mindustry.logic.ConditionOp;
 import mindustry.logic.LExecutor;
 import mindustry.logic.LVar;
@@ -20,7 +16,9 @@ import mindustry.world.blocks.logic.LogicBlock.LogicBuild;
  * upstream MlogAssertions mod (cardillan/mlogassertions, wire-format compatible). Failure
  * reporting goes through {@link ProcessorStatus}, which draws the message above the
  * processor and keeps the program looping on the failing instruction (counter rewind +
- * yield) until the condition passes or the processor is reconfigured.
+ * yield) until the condition passes or the processor is reconfigured. With the
+ * {@code assertsAreBreakpoints} setting, a failed assertion pauses the game at the
+ * instruction instead (upstream v0.8.2).
  *
  * <p>Every class implements the {@link AssertInstruction} marker so the map overlay skips
  * these blocks during its scan: the instruction owns its message lifecycle, and a scan
@@ -59,19 +57,13 @@ public final class AssertInstructions{
 
         @Override
         public final void run(LExecutor exec){
-            Building building = exec.thisv.building();
-
             if((value.isobj ? type.objFunction.get(value.objval) : type.function.get(value.num()))
                 && (type != AssertionType.multiple || (value.num() % multiple.num() == 0))
                 && (opMin.function.get(min.num(), value.num()))
                 && (opMax.function.get(value.num(), max.num()))){
-                ProcessorStatus.reset((LogicBuild)building);
+                ProcessorStatus.reset(exec.build);
             }else{
-                ProcessorStatus.setMessage((LogicBuild)building, () -> print(message));
-
-                //skip back to self.
-                exec.counter.numval--;
-                exec.yield = true;
+                assertion(exec, message, null, null);
             }
         }
     }
@@ -92,14 +84,10 @@ public final class AssertInstructions{
 
         @Override
         public final void run(LExecutor exec){
-            Building building = exec.thisv.building();
-
             if(ConditionOp.strictEqual.test(expected, actual)){
-                ProcessorStatus.reset((LogicBuild)building);
+                ProcessorStatus.reset(exec.build);
             }else{
-                ProcessorStatus.setMessage((LogicBuild)building, () -> "Assertion failed: " + print(message));
-                exec.counter.numval--;
-                exec.yield = true;
+                assertion(exec, message, expected, actual);
             }
         }
     }
@@ -136,24 +124,17 @@ public final class AssertInstructions{
 
         @Override
         public final void run(LExecutor exec){
-            Building building = exec.thisv.building();
-
             int flushIndex = this.flushIndex.numi();
             if(flushIndex < 0 || flushIndex > exec.textBuffer.length()){
-                ProcessorStatus.setMessage((LogicBuild)building, () -> "Invalid flush index");
-                exec.counter.numval--;
-                exec.yield = true;
+                assertion(exec, Core.bundle.get("logicsugar.asserts.invalidFlushIndex"), null, null);
             }else{
                 String text = exec.textBuffer.substring(flushIndex);
 
                 if(!text.equals(expected.obj())){
-                    ProcessorStatus.setMessage((LogicBuild)building,
-                        () -> "Assertion failed: " + print(message));
-                    exec.counter.numval--;
-                    exec.yield = true;
+                    assertion(exec, message, expected, text);
                 }else{
                     exec.textBuffer.setLength(flushIndex);
-                    ProcessorStatus.reset((LogicBuild)building);
+                    ProcessorStatus.reset(exec.build);
                 }
             }
         }
@@ -179,16 +160,10 @@ public final class AssertInstructions{
 
         @Override
         public final void run(LExecutor exec){
-            Building building = exec.thisv.building();
-
             if(type.matches(value)){
-                ProcessorStatus.reset((LogicBuild)building);
+                ProcessorStatus.reset(exec.build);
             }else{
-                ProcessorStatus.setMessage((LogicBuild)building, () ->
-                    "Assertion failed: " + print(message) + " (expected " + type.token()
-                        + ", got " + AssertDataType.actualType(value) + ")");
-                exec.counter.numval--;
-                exec.yield = true;
+                assertion(exec, message, type.token(), AssertDataType.actualType(value));
             }
         }
     }
@@ -209,36 +184,24 @@ public final class AssertInstructions{
         @Override
         public void run(LExecutor exec){
             if(op.test(value, compare)){
-                Vars.state.set(GameState.State.paused);
-                Vars.world.tiles.eachTile(tile -> {
-                    if(tile.build instanceof LogicBuild logicBuild){
-                        logicBuild.accumulator = 0f;
-                    }
-                });
-                var build = exec.build;
-                Vars.ui.showInfoToast(Core.bundle.format("logicsugar.breakpoint.message",
-                    build.block.name, build.tile.x, build.tile.y), 10);
-                Fx.unitCapKill.at(build.getX(), build.getY(), 10f, Color.crimson);
+                breakpoint(exec.build, Core.bundle.format("logicsugar.breakpoint.message", exec.counter.numval - 1));
             }
         }
     }
 
     public static class ErrorI implements LExecutor.LInstruction, AssertInstruction{
-        public LVar[] vars;
+        public LVar[] vars = new LVar[10];
 
         public ErrorI(LVar[] vars){
             this.vars = vars;
         }
 
         public ErrorI(){
-            vars = new LVar[10];
         }
 
         @Override
         public final void run(LExecutor exec){
-            Building building = exec.thisv.building();
-
-            ProcessorStatus.setMessage((LogicBuild)building, () -> buildMessage("", vars));
+            ProcessorStatus.setMessage(exec.build, () -> buildMessage("", vars));
             exec.counter.numval--;
             exec.yield = true;
         }
@@ -246,7 +209,7 @@ public final class AssertInstructions{
 
     public static class LogI implements LExecutor.LInstruction, AssertInstruction{
         public Log.LogLevel level = Log.LogLevel.info;
-        public LVar[] vars;
+        public LVar[] vars = new LVar[10];
 
         public LogI(Log.LogLevel level, LVar[] vars){
             this.level = level;
@@ -254,13 +217,37 @@ public final class AssertInstructions{
         }
 
         public LogI(){
-            vars = new LVar[10];
         }
 
         @Override
         public final void run(LExecutor exec){
             Log.log(level, buildMessage("[LogicSugar] ", vars));
         }
+    }
+
+    /** Reports a failed assertion. By default the program loops on the failing instruction
+     *  and the message is drawn above the processor; with {@code assertsAreBreakpoints} the
+     *  game pauses at the instruction instead (upstream v0.8.2 behavior). When both
+     *  {@code expected} and {@code actual} are given, the message appends
+     *  " (expected X, got Y)". */
+    private static void assertion(LExecutor exec, Object message, Object expected, Object actual){
+        if(ProcessorStatus.assertsAreBreakpoints){
+            if(ProcessorStatus.disableBreakpoints) return;  // avoid building the message
+            breakpoint(exec.build, expected == null && actual == null
+                ? Core.bundle.format("logicsugar.asserts.failed", print(message))
+                : Core.bundle.format("logicsugar.asserts.failedWithValues", print(message), print(expected), print(actual)));
+        }else{
+            exec.counter.numval--;
+            exec.yield = true;
+
+            ProcessorStatus.setMessage(exec.build, expected == null && actual == null
+                ? () -> Core.bundle.format("logicsugar.asserts.failed", print(message))
+                : () -> Core.bundle.format("logicsugar.asserts.failedWithValues", print(message), print(expected), print(actual)));
+        }
+    }
+
+    private static void breakpoint(LogicBuild build, String message){
+        ProcessorStatus.breakpoint(build, message);
     }
 
     /** Expands {@code [[1]}..{@code [[9]} placeholders from vars[1..9], then appends any
@@ -297,6 +284,12 @@ public final class AssertInstructions{
 
     private static String print(LVar value){
         return print(value, false);
+    }
+
+    /** Formats an assertion message part: an {@link LVar} through the logic printer, any
+     *  other value (already-classified type name, actual buffer text) as plain text. */
+    private static String print(Object value){
+        return value instanceof LVar lvar ? print(lvar, false) : String.valueOf(value);
     }
 
     private static String print(LVar value, boolean formatString){

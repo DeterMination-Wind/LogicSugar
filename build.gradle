@@ -130,8 +130,73 @@ tasks.register("arrayTest", JavaExec){
     mainClass = "mindustry.logic.ArraySugarTest"
 }
 
+// Data subsystem (arrays bulk ops + data structures): one task per main()-based self-test.
+tasks.register("arrayBulkTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.data.ArrayBulkTest"
+}
+
+tasks.register("dataFrameworkTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.data.DataFrameworkSelfTest"
+}
+
+tasks.register("recordTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.data.RecordTest"
+}
+
+tasks.register("containerTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.data.ContainerTest"
+}
+
+tasks.register("bitsetTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.data.BitsetTest"
+}
+
+tasks.register("mapTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.data.MapTest"
+}
+
+tasks.register("listHeapTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.data.ListHeapTest"
+}
+
+tasks.register("chainTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.data.ChainTest"
+}
+
+tasks.register("dataSubsystemTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.DataSubsystemIntegrationTest"
+}
+
+// Generic main()-based self-test runner: ./gradlew runTestClass -PmainClass=<fully.qualified.Class>
+// (F2 framework tests use this; integration stage may add dedicated tasks / check.dependsOn.)
+tasks.register("runTestClass", JavaExec){
+    dependsOn testClasses
+    def cls = project.findProperty("mainClass")
+    if(cls == null) throw new GradleException("usage: ./gradlew runTestClass -PmainClass=<class>")
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = cls
+}
+
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, assertTest, assertTypeTest, arrayTest
+check.dependsOn selfTest, ifElseTest, decompileTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, listHeapTest, chainTest, dataSubsystemTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

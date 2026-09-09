@@ -2,6 +2,7 @@ package logicsugar.assist.expr;
 
 import arc.Core;
 import mindustry.logic.LAccess;
+import mindustry.logic.SugarCompiler;
 
 import java.util.*;
 
@@ -127,8 +128,11 @@ public class ExprCompiler{
     static class Binary extends Node{ final String op; final Node l,r; Binary(String o,Node a,Node b){op=o;l=a;r=b;} }
     /** 成员访问：unit.Health → sensor。base 可以是任意值表达式，prop 是属性名。 */
     static class Member extends Node{ final Node base; final String prop; Member(Node b,String p){base=b;prop=p;} }
-    /** 数组下标：buf[i] → read。base 必须是已声明数组的名字（经注册表解析），index 是逻辑下标。 */
+    /** 数组下标：buf[i] → read。base 必须是已声明数组的名字（经注册表解析），index 是逻辑下标。
+     *  矩阵下标 m[i][j] 解析为 Index(Index(Var m, i), j)，由 {@link #emitArrayAddress} 识别。 */
     static class Index extends Node{ final Node base; final Node index; Index(Node b,Node i){base=b;index=i;} }
+    /** 单参数 len(buf)：已声明数组的长度，编译期折叠为 size 字面量。len(a,b) 仍是原版向量长度。 */
+    static class ArrayLen extends Node{ final Node arg; ArrayLen(Node a){arg=a;} }
     /** 用户函数调用：foo(a, b)。名字不是数学函数时生成，校验推迟到调用方。 */
     static class Call extends Node{ final String name; final List<Node> args; Call(String n,List<Node> a){name=n;args=a;} }
 
@@ -219,6 +223,51 @@ public class ExprCompiler{
         }
         @Override public String toText(){
             return "write " + value + " " + memory + " " + address;
+        }
+    }
+
+    /** 任意文本行：原样输出。用于表达式链里的非 op 指令（数组越界断言行等）。
+     *  下游（ExprStatement.write、SugarFunctions 的 lower 路径）按类分支处理：
+     *  toText() 即最终 mlog 文本，不参与临时变量改名之外的任何重写。 */
+    public static class RawLine extends Line{
+        public final String text;
+        public RawLine(String text){
+            this.text = text;
+        }
+        @Override public String toText(){
+            return text;
+        }
+    }
+
+    /** 数组/矩阵越界断言行（emit 调试构建专用）：线格式与
+     *  {@link mindustry.logic.SugarAsserts.AssertBoundsCard} 完全一致——
+     *  {@code assertBounds <type> <multiple> <min> <opMin> <value> <opMax> <max> "<message>"}。
+     *  结构化保存 value，条件/返回表达式 lowering 时按各自命名空间改名临时变量。 */
+    public static class AssertBoundsLine extends RawLine{
+        public final String type, multiple, min, opMin, value, opMax, max, message;
+
+        public AssertBoundsLine(String type, String multiple, String min, String opMin,
+                                String value, String opMax, String max, String message){
+            super(buildText(type, multiple, min, opMin, value, opMax, max, message));
+            this.type = type;
+            this.multiple = multiple;
+            this.min = min;
+            this.opMin = opMin;
+            this.value = value;
+            this.opMax = opMax;
+            this.max = max;
+            this.message = message;
+        }
+
+        private static String buildText(String type, String multiple, String min, String opMin,
+                                        String value, String opMax, String max, String message){
+            return "assertBounds " + type + " " + multiple + " " + min + " " + opMin + " "
+                + value + " " + opMax + " " + max + " " + message;
+        }
+
+        /** 断言操作数改名后的副本（条件/返回表达式的临时变量命名空间转换）。 */
+        public AssertBoundsLine withValue(String newValue){
+            return new AssertBoundsLine(type, multiple, min, opMin, newValue, opMax, max, message);
         }
     }
 
@@ -446,16 +495,29 @@ public class ExprCompiler{
                         if(UNARY_OPS.contains(funcName)){
                             if(args.size() != 1) throw new ParseException(msg("la.err.requires_1_arg", funcName));
                             base = new Unary(funcName, args.get(0));
+                        }else if("len".equals(funcName) && args.size() == 1){
+                            // F1: len(buf) —— 已声明数组的长度（编译期常量 size）；
+                            // len(a, b) 两参仍是原版向量长度内置函数（走下面的 Binary 分支）
+                            base = new ArrayLen(args.get(0));
+                        }else if(ExprIntrinsics.isIntrinsicName(funcName, args.size())){
+                            // F2: 1 参 min/max 是数组批量运算（按实参个数分派）；2 参仍是原版内置
+                            base = new Call(funcName, args);
                         }else{
                             if(args.size() != 2) throw new ParseException(msg("la.err.requires_2_args", funcName));
                             base = new Binary(funcName, args.get(0), args.get(1));
                         }
-                    }else if(checker != null && !checker.isFunction(name)){
-                        // 编辑期校验：名字不是已知用户函数/库函数
-                        throw new ParseException(msg("la.err.unknown_func", name));
                     }else{
-                        // 用户函数调用（无 checker 的编译路径不做校验，由 analyze/lower 负责）
-                        base = new Call(name, args);
+                        // F2: intrinsic 名字（sum/avg/count/...，大小写不敏感；用户函数优先）
+                        String intrinsic = ExprIntrinsics.canonicalName(name, args.size());
+                        if(intrinsic != null){
+                            base = new Call(intrinsic, args);
+                        }else if(checker != null && !checker.isFunction(name)){
+                            // 编辑期校验：名字不是已知用户函数/库函数
+                            throw new ParseException(msg("la.err.unknown_func", name));
+                        }else{
+                            // 用户函数调用（无 checker 的编译路径不做校验，由 analyze/lower 负责）
+                            base = new Call(name, args);
+                        }
                     }
                 }else{
                     base = new Var(name);
@@ -513,6 +575,50 @@ public class ExprCompiler{
     // ===== 正向编译：表达式 → op 链 =====
 
     /**
+     * F2: intrinsic provider 的编译上下文。Node/Line 是包私有类型，所以 Ctx 实现必须留在
+     * 本包；provider 通过它追加指令行、编译子表达式、分配临时变量并抛统一格式的编译错误。
+     */
+    static final class IntrinsicCtx implements ExprIntrinsics.Ctx{
+        private final List<Line> ops;
+        private final TempStack temps;
+
+        IntrinsicCtx(List<Line> ops, TempStack temps){
+            this.ops = ops;
+            this.temps = temps;
+        }
+
+        @Override
+        public List<Line> ops(){
+            return ops;
+        }
+
+        @Override
+        public String compile(Node node){
+            return compileNode(node, ops, temps);
+        }
+
+        @Override
+        public String temp(String... operands){
+            return temps.alloc(operands);
+        }
+
+        @Override
+        public boolean isDeclaredName(String name){
+            ArrayRegistry registry = ArrayRegistry.active();
+            return registry != null && (registry.get(name) != null || registry.getMatrix(name) != null);
+        }
+
+        @Override
+        public RuntimeException error(String message){
+            return new ParseException(message);
+        }
+    }
+
+    /** 越界断言发射开关（emit 调试构建）。编译路径显式传入，编辑器/预览路径恒为 false：
+     *  编辑器展开（ExprHook.unfoldAll）会把链写回画布，断言行只在真正的 lower 阶段生成。 */
+    private static boolean boundsAsserts;
+
+    /**
      * 编译表达式为语句链（op / sensor / 函数调用）。
      * @param dest 目标变量名
      * @param expr 表达式字符串（如 "cos(a) * 10 + x"）
@@ -527,6 +633,26 @@ public class ExprCompiler{
      * checker 为 null 时不做校验——编译路径（lower 阶段）由 analyze/resolveCall 负责。
      */
     public static List<Line> compile(String dest, String expr, FunctionChecker checker){
+        return compile(dest, expr, checker, false);
+    }
+
+    /**
+     * 编译表达式为语句链，并可选地在非常量下标的 read/write 之前发射数组/矩阵越界断言
+     * （{@link AssertBoundsLine}，仅 {@code SugarCompiler.AssertEmit.emit} 调试构建；
+     * strip 模式与编辑器路径恒为 false）。编译上下文是静态的（同
+     * {@link ArrayRegistry#enter} 的模式），enter/restore 保证嵌套调用后恢复。
+     */
+    public static List<Line> compile(String dest, String expr, FunctionChecker checker, boolean emitBoundsAsserts){
+        boolean previous = boundsAsserts;
+        boundsAsserts = emitBoundsAsserts;
+        try{
+            return compileInternal(dest, expr, checker);
+        }finally{
+            boundsAsserts = previous;
+        }
+    }
+
+    private static List<Line> compileInternal(String dest, String expr, FunctionChecker checker){
         List<Token> tokens = tokenize(expr);
         Parser parser = new Parser(tokens, checker);
         Node ast = parser.parse();
@@ -545,6 +671,21 @@ public class ExprCompiler{
             if(!(target instanceof Index))
                 throw new ParseException(msg("la.err.assign_target", dest));
             return compileAssignment((Index)target, ast);
+        }
+
+        // F2: 成员赋值目标（p.f1 = value）——intrinsic provider 命中时走写路径。
+        // 只在 dest 含 '.' 时尝试；解析失败或没有 provider 处理时保持既有"当普通变量名"语义。
+        if(dest != null && dest.indexOf('.') >= 0){
+            Node target = parseAssignTarget(dest, checker);
+            if(target instanceof Member member){
+                List<Line> memberOps = new ArrayList<>();
+                List<Line> written = ExprIntrinsics.tryWriteMember(member.base, member.prop, ast,
+                    new IntrinsicCtx(memberOps, new TempStack()));
+                if(written != null){
+                    memberOps.addAll(written);
+                    return memberOps;
+                }
+            }
         }
 
         List<Line> ops = new ArrayList<>();
@@ -590,19 +731,50 @@ public class ExprCompiler{
         return ops;
     }
 
+    /** 解析赋值目标文本为 AST；不是合法表达式时返回 null（调用方回退既有语义）。 */
+    private static Node parseAssignTarget(String dest, FunctionChecker checker){
+        try{
+            return new Parser(tokenize(dest), checker).parse();
+        }catch(Exception e){
+            return null;
+        }
+    }
+
     /**
-     * 解析下标目标的数组信息并发射地址计算，返回 {memory, address}。
-     * 规则：base==0 且下标为字面量 → 地址=下标字面量；base==0 且非字面量 → 地址=下标本身；
-     * base&gt;0 且字面量 → 地址折叠为 base+下标字面量；否则先 {@code op add _t <base> <下标>}。
-     * 注册表存在且非空时做严格校验（未声明数组名、字面量下标越界都报错）；
+     * 解析下标目标的数组/矩阵信息并发射地址计算，返回 {memory, address}。
+     * 一维数组规则：base==0 且下标为字面量 → 地址=下标字面量；base==0 且非字面量 →
+     * 地址=下标本身；base&gt;0 且字面量 → 地址折叠为 base+下标字面量；否则先
+     * {@code op add _t <base> <下标>}。矩阵 {@code m[i][j]}（解析为 Index(Index(...))）
+     * 走 {@link #emitMatrixAddress}，地址 = base + i*cols + j，字面量下标编译期折叠。
+     * 注册表存在且非空时做严格校验（未声明名字、字面量下标越界都报错）；
      * 注册表缺失/为空（语法校验场景）退化为按普通变量名发射 read/write，不做检查。
+     * emit 调试构建下非常量下标会在 read/write 之前追加 {@code assertBounds} 行。
      */
     private static String[] emitArrayAddress(Index ix, List<Line> ops, TempStack temps){
+        ArrayRegistry registry = ArrayRegistry.active();
+        boolean strict = registry != null && !registry.isEmpty();
+
+        // 二维下标 m[i][j]：外层 Index 的 base 是内层 Index
+        if(ix.base instanceof Index inner){
+            if(!(inner.base instanceof Var))
+                throw new ParseException(msg("la.err.array_base_var"));
+            if(!strict)
+                throw new ParseException(msg("la.err.array_base_var"));
+            String name = ((Var)inner.base).name;
+            ArrayRegistry.MatrixInfo matrix = registry.getMatrix(name);
+            if(matrix == null){
+                if(registry.get(name) != null)
+                    throw new ParseException(msg("la.err.array_extra_index", name));
+                throw new ParseException(msg("la.err.array_unknown", name));
+            }
+            return emitMatrixAddress(matrix, inner.index, ix.index, ops, temps);
+        }
+
         if(!(ix.base instanceof Var))
             throw new ParseException(msg("la.err.array_base_var"));
         String name = ((Var)ix.base).name;
-        ArrayRegistry registry = ArrayRegistry.active();
-        boolean strict = registry != null && !registry.isEmpty();
+        if(strict && registry.getMatrix(name) != null)
+            throw new ParseException(msg("la.err.matrix_two_indices", name));
         ArrayRegistry.ArrayInfo info = strict ? registry.get(name) : null;
         if(strict && info == null)
             throw new ParseException(msg("la.err.array_unknown", name));
@@ -615,11 +787,86 @@ public class ExprCompiler{
             return new String[]{info == null ? name : info.memory, formatNum(address)};
         }
         String subscript = compileNode(ix.index, ops, temps);
+        if(info != null) emitBoundsAssert(ops, "array '" + name + "' index", subscript, 0, info.size - 1);
         int base = info == null ? 0 : info.base;
         if(base == 0) return new String[]{info == null ? name : info.memory, subscript};
         String temp = temps.alloc(subscript);
         ops.add(new OpLine("add", temp, String.valueOf(base), subscript));
         return new String[]{info == null ? name : info.memory, temp};
+    }
+
+    /**
+     * 矩阵地址计算：地址 = base + row*cols + col（行主序）。字面量下标编译期折叠
+     * （含 base 折叠），越界字面量报错；非常量下标用 TempStack 发射 op mul/op add，
+     * emit 调试构建下在读写之前追加行/列两条 assertBounds。
+     */
+    private static String[] emitMatrixAddress(ArrayRegistry.MatrixInfo matrix, Node rowNode, Node colNode,
+                                              List<Line> ops, TempStack temps){
+        Long rowLit = literalValue(rowNode);
+        Long colLit = literalValue(colNode);
+        if(rowLit != null && !matrix.inRows(rowLit))
+            throw new ParseException(msg("la.err.matrix_row_oob", matrix.name, formatNum(rowLit), matrix.rows));
+        if(colLit != null && !matrix.inCols(colLit))
+            throw new ParseException(msg("la.err.matrix_col_oob", matrix.name, formatNum(colLit), matrix.cols));
+
+        if(rowLit != null && colLit != null){
+            return new String[]{matrix.memory, formatNum(matrix.addressOf(rowLit, colLit))};
+        }
+
+        if(rowLit != null){
+            // 行是字面量：地址 = (base + row*cols) + col
+            String col = compileNode(colNode, ops, temps);
+            emitBoundsAssert(ops, "matrix '" + matrix.name + "' column", col, 0, matrix.cols - 1);
+            long offset = matrix.base + rowLit * (long)matrix.cols;
+            if(offset == 0) return new String[]{matrix.memory, col};
+            String dest = temps.alloc(col);
+            ops.add(new OpLine("add", dest, formatNum(offset), col));
+            return new String[]{matrix.memory, dest};
+        }
+
+        if(colLit != null){
+            // 列是字面量：地址 = (base + col) + row*cols
+            String row = compileNode(rowNode, ops, temps);
+            emitBoundsAssert(ops, "matrix '" + matrix.name + "' row", row, 0, matrix.rows - 1);
+            String product = row;
+            if(matrix.cols != 1){
+                product = temps.alloc(row);
+                ops.add(new OpLine("mul", product, row, String.valueOf(matrix.cols)));
+            }
+            long offset = matrix.base + colLit;
+            if(offset == 0) return new String[]{matrix.memory, product};
+            String dest = temps.alloc(product);
+            ops.add(new OpLine("add", dest, formatNum(offset), product));
+            return new String[]{matrix.memory, dest};
+        }
+
+        // 行列都是变量：product = row*cols, sum = product + col, address = base + sum
+        String row = compileNode(rowNode, ops, temps);
+        emitBoundsAssert(ops, "matrix '" + matrix.name + "' row", row, 0, matrix.rows - 1);
+        String col = compileNode(colNode, ops, temps);
+        emitBoundsAssert(ops, "matrix '" + matrix.name + "' column", col, 0, matrix.cols - 1);
+        // 行、列是同一个临时变量时不能复用它的名字做乘法目标（会先覆盖再相加）；
+        // TempStack.alloc 只复用"操作数里的临时变量"，别名场景改发新临时变量。
+        boolean alias = isTemp(row) && row.equals(col);
+        String product = row;
+        if(matrix.cols != 1){
+            product = alias ? temps.fresh() : temps.alloc(row);
+            ops.add(new OpLine("mul", product, row, String.valueOf(matrix.cols)));
+        }
+        String sum = temps.alloc(product, col);
+        ops.add(new OpLine("add", sum, product, col));
+        if(matrix.base == 0) return new String[]{matrix.memory, sum};
+        String dest = temps.alloc(sum);
+        ops.add(new OpLine("add", dest, String.valueOf(matrix.base), sum));
+        return new String[]{matrix.memory, dest};
+    }
+
+    /** emit 调试构建下发射一条越界断言行（strip 模式与编辑器路径恒不发射）。 */
+    private static void emitBoundsAssert(List<Line> ops, String what, String operand, long min, long max){
+        if(!boundsAsserts) return;
+        String message = "\"" + what + " out of bounds (" + min + ".." + max + ")\"";
+        ops.add(new AssertBoundsLine("integer", "~", String.valueOf(min), "lessThanEq",
+            operand, "lessThanEq", String.valueOf(max), message));
     }
 
     /** 常量折叠裸字面量下标：Num 或 -Num（整数），其余返回 null。 */
@@ -639,8 +886,34 @@ public class ExprCompiler{
         if(node instanceof Num) return formatNum(((Num)node).val);
         if(node instanceof Var) return ((Var)node).name;
 
+        if(node instanceof ArrayLen){
+            // F1: len(buf) —— 已声明数组的长度，编译期折叠为 size 字面量
+            ArrayLen len = (ArrayLen)node;
+            if(!(len.arg instanceof Var))
+                throw new ParseException(msg("la.err.len_arg_var"));
+            String name = ((Var)len.arg).name;
+            ArrayRegistry registry = ArrayRegistry.active();
+            ArrayRegistry.ArrayInfo info = registry == null ? null : registry.get(name);
+            if(info == null){
+                if(registry != null && registry.getMatrix(name) != null)
+                    throw new ParseException(msg("la.err.len_matrix", name));
+                throw new ParseException(msg("la.err.len_unknown", name));
+            }
+            return String.valueOf(info.size);
+        }
+
+        // F2: ExprIntrinsics dispatch point
         if(node instanceof Call){
             Call c = (Call)node;
+            // intrinsic 展开（用户 funcdef/库函数优先：被遮蔽的名字在 ExprIntrinsics 里返回 null，
+            // 走下面的普通 funccall 路径）
+            List<Line> expanded = ExprIntrinsics.tryExpandCall(c.name, c.args, new IntrinsicCtx(ops, temps));
+            if(expanded != null){
+                ops.addAll(expanded);
+                String result = lineDest(expanded.get(expanded.size() - 1));
+                if(result == null) throw new ParseException("intrinsic '" + c.name + "' did not produce a result operand");
+                return result;
+            }
             StringBuilder args = new StringBuilder();
             for(int i = 0; i < c.args.size(); i++){
                 if(i > 0) args.append(", ");
@@ -661,6 +934,14 @@ public class ExprCompiler{
 
         if(node instanceof Member){
             Member m = (Member)node;
+            // F2: 记录变量等 intrinsic 成员读（provider 未命中时退回 sensor 属性路径）
+            List<Line> expanded = ExprIntrinsics.tryReadMember(m.base, m.prop, new IntrinsicCtx(ops, temps));
+            if(expanded != null){
+                ops.addAll(expanded);
+                String result = lineDest(expanded.get(expanded.size() - 1));
+                if(result == null) throw new ParseException("intrinsic member read '" + m.prop + "' did not produce a result operand");
+                return result;
+            }
             String canonical = resolveMember(m.prop);
             if(canonical == null)
                 throw new ParseException(msg("la.err.unknown_member", m.prop));
@@ -741,7 +1022,7 @@ public class ExprCompiler{
         if(folds == null) return null;
         ArrayFold fold = folds.get(last);
         if(fold == null || fold == ArrayFold.CONSUMED) return null;
-        Node dest = new Index(new Var(fold.info.name), operandToNode(fold.indexOperand));
+        Node dest = foldNode(fold);
         Node value = operandToNode(((WriteLine)last).value);
         for(int i = ops.size() - 2; i >= 0; i--){
             Line line = ops.get(i);
@@ -757,29 +1038,65 @@ public class ExprCompiler{
         return new String[]{nodeToString(dest), nodeToString(value)};
     }
 
-    /** 一条 read/write 行折叠时解析到的数组与"逻辑下标操作数"。CONSUMED 标记被消费的
-     *  base 加法定义行（其 dest 是物理地址临时，不进入表达式，也不再参与替换）。 */
+    /** 一条 read/write 行折叠时解析到的数组/矩阵归属。CONSUMED 标记被消费的地址计算行
+     *  （其 dest 是物理地址临时，不进入表达式，也不再参与替换）。
+     *  <ul>
+     *    <li>一维数组：{@link #info} + {@link #indexOperand}（逻辑下标操作数）；</li>
+     *    <li>矩阵：{@link #matrix} + {@link #row}/{@link #col}（行/列下标 AST——地址链的
+     *        子表达式已展开进 AST，被消费的地址计算行记在 {@link #consumed} 里）。</li>
+     *  </ul> */
     static final class ArrayFold{
-        static final ArrayFold CONSUMED = new ArrayFold(null, null);
+        static final ArrayFold CONSUMED = new ArrayFold(null, null, null, null, null, null);
         final ArrayRegistry.ArrayInfo info;
+        final ArrayRegistry.MatrixInfo matrix;
         final String indexOperand;
-        ArrayFold(ArrayRegistry.ArrayInfo info, String indexOperand){
+        final Node row, col;
+        final List<Line> consumed;
+
+        ArrayFold(ArrayRegistry.ArrayInfo info, String indexOperand, Line consumed){
+            this(info, null, indexOperand, null, null,
+                consumed == null ? null : Collections.singletonList(consumed));
+        }
+
+        ArrayFold(ArrayRegistry.MatrixInfo matrix, Node row, Node col, List<Line> consumed){
+            this(null, matrix, null, row, col, consumed);
+        }
+
+        private ArrayFold(ArrayRegistry.ArrayInfo info, ArrayRegistry.MatrixInfo matrix, String indexOperand,
+                          Node row, Node col, List<Line> consumed){
             this.info = info;
+            this.matrix = matrix;
             this.indexOperand = indexOperand;
+            this.row = row;
+            this.col = col;
+            this.consumed = consumed;
         }
     }
 
+    /** 折叠解析结果 → 下标 AST（一维 {@code buf[i]} 或矩阵 {@code m[i][j]}）。 */
+    private static Node foldNode(ArrayFold fold){
+        if(fold.matrix != null){
+            return new Index(new Index(new Var(fold.matrix.name), fold.row), fold.col);
+        }
+        return new Index(new Var(fold.info.name), operandToNode(fold.indexOperand));
+    }
+
     /**
-     * 解析链中所有 read/write 行的数组归属——仅当注册表存在且 memory 操作数命中已声明
-     * 数组时（用户手写的普通 read/write 与纯原版 mlog 不受影响）。解析规则：
+     * 解析链中所有 read/write 行的数组/矩阵归属——仅当注册表存在且 memory 操作数命中已声明
+     * 数组/矩阵时（用户手写的普通 read/write 与纯原版 mlog 不受影响）。一维数组规则：
      * <ul>
      *   <li>地址为整数字面量 → 归属区间 [base, base+size) 包含该地址的数组，下标=地址-base；
      *       越界地址不折叠（避免折出下次编译报错的卡片）；</li>
      *   <li>地址非字面量 → 回溯最近一条 {@code op add _t <base> <下标>} 定义行（base 与某数组
      *       相等），下标取其加法操作数（加法前的旧值），并把该定义行标记为 CONSUMED——
      *       这样 {@code buf[i]} 折回后重编译的指令流与原链一致；</li>
-     *   <li>无 base 加法定义 → 仅当该内存块上恰有一个 base==0 数组时，下标=地址本身。</li>
+     *   <li>无 base 加法定义 → 仅当该内存块上恰有一个 base==0 数组且没有 base==0 矩阵时，
+     *       下标=地址本身（base 0 矩阵的地址可能是行主序地址，存在时不折叠）。</li>
      * </ul>
+     * 一维未命中时尝试矩阵折叠（{@link #resolveMatrixFold}）：地址字面量直接反解行/列；
+     * 变量地址沿链内 {@code op add}/{@code op mul} 定义链反解（{@code base + row*cols + col}
+     * 的三种编译器形态的逆）。任何无法唯一确定的归属都返回 null——宁可少折回也不能折错，
+     * 最终由 {@link #verifyArrayFold} 的重新编译比对兜底。
      */
     private static Map<Line, ArrayFold> resolveArrayFolds(List<Line> ops){
         ArrayRegistry registry = ArrayRegistry.active();
@@ -797,60 +1114,263 @@ public class ExprCompiler{
             }else{
                 continue;
             }
-            ArrayRegistry.ArrayInfo info = null;
-            String indexOperand = null;
-            int consumedAdd = -1;
-            Long literal = ArrayRegistry.parseIntLiteral(address);
-            if(literal != null){
-                for(ArrayRegistry.ArrayInfo candidate : registry.byMemory(memory)){
-                    if(candidate.base <= literal && literal < candidate.base + candidate.size){
-                        info = candidate;
-                        break;
-                    }
-                }
-                if(info == null) continue;
-                long index = literal - info.base;
-                if(index < 0 || index >= info.size) continue;
-                indexOperand = formatNum(index);
-            }else{
-                for(int j = p - 1; j >= 0; j--){
-                    Line def = ops.get(j);
-                    if(!(def instanceof OpLine opdef) || !opdef.op.equals("add") || !opdef.dest.equals(address)) continue;
-                    Long baseA = ArrayRegistry.parseIntLiteral(opdef.a);
-                    Long baseB = baseA == null ? ArrayRegistry.parseIntLiteral(opdef.b) : null;
-                    ArrayRegistry.ArrayInfo byA = baseA == null ? null : findByBase(registry, memory, baseA);
-                    ArrayRegistry.ArrayInfo byB = byA == null && baseB != null ? findByBase(registry, memory, baseB) : null;
-                    if(byA != null){
-                        info = byA;
-                        indexOperand = opdef.b;
-                        consumedAdd = j;
-                        break;
-                    }
-                    if(byB != null){
-                        info = byB;
-                        indexOperand = opdef.a;
-                        consumedAdd = j;
-                        break;
-                    }
-                }
-                if(info == null){
-                    ArrayRegistry.ArrayInfo zero = null;
-                    for(ArrayRegistry.ArrayInfo candidate : registry.byMemory(memory)){
-                        if(candidate.base == 0){
-                            if(zero != null){ zero = null; break; }
-                            zero = candidate;
-                        }
-                    }
-                    if(zero == null) continue;
-                    info = zero;
-                    indexOperand = address;
-                }
-            }
+            ArrayFold fold = resolveArrayFold(registry, memory, address, ops, p);
+            if(fold == null) fold = resolveMatrixFold(registry, memory, address, ops, p);
+            if(fold == null) continue;
             if(folds == null) folds = new IdentityHashMap<>();
-            folds.put(line, new ArrayFold(info, indexOperand));
-            if(consumedAdd >= 0) folds.put(ops.get(consumedAdd), ArrayFold.CONSUMED);
+            folds.put(line, fold);
+            if(fold.consumed != null){
+                for(Line consumed : fold.consumed) folds.put(consumed, ArrayFold.CONSUMED);
+            }
         }
         return folds;
+    }
+
+    /** 一维数组归属解析（规则见 {@link #resolveArrayFolds}），未命中返回 null。 */
+    private static ArrayFold resolveArrayFold(ArrayRegistry registry, String memory, String address, List<Line> ops, int p){
+        Long literal = ArrayRegistry.parseIntLiteral(address);
+        if(literal != null){
+            for(ArrayRegistry.ArrayInfo candidate : registry.byMemory(memory)){
+                if(candidate.base <= literal && literal < candidate.base + candidate.size){
+                    long index = literal - candidate.base;
+                    if(index < 0 || index >= candidate.size) return null;
+                    return new ArrayFold(candidate, formatNum(index), null);
+                }
+            }
+            return null;
+        }
+        for(int j = p - 1; j >= 0; j--){
+            Line def = ops.get(j);
+            if(!(def instanceof OpLine opdef) || !opdef.op.equals("add") || !opdef.dest.equals(address)) continue;
+            Long baseA = ArrayRegistry.parseIntLiteral(opdef.a);
+            Long baseB = baseA == null ? ArrayRegistry.parseIntLiteral(opdef.b) : null;
+            ArrayRegistry.ArrayInfo byA = baseA == null ? null : findByBase(registry, memory, baseA);
+            ArrayRegistry.ArrayInfo byB = byA == null && baseB != null ? findByBase(registry, memory, baseB) : null;
+            if(byA != null) return new ArrayFold(byA, opdef.b, def);
+            if(byB != null) return new ArrayFold(byB, opdef.a, def);
+        }
+        // 地址即下标：仅当该内存块上恰有一个 base==0 数组、且不存在 base==0 矩阵
+        if(registry.hasZeroBaseMatrix(memory)) return null;
+        ArrayRegistry.ArrayInfo zero = null;
+        for(ArrayRegistry.ArrayInfo candidate : registry.byMemory(memory)){
+            if(candidate.base == 0){
+                if(zero != null) return null;
+                zero = candidate;
+            }
+        }
+        return zero == null ? null : new ArrayFold(zero, address, null);
+    }
+
+    /** 矩阵归属解析：地址字面量直接反解；变量地址沿链内 op add/mul 定义反解。 */
+    private static ArrayFold resolveMatrixFold(ArrayRegistry registry, String memory, String address, List<Line> ops, int p){
+        List<ArrayRegistry.MatrixInfo> candidates = registry.matricesByMemory(memory);
+        if(candidates.isEmpty()) return null;
+
+        Long literal = ArrayRegistry.parseIntLiteral(address);
+        if(literal != null){
+            ArrayFold found = null;
+            for(ArrayRegistry.MatrixInfo matrix : candidates){
+                long offset = literal - matrix.base;
+                if(offset < 0 || offset >= matrix.size()) continue;
+                ArrayFold fold = new ArrayFold(matrix, new Num(offset / matrix.cols), new Num(offset % matrix.cols), null);
+                if(found != null) return null; // 多个矩阵区间都能解释该地址 → 不可判定
+                found = fold;
+            }
+            return found;
+        }
+
+        Set<Line> absorbed = new LinkedHashSet<>();
+        AddrNode root = buildAddrNode(ops, p, address, absorbed);
+        if(!resolvableTemps(root, ops, p)) return null;
+        ArrayFold found = null;
+        for(ArrayRegistry.MatrixInfo matrix : candidates){
+            ArrayFold fold = unifyMatrix(matrix, root, absorbed);
+            if(fold != null){
+                if(found != null) return null; // 多个矩阵都能解释地址链 → 不可判定
+                found = fold;
+            }
+        }
+        return found;
+    }
+
+    // ===== 矩阵地址逆向：read/write 的 memory/address → m[i][j] =====
+
+    /** 地址操作数的符号表达式：只沿链内 op add/mul 定义展开；其余定值（read/sensor/sub/...）
+     *  与普通变量保持为叶子，交给 {@code rebuild} 的临时变量替换机制处理。 */
+    abstract static class AddrNode{
+        final String operand; // 该子表达式的操作数名（临时变量/变量/字面量）
+        AddrNode(String operand){ this.operand = operand; }
+    }
+    static final class AddrLit extends AddrNode{
+        final long value;
+        AddrLit(String operand, long value){ super(operand); this.value = value; }
+    }
+    static final class AddrVar extends AddrNode{
+        AddrVar(String operand){ super(operand); }
+    }
+    static final class AddrBin extends AddrNode{
+        final String op; // add / mul
+        final AddrNode a, b;
+        AddrBin(String operand, String op, AddrNode a, AddrNode b){
+            super(operand); this.op = op; this.a = a; this.b = b;
+        }
+    }
+
+    /** 沿链内 op add/mul 定义展开地址操作数（{@code before} 之前），展开过的定义行记入 used。 */
+    private static AddrNode buildAddrNode(List<Line> ops, int before, String operand, Set<Line> used){
+        Long literal = ArrayRegistry.parseIntLiteral(operand);
+        if(literal != null) return new AddrLit(operand, literal);
+        for(int j = before - 1; j >= 0; j--){
+            Line line = ops.get(j);
+            String dest = lineDest(line);
+            if(dest == null || !dest.equals(operand)) continue;
+            if(line instanceof OpLine op && (op.op.equals("add") || op.op.equals("mul"))){
+                used.add(line);
+                return new AddrBin(operand, op.op,
+                    buildAddrNode(ops, j, op.a, used), buildAddrNode(ops, j, op.b, used));
+            }
+            // 最近的定值行不可逆（read/sub/sensor/...）：保持操作数本身，由替换机制还原
+            return new AddrVar(operand);
+        }
+        return new AddrVar(operand);
+    }
+
+    /** DAG 里的临时变量叶子必须在链内有定值行，否则折叠会留下无定义的 _N。 */
+    private static boolean resolvableTemps(AddrNode node, List<Line> ops, int p){
+        if(node instanceof AddrBin bin) return resolvableTemps(bin.a, ops, p) && resolvableTemps(bin.b, ops, p);
+        if(node instanceof AddrVar){
+            if(!isTemp(node.operand)) return true;
+            for(int j = 0; j < p; j++){
+                String dest = lineDest(ops.get(j));
+                if(dest != null && dest.equals(node.operand)) return true;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /** 把一个候选矩阵与地址 DAG 做模式匹配（编译器三种地址形态的逆），不匹配返回 null。
+     *  形态优先级：行列都变量 → 列字面量 → 行字面量（都能重编译成同一指令流时取更具体的）。 */
+    private static ArrayFold unifyMatrix(ArrayRegistry.MatrixInfo matrix, AddrNode root, Set<Line> used){
+        ArrayFold fold = matchBothVariable(matrix, root, used);
+        if(fold == null) fold = matchColLiteral(matrix, root, used);
+        if(fold == null) fold = matchRowLiteral(matrix, root, used);
+        return fold;
+    }
+
+    /** 行列都是变量：地址 = [base +] (row*cols + col)（cols==1 时省略乘法）。 */
+    private static ArrayFold matchBothVariable(ArrayRegistry.MatrixInfo matrix, AddrNode root, Set<Line> used){
+        AddrNode sum = root;
+        if(matrix.base != 0){
+            if(!(sum instanceof AddrBin baseAdd) || !baseAdd.op.equals("add") || !isLit(baseAdd.a, matrix.base)) return null;
+            sum = baseAdd.b;
+        }
+        if(!(sum instanceof AddrBin add) || !add.op.equals("add")) return null;
+        AddrNode product = add.a, colNode = add.b, rowNode;
+        if(matrix.cols != 1){
+            if(!(product instanceof AddrBin mul) || !mul.op.equals("mul") || !isLit(mul.b, matrix.cols)) return null;
+            rowNode = mul.a;
+        }else{
+            rowNode = product;
+        }
+        if(rowNode instanceof AddrLit || colNode instanceof AddrLit) return null; // 字面量下标走其它形态
+        return new ArrayFold(matrix, addrToNode(rowNode), addrToNode(colNode), new ArrayList<>(used));
+    }
+
+    /** 列是字面量：地址 = [base + col] + row*cols（cols==1 时省略乘法）。 */
+    private static ArrayFold matchColLiteral(ArrayRegistry.MatrixInfo matrix, AddrNode root, Set<Line> used){
+        AddrNode product;
+        long col;
+        if(root instanceof AddrBin add && add.op.equals("add") && add.a instanceof AddrLit offset){
+            long rel = offset.value - matrix.base;
+            if(rel < 0 || rel >= matrix.cols) return null;
+            col = rel;
+            product = add.b;
+        }else if(matrix.base == 0){
+            col = 0;
+            product = root;
+        }else{
+            return null;
+        }
+        AddrNode rowNode;
+        if(matrix.cols != 1){
+            if(!(product instanceof AddrBin mul) || !mul.op.equals("mul") || !isLit(mul.b, matrix.cols)) return null;
+            rowNode = mul.a;
+        }else{
+            rowNode = product;
+        }
+        if(rowNode instanceof AddrLit) return null;
+        return new ArrayFold(matrix, addrToNode(rowNode), new Num(col), new ArrayList<>(used));
+    }
+
+    /** 行是字面量：地址 = [base + row*cols] + col（偏移为 0 时地址就是列操作数）。 */
+    private static ArrayFold matchRowLiteral(ArrayRegistry.MatrixInfo matrix, AddrNode root, Set<Line> used){
+        if(root instanceof AddrBin add && add.op.equals("add") && add.a instanceof AddrLit offset){
+            long rel = offset.value - matrix.base;
+            if(rel >= 0 && rel % matrix.cols == 0){
+                long row = rel / matrix.cols;
+                if(row < matrix.rows && !(add.b instanceof AddrLit)){
+                    return new ArrayFold(matrix, new Num(row), addrToNode(add.b), new ArrayList<>(used));
+                }
+            }
+        }
+        if(matrix.base == 0 && !(root instanceof AddrLit)){
+            return new ArrayFold(matrix, new Num(0), addrToNode(root), new ArrayList<>(used));
+        }
+        return null;
+    }
+
+    private static boolean isLit(AddrNode node, long value){
+        return node instanceof AddrLit lit && lit.value == value;
+    }
+
+    /** AddrNode（地址 DAG）→ AST 节点。 */
+    private static Node addrToNode(AddrNode node){
+        if(node instanceof AddrLit lit) return new Num(lit.value);
+        if(node instanceof AddrVar) return new Var(node.operand);
+        AddrBin bin = (AddrBin)node;
+        return new Binary(bin.op, addrToNode(bin.a), addrToNode(bin.b));
+    }
+
+    /**
+     * 折回安全门：仅当链内确实存在数组/矩阵折叠时才校验——折回结果重新编译后与原链
+     * 逐行一致才允许折叠（宁可少折回也不能折错）。链内没有数组/矩阵折叠时直接返回 true，
+     * 既有的 op/sensor/funccall 折叠行为不变（funccall 实参文本的空格规范化差异也不会误伤）。
+     */
+    public static boolean verifyArrayFold(List<Line> ops, String dest, String expr, FunctionChecker checker){
+        if(resolveArrayFolds(ops) == null) return true;
+        if(dest == null) return false;
+        try{
+            return sameStream(compile(dest, expr, checker), ops);
+        }catch(RuntimeException e){
+            return false;
+        }
+    }
+
+    /** 两条指令链逐行等价（funccall 实参只比较去掉空白后的值列表）。 */
+    private static boolean sameStream(List<Line> a, List<Line> b){
+        if(a.size() != b.size()) return false;
+        for(int i = 0; i < a.size(); i++){
+            if(!sameLine(a.get(i), b.get(i))) return false;
+        }
+        return true;
+    }
+
+    private static boolean sameLine(Line a, Line b){
+        if(a instanceof CallLine ca && b instanceof CallLine cb){
+            return ca.name.equals(cb.name) && ca.dest.equals(cb.dest)
+                && stripSpaces(ca.args).equals(stripSpaces(cb.args));
+        }
+        return a.toText().equals(b.toText());
+    }
+
+    private static String stripSpaces(String text){
+        StringBuilder out = new StringBuilder(text.length());
+        for(int i = 0; i < text.length(); i++){
+            char c = text.charAt(i);
+            if(!Character.isWhitespace(c)) out.append(c);
+        }
+        return out.toString();
     }
 
     /** 按 base 在同一内存块上找唯一数组；不唯一或 base 非法时返回 null。 */
@@ -885,11 +1405,11 @@ public class ExprCompiler{
             return new Call(call.name, args);
         }
         if(!(op instanceof OpLine opLine)) return null;
-        // read 指令行 → 数组下标节点（buf[i]）；未命中注册表（含手写 read）返回 null 不折叠
+        // read 指令行 → 数组/矩阵下标节点（buf[i] / m[i][j]）；未命中注册表（含手写 read）返回 null 不折叠
         if(op instanceof ReadLine read){
             ArrayFold fold = folds == null ? null : folds.get(read);
             if(fold == null || fold == ArrayFold.CONSUMED) return null;
-            return new Index(new Var(fold.info.name), operandToNode(fold.indexOperand));
+            return foldNode(fold);
         }
         // sensor 指令 → 成员访问节点（unit.Health）
         if(op instanceof SensorLine){
@@ -951,6 +1471,8 @@ public class ExprCompiler{
         }else if(node instanceof Index){
             collectCallNodes(((Index)node).base, out);
             collectCallNodes(((Index)node).index, out);
+        }else if(node instanceof ArrayLen){
+            collectCallNodes(((ArrayLen)node).arg, out);
         }else if(node instanceof Member){
             collectCallNodes(((Member)node).base, out);
         }else if(node instanceof Unary){
@@ -980,6 +1502,9 @@ public class ExprCompiler{
             return new Index(
                 substituteTemp(ix.base, tempName, replacement),
                 substituteTemp(ix.index, tempName, replacement));
+        }
+        if(node instanceof ArrayLen){
+            return new ArrayLen(substituteTemp(((ArrayLen)node).arg, tempName, replacement));
         }
         if(node instanceof Member){
             Member m = (Member)node;
@@ -1028,6 +1553,10 @@ public class ExprCompiler{
                 base = "(" + base + ")";
             }
             return base + "[" + nodeToString(ix.index) + "]";
+        }
+
+        if(node instanceof ArrayLen){
+            return "len(" + nodeToString(((ArrayLen)node).arg) + ")";
         }
 
         if(node instanceof Member){

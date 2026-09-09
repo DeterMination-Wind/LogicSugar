@@ -19,9 +19,10 @@ import mindustry.ui.Styles;
 
 /**
  * Assertion statement set for runtime checks and debugging, ported from the upstream
- * MlogAssertions mod (cardillan/mlogassertions) with its exact wire format, so programs
- * compiled in debug mode run identically under either mod and Mindcode-generated code
- * round-trips through the editor.
+ * MlogAssertions mod (cardillan/mlogassertions v0.8.2) with its exact wire format, so
+ * programs compiled in debug mode run identically under either mod and Mindcode-generated
+ * code round-trips through the editor. The one extension is {@code asserttype}'s null
+ * type — see {@link AssertTypeCard}.
  *
  * <p>The cards serialize to the custom instruction tokens themselves ({@code assertBounds
  * ...}), which double as the sugar source format. The compiler decides their fate at
@@ -277,8 +278,12 @@ public final class SugarAsserts{
     }
 
     /** Checks that a variable currently holds a value of the expected runtime data type.
-     *  LogicSugar-original (no MlogAssertions/Mindcode counterpart): their clients degrade
-     *  this instruction to a placeholder, which only ever matters for shared debug builds. */
+     *
+     *  <p>Upstream MlogAssertions added its own {@code asserttype} in v0.8.1 with the same
+     *  opcode and 4-token layout; the six shared type tokens are byte-identical. LogicSugar
+     *  additionally offers {@code none} ("null" on the wire), which upstream's parser
+     *  rejects ({@code AssertDataType.valueOf}), so a debug build using the null type
+     *  cannot be opened by MlogAssertions/Mindcode. Every other type interchanges.</p> */
     public static class AssertTypeCard extends AssertCard{
         public static final String opcode = "asserttype";
         public String value = "value";

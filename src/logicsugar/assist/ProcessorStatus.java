@@ -9,14 +9,18 @@ import arc.graphics.g2d.Fill;
 import arc.graphics.g2d.Lines;
 import arc.graphics.g2d.Font;
 import arc.graphics.g2d.GlyphLayout;
+import arc.math.geom.Rect;
 import arc.scene.ui.layout.Scl;
+import arc.struct.FloatSeq;
 import arc.struct.ObjectMap;
 import arc.struct.Seq;
 import arc.util.Align;
 import arc.util.pooling.Pools;
 import mindustry.Vars;
 import mindustry.content.Fx;
+import mindustry.core.GameState;
 import mindustry.game.EventType;
+import mindustry.gen.Groups;
 import mindustry.graphics.Drawf;
 import mindustry.graphics.Layer;
 import mindustry.logic.LExecutor;
@@ -38,15 +42,31 @@ import static mindustry.Vars.tilesize;
  *
  * <p>Performance: the whole-map scan is throttled (fractional update budget, round-robin
  * over the processor list, {@link #scanPerTick} blocks per frame at most); the wait arc
- * itself is drawn straight from the executor's live state every frame.</p>
+ * itself is drawn straight from the executor's live state every frame, and both the wait
+ * arc and the failure text are culled against the camera viewport.</p>
+ *
+ * <p>Breakpoints (ported from upstream v0.8.2) pause the game at the instruction, center
+ * the camera on the processor, optionally detach the camera, and freeze every processor's
+ * accumulator for the remainder of the frame. Failed assertions can be routed through the
+ * same path with the {@code assertsAreBreakpoints} setting.</p>
  */
 public final class ProcessorStatus{
+    /** Slider steps for the processor scan rate (index -> scans per frame), ported from
+     *  upstream v0.8.2. The stored setting is the index, not the value. */
+    public static final int[] UPDATES_PER_TICK = {1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000};
+
     /** Waits shorter than this (ms) are not indicated; 0 disables wait indication. */
     public static volatile int minWaitMillis = 1000;
     /** Max blocks inspected per frame while distributing the scan. */
     public static volatile int scanPerTick = 50;
     /** < 0: never spawn warning effects; 0: once when a failure appears; n: every n seconds. */
     public static volatile int warnEffectFrequency = 0;
+    /** Breakpoint instructions do nothing when set. */
+    public static volatile boolean disableBreakpoints = false;
+    /** Failed assertions pause the game at the failing instruction instead of looping. */
+    public static volatile boolean assertsAreBreakpoints = false;
+    /** Center the camera on the processor and temporarily detach it when a breakpoint hits. */
+    public static volatile boolean detachCameraOnBreakpoint = true;
 
     // wait is a special case, recognized by comparison to this instance
     static final String WAIT = new String("W");
@@ -58,6 +78,11 @@ public final class ProcessorStatus{
     static final float waitLayer = Layer.turret + 1;
     static final float textWidth = 110f;
 
+    // Camera bounds used to skip processors that cannot be seen
+    static final Rect wideBounds = new Rect();
+    static final Rect narrowBounds = new Rect();
+    static final Rect hitbox = new Rect();
+
     // Active messages
     static final ObjectMap<LogicBuild, String> blocks = new ObjectMap<>();
 
@@ -66,6 +91,13 @@ public final class ProcessorStatus{
 
     // Invalid blocks
     static final Seq<LogicBuild> invalidBlocks = new Seq<>();
+
+    // The breakpoint context: the paused processor's message is drawn even though the
+    // overlay scan is suspended while the game is paused
+    static LogicBuild breakpointProc;
+    static String breakpointMessage;
+    static final FloatSeq accumulators = new FloatSeq();
+    static final Seq<LogicBuild> accumulatorBlocks = new Seq<>();
 
     // The next time the effect should be run (game time)
     static double nextWarnEffect = 0;
@@ -82,8 +114,42 @@ public final class ProcessorStatus{
     public static void applySettings(){
         if(Core.settings == null) return;
         minWaitMillis = Core.settings.getInt("logicsugar.waitIndication", minWaitMillis);
-        scanPerTick = Core.settings.getInt("logicsugar.processorScan", scanPerTick);
+        scanPerTick = updatesPerTick(scanStep());
         warnEffectFrequency = Core.settings.getInt("logicsugar.warnEffect", warnEffectFrequency);
+        disableBreakpoints = Core.settings.getBool("logicsugar.disableBreakpoints", false);
+        assertsAreBreakpoints = Core.settings.getBool("logicsugar.assertsAreBreakpoints", false);
+        detachCameraOnBreakpoint = Core.settings.getBool("logicsugar.detachCameraOnBreakpoint", true);
+    }
+
+    /** The scan slider stores a step index. Pre-v0.8.2 builds stored the raw per-frame
+     *  count under the same key, so a one-time migration rewrites it to the closest step
+     *  (a stored 10 must become step 2, not step 10 = 5000/frame). */
+    static int scanStep(){
+        if(!Core.settings.getBool("logicsugar.processorScanMigrated", false)){
+            int raw = Core.settings.getInt("logicsugar.processorScan", 50);
+            Core.settings.put("logicsugar.processorScan", closestStep(raw));
+            Core.settings.put("logicsugar.processorScanMigrated", true);
+        }
+        return Core.settings.getInt("logicsugar.processorScan", 4);
+    }
+
+    /** Index of the step whose value is closest to {@code raw}. */
+    static int closestStep(int raw){
+        int best = 0;
+        for(int i = 1; i < UPDATES_PER_TICK.length; i++){
+            if(Math.abs(UPDATES_PER_TICK[i] - raw) < Math.abs(UPDATES_PER_TICK[best] - raw)) best = i;
+        }
+        return best;
+    }
+
+    /** Slider index -> scans per frame. Out-of-range values defensively fall back to the
+     *  closest lower step (normalized settings never hit this path). */
+    public static int updatesPerTick(int index){
+        if(index >= 0 && index < UPDATES_PER_TICK.length) return UPDATES_PER_TICK[index];
+        for(int i = UPDATES_PER_TICK.length - 1; i >= 0; i--){
+            if(UPDATES_PER_TICK[i] <= index) return UPDATES_PER_TICK[i];
+        }
+        return UPDATES_PER_TICK[0];
     }
 
     public static synchronized void init(){
@@ -94,6 +160,7 @@ public final class ProcessorStatus{
             blocks.clear();
             allBlocks.clear();
             invalidBlocks.clear();
+            breakpointProc = null;
             nextWarnEffect = 0;
         });
 
@@ -103,8 +170,9 @@ public final class ProcessorStatus{
             invalidBlocks.clear();
             nextWarnEffect = 0;
 
-            Vars.world.tiles.eachTile(tile -> {
-                if(tile.build instanceof LogicBuild build && blocks.put(build, "") == null){
+            // Groups.build is the live building list: no full-map tile sweep needed
+            Groups.build.each(b -> {
+                if(b instanceof LogicBuild build && blocks.put(build, "") == null){
                     allBlocks.add(build);
                 }
             });
@@ -124,14 +192,82 @@ public final class ProcessorStatus{
             }
         });
 
+        // Leaving the paused state ends the breakpoint context
+        Events.on(EventType.StateChangeEvent.class, e -> {
+            if(e.from == GameState.State.paused){
+                breakpointProc = null;
+                reattachCamera();
+            }
+        });
+
         Events.run(EventType.Trigger.drawOver, () -> {
             checkBlocks();
+
+            Core.camera.bounds(narrowBounds);
+            wideBounds.set(narrowBounds);
+            narrowBounds.grow(tilesize * 2f);
+            wideBounds.grow(tilesize * 10f);
+
             blocks.each(ProcessorStatus::draw);
+            if(breakpointProc != null){
+                draw(breakpointProc, breakpointMessage);
+            }
 
             invalidBlocks.each(blocks::remove);
             allBlocks.removeAll(invalidBlocks);
             invalidBlocks.clear();
         });
+
+        // Restore the camera if the game was closed while paused at a breakpoint
+        reattachCamera();
+    }
+
+    /** Pauses the game at a breakpoint: centers the camera on {@code processor}, freezes
+     *  every processor's accumulator for this frame (restored right after the update), and
+     *  keeps {@code message} drawn above the processor while the game is paused.
+     *
+     * <p>Port of upstream MlogAssertions v0.8.2, with one correction: the vanilla
+     *  {@code detach-camera} setting is restored to its previous value instead of always
+     *  being cleared, so a user who runs with the camera detached keeps that preference.</p> */
+    public static void breakpoint(LogicBuild processor, String message){
+        if(disableBreakpoints) return;
+
+        Vars.state.set(GameState.State.paused);
+
+        if(detachCameraOnBreakpoint){
+            Core.settings.put("logicsugar.breakpointCameraSaved", true);
+            Core.settings.put("logicsugar.breakpointCameraPrevious", Core.settings.getBool("detach-camera", false));
+            Core.settings.put("detach-camera", true);
+        }
+        Core.camera.position.set(processor.getX(), processor.getY());
+
+        // Stop every processor for the rest of this frame...
+        accumulators.clear();
+        accumulatorBlocks.clear();
+        allBlocks.each(b -> {
+            accumulatorBlocks.add(b);
+            accumulators.add(b.accumulator);
+            b.accumulator = 0;
+        });
+
+        // ...and give their accumulated time back right after the update
+        Core.app.post(() -> {
+            for(int i = 0; i < accumulators.size && i < accumulatorBlocks.size; i++){
+                accumulatorBlocks.get(i).accumulator += accumulators.get(i);
+            }
+        });
+
+        breakpointProc = processor;
+        breakpointMessage = message;
+        blocks.remove(processor);
+    }
+
+    /** Restores the vanilla {@code detach-camera} value saved when the breakpoint hit. */
+    private static void reattachCamera(){
+        if(Core.settings.getBool("logicsugar.breakpointCameraSaved", false)){
+            Core.settings.put("detach-camera", Core.settings.getBool("logicsugar.breakpointCameraPrevious", false));
+            Core.settings.put("logicsugar.breakpointCameraSaved", false);
+        }
     }
 
     /** Marks a processor as failed, showing {@code message} above it until it recovers. */
@@ -168,14 +304,13 @@ public final class ProcessorStatus{
         return minWaitMillis > 0 && 1000 * waitSeconds >= minWaitMillis;
     }
 
-    /** Frame budget advance for the throttled scan (ported verbatim from upstream): delta
-     *  is clamped from BELOW at 1.5, so every frame delivers at least {@code 1.5 * perTick}
-     *  scans (a live minimum, not a catch-up clamp) — the whole map is re-scanned on
-     *  normal maps and the cap only engages on very processor-heavy ones. Sub-unit
-     *  remainders still accumulate when {@code 1.5 * perTick} is fractional
-     *  (e.g. 7.5/frame at perTick=5), which is what the fractional budget preserves. */
+    /** Frame budget advance for the throttled scan (ported from upstream v0.8.2): the
+     *  budget scales with frame time ({@code delta * 60} = 1 at 60 FPS) so the scan rate
+     *  is frame-rate independent, and is capped at 5x per frame so a stutter (or a very
+     *  low FPS) cannot force a full-map scan burst on top of the lag. Sub-unit remainders
+     *  still accumulate, which keeps fractional per-frame rates from losing scans. */
     static double advanceBudget(double previous, double delta, int perTick){
-        return previous + Math.max(delta, 1.5) * perTick;
+        return previous + Math.min(delta * 60, 5) * perTick;
     }
 
     static void checkBlocks(){
@@ -241,9 +376,15 @@ public final class ProcessorStatus{
             return;
         }
 
+        // No drawing for processors outside the (grown) viewport
+        block.hitbox(hitbox);
+        if(!wideBounds.overlaps(hitbox)) return;
+
         // This is a wait indication
         if(message == WAIT){
-            drawWait(block);
+            if(narrowBounds.overlaps(hitbox)){
+                drawWait(block);
+            }
             return;
         }
 

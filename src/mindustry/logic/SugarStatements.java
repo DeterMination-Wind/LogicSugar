@@ -55,6 +55,8 @@ public final class SugarStatements{
         LAssembler.customParsers.put("funccall", SugarStatements::parseFuncCall);
         LAssembler.customParsers.put("return", SugarStatements::parseReturn);
         LAssembler.customParsers.put("array", SugarStatements::parseArray);
+        LAssembler.customParsers.put("matrix", SugarStatements::parseMatrix);
+        LAssembler.customParsers.put("arrayinit", SugarStatements::parseArrayInit);
 
         // Read-only compatibility for markers produced by the first development version.
         LAssembler.customParsers.put("forend", tokens -> new SugarStatements.BlockEndStatement());
@@ -656,6 +658,85 @@ public final class SugarStatements{
         }
     }
 
+    /** 二维数组（矩阵）声明卡：把内存块的一段行主序区间 [base, base+rows*cols) 登记为
+     *  命名矩阵（纯编译期元数据，卡片本身不产出 mlog 行）。表达式 {@code m[i][j]} 读、
+     *  {@code m[i][j] = x} 写经 {@link logicsugar.assist.expr.ArrayRegistry} 换算为
+     *  原版 {@code read}/{@code write}：物理地址 = base + i*cols + j。 */
+    public static class MatrixStatement extends SugarStatement{
+        /** 表达式中使用的矩阵名。 */
+        public String matrix = "mat";
+        /** 承载数据的内存块变量名（如 cell1）。 */
+        public String memory = "cell1";
+        /** 矩阵起始物理地址（非负整数字面量）。 */
+        public String base = "0";
+        /** 行数（≥1 整数字面量）。 */
+        public String rows = "2";
+        /** 列数（≥1 整数字面量）。 */
+        public String cols = "2";
+
+        @Override
+        public void build(Table table){
+            table.add(text("matrix.card", "Matrix")).self(c -> hint(c, "matrix.name"));
+            field(table, matrix, value -> matrix = value).width(70f);
+            table.add(text("array.memory", "mem")).self(c -> hint(c, "array.memory"));
+            field(table, memory, value -> memory = value).width(70f);
+            table.add(text("array.base", "base")).self(c -> hint(c, "array.base"));
+            field(table, base, value -> base = value).width(45f);
+            table.add(text("matrix.rows", "rows")).self(c -> hint(c, "matrix.rows"));
+            field(table, rows, value -> rows = value).width(45f);
+            table.add(text("matrix.cols", "cols")).self(c -> hint(c, "matrix.cols"));
+            field(table, cols, value -> cols = value).width(45f);
+        }
+
+        @Override public String name(){ return cardText("matrix.card", "Matrix"); }
+        @Override public String typeName(){ return "Matrix"; }
+
+        @Override
+        public void write(StringBuilder out){
+            // 固定 token 数（空槽位 "~" 占位）：LParser 复用静态 token 数组，缺尾 token 无法与残值区分
+            out.append("matrix ").append(optional(matrix)).append(' ').append(optional(memory)).append(' ')
+                .append(optional(base)).append(' ').append(optional(rows)).append(' ').append(optional(cols));
+        }
+    }
+
+    /** 数组初始化卡：{@code arrayinit <name> <v0>…<v7>}，卡片位置即初始化位置。
+     *  只接受数字字面量（整数/小数，可带负号），{@code ~} 表示跳过该槽；lower 时在该位置
+     *  发射 {@code write <v> <memory> <base+k>}（卡片本身不产出非原版行）。 */
+    public static class ArrayInitStatement extends SugarStatement{
+        /** 被初始化的数组名（必须已声明）。 */
+        public String array = "buf";
+        /** 8 个槽位值；空串表示跳过（写 "~"）。 */
+        public String[] values = new String[8];
+
+        public ArrayInitStatement(){
+            java.util.Arrays.fill(values, "");
+        }
+
+        @Override
+        public void build(Table table){
+            table.add(text("arrayinit.card", "Array Init")).self(c -> hint(c, "arrayinit.name"));
+            field(table, array, value -> array = value).width(70f);
+            for(int i = 0; i < values.length; i++){
+                final int index = i;
+                if(i % 4 == 0) table.row();
+                table.add(String.valueOf(i)).padLeft(i % 4 == 0 ? 4 : 2).color(table.color);
+                field(table, values[index], value -> values[index] = value).width(45f).pad(2f);
+            }
+        }
+
+        @Override public String name(){ return cardText("arrayinit.card", "Array Init"); }
+        @Override public String typeName(){ return "ArrayInit"; }
+
+        @Override
+        public void write(StringBuilder out){
+            // 固定 token 数（空槽位 "~" 占位）：LParser 复用静态 token 数组，缺尾 token 无法与残值区分
+            out.append("arrayinit ").append(optional(array));
+            for(String value : values){
+                out.append(' ').append(optional(value));
+            }
+        }
+    }
+
     public static class BreakStatement extends SugarStatement{
         @Override public void build(Table table){}
         @Override public String name(){ return cardText("break", "Break"); }
@@ -851,6 +932,37 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
         }
         result.base = optionalValue(tokens[3]);
         result.size = optionalValue(tokens[4]);
+        return result;
+    }
+
+    public static LStatement parseMatrix(String[] tokens){
+        MatrixStatement result = new MatrixStatement();
+        result.matrix = optionalValue(tokens[1]);
+        if(result.matrix.isEmpty()){
+            throw new IllegalArgumentException("Invalid matrix statement: missing matrix name");
+        }
+        result.memory = optionalValue(tokens[2]);
+        if(result.memory.isEmpty()){
+            throw new IllegalArgumentException("Invalid matrix statement: missing memory cell");
+        }
+        result.base = optionalValue(tokens[3]);
+        result.rows = optionalValue(tokens[4]);
+        result.cols = optionalValue(tokens[5]);
+        return result;
+    }
+
+    public static LStatement parseArrayInit(String[] tokens){
+        ArrayInitStatement result = new ArrayInitStatement();
+        result.array = optionalValue(tokens[1]);
+        if(result.array.isEmpty()){
+            throw new IllegalArgumentException("Invalid arrayinit statement: missing array name");
+        }
+        for(int i = 0; i < result.values.length; i++){
+            // 自定义解析器拿不到本行的 token 数量（LParser 复用静态 token 数组），
+            // 超出本行的槽位读到的可能是残留值；卡片写盘时总是补满 8 个槽位，
+            // 因此正常存档的往返始终精确。
+            result.values[i] = 2 + i < tokens.length ? optionalValue(tokens[2 + i]) : "";
+        }
         return result;
     }
 

@@ -34,10 +34,13 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 项目硬底线的执行机制：**多人联机环境必须兼容原版客户端**，因此会改变保存产物语义的调试类功能（目前是 AssertEmit=emit）只在 `!Vars.net.active()`（单机/地图编辑器）时生效，联机（已连接或自建）一律回落原版行为。门禁在代码层强制（`SugarCompiler.currentAssertEmit`）；不提供改变指令预算的能力（指令上限覆盖曾试做后移除，产物恒 ≤1000 条），不依赖用户自觉；纯展示类功能不受此限。残余风险：单机创建的越界内容被分享到多人环境时原版客户端仍会截断/清空/静默降级，只能靠文档与设置描述讲清。
 
 ### 断言语句集（assertions）
-移植自 cardillan/MlogAssertions 的八条运行时检查指令（`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`asserttype`/`error`/`log`/`breakpoint`），线格式逐字节兼容：断言失败程序在失败行自旋并由 `ProcessorStatus` 显示消息，`breakpoint` 暂停游戏。与 MlogAssertions 并存时按"先到先得"跳过重复 opcode 注册。
+移植自 cardillan/MlogAssertions v0.8.2 的八条运行时检查指令（`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`asserttype`/`error`/`log`/`breakpoint`），线格式逐字节兼容：断言失败程序在失败行自旋并由 `ProcessorStatus` 显示消息（可经「断言失败即断点」改为在失败指令处暂停），`breakpoint` 暂停游戏、居中视角并按设置临时分离视角，全部 accumulator 在本帧结束后归还。与 MlogAssertions 并存时按"先到先得"跳过重复 opcode 注册。
+
+### 断点（breakpoint）
+暂停整个游戏并把视角定位到命中的处理器，用于在不改变处理器状态的前提下检查变量与内存。`ProcessorStatus.breakpoint` 负责暂停、视角、accumulator 冻结/归还与暂停期间的消息绘制；「禁用断点」让 breakpoint 与断点化断言变成空操作，「断点分离视角」决定是否临时改写原版 `detach-camera` 设置（取消暂停时恢复原值）。
 
 ### 线格式（wire format）
-自定义指令在 token 流中的精确形状（opcode 拼写、参数顺序、引号约定）。断言语句集的线格式必须与 MlogAssertions/Mindcode 保持逐字节一致，由 `assertTest` 钉住；任何一侧漂移都会破坏互操作。
+自定义指令在 token 流中的精确形状（opcode 拼写、参数顺序、引号约定）。断言语句集的线格式必须与 MlogAssertions/Mindcode 保持逐字节一致，由 `assertTest` 钉住；任何一侧漂移都会破坏互操作。唯一例外是 `asserttype` 的 `null` 类型：它是 LogicSugar 扩展（上游 v0.8.1 的 `asserttype` 只有六种类型，`valueOf` 不识别 `null`），其余 token 与上游完全一致。
 
 ### 跳转表（jump table）
 `switch` 的一种下降结果：先做上下界守卫，再用 `op add @counter @counter` 按槽位分派；越界与空洞槽走默认路径。非整数或跨度过大的 case 集合自动回退比较链。
@@ -76,6 +79,35 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 
 ### RecoveryPredicate
 无依赖的谓词树模型（`And`/`Or`/`Not`/比较原子），带 `EAGER` / `SHORT_CIRCUIT` / `UNKNOWN` 求值方式标注与 loss/score 度量，供恢复代码在触碰游戏 API 前构建、打分候选。
+
+## 数据子系统
+
+### intrinsic（表达式内建）
+`ExprIntrinsics` 注册的表达式函数展开点：表达式里的函数名（`sum`、`spush`、`mapset`…）在编译期展开为原版 `op`/`read`/`write`/`funccall` 指令链，而不是用户函数调用。Provider 实现必须放在 `logicsugar.assist.expr` 包（`Node`/`Line` 是 `ExprCompiler` 的包私有类型）；同名用户 `funcdef`/库函数优先（intrinsic 被遮蔽），`min`/`max` 按实参个数分派。
+
+### 数据模块（DataModule / DataModules）
+一个数据结构 = 一个 `DataModule` 子类（声明卡解析器 + 编译期注册表 + intrinsic provider + 注入函数源文本）。`DataModules` 是统一驱动点：`register` 登记模块并注册 provider（按 `id()` 幂等），`registerParsers` 安装声明卡解析器，`collectAll`/`restore` 在每次编译前后配对建立/清理程序级注册表（`SugarCompiler` 的 `finally` 保证异常路径也恢复），`markInvalid` 供编辑期标红。
+
+### 隐藏状态变量
+栈/队列/列表/堆/链表等结构的运行时状态（如 `__ls_stk_<name>_top`、`__ls_que_<name>_head/_tail/_count`、`__ls_lst_<name>_count`、`__ls_chn_<name>_head/_free`）是普通 mlog 变量，用 `__ls_` 保留前缀声明，`VarDisplayFilter` 自动隐藏、用户不得使用同前缀命名。mlog 变量未赋值读取为 0，因此初始状态不需要初始化指令；代价是它们不随存档持久化——处理器代码重新载入后计数归零而内存块内容保留。链表是例外：`head`/`free` 读作 0 会被当成合法节点下标，首次使用前必须显式 `cinit(c)` / `cclear(c)` 重建空闲链。
+
+### 注入函数（`__ls_builtin_*`）
+模块提供的 `funcdef` 源文本，经 `SugarFunctions.withBuiltins` 并入本次编译的函数索引。循环型/写内存型操作（push、sort、find、哈希探测等）走注入函数，normal 模式全程序共享一份子程序、未使用不进产物，且不会进入 `__ls_lib` 载体或用户函数库。
+
+### 墓碑删除（tombstone delete）
+哈希表 `mapdel` 的删除策略：只把 key 槽写成 NaN 标记、value 槽保留原值。探测是整表环形扫描，墓碑不会截断探测链，因此无需回填/重插。空槽判定用 `op strictEqual`（NaN 存回内存后是 null 对象，`equal` 会把数字 0 与 null 判等）。
+
+### 记录（record）
+`record <name> <f1>…<f8>` 声明卡定义的纯编译期结构：字段降级为普通变量 `<name>_<field>`（用户可见），成员读 `p.f1` 为 `op add <tmp> p_f1 0`、成员写 `p.f1 = expr` 为 `op add p_f1 <value> 0`。只有已声明为 record 的变量名才走成员展开，其余成员访问保持原版 sensor 语义。
+
+### 哈希表（map）
+`map <name> <memory> <base> <capacity>` 声明的开放寻址哈希表：键区 `[base, base+capacity)`、值区 `[base+capacity, base+2*capacity)`，`hash = abs(key) % capacity` 线性探测。首次使用前必须 `mapclear(m)`（未初始化槽读回 0 会被当作已占用 key=0）；不支持字符串键。
+
+### 链表（chain）
+`chain <name> <memory> <base> <size>` 声明的单链 + 空闲链结构：节点 i 的值槽在 `base+2*i`、next 槽在 `base+2*i+1`，`next = -1` 表示链尾；声明区间 `[base, base+2*size)`。`cnew` 从空闲链 LIFO 取节点并返回下标（空闲链空返回 -1），`cfree` 摘链后挂回空闲链（非法下标返回 0 且不改状态），`clink` 只改 next 槽不校验目标（`-1` 合法），`clen` 沿 next 遍历计数。首次使用前必须 `cinit(c)` / `cclear(c)`。
+
+### 空闲链（free list）
+链表的空闲节点单链，由隐藏变量 `__ls_chn_<name>_free` 指向链头（`-1` = 无空闲节点），`cinit` / `cclear` 把它重建为 `0→1→…→size-1→-1`，`cnew` 从中摘取、`cfree` 挂回。它让节点分配/释放不依赖额外的计数变量；`cfree` 不检测重复释放，重复释放同一节点会让空闲链成环。
 
 ## 函数
 

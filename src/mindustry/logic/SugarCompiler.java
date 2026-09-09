@@ -20,8 +20,10 @@ import mindustry.logic.SugarStatements.IfBeginStatement;
 import mindustry.logic.SugarStatements.ReturnStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
 import mindustry.logic.SugarStatements.WhileBeginStatement;
+import logicsugar.assist.data.DataModules;
 import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ExprIntrinsics;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
@@ -196,8 +198,11 @@ public final class SugarCompiler{
         for(FuncMode mode : FuncMode.values()){
             // Programs saved as debug builds carry assert instructions in the stored stream;
             // recompiling with the local (possibly strip) setting would drop them and fail
-            // the comparison, so both emit shapes are tried for assertion-bearing sugar.
+            // the comparison, so both emit shapes are tried for assertion-bearing programs.
+            // The stored stream is checked as well as the sugar: array/matrix subscript
+            // bounds asserts are generated at lowering time and never appear in the sugar.
             AssertEmit[] emitShapes = SugarAsserts.containsAssertStatements(restored)
+                || SugarAsserts.containsAssertStatements(code)
                 ? AssertEmit.values() : new AssertEmit[]{AssertEmit.strip};
             for(AssertEmit emit : emitShapes){
                 try{
@@ -257,21 +262,47 @@ public final class SugarCompiler{
         if(!containsSugar(statements)) return sugar;
 
         validatePairs(statements);
-        SugarFunctions.FunctionSet functions = SugarFunctions.analyze(statements, library);
 
-        // Array declaration cards → program-level registry: the compile-time basis for
-        // resolving `buf[i]` in condition/return/argument expressions (and for the editor's
-        // fold/unfold when no explicit context is active). Strict validation (duplicates,
-        // overlapping ranges, illegal literals) runs before lowering and aborts the compile.
-        // The function-name set is local funcdefs plus library functions; array names must
-        // not shadow them. The registry is installed as a static compile-time context
-        // (same pattern as currentAssertEmit) and popped in finally, so lower()/throwing
-        // paths and the recompile inside verifyRestore() always see a consistent table.
-        Set<String> functionNames = new HashSet<>(functions.functions.keySet());
-        if(functions.library != null) functionNames.addAll(functions.library.functions.keySet());
-        ArrayRegistry arrays = ArrayRegistry.compileRegistry(statements, functionNames);
-        ArrayRegistry previousArrays = ArrayRegistry.enter(arrays);
+        // F2: 用户函数名（本地 funcdef + 库函数）在表达式展开时遮蔽同名 intrinsic
+        // （sum/avg/count/... 走普通 funccall）。在 analyze 之前安装：collectCalls 与
+        // lower 阶段的解析器必须看到同一套遮蔽关系。try/finally 配对，异常路径同样恢复。
+        Set<String> userFunctionNames = new HashSet<>();
+        for(LStatement statement : statements){
+            if(statement instanceof FuncDefStatement def) userFunctionNames.add(def.name);
+        }
+        if(library != null) userFunctionNames.addAll(library.functions.keySet());
+        Set<String> previousUserFunctions = ExprIntrinsics.enterUserFunctions(userFunctionNames);
+        // F2: 数据模块注入的内置函数库并入本次编译使用的 LibraryIndex（只影响本次编译；
+        // extractLibrarySource 仍只作用于纯用户库文本，内置函数不会进入 __ls_lib 载体）。
+        SugarFunctions.LibraryIndex compileLibrary = SugarFunctions.withBuiltins(library, DataModules.builtinSugar());
+        ArrayRegistry previousArrays = null;
+        boolean arraysEntered = false;
+        boolean modulesCollected = false;
         try{
+            SugarFunctions.FunctionSet functions = SugarFunctions.analyze(statements, compileLibrary);
+
+            // Array declaration cards → program-level registry: the compile-time basis for
+            // resolving `buf[i]` in condition/return/argument expressions (and for the editor's
+            // fold/unfold when no explicit context is active). Strict validation (duplicates,
+            // overlapping ranges, illegal literals) runs before lowering and aborts the compile.
+            // The function-name set is local funcdefs plus library functions; array names must
+            // not shadow them. The registry is installed as a static compile-time context
+            // (same pattern as currentAssertEmit) and popped in finally, so lower()/throwing
+            // paths and the recompile inside verifyRestore() always see a consistent table.
+            Set<String> functionNames = new HashSet<>(functions.functions.keySet());
+            if(functions.library != null) functionNames.addAll(functions.library.functions.keySet());
+            ArrayRegistry arrays = ArrayRegistry.compileRegistry(statements, functionNames);
+            previousArrays = ArrayRegistry.enter(arrays);
+            arraysEntered = true;
+
+            // F2: 数据模块编译期上下文（analyze 之后、lower 之前）；restore() 在 finally 统一清理。
+            // 标记在 collectAll 之前置位：collectAll 会先安装上下文再逐模块 collect，任一模块
+            // collect 抛错都必须由 finally 的 restore() 配对清理，否则注册表泄漏到下一次编译/编辑器渲染。
+            java.util.List<LStatement> statementList = new java.util.ArrayList<>(statements.size);
+            for(LStatement statement : statements) statementList.add(statement);
+            modulesCollected = true;
+            DataModules.collectAll(statementList, functionNames);
+
             StringBuilder out = new StringBuilder();
             SugarFunctions.CallIds ids = new SugarFunctions.CallIds();
             if(mode == FuncMode.normal){
@@ -355,7 +386,9 @@ public final class SugarCompiler{
             result.append(carriers);
             return result.toString();
         }finally{
-            ArrayRegistry.restore(previousArrays);
+            if(modulesCollected) DataModules.restore();
+            if(arraysEntered) ArrayRegistry.restore(previousArrays);
+            ExprIntrinsics.restoreUserFunctions(previousUserFunctions);
         }
     }
 
@@ -648,10 +681,13 @@ public final class SugarCompiler{
             if(statement instanceof FuncDefStatement def) local.add(def.name);
         }
         SugarFunctions.LibraryIndex library = SugarFunctions.library();
+        // F2: 数据模块注入的内置函数名（编辑器里对内置 funccall 不标红）
+        Set<String> builtinNames = DataModules.builtinFunctionNames();
         for(int i = 0; i < statements.size; i++){
             if(statements.get(i) instanceof FuncCallStatement call){
                 if(!local.contains(call.name)
-                    && (library == null || !library.functions.containsKey(call.name))){
+                    && (library == null || !library.functions.containsKey(call.name))
+                    && !builtinNames.contains(call.name)){
                     invalid[i] = true;
                 }
                 // 实参表达式非法（如 a1.1）时编译期会抛错，编辑期同步标红；
@@ -672,6 +708,10 @@ public final class SugarCompiler{
         Set<String> arrayReservedNames = new HashSet<>(local);
         if(library != null) arrayReservedNames.addAll(library.functions.keySet());
         ArrayRegistry.markInvalidStatements(statements, invalid, arrayReservedNames);
+        // F2: 数据模块自有声明卡的字段级标红（record/stack/... 的注册表校验）
+        java.util.List<LStatement> statementList = new java.util.ArrayList<>(statements.size);
+        for(LStatement statement : statements) statementList.add(statement);
+        DataModules.markInvalid(statementList, invalid, arrayReservedNames);
         return invalid;
     }
 
@@ -684,7 +724,7 @@ public final class SugarCompiler{
         }
     }
 
-    /** 条件表达式里的函数名校验：本地 funcdef + 库函数（数学函数由 ExprCompiler 内置）。 */
+    /** 条件表达式里的函数名校验：本地 funcdef + 库函数 + 数据模块 intrinsic（数学函数由 ExprCompiler 内置）。 */
     private static ExprCompiler.FunctionChecker conditionChecker(Seq<LStatement> statements){
         Set<String> names = new HashSet<>();
         for(LStatement statement : statements){
@@ -692,6 +732,9 @@ public final class SugarCompiler{
         }
         SugarFunctions.LibraryIndex library = SugarFunctions.library();
         if(library != null) names.addAll(library.functions.keySet());
+        // F2: 数据模块的表达式函数名（sum/avg/count/... 与 record 成员）在条件表达式里合法
+        names.addAll(ExprIntrinsics.intrinsicNames());
+        names.addAll(DataModules.builtinFunctionNames());
         return names::contains;
     }
 

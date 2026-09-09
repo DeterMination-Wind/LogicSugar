@@ -16,7 +16,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 入口类 `logicsugar.LogicSugarMod`（`mod.json` 的 `main`），初始化流程：
 
-1. **注册语句**：`registerStatements()` 把 13 种 Sugar 语句（`ForBegin` / `WhileBegin` / `SwitchBegin` / `IfBegin` / `Case` / `ElseIf` / `Else` / `Break` / `Continue` / `BlockEnd` / `FuncDef` / `FuncCall` / `Return`）加入 `LogicIO.allStatements`，随后 `SugarStatements.installParsers()` 向 `LAssembler.customParsers` 注册全部 token 解析器（含 `forend` / `whileend` / `switchend` 三个旧开发版本标记的只读兼容）。这是与反编译器、自测共享的唯一注册点。
+1. **注册语句**：`registerStatements()` 把 16 种 `SugarStatements` 卡片（`ForBegin` / `WhileBegin` / `SwitchBegin` / `IfBegin` / `Case` / `ElseIf` / `Else` / `Break` / `Continue` / `BlockEnd` / `FuncDef` / `FuncCall` / `Return` / `Array` / `Matrix` / `ArrayInit`）加入 `LogicIO.allStatements`；随后注册数据子系统模块（`DataModules.register(new ArrayBulkModule/RecordModule/ContainerModule/BitsetModule/MapModule/ListHeapModule/ChainModule())`，同时注册表达式 intrinsic provider），再调用 `SugarStatements.installParsers()` 与 `DataModules.registerParsers()` 向 `LAssembler.customParsers` 注册全部 token 解析器（含 `forend` / `whileend` / `switchend` 三个旧开发版本标记的只读兼容，以及 `record` / `stack` / `queue` / `bitset` / `map` / `list` / `heap` / `chain` 八张数据声明卡）。整个 `registerStatements()` 由静态 `registered` 守卫，重复 `init()` 不会重复添加卡片或解析器。这是与反编译器、自测共享的唯一注册点。
 2. **接管编辑器**：`ClientLoadEvent` 后把 `Vars.ui.logic` 换成 `SugarLogicDialog`（构造函数内使用 `SugarCanvas`）。替换前把旧对话框上除 canvas/buttons 外的子元素（如 MindustryX 的逻辑辅助浮层）按 z 顺序迁移到新对话框。
 3. **挂辅助功能**：`BoxSelect.init()`（框选）、`ExprHook.init()`（表达式语句）、`VarDisplayFilter.init()`（隐藏 `__ls_*` 内部变量），并注册关闭对话框时清空跳转线着色缓存。
 
@@ -41,9 +41,54 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - `ShortCircuitCompiler`：把 `&&` / `||` 谓词下降为条件 `jump`，按控制流顺序发射（不产生先行求值的布尔临时变量）；不依赖任何 Mindustry 类，便于在编译期与反编译恢复两侧复用。`whilebegin exprsc …` 等带 `c` 后缀的解析变体对应"折叠式表达式条件"（collapsed）。
 - `RecoveryPredicate`：无依赖的谓词树模型（`EAGER` / `SHORT_CIRCUIT` / `UNKNOWN` 求值方式、loss/score 度量），供恢复代码在触碰游戏 API 之前构建与打分候选。
 
+## 数据子系统（数组批量运算 / 矩阵 / 记录 / 容器 / 位集 / 哈希表 / 列表 / 堆 / 链表）
+
+数据子系统把「内存块上的结构化数据」做成纯编译期抽象：声明卡只是元数据，lower 阶段整体跳过、不产指令；所有运算降级为原版 `read` / `write` / `op` / `funccall` / `jump`，产物仍是原版可解析的 mlog，联机（含自建服）与单机行为一致。
+
+### 框架：ExprIntrinsics + DataModules + 注入函数
+
+- **`ExprIntrinsics`**（`logicsugar.assist.expr`）：表达式函数名 → 原版指令链的展开点。Provider 实现必须放在 `expr` 包（`Node` / `Line` 是 `ExprCompiler` 的包私有类型）。`ExprCompiler` 的 `compileNode(Call)` / `compileNode(Member)` / 成员赋值路径先查 provider，未命中退回普通 `funccall` / sensor 路径。用户 `funcdef` / 库函数同名时优先（`enterUserFunctions` 遮蔽 intrinsic），`min` / `max` 按实参个数分派（1 参 = 数组运算，2 参 = 原版内置），名字匹配大小写不敏感。
+- **`DataModule` / `DataModules`**（`logicsugar.assist.data`）：每个数据结构一个模块（`id()` 去重）。`LogicSugarMod.registerStatements()` 注册全部模块（同时把 `intrinsics()` 注册进 `ExprIntrinsics`）并调用 `DataModules.registerParsers()` 安装声明卡解析器与调色板卡片；`SugarCompiler.compile` 在 `analyze` 之后、`lower` 之前 `DataModules.collectAll(...)` 建立程序级注册表，`finally` 里 `restore()` 清理——配对标记在 `collectAll` 之前置位，任一模块 `collect` 抛异常也会恢复，不把注册表泄漏给下一次编译或编辑器渲染。`markInvalid` 供编辑期标红，`builtinSugar()` 提供注入函数源文本。
+- **注入函数**：模块把循环型 / 写内存型操作写成 `funcdef __ls_builtin_*`，由 `SugarCompiler` 经 `SugarFunctions.withBuiltins` 并入本次编译的 `LibraryIndex`。normal 模式全程序共享一份子程序，未使用不进产物；`extractLibrarySource` 只处理用户库文本，内置函数不会进入 `__ls_lib` 载体、也不会出现在用户函数库。inline 模式按调用点展开函数体。
+
+### 语法与降级
+
+| 结构 | 声明卡（token 定长，空槽 `~`） | 表达式用法 | 降级目标 |
+| --- | --- | --- | --- |
+| 数组 | `array <name> <memory> <base> <size>` | `buf[i]`、`len(buf)` | `read` / `write`；`len` 折叠为 `size` |
+| 数组初始化 | `arrayinit <name> <v0>…<v7>` | —（卡片位置即写入位置） | 最多 8 条 `write`（`~` 跳过） |
+| 矩阵 | `matrix <name> <memory> <base> <rows> <cols>` | `m[i][j]` 读 / 写 | 地址 = `base + i*cols + j`；字面量编译期折叠，越界报错 |
+| 批量数组运算 | 复用 `array` / `matrix` | `sum` `avg` `min` `max` `count` `indexof` `fill` `copy` `sortasc` `sortdesc` | 注入函数 `__ls_builtin_arr*` |
+| 记录 | `record <name> <f1>…<f8>` | `p.f1` 读 / `p.f1 = expr` 写 | 普通变量 `<name>_<field>` |
+| 栈 | `stack <name> <memory> <base> <size>` | `spush` `spop` `speek` `ssize` `sclear` | `read` / `write` + `__ls_stk_<name>_top` |
+| 队列 | `queue <name> <memory> <base> <size>` | `qpush` `qpop` `qpeek` `qsize` `qclear` | `read` / `write` + `__ls_que_<name>_head/_tail/_count` |
+| 位集 | `bitset <name> <memory> <base> <words>` | `bset` `bclr` `btest` `bcount` | 每 word 64 位，`and` / `or` / `shl` / `shr` + `read` / `write` |
+| 哈希表 | `map <name> <memory> <base> <capacity>` | `mapset` `mapget` `maphas` `mapdel` `mapsize` `mapclear` | 开放寻址；键区 `[base, base+capacity)`、值区 `[base+capacity, base+2*capacity)`；`hash = abs(key) % capacity`，线性探测 |
+| 列表 | `list <name> <memory> <base> <size>` | `lappend` `lget` `lset` `linsert` `lremove` `lfind` `lsize` | `read` / `write` + `__ls_lst_<name>_count` |
+| 堆（小顶） | `heap <name> <memory> <base> <size>` | `hpush` `hpop` `hsize` | `read` / `write` + `__ls_hep_<name>_count` |
+| 链表 | `chain <name> <memory> <base> <size>` | `cinit` `cclear` `cnew` `cfree` `cget` `cset` `cnext` `clink` `cshead` `chead` `clen` | 节点 i 的值槽 `base+2*i`、next 槽 `base+2*i+1`（`next = -1` 为链尾）；`read` / `write` + `__ls_chn_<name>_head/_free` |
+
+- **容量检查**：`memory` 形如 `cellN` 容量 64、`bankN` / `worldN` 容量 512（大小写不敏感），`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`）超容量编译期报错；其它名字跳过。
+- **越界断言**：仅 `AssertEmit=emit` 的调试构建下、下标为非常量时，在 `read` / `write` 前发射 `assertBounds`（复用 `SugarAsserts` 线格式）；`strip` 模式不发射。数组/矩阵字面量越界始终是编译错误。
+- **空容器语义**：pop / peek 在空时返回 NaN（`op div <tmp> 0 0` 或越界 `read`）；push 在满时返回当前长度且不写入；`lget` 越界返回 NaN，`lset` / `linsert` / `hpush` 失败返回 0，`lremove` 越界返回 NaN、成功返回被删除值，`lfind` 未找到返回 -1，`mapget` 未命中返回 NaN，`mapset` 在 NaN/±Inf 键上返回 -1；链表 `cget` 越界返回 NaN，`cset` / `clink` / `cfree` 越界返回 0，`cnext` 越界返回 -1，`cnew` 在空闲链为空时返回 -1，`clen` 空链返回 0。
+- **保留命名空间**：隐藏状态变量与注入函数名都以 `__ls_` 开头（`VarDisplayFilter` 自动隐藏，用户声明名使用该前缀会被模块拒绝）。记录字段变量 `<name>_<field>` 是普通用户变量，不隐藏、可调试。
+
+### 单机 / 联机与 1000 指令约束
+
+- 声明卡不产指令，全部运算都是原版指令：产物在任何原版客户端可解析、可运行，联机（含自建服）与单机一致；数据子系统不引入任何 `AssertEmit` 例外。
+- 1000 条上限沿用 `SugarCompiler` 既有检查（lowered 指令 + 载体行一起计数），新功能不绕过。循环型操作（push / sort / find / 哈希探测等）在 normal 模式做成共享 `funcdef`，指令预算与调用点数量线性、与结构数量无关；inline 模式会复制函数体，长程序需切回 normal（编译器在超限报错里提示）。
+
+### 已知限制
+
+- **跨模块校验未统一**：每个模块只严格校验「自己声明的结构 + `array`/`matrix`」。不同模块之间（如 `stack` 与 `list` 共用同一内存块且区间重叠，或跨结构重名）不做统一校验，需要用户自行避免；统一程序级名字/区间表需要改各模块的 `collect` 口径，属后续工作。
+- **哈希表**：不支持字符串键；键比较沿用原版 `equal` 的 1e-6 容差；首次使用前必须调用 `mapclear(m)`（未初始化槽读回数字 0，会被当作「已占用且 key = 0」）；删除是墓碑策略——只把 key 槽写成 NaN，value 槽保留，探测是整表环形扫描因此墓碑不会截断探测链。
+- **链表**：首次使用前必须调用一次 `cinit(c)` / `cclear(c)`——未赋值变量读作 0，不初始化直接 `cnew` 会把 0 号节点当成空闲节点；`cfree` 不检测重复释放，把已在空闲链上的节点再次释放会让空闲链成环；`clen` / `cfree` 的遍历在用户手工 `clink` 造出环时不会终止，链表不变量（next 槽只由本模块写入、指向合法下标或 -1）由使用者维护。
+- **状态变量不随存档持久化**：隐藏计数是普通 mlog 变量，处理器代码重新载入（存档往返 / 重编译 / 换处理器）后归零，而内存块内容保留；跨存档运行的结构需要在程序开头显式重建状态（`sclear` / `qclear` / 重新初始化内存或计数）。
+- 矩阵不支持 `len()`（用 `rows*cols`）；`len(a, b)` 仍是原版向量长度。
+
 ## 断言子系统（调试构建）
 
-`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions（线格式逐字节兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：八条自定义指令 `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `asserttype` / `error` / `log` / `breakpoint`，断言失败时程序在失败行自旋（`counter` 回退 + `yield`），消息由 `ProcessorStatus` 绘制在处理器上方；`breakpoint` 暂停游戏并清空全部 accumulator。
+`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions v0.8.2（线格式逐字节兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：八条自定义指令 `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `asserttype` / `error` / `log` / `breakpoint`，断言失败时程序在失败行自旋（`counter` 回退 + `yield`），消息由 `ProcessorStatus` 绘制在处理器上方（失败消息统一走 `logicsugar.asserts.failed[WithValues]`，带「(expected X, got Y)」诊断）；`breakpoint` 按上游 v0.8.2 语义暂停游戏：视角居中到处理器、按设置临时分离视角、冻结全部 accumulator 并在本帧更新结束后归还，暂停期间消息持续绘制。设置「断言失败即断点」（`logicsugar.assertsAreBreakpoints`）可让断言失败改为在失败指令处暂停；「禁用断点」（`logicsugar.disableBreakpoints`）让 breakpoint 与断点化断言直接跳过。`asserttype` 的六种类型 token 与上游一致，LogicSugar 额外支持 `none`（线上写 `null`）——上游 `AssertDataType.valueOf` 不认识该 token，使用空值断言的调试构建无法在 MlogAssertions/Mindcode 中打开。
 
 - **双身份序列化**：卡片 `write()` 直接输出指令 token，既是编辑器卡片也是 mlog 指令行；空槽位按 LogicSugar 惯例写 `~` 保持定长 token（上游无此约定，仅空字段场景降级）。
 - **AssertEmit 开关**（设置项 `logicsugar.assertEmit`，默认 `strip`，**仅单机/编辑器生效**）：`strip` 把断言编译掉——sugar（含断言）随载体保存，mlog 保持原版可解析；`emit`（调试构建）把断言写回为真实指令，**原版客户端会将其降级为 InvalidStatement 占位**（程序能跑但断言静默失效）。联机会话（`Vars.net.active()`，已连接或自建）下 `currentAssertEmit()` 一律强制 `strip`——兼容底线在代码层强制，不依赖用户自觉；显式 `compile(..., AssertEmit)` 重载仅供验证矩阵与自测使用。
@@ -89,7 +134,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 跳转线着色 | `assist.JumpLineColor` | 按目标着色三模式：关闭 / 分散色 / 积木色 |
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
 | 复制变量/打印缓冲 | `assist.VarClipboard` | SugarLogicDialog 按钮行，全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示按钮 |
-| 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；设置三滑杆（阈值 0 关闭 / 每帧扫描数 / 警告特效） |
+| 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器（`Groups.build`，视野外按 hitbox 裁剪）：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；扫描预算按帧时长换算（`min(delta*60,5) × 每帧扫描数`，低帧率不爆发）；设置三滑杆（阈值 0 关闭 / 每帧扫描数 1–5000 档位 / 警告特效）+ 断点三开关（禁用断点 / 断言失败即断点 / 断点分离视角） |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 
 ### 结构语句布局
@@ -146,7 +191,10 @@ bump 到新上游版本时按序执行：
 src/logicsugar/           模组侧：入口、设置、函数库、FunctionLibraryDialog
 src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter、MlogLint、
                           VarClipboard、ProcessorStatus、AssertInstructions
-src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ArrayRegistry、ShortCircuitCompiler
+src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ArrayRegistry、
+                          ShortCircuitCompiler、ExprIntrinsics 与各数据结构的 *Intrinsics
+src/logicsugar/assist/data/  数据子系统：DataModule/DataModules/DataDeclaration 框架 +
+                          ArrayBulkModule、RecordModule、ContainerModule、BitsetModule、MapModule、ListHeapModule
 src/mindustry/logic/      与游戏同包名的扩展层：SugarCompiler、SugarDecompiler、SugarStatements、
                           SugarAsserts、SugarCanvas、SugarLogicDialog、SugarFunctions、RecoveryPredicate、MlogCFG
 test/                     与 src 同构的 main() 式自测（无 JUnit）

@@ -356,9 +356,12 @@ public final class SugarDecompiler{
     private record RecoveryVeto(int cursor, int rank){}
 
     /** Defensive re-registration for headless/self-test environments; the game mod path
-     *  installs them at init via {@link SugarStatements#installParsers()} (idempotent). */
+     *  installs them at init via {@link SugarStatements#installParsers()} (idempotent).
+     *  Data declaration cards (record/stack/queue/…) can appear in restored carrier source,
+     *  so their parsers are re-registered here too; both calls are idempotent. */
     private static void installSugarParsers(){
         SugarStatements.installParsers();
+        logicsugar.assist.data.DataModules.registerParsers();
     }
 
     private static void validateInput(String code, boolean privileged){

@@ -20,13 +20,20 @@ this file only adds what is specific to this project.
   只能靠设置描述与文档把后果讲清（见 bundle 的 maxInstructions/assertEmit 描述）。
 - 新功能提案先按此底线分类：不碰保存产物 → 正常实现；碰保存产物 → 必须加联机门禁，
   并在 bundle 与 `docs/architecture.md` 说明单机限定。
+- **上游同步基线**：断言/断点子系统对齐 cardillan/MlogAssertions **v0.8.2**（本地副本
+  `../_upstream/MlogAssertions-pr`，`git fetch upstream` 更新）。上游的指令上限覆盖
+  （`max-instructions`）**不得**移植。唯一线格式例外：`asserttype` 的 `null` 类型是
+  LogicSugar 扩展，上游 `AssertDataType.valueOf` 不识别——改这一块前先看
+  `SugarAsserts.AssertTypeCard` 的注释与 `assertTypeTest`。
 
 ## Build & Test
 
 ```powershell
 cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, recoveryPredicateTest,
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
-                                      # varClipboardTest, processorStatusTest, assertTest, assertTypeTest, arrayTest
+                                      # varClipboardTest, processorStatusTest, assertTest, assertTypeTest, arrayTest,
+                                      # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
+                                      # mapTest, listHeapTest, chainTest, dataSubsystemTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 
@@ -69,6 +76,36 @@ programs". Two properties of the gate are load-bearing:
   runs only after the greedy candidate failed verification, and every promoted result must
   pass the same gate.
 
+## Data subsystem (arrays / matrix / record / containers / bitset / map / list / heap / chain)
+
+The data subsystem is a compile-time abstraction layer: declaration cards are metadata and never
+emit instructions; every operation lowers to plain vanilla `read`/`write`/`op`/`funccall`/`jump`,
+so saved programs stay vanilla-parseable and multiplayer-safe.
+
+- Framework: `logicsugar.assist.data.DataModule` / `DataModules` + `logicsugar.assist.expr.ExprIntrinsics`
+  (`Provider` implementations must live in the `expr` package — `Node`/`Line` are package-private).
+  A new structure is 3 new files (`src/logicsugar/assist/data/<Module>.java`,
+  `src/logicsugar/assist/expr/<Module>Intrinsics.java`, `test/logicsugar/assist/data/<Module>Test.java`)
+  plus exactly one `DataModules.register(new <Module>())` line in
+  `LogicSugarMod.registerStatements()` (registration is idempotent by `id()`, and
+  `DataModules.registerParsers()` installs the declaration-card parsers). Do not hardcode a module in
+  production code outside that registration list.
+- Injected functions use the `__ls_builtin_*` prefix. They are merged into the compile-time
+  `LibraryIndex` via `SugarFunctions.withBuiltins` but must never enter the user function library or
+  the `__ls_lib` carrier (`extractLibrarySource` only sees user library text). Unused builtins stay out
+  of the product; normal mode shares one `funcdef` body per operation.
+- `SugarCompiler.compile` must keep the `DataModules.collectAll(...)` / `DataModules.restore()`
+  pairing in its `try/finally`, with the pairing flag set *before* `collectAll` — a module `collect`
+  exception must not leak compile-time registries into the next compile or editor render.
+- Cross-module validation is per-module by design: each module validates its own declarations plus
+  `array`/`matrix`. Name/range conflicts **between different modules** (e.g. a stack and a list on
+  overlapping memory ranges, or the same name declared by two different structures) are NOT rejected.
+  Do not push this into individual modules; if it is ever needed, add a program-level name/range table
+  to `DataModules` and document it in `docs/architecture.md` first.
+- Never change the `array` four-token wire format or any declaration-card token count; hidden state
+  variables stay `__ls_<kind>_<name>_<field>` (users must not use the `__ls_` prefix), and pop/peek on
+  an empty container returns NaN.
+
 ## Docs
 
 Classified documentation lives in `docs/` (Chinese, feature names in English), styled after
@@ -79,7 +116,7 @@ the Neon main repo's docs:
   pipelines, expression subsystem, cross-loader constraint, decompiler gate, layout map.
 - `docs/development.md` — environment, Gradle commands, artifact chain, style rules.
 - `docs/release.md` — version scheme, `deploy`/D8 pipeline, Release asset safety rules.
-- `docs/testing.md` — the fourteen JavaExec self-test tasks, new-test conventions, manual
+- `docs/testing.md` — the twenty-three JavaExec self-test tasks, new-test conventions, manual
   checklist.
 - `docs/glossary.md` — project terminology (carrier, FuncMode, SwitchStrategy, gate, …).
 
