@@ -8,6 +8,7 @@ LogicSugar 的分类文档。文档以中文为主，功能名保留英文本名
 | --- | --- |
 | 玩家 | [README_zh.md](../README_zh.md)（功能与安装说明） |
 | 想了解 LogicSugar 怎么组织的人 | [架构总览](architecture.md) |
+| 本分支三项调查（STL / 函数库 / 正式版 vs BE） | [概要报告](investigation-overview.md) · [技术报告](investigation-technical.md) |
 | 想改 LogicSugar 代码 | [开发指南](development.md) 与[架构总览](architecture.md) |
 | 改动需要验证 | [测试指南](testing.md) |
 | 准备发版 | [版本与发布](release.md) |
@@ -18,6 +19,8 @@ LogicSugar 的分类文档。文档以中文为主，功能名保留英文本名
 ```text
 docs/
 |-- README.md            本页：文档导航
+|-- investigation-overview.md   feat/arrays-l10n-v160prep 调查报告（无技术细节）
+|-- investigation-technical.md  同上，含实现与 API 细节
 |-- architecture.md      架构总览：双形态、编译器/反编译器、表达式子系统、数据子系统、跨类加载器约束、上游版本适配笔记
 |-- development.md       开发指南：环境、构建命令、代码风格、调试建议
 |-- release.md           版本与发布：版本号体系、构建产物链、Release 资产安全
@@ -30,7 +33,7 @@ docs/
 - [README.md](../README.md) / [README_zh.md](../README_zh.md)：面向玩家的功能与安装说明（英文 / 中文）。
 - [AGENTS.md](../AGENTS.md)：仓库维护约束，重点是**跨类加载器访问陷阱**与**反编译恢复安全门**两节。
 - [mod.json](../mod.json)：模组描述符（入口 `logicsugar.LogicSugarMod`、最低 Mindustry BE 构建 `27771`）。
-- [build.gradle](../build.gradle)：编译依赖、二十三个自测任务与 Android 打包管线的唯一事实来源。
+- [build.gradle](../build.gradle)：编译依赖、二十五个自测任务与 Android 打包管线的唯一事实来源。
 - `release_notes_v<版本>.md`：每个版本的双语（中文/English）发布说明，见 [版本与发布](release.md)。
 
 ## 维护约定

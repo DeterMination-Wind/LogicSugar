@@ -8,6 +8,7 @@ import arc.scene.ui.TextField;
 import arc.scene.ui.layout.Cell;
 import arc.scene.ui.layout.Table;
 import arc.struct.Seq;
+import mindustry.gen.Icon;
 import mindustry.graphics.Pal;
 import mindustry.logic.LCanvas.JumpButton;
 import mindustry.logic.LCanvas.JumpCurve;
@@ -25,6 +26,13 @@ public final class SugarStatements{
 
     /** Settings key for localized card titles (checkbox registered in LogicSugarSettings). */
     public static final String settingLocalizeCards = "logicsugar.localizeCards";
+
+    /** For / while / switch / if / functions: not mixed with vanilla jump/end. */
+    public static final LCategory advancedControl = new LCategory("advcontrol", Color.valueOf("ff8a65"), Icon.rightOpen);
+    /** Declaration cards: stack, queue, deque, map, set, list, heap, bitset, chain, record. */
+    public static final LCategory dataStructures = new LCategory("datastruct", Color.valueOf("81c784"), Icon.fileText);
+    /** Array / matrix / array-init cards (bulk ops stay expression-only). */
+    public static final LCategory arrayAlgo = new LCategory("arrayalgo", Color.valueOf("64b5f6"), Icon.pencil);
 
     private static boolean parsersInstalled;
 
@@ -100,7 +108,7 @@ public final class SugarStatements{
 
         @Override
         public LCategory category(){
-            return LCategory.control;
+            return advancedControl;
         }
 
         /** {@link JumpStatement#addOp} with the value/compare fields narrowed to 75px, so
@@ -649,6 +657,7 @@ public final class SugarStatements{
 
         @Override public String name(){ return cardText("array.card", "Array"); }
         @Override public String typeName(){ return "Array"; }
+        @Override public LCategory category(){ return arrayAlgo; }
 
         @Override
         public void write(StringBuilder out){
@@ -690,6 +699,7 @@ public final class SugarStatements{
 
         @Override public String name(){ return cardText("matrix.card", "Matrix"); }
         @Override public String typeName(){ return "Matrix"; }
+        @Override public LCategory category(){ return arrayAlgo; }
 
         @Override
         public void write(StringBuilder out){
@@ -726,6 +736,7 @@ public final class SugarStatements{
 
         @Override public String name(){ return cardText("arrayinit.card", "Array Init"); }
         @Override public String typeName(){ return "ArrayInit"; }
+        @Override public LCategory category(){ return arrayAlgo; }
 
         @Override
         public void write(StringBuilder out){

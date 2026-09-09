@@ -60,10 +60,21 @@ public class DataSubsystemIntegrationTest{
         check(countClass(logicsugar.assist.data.RecordModule.RecordStatement.class) == 1, "record card registered more than once");
         check(countClass(logicsugar.assist.data.ContainerModule.StackDeclStatement.class) == 1, "stack card registered more than once");
         check(countClass(logicsugar.assist.data.ContainerModule.QueueDeclStatement.class) == 1, "queue card registered more than once");
+        check(countClass(logicsugar.assist.data.ContainerModule.DequeDeclStatement.class) == 1, "deque card registered more than once");
         check(countClass(logicsugar.assist.data.BitsetModule.BitsetStatement.class) == 1, "bitset card registered more than once");
         check(countClass(logicsugar.assist.data.MapModule.MapStatement.class) == 1, "map card registered more than once");
+        check(countClass(logicsugar.assist.data.SetModule.USetStatement.class) == 1, "uset card registered more than once");
         check(countClass(logicsugar.assist.data.ListHeapModule.ListDeclStatement.class) == 1, "list card registered more than once");
         check(countClass(logicsugar.assist.data.ListHeapModule.HeapDeclStatement.class) == 1, "heap card registered more than once");
+
+        check(new SugarStatements.ForBeginStatement().category() == SugarStatements.advancedControl,
+            "for/while/switch should leave vanilla Flow Control");
+        check(new SugarStatements.ArrayStatement().category() == SugarStatements.arrayAlgo
+            && new SugarStatements.ArrayInitStatement().category() == SugarStatements.arrayAlgo,
+            "array cards should be in the array-algorithm category");
+        check(new logicsugar.assist.data.ContainerModule.StackDeclStatement().category() == SugarStatements.dataStructures
+            && new logicsugar.assist.data.SetModule.USetStatement().category() == SugarStatements.dataStructures,
+            "declaration cards should be in the data-structure category");
 
         // 重复 init：卡片列表长度不变（registered 守卫 + 模块 register 幂等）
         mod.init();
@@ -75,16 +86,19 @@ public class DataSubsystemIntegrationTest{
 
     private static void dataDeclarationsAreVisible(){
         // 声明卡解析器（LAssembler.customParsers）
-        for(String token : Arrays.asList("matrix", "arrayinit", "record", "stack", "queue", "bitset", "map", "list", "heap")){
+        for(String token : Arrays.asList("matrix", "arrayinit", "record", "stack", "queue", "deque", "bitset", "map", "uset", "list", "heap", "chain")){
             check(LAssembler.customParsers.containsKey(token), "missing declaration parser: " + token);
         }
         // 表达式内置（生产注册即注册 provider，无需先编译）
         Set<String> expected = new HashSet<>(Arrays.asList(
             "sum", "avg", "min", "max", "count", "indexof", "fill", "copy", "sortasc", "sortdesc",
+            "reverse", "replace", "swap", "bsearch",
             "spush", "spop", "speek", "ssize", "sclear",
             "qpush", "qpop", "qpeek", "qsize", "qclear",
+            "dpushf", "dpushb", "dpopf", "dpopb", "dpeekf", "dpeekb", "dsize", "dclear",
             "bset", "bclr", "btest", "bcount",
             "mapset", "mapget", "maphas", "mapdel", "mapsize", "mapclear",
+            "uadd", "uhas", "udel", "usize", "uclear",
             "lappend", "lget", "lset", "linsert", "lremove", "lfind", "lsize",
             "hpush", "hpop", "hsize"
         ));
@@ -106,8 +120,10 @@ public class DataSubsystemIntegrationTest{
             + "record p hp mp ~ ~ ~ ~ ~ ~\n"
             + "stack s cell3 0 4\n"
             + "queue q cell3 4 4\n"
+            + "deque d cell3 8 4\n"
             + "bitset b cell4 0 2\n"
             + "map m cell5 0 4\n"
+            + "uset u cell5 8 4\n"
             + "list l cell6 0 4\n"
             + "heap h cell6 8 4\n";
         String sugar = wrap(declarations,
@@ -116,15 +132,17 @@ public class DataSubsystemIntegrationTest{
             "p.hp > 0",
             "spush(s, 1) > 0",
             "qpush(q, 2) > 0",
+            "dpushb(d, 3) > 0",
             "btest(b, 3) > 0",
             "mapset(m, 1, 2) > 0",
+            "uadd(u, 1) > 0",
             "lappend(l, 5) > 0",
             "hpush(h, 6) > 0"
         );
         String mlog = stripCompile(sugar);
 
         // 声明卡文本不进入产物
-        for(String card : Arrays.asList("arrayinit ", "matrix ", "record ", "stack ", "queue ", "bitset ", "map ", "list ", "heap ")){
+        for(String card : Arrays.asList("arrayinit ", "matrix ", "record ", "stack ", "queue ", "deque ", "bitset ", "map ", "uset ", "list ", "heap ")){
             check(!mlog.contains(card), "declaration card leaked into the product: " + card + "\n" + mlog);
         }
         check(!mlog.contains("funccall "), "funccall leaked into the product:\n" + mlog);
@@ -144,7 +162,7 @@ public class DataSubsystemIntegrationTest{
             "expected read + shared stack push body:\n" + mlog);
         // 隐藏状态变量是普通 mlog 变量（运行时状态载体），随使用出现；声明卡本身不产指令
         check(mlog.contains("__ls_stk_s_top") && mlog.contains("__ls_que_q_count")
-            && mlog.contains("__ls_lst_l_count") && mlog.contains("__ls_hep_h_count"),
+            && mlog.contains("__ls_deq_d_count") && mlog.contains("__ls_lst_l_count") && mlog.contains("__ls_hep_h_count"),
             "hidden state variables missing from a program that uses the containers:\n" + mlog);
 
         // 载体往返仍可恢复源码（声明卡是编译期元数据，不进指令流）

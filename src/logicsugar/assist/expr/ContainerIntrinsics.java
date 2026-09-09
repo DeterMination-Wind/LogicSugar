@@ -9,18 +9,21 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 栈 + 队列的表达式扩展（{@code spush/spop/speek/ssize/sclear}、
- * {@code qpush/qpop/qpeek/qsize/qclear}）。
+ * 栈 + 队列 + 双端队列的表达式扩展（{@code spush/spop/speek/ssize/sclear}、
+ * {@code qpush/qpop/qpeek/qsize/qclear}、
+ * {@code dpushf/dpushb/dpopf/dpopb/dpeekf/dpeekb/dsize/dclear}）。
  *
  * <p>第一个实参必须是<b>已声明容器名</b>（{@link ContainerModule} 的编译期注册表），
- * 且函数与容器种类匹配（{@code spush} 只接受 stack、{@code qpush} 只接受 queue）。</p>
+ * 且函数与容器种类匹配（{@code spush} 只接受 stack、{@code qpush} 只接受 queue、
+ * {@code dpushf} 只接受 deque）。</p>
  *
  * <p><b>展开形态</b>：</p>
  * <ul>
- *   <li><b>读/变量类</b>（spop/speek/ssize/sclear、qpop/qpeek/qsize/qclear）：无分支直线
+ *   <li><b>读/变量类</b>（pop/peek/size/clear）：无分支直线
  *       {@code op}/{@code read} 链，只写隐藏状态变量与临时变量；</li>
- *   <li><b>写内存类</b>（spush/qpush）：展开为对注入函数 {@code __ls_builtin_stkpush} /
- *       {@code __ls_builtin_quepush} 的 {@code funccall}（normal 模式全程序共享一份子程序，
+ *   <li><b>写内存类</b>（spush/qpush/dpushb/dpushf）：展开为对注入函数
+ *       {@code __ls_builtin_stkpush} / {@code __ls_builtin_quepush} /
+ *       {@code __ls_builtin_deqpushf} 的 {@code funccall}（normal 模式全程序共享一份子程序，
  *       未使用时不进入产物）。<b>原因</b>：{@link ExprCompiler.WriteLine} 不被
  *       {@code SugarFunctions.emitConditionExpression}/{@code emitReturn} 的分支识别
  *       （它们只处理 OpLine/ReadLine/SensorLine/CallLine/RawLine），intrinsic 在条件/返回
@@ -30,15 +33,18 @@ import java.util.Map;
  *
  * <p><b>边界语义</b>（原版 {@code MemoryBlock} 行为）：</p>
  * <ul>
- *   <li><b>已满不写入</b>：push 在函数体内分支，满时直接返回 size，不执行 write；</li>
+ *   <li><b>已满不写入</b>：push 在函数体内分支，满时直接返回 size，不执行 write；
+ *       双端队列前端 push 满时同样不改 head；</li>
  *   <li><b>空容器返回 NaN</b>：pop/peek 的读地址在空时被重定向到 {@code -1}，原版
  *       {@code MemoryBlock.read} 对越界地址返回 {@code Double.NaN}（与 {@code op div <tmp> 0 0}
  *       是同一个 NaN 表示）；空 pop 的状态更新是 {@code max(x-1, 0)}，head 用
- *       {@code (head + min(count,1)) % size} 保持不动。</li>
+ *       {@code (head + min(count,1)) % size} 保持不动。head 回绕用
+ *       {@code (head + size - 1) % size}，避免 mlog 对负数取模。</li>
  * </ul>
  *
  * <p>状态变量：栈 {@code __ls_stk_<name>_top}（元素个数）；队列
- * {@code __ls_que_<name>_head/_tail/_count}，恒有 {@code tail == (head + count) % size}。
+ * {@code __ls_que_<name>_head/_tail/_count}，双端队列 {@code __ls_deq_<name>_head/_tail/_count}，
+ * 恒有 {@code tail == (head + count) % size}。
  * 未初始化时 mlog 读取为 0，因此「初始 0」不需要初始化指令（声明卡不产行）。</p>
  *
  * <p>依赖原版内存语义：{@code memory} 应指向 cell/bank/world 内存块（与
@@ -49,12 +55,15 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** 注入函数：栈 push（返回新元素个数；满时不写入并返回 size）。 */
     public static final String BUILTIN_STACK_PUSH = "__ls_builtin_stkpush";
-    /** 注入函数：队列 push（返回新元素个数；满时不写入并返回 size）。 */
+    /** 注入函数：队列 / 双端队列后端 push（返回新元素个数；满时不写入并返回 size）。 */
     public static final String BUILTIN_QUEUE_PUSH = "__ls_builtin_quepush";
+    /** 注入函数：双端队列前端 push（返回新 head；满时不写入并返回旧 head）。 */
+    public static final String BUILTIN_DEQUE_PUSH_FRONT = "__ls_builtin_deqpushf";
 
     private static final String[] CALL_NAMES = {
         "spush", "spop", "speek", "ssize", "sclear",
-        "qpush", "qpop", "qpeek", "qsize", "qclear"
+        "qpush", "qpop", "qpeek", "qsize", "qclear",
+        "dpushf", "dpushb", "dpopf", "dpopb", "dpeekf", "dpeekb", "dsize", "dclear"
     };
 
     private ContainerIntrinsics(){}
@@ -69,6 +78,8 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         switch(name){
             case "spush":
             case "qpush":
+            case "dpushf":
+            case "dpushb":
                 return 2;
             case "spop":
             case "speek":
@@ -78,6 +89,12 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
             case "qpeek":
             case "qsize":
             case "qclear":
+            case "dpopf":
+            case "dpopb":
+            case "dpeekf":
+            case "dpeekb":
+            case "dsize":
+            case "dclear":
                 return 1;
             default:
                 return -1;
@@ -97,6 +114,14 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
             case "qpeek": return queuePeek(args, ctx);
             case "qsize": return queueSize(args, ctx);
             case "qclear": return queueClear(args, ctx);
+            case "dpushf": return dequePushFront(args, ctx);
+            case "dpushb": return dequePushBack(args, ctx);
+            case "dpopf": return dequePopFront(args, ctx);
+            case "dpopb": return dequePopBack(args, ctx);
+            case "dpeekf": return dequePeekFront(args, ctx);
+            case "dpeekb": return dequePeekBack(args, ctx);
+            case "dsize": return dequeSize(args, ctx);
+            case "dclear": return dequeClear(args, ctx);
             default: return null;
         }
     }
@@ -119,15 +144,17 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
     @Override
     public List<String> callees(String name, int argc){
         if("spush".equals(name)) return Collections.singletonList(BUILTIN_STACK_PUSH);
-        if("qpush".equals(name)) return Collections.singletonList(BUILTIN_QUEUE_PUSH);
+        if("qpush".equals(name) || "dpushb".equals(name)) return Collections.singletonList(BUILTIN_QUEUE_PUSH);
+        if("dpushf".equals(name)) return Collections.singletonList(BUILTIN_DEQUE_PUSH_FRONT);
         return Collections.emptyList();
     }
 
     /** 注入函数的 sugar 源文本（每项一个完整 funcdef 块）。 */
     public static List<String> builtinSugar(){
-        List<String> result = new ArrayList<>(2);
+        List<String> result = new ArrayList<>(3);
         result.add(stackPushBody());
         result.add(queuePushBody());
+        result.add(dequePushFrontBody());
         return result;
     }
 
@@ -284,6 +311,171 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         return out;
     }
 
+    // ===== 双端队列 =====
+
+    /** {@code dsize(d)}：{@code op add <r> count 0}。 */
+    private static List<ExprCompiler.Line> dequeSize(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        ContainerModule.Info info = resolve("dsize", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        List<ExprCompiler.Line> out = new ArrayList<>(1);
+        out.add(new ExprCompiler.OpLine("add", ctx.temp(), info.stateVar(ContainerModule.FIELD_COUNT), "0"));
+        return out;
+    }
+
+    /** {@code dclear(d)}：head/tail/count = 0，返回 0。 */
+    private static List<ExprCompiler.Line> dequeClear(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        ContainerModule.Info info = resolve("dclear", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        List<ExprCompiler.Line> out = new ArrayList<>(4);
+        out.add(new ExprCompiler.OpLine("add", info.stateVar(ContainerModule.FIELD_HEAD), "0", "0"));
+        out.add(new ExprCompiler.OpLine("add", info.stateVar(ContainerModule.FIELD_TAIL), "0", "0"));
+        out.add(new ExprCompiler.OpLine("add", info.stateVar(ContainerModule.FIELD_COUNT), "0", "0"));
+        out.add(new ExprCompiler.OpLine("add", ctx.temp(), "0", "0"));
+        return out;
+    }
+
+    /** {@code dpeekf(d)}：空 → 越界读 → NaN；否则读 base+head。 */
+    private static List<ExprCompiler.Line> dequePeekFront(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        return ringPeek("dpeekf", args, ctx, true);
+    }
+
+    /** {@code dpeekb(d)}：空 → 越界读 → NaN；否则读 (head+count-1)%size。 */
+    private static List<ExprCompiler.Line> dequePeekBack(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        return ringPeek("dpeekb", args, ctx, false);
+    }
+
+    /** {@code dpopf(d)}：与队列 pop 相同（从前端取出）。 */
+    private static List<ExprCompiler.Line> dequePopFront(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        return ringPopFront("dpopf", args, ctx);
+    }
+
+    /** {@code dpopb(d)}：空 → NaN；否则从后端取出并 count-1，随后同步 tail。 */
+    private static List<ExprCompiler.Line> dequePopBack(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        ContainerModule.Info info = resolve("dpopb", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        String head = info.stateVar(ContainerModule.FIELD_HEAD);
+        String tail = info.stateVar(ContainerModule.FIELD_TAIL);
+        String count = info.stateVar(ContainerModule.FIELD_COUNT);
+        String base = Integer.toString(info.base);
+        String size = Integer.toString(info.size);
+        List<ExprCompiler.Line> out = new ArrayList<>(14);
+        String empty = ctx.temp();
+        String index = ctx.temp();
+        String address = ctx.temp();
+        String bump = ctx.temp();
+        out.add(new ExprCompiler.OpLine("lessThanEq", empty, count, "0"));
+        // (head + count - 1 + size) % size：先加 size 再减 1，避免空时 head-1 对负数取模
+        out.add(new ExprCompiler.OpLine("add", index, head, count));
+        out.add(new ExprCompiler.OpLine("add", index, index, size));
+        out.add(new ExprCompiler.OpLine("sub", index, index, "1"));
+        out.add(new ExprCompiler.OpLine("mod", index, index, size));
+        out.add(new ExprCompiler.OpLine("add", address, base, index));
+        out.add(new ExprCompiler.OpLine("add", bump, address, "1"));
+        out.add(new ExprCompiler.OpLine("mul", empty, empty, bump));
+        out.add(new ExprCompiler.OpLine("sub", address, address, empty));
+        out.add(new ExprCompiler.OpLine("sub", count, count, "1"));
+        out.add(new ExprCompiler.OpLine("max", count, count, "0"));
+        out.add(new ExprCompiler.OpLine("add", tail, head, count));
+        out.add(new ExprCompiler.OpLine("mod", tail, tail, size));
+        out.add(new ExprCompiler.ReadLine(ctx.temp(), info.memory, address));
+        return out;
+    }
+
+    /** {@code dpushb(d,v)}：与队列 push 相同（写入后端）。 */
+    private static List<ExprCompiler.Line> dequePushBack(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        ContainerModule.Info info = resolve("dpushb", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        return ringPushBack(info, args, ctx);
+    }
+
+    /**
+     * {@code dpushf(d,v)}：注入函数返回新 head（满时旧 head），随后
+     * {@code count = min(count+1, size)} 并同步 tail。表达式结果是新 count。
+     */
+    private static List<ExprCompiler.Line> dequePushFront(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        ContainerModule.Info info = resolve("dpushf", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        String head = info.stateVar(ContainerModule.FIELD_HEAD);
+        String tail = info.stateVar(ContainerModule.FIELD_TAIL);
+        String count = info.stateVar(ContainerModule.FIELD_COUNT);
+        String size = Integer.toString(info.size);
+        String value = ctx.compile(args.get(1));
+        List<ExprCompiler.Line> out = new ArrayList<>(6);
+        out.add(new ExprCompiler.CallLine(BUILTIN_DEQUE_PUSH_FRONT,
+            info.memory + ", " + info.base + ", " + info.size + ", " + head + ", " + count + ", " + value, head));
+        String bump = ctx.temp();
+        out.add(new ExprCompiler.OpLine("add", bump, count, "1"));
+        out.add(new ExprCompiler.OpLine("min", count, bump, size));
+        out.add(new ExprCompiler.OpLine("add", tail, head, count));
+        out.add(new ExprCompiler.OpLine("mod", tail, tail, size));
+        out.add(new ExprCompiler.OpLine("add", ctx.temp(), count, "0"));
+        return out;
+    }
+
+    private static List<ExprCompiler.Line> ringPeek(String op, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx, boolean front){
+        ContainerModule.Info info = resolve(op, args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        String head = info.stateVar(ContainerModule.FIELD_HEAD);
+        String count = info.stateVar(ContainerModule.FIELD_COUNT);
+        String base = Integer.toString(info.base);
+        String size = Integer.toString(info.size);
+        List<ExprCompiler.Line> out = new ArrayList<>(10);
+        String empty = ctx.temp();
+        String address = ctx.temp();
+        String bump = ctx.temp();
+        out.add(new ExprCompiler.OpLine("lessThanEq", empty, count, "0"));
+        if(front){
+            out.add(new ExprCompiler.OpLine("add", address, base, head));
+        }else{
+            String index = ctx.temp();
+            out.add(new ExprCompiler.OpLine("add", index, head, count));
+            out.add(new ExprCompiler.OpLine("add", index, index, size));
+            out.add(new ExprCompiler.OpLine("sub", index, index, "1"));
+            out.add(new ExprCompiler.OpLine("mod", index, index, size));
+            out.add(new ExprCompiler.OpLine("add", address, base, index));
+        }
+        out.add(new ExprCompiler.OpLine("add", bump, address, "1"));
+        out.add(new ExprCompiler.OpLine("mul", empty, empty, bump));
+        out.add(new ExprCompiler.OpLine("sub", address, address, empty));
+        out.add(new ExprCompiler.ReadLine(ctx.temp(), info.memory, address));
+        return out;
+    }
+
+    private static List<ExprCompiler.Line> ringPopFront(String op, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        ContainerModule.Info info = resolve(op, args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        String head = info.stateVar(ContainerModule.FIELD_HEAD);
+        String count = info.stateVar(ContainerModule.FIELD_COUNT);
+        String base = Integer.toString(info.base);
+        String size = Integer.toString(info.size);
+        List<ExprCompiler.Line> out = new ArrayList<>(11);
+        String empty = ctx.temp();
+        String address = ctx.temp();
+        String bump = ctx.temp();
+        out.add(new ExprCompiler.OpLine("lessThanEq", empty, count, "0"));
+        out.add(new ExprCompiler.OpLine("add", address, base, head));
+        out.add(new ExprCompiler.OpLine("add", bump, address, "1"));
+        out.add(new ExprCompiler.OpLine("mul", empty, empty, bump));
+        out.add(new ExprCompiler.OpLine("sub", address, address, empty));
+        String step = ctx.temp();
+        String moved = ctx.temp();
+        out.add(new ExprCompiler.OpLine("min", step, count, "1"));
+        out.add(new ExprCompiler.OpLine("add", moved, head, step));
+        out.add(new ExprCompiler.OpLine("mod", head, moved, size));
+        out.add(new ExprCompiler.OpLine("sub", count, count, "1"));
+        out.add(new ExprCompiler.OpLine("max", count, count, "0"));
+        out.add(new ExprCompiler.ReadLine(ctx.temp(), info.memory, address));
+        return out;
+    }
+
+    private static List<ExprCompiler.Line> ringPushBack(ContainerModule.Info info, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        String head = info.stateVar(ContainerModule.FIELD_HEAD);
+        String tail = info.stateVar(ContainerModule.FIELD_TAIL);
+        String count = info.stateVar(ContainerModule.FIELD_COUNT);
+        String size = Integer.toString(info.size);
+        String value = ctx.compile(args.get(1));
+        List<ExprCompiler.Line> out = new ArrayList<>(4);
+        out.add(new ExprCompiler.CallLine(BUILTIN_QUEUE_PUSH,
+            info.memory + ", " + info.base + ", " + info.size + ", " + head + ", " + count + ", " + value, count));
+        out.add(new ExprCompiler.OpLine("add", tail, head, count));
+        out.add(new ExprCompiler.OpLine("mod", tail, tail, size));
+        out.add(new ExprCompiler.OpLine("add", ctx.temp(), count, "0"));
+        return out;
+    }
+
     // ===== 解析 =====
 
     /** 解析第一个实参为已声明容器，并校验种类匹配。 */
@@ -338,6 +530,24 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         fn.jump("L_end", "always", "x", "false");
         fn.label("L_full");
         fn.op("add", "__ls_ct_r", "size", "0");
+        fn.label("L_end");
+        fn.line("return \"__ls_ct_r\"");
+        return fn.build();
+    }
+
+    /** 双端队列前端 push：满时返回旧 head；否则 head=(head+size-1)%size，写 base+head，返回新 head。 */
+    private static String dequePushFrontBody(){
+        Fn fn = new Fn(BUILTIN_DEQUE_PUSH_FRONT, "mem,base,size,head,count,v");
+        fn.jump("L_full", "greaterThanEq", "count", "size");
+        fn.op("add", "__ls_ct_h", "head", "size");
+        fn.op("sub", "__ls_ct_h", "__ls_ct_h", "1");
+        fn.op("mod", "__ls_ct_h", "__ls_ct_h", "size");
+        fn.op("add", "__ls_ct_a", "base", "__ls_ct_h");
+        fn.write("v", "mem", "__ls_ct_a");
+        fn.op("add", "__ls_ct_r", "__ls_ct_h", "0");
+        fn.jump("L_end", "always", "x", "false");
+        fn.label("L_full");
+        fn.op("add", "__ls_ct_r", "head", "0");
         fn.label("L_end");
         fn.line("return \"__ls_ct_r\"");
         return fn.build();

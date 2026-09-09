@@ -20,11 +20,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 栈 + 队列（环形缓冲）模块：声明卡 {@code stack <name> <memory> <base> <size>} /
- * {@code queue <name> <memory> <base> <size>}（纯编译期元数据，不产出任何 mlog 行），
- * 表达式操作 {@code spush/spop/speek/ssize/sclear}、{@code qpush/qpop/qpeek/qsize/qclear}
- * 由 {@link ContainerIntrinsics} 展开：读/变量类是无分支 {@code op}/{@code read} 直线链，
- * 写内存类（push）是对注入函数 {@code __ls_builtin_stkpush}/{@code __ls_builtin_quepush}
+ * 栈 + 队列 + 双端队列（环形缓冲）模块：声明卡
+ * {@code stack}/{@code queue}/{@code deque} {@code <name> <memory> <base> <size>}
+ * （纯编译期元数据，不产出任何 mlog 行），表达式操作由 {@link ContainerIntrinsics} 展开：
+ * 读/变量类是无分支 {@code op}/{@code read} 直线链，写内存类（push）是对注入函数
+ * {@code __ls_builtin_stkpush}/{@code __ls_builtin_quepush}/{@code __ls_builtin_deqpushf}
  * 的 {@code funccall}（原因见 {@link ContainerIntrinsics} 类注释：框架的条件/返回 lowering
  * 不识别 {@link logicsugar.assist.expr.ExprCompiler.WriteLine}）。
  *
@@ -32,13 +32,14 @@ import java.util.Set;
  * <ul>
  *   <li>栈：{@code __ls_stk_<name>_top} = 元素个数（0 = 空）；</li>
  *   <li>队列：{@code __ls_que_<name>_head} / {@code __ls_que_<name>_tail} /
- *       {@code __ls_que_<name>_count}，恒有 {@code tail == (head + count) % size}。</li>
+ *       {@code __ls_que_<name>_count}，恒有 {@code tail == (head + count) % size}；</li>
+ *   <li>双端队列：{@code __ls_deq_<name>_head/_tail/_count}，同一环形不变式。</li>
  * </ul>
  * <p>mlog 变量未赋值时读取为 0（{@code LVar.num()} 把 null/NaN 视作 0），因此「初始 0」
  * 不需要任何初始化指令——声明卡不产行这条硬约束与语义不冲突。</p>
  *
  * <p>严格校验（{@link #collect}，编译路径，问题抛 {@link IllegalArgumentException}）：
- * 名字合法/唯一（本模块内 stack/queue 互不重名，也不得与 array/matrix/函数重名）、
+ * 名字合法/唯一（本模块内 stack/queue/deque 互不重名，也不得与 array/matrix/函数重名）、
  * {@code memory} 非空且非保留前缀、{@code base}/{@code size} 为整数字面量
  * （{@code base >= 0}，{@code size >= 1}，与 {@code array} 卡口径一致）、
  * 同内存块区间不重叠、容量检查（cellN=64，bankN/worldN=512，其它名字跳过）。
@@ -54,8 +55,10 @@ public class ContainerModule extends DataModule{
 
     public static final String STACK_TOKEN = "stack";
     public static final String QUEUE_TOKEN = "queue";
+    public static final String DEQUE_TOKEN = "deque";
     public static final String KIND_STACK = "stack";
     public static final String KIND_QUEUE = "queue";
+    public static final String KIND_DEQUE = "deque";
 
     /** 保留前缀：状态变量、注入函数名都以它开头，用户声明名不得使用。 */
     public static final String RESERVED_PREFIX = "__ls_";
@@ -133,6 +136,36 @@ public class ContainerModule extends DataModule{
         }
     }
 
+    /** {@code deque <name> <memory> <base> <size>} 声明卡（双端环形缓冲，纯元数据）。 */
+    public static class DequeDeclStatement extends DataDeclaration{
+        public String name = "d";
+        public String memory = "cell1";
+        public String base = "0";
+        public String size = "8";
+
+        @Override public String token(){ return DEQUE_TOKEN; }
+        @Override public String name(){ return cardText("deque.card", "Deque"); }
+
+        @Override
+        public void build(Table table){
+            table.add(cardText("deque.card", "Deque")).self(c -> hint(c, "deque.name"));
+            field(table, name, value -> name = value).width(70f);
+            table.add(cardText("array.memory", "mem")).self(c -> hint(c, "deque.memory"));
+            field(table, memory, value -> memory = value).width(70f);
+            table.add(cardText("array.base", "base")).self(c -> hint(c, "deque.base"));
+            field(table, base, value -> base = value).width(45f);
+            table.add(cardText("array.size", "size")).self(c -> hint(c, "deque.size"));
+            field(table, size, value -> size = value).width(45f);
+        }
+
+        @Override
+        public void write(StringBuilder out){
+            out.append(DEQUE_TOKEN).append(' ').append(optional(name)).append(' ')
+                .append(optional(memory)).append(' ').append(optional(base)).append(' ')
+                .append(optional(size));
+        }
+    }
+
     // ===== 编译期注册表 =====
 
     /** 一个已声明的容器：内存块上的区间 [base, base+size) 加隐藏状态变量。 */
@@ -157,7 +190,7 @@ public class ContainerModule extends DataModule{
         }
     }
 
-    /** 名字 → 声明信息（本模块内 stack/queue 共用一张表，保证互不重名）。 */
+    /** 名字 → 声明信息（本模块内 stack/queue/deque 共用一张表，保证互不重名）。 */
     public static final class Registry{
         private final Map<String, Info> byName = new LinkedHashMap<>();
 
@@ -182,9 +215,12 @@ public class ContainerModule extends DataModule{
         }
     }
 
-    /** 隐藏状态变量名：{@code __ls_stk_<name>_top} / {@code __ls_que_<name>_<field>}。 */
+    /** 隐藏状态变量名：栈 {@code __ls_stk_}、队列 {@code __ls_que_}、双端队列 {@code __ls_deq_}。 */
     public static String stateVar(String kind, String name, String field){
-        return (KIND_QUEUE.equals(kind) ? "__ls_que_" : "__ls_stk_") + name + "_" + field;
+        String prefix = KIND_DEQUE.equals(kind) ? "__ls_deq_"
+            : KIND_QUEUE.equals(kind) ? "__ls_que_"
+            : "__ls_stk_";
+        return prefix + name + "_" + field;
     }
 
     // ===== 静态编译期上下文 =====
@@ -211,7 +247,7 @@ public class ContainerModule extends DataModule{
         return canvasRegistry();
     }
 
-    /** 收集当前打开的 Sugar 画布上的 stack/queue 声明卡（跳过不合法的卡片），画布不可用时为 null。 */
+    /** 收集当前打开的 Sugar 画布上的 stack/queue/deque 声明卡（跳过不合法的卡片），画布不可用时为 null。 */
     public static Registry canvasRegistry(){
         try{
             SugarCanvas canvas = SugarCanvas.current();
@@ -248,8 +284,10 @@ public class ContainerModule extends DataModule{
         parsersInstalled = true;
         LogicIO.allStatements.add(StackDeclStatement::new);
         LogicIO.allStatements.add(QueueDeclStatement::new);
+        LogicIO.allStatements.add(DequeDeclStatement::new);
         LAssembler.customParsers.put(STACK_TOKEN, ContainerModule::parseStack);
         LAssembler.customParsers.put(QUEUE_TOKEN, ContainerModule::parseQueue);
+        LAssembler.customParsers.put(DEQUE_TOKEN, ContainerModule::parseDeque);
     }
 
     private static boolean parsersInstalled;
@@ -314,10 +352,25 @@ public class ContainerModule extends DataModule{
         return result;
     }
 
+    public static LStatement parseDeque(String[] tokens){
+        DequeDeclStatement result = new DequeDeclStatement();
+        result.name = token(tokens, 1);
+        if(result.name.isEmpty()){
+            throw new IllegalArgumentException("Invalid deque statement: missing deque name");
+        }
+        result.memory = token(tokens, 2);
+        if(result.memory.isEmpty()){
+            throw new IllegalArgumentException("Invalid deque statement: missing memory cell");
+        }
+        result.base = token(tokens, 3);
+        result.size = token(tokens, 4);
+        return result;
+    }
+
     // ===== 严格校验（编译路径） =====
 
     /**
-     * 从语句列表收集全部 {@code stack}/{@code queue} 声明卡并严格校验，任何问题都抛出
+     * 从语句列表收集全部 {@code stack}/{@code queue}/{@code deque} 声明卡并严格校验，任何问题都抛出
      * {@link IllegalArgumentException}。卡片允许出现在程序任意位置，注册表是程序级的。
      *
      * @param functionNames 本地 funcdef + 库函数名的并集（容器名不得与之冲突）；
@@ -435,7 +488,7 @@ public class ContainerModule extends DataModule{
         for(long[] span : existing){
             if(base < span[1] && span[0] < base + size){
                 throw error(kind, index, "'" + name + "' range [" + base + ", " + (base + size)
-                    + ") overlaps another stack or queue on '" + memory + "'");
+                    + ") overlaps another stack, queue or deque on '" + memory + "'");
             }
         }
         existing.add(new long[]{base, base + size});
@@ -453,7 +506,7 @@ public class ContainerModule extends DataModule{
         return new IllegalArgumentException(kind + " at statement " + index + " " + detail + ".");
     }
 
-    /** 声明卡视图（统一 stack/queue 的处理）。 */
+    /** 声明卡视图（统一 stack/queue/deque 的处理）。 */
     private static final class Card{
         final String kind, name, memory, base, size;
 
@@ -472,6 +525,9 @@ public class ContainerModule extends DataModule{
         }
         if(statement instanceof QueueDeclStatement queue){
             return new Card(KIND_QUEUE, queue.name, queue.memory, queue.base, queue.size);
+        }
+        if(statement instanceof DequeDeclStatement deque){
+            return new Card(KIND_DEQUE, deque.name, deque.memory, deque.base, deque.size);
         }
         return null;
     }

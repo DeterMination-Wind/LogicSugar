@@ -6,9 +6,13 @@ import arc.func.Prov;
 import arc.input.KeyCode;
 import arc.scene.Element;
 import arc.scene.Group;
+import arc.scene.event.InputEvent;
+import arc.scene.event.InputListener;
 import arc.scene.style.Drawable;
+import arc.graphics.Color;
 import arc.scene.ui.Button;
 import arc.scene.ui.Dialog;
+import arc.scene.ui.Label;
 import arc.scene.ui.TextButton;
 import arc.scene.ui.TextButton.TextButtonStyle;
 import arc.scene.ui.layout.Table;
@@ -27,6 +31,8 @@ import mindustry.ui.dialogs.BaseDialog;
 import mindustry.world.blocks.logic.LogicBlock;
 import logicsugar.FunctionLibrary;
 import logicsugar.FunctionLibraryDialog;
+import logicsugar.assist.EditHistory;
+import logicsugar.assist.InstructionBudget;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprStatement;
 
@@ -77,11 +83,25 @@ public class SugarLogicDialog extends LogicDialog{
     private Button discardButton;
     private Element editButton;
     private float menuScanTimer;
+    /** Live compiled-size banner; rebuilt with the vanilla button row. */
+    private Label budgetLabel;
+    private float budgetTimer;
+    private boolean budgetToastShown;
+    private InstructionBudget.Snapshot lastBudget;
+    private final EditHistory history = new EditHistory();
+    private String lastHistorySnap = "";
+    private float historyTimer;
+    private float historyIdle;
+    private Button undoButton;
+    private Button redoButton;
 
     public SugarLogicDialog(){
         super();
         clearChildren();
         canvas = new SugarCanvas();
+        if(canvas instanceof SugarCanvas sugarCanvas){
+            sugarCanvas.afterMutate = this::recordCanvasHistory;
+        }
         add(canvas).grow().name("canvas");
         row();
         add(buttons).growX().name("buttons");
@@ -96,6 +116,23 @@ public class SugarLogicDialog extends LogicDialog{
         // (clearChildren) on EVERY show — wiping anything added outside it. Re-append the
         // Sugar-owned buttons after each rebuild; find() guards make it idempotent.
         shown(this::installSugarButtons);
+        addCaptureListener(new InputListener(){
+            @Override
+            public boolean keyDown(InputEvent event, KeyCode keycode){
+                if(Vars.mobile || !isShown()) return false;
+                boolean ctrl = Core.input.keyDown(KeyCode.controlLeft) || Core.input.keyDown(KeyCode.controlRight);
+                if(!ctrl) return false;
+                if(keycode == KeyCode.z){
+                    performUndo();
+                    return true;
+                }
+                if(keycode == KeyCode.y){
+                    performRedo();
+                    return true;
+                }
+                return false;
+            }
+        });
         update(() -> {
             installEditHook();
             menuScanTimer += Time.delta;
@@ -103,6 +140,16 @@ public class SugarLogicDialog extends LogicDialog{
                 menuScanTimer = 0f;
                 installCompiledCopy();
                 installOriginalView();
+            }
+            budgetTimer += Time.delta;
+            if(budgetTimer >= 24f){
+                budgetTimer = 0f;
+                refreshInstructionBudget();
+            }
+            historyTimer += Time.delta;
+            if(historyTimer >= 8f){
+                historyTimer = 0f;
+                pollCanvasHistory();
             }
         });
     }
@@ -121,6 +168,118 @@ public class SugarLogicDialog extends LogicDialog{
         // processor-inspection copy buttons (variables dump + print buffer); no-op in
         // library-file editing sessions where there is no processor to inspect
         logicsugar.assist.VarClipboard.addButtons(buttons, this);
+        installBudgetLabel();
+        installHistoryButtons();
+    }
+
+    private void installHistoryButtons(){
+        if(!Vars.mobile) return;
+        if(buttons.find("logicsugar-undo") == null){
+            undoButton = buttons.button("@logicsugar.undo", Icon.left, this::performUndo).get();
+            undoButton.name = "logicsugar-undo";
+        }else if(buttons.find("logicsugar-undo") instanceof Button button){
+            undoButton = button;
+        }
+        if(buttons.find("logicsugar-redo") == null){
+            redoButton = buttons.button("@logicsugar.redo", Icon.rightOpen, this::performRedo).get();
+            redoButton.name = "logicsugar-redo";
+        }else if(buttons.find("logicsugar-redo") instanceof Button button){
+            redoButton = button;
+        }
+        refreshHistoryButtons();
+    }
+
+    private void performUndo(){
+        applyHistory(history.undo(canvasSnapshot()));
+    }
+
+    private void performRedo(){
+        applyHistory(history.redo(canvasSnapshot()));
+    }
+
+    private String canvasSnapshot(){
+        try{
+            return canvas.save();
+        }catch(Throwable ignored){
+            return lastHistorySnap;
+        }
+    }
+
+    private void recordCanvasHistory(){
+        try{
+            String now = canvas.save();
+            history.record(now);
+            lastHistorySnap = now;
+            historyIdle = 0f;
+            refreshHistoryButtons();
+        }catch(Throwable ignored){
+        }
+    }
+
+    private void pollCanvasHistory(){
+        if(history.isRestoring()) return;
+        try{
+            String now = canvas.save();
+            if(!now.equals(lastHistorySnap)){
+                lastHistorySnap = now;
+                historyIdle = 0f;
+            }else{
+                historyIdle += 8f;
+                if(historyIdle >= 24f){
+                    history.record(now);
+                    historyIdle = 0f;
+                    refreshHistoryButtons();
+                }
+            }
+        }catch(Throwable ignored){
+        }
+    }
+
+    private void applyHistory(String sugar){
+        if(sugar == null) return;
+        canvas.load(sugar);
+        try{
+            String actual = canvas.save();
+            history.applied(actual);
+            lastHistorySnap = actual;
+        }catch(Throwable ignored){
+            history.applied(sugar);
+            lastHistorySnap = sugar;
+        }
+        historyIdle = 0f;
+        refreshHistoryButtons();
+    }
+
+    private void resetEditHistory(){
+        try{
+            String snap = canvas.save();
+            history.reset(snap);
+            lastHistorySnap = snap;
+        }catch(Throwable ignored){
+            history.reset("");
+            lastHistorySnap = "";
+        }
+        historyIdle = 0f;
+        refreshHistoryButtons();
+    }
+
+    private void refreshHistoryButtons(){
+        if(undoButton != null) undoButton.setDisabled(!history.canUndo());
+        if(redoButton != null) redoButton.setDisabled(!history.canRedo());
+    }
+
+    private void installBudgetLabel(){
+        if(buttons.find("instruction-budget") != null){
+            Element found = buttons.find("instruction-budget");
+            if(found instanceof Label label) budgetLabel = label;
+            return;
+        }
+        budgetLabel = new Label("");
+        budgetLabel.setName("instruction-budget");
+        budgetLabel.setAlignment(arc.util.Align.left);
+        budgetLabel.setWrap(true);
+        buttons.add(budgetLabel).name("instruction-budget").left().growX().padLeft(8f).minWidth(160f).height(40f);
+        refreshInstructionBudget();
     }
 
     private void installEditHook(){
@@ -414,6 +573,9 @@ public class SugarLogicDialog extends LogicDialog{
         this.originalCode = null;
         this.recoveredSugar = null;
         this.showingOriginal = false;
+        this.lastBudget = null;
+        this.budgetToastShown = false;
+        this.budgetTimer = 24f;
         clearOriginalViewCache();
         // drafts are keyed by Building; drop entries whose processor is gone so the map
         // cannot grow without bound over a session
@@ -475,6 +637,7 @@ public class SugarLogicDialog extends LogicDialog{
         // LogicDialog normally suppresses equal results. Sugar must always win the
         // close race against remote processor edits, so replace that consumer.
         setConsumer(sugar -> submit(sugar, executor, modified, key, true));
+        resetEditHistory();
     }
 
     private void submit(String sugar, LExecutor executor, Cons<String> modified, Object key, boolean closing){
@@ -530,6 +693,10 @@ public class SugarLogicDialog extends LogicDialog{
         if(executor != null && !passThroughSugarOnError && hasUncompilableExpression()){
             Core.app.post(() -> showCompileError(
                 new IllegalArgumentException(uncompilableExpressionMessage()), true));
+            return;
+        }
+        if(executor != null && !passThroughSugarOnError && overProcessorBudget()){
+            Core.app.post(() -> Vars.ui.showErrorMessage(budgetCloseError().getMessage()));
             return;
         }
         clearCompiledCopyCache();
@@ -614,5 +781,79 @@ public class SugarLogicDialog extends LogicDialog{
     private void showCompileError(IllegalArgumentException exception, boolean draftKept){
         String key = draftKept ? "logicsugar.error.draft" : "logicsugar.error.compile";
         Vars.ui.showErrorMessage(Core.bundle.format(key, exception.getMessage()));
+    }
+
+    /** Recompiles the canvas and updates the live instruction-budget banner. */
+    private void refreshInstructionBudget(){
+        if(!isShown() || budgetLabel == null || canvas == null) return;
+        String sugar;
+        try{
+            sugar = canvas.save();
+        }catch(Throwable ignored){
+            return;
+        }
+        lastBudget = InstructionBudget.of(sugar, SugarCompiler.currentMode(),
+            effectiveLibrary.index, effectiveLibrary.text);
+        int storage = compressedSize(lastBudget);
+        updateBudgetLabel(storage);
+        boolean over = lastBudget.over() || storageOver(storage);
+        if(over && !budgetToastShown){
+            budgetToastShown = true;
+            Vars.ui.showInfoFade(Core.bundle.format("logicsugar.budget.toast",
+                lastBudget.displayCount(), lastBudget.instructionLimit));
+        }
+        if(!over) budgetToastShown = false;
+    }
+
+    private void updateBudgetLabel(int storage){
+        if(budgetLabel == null || lastBudget == null) return;
+        boolean over = lastBudget.over() || storageOver(storage);
+        String text = Core.bundle.format(over ? "logicsugar.budget.over" : "logicsugar.budget",
+            lastBudget.displayCount(), lastBudget.instructionLimit);
+        if(storage >= 0){
+            text += "\n" + Core.bundle.format("logicsugar.budget.storage", storage, maxCompressedBytes);
+        }
+        budgetLabel.setText(text);
+        budgetLabel.setColor(over ? Pal.remove : Color.lightGray);
+    }
+
+    private int compressedSize(InstructionBudget.Snapshot snapshot){
+        if(snapshot == null || snapshot.compiled == null) return -1;
+        if(executor == null || !(executor.build instanceof LogicBlock.LogicBuild build)) return -1;
+        try{
+            return LogicBlock.compress(snapshot.compiled, build.relativeConnections()).length;
+        }catch(Throwable ignored){
+            return -1;
+        }
+    }
+
+    private boolean storageOver(int storage){
+        return storage > maxCompressedBytes;
+    }
+
+    private boolean overProcessorBudget(){
+        String sugar;
+        try{
+            sugar = canvas.save();
+        }catch(Throwable ignored){
+            return false;
+        }
+        lastBudget = InstructionBudget.of(sugar, SugarCompiler.currentMode(),
+            effectiveLibrary.index, effectiveLibrary.text);
+        int storage = compressedSize(lastBudget);
+        updateBudgetLabel(storage);
+        return lastBudget.over() || storageOver(storage);
+    }
+
+    private IllegalArgumentException budgetCloseError(){
+        if(lastBudget != null && lastBudget.over()){
+            String hint = SugarCompiler.currentMode() == SugarCompiler.FuncMode.inline
+                ? Core.bundle.get("logicsugar.error.budget.inlineHint") : "";
+            return new IllegalArgumentException(Core.bundle.format("logicsugar.error.budget",
+                lastBudget.displayCount(), lastBudget.instructionLimit, hint));
+        }
+        int storage = compressedSize(lastBudget);
+        return new IllegalArgumentException(Core.bundle.format("logicsugar.error.storage",
+            storage, maxCompressedBytes));
     }
 }

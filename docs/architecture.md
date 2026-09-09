@@ -16,7 +16,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 入口类 `logicsugar.LogicSugarMod`（`mod.json` 的 `main`），初始化流程：
 
-1. **注册语句**：`registerStatements()` 把 16 种 `SugarStatements` 卡片（`ForBegin` / `WhileBegin` / `SwitchBegin` / `IfBegin` / `Case` / `ElseIf` / `Else` / `Break` / `Continue` / `BlockEnd` / `FuncDef` / `FuncCall` / `Return` / `Array` / `Matrix` / `ArrayInit`）加入 `LogicIO.allStatements`；随后注册数据子系统模块（`DataModules.register(new ArrayBulkModule/RecordModule/ContainerModule/BitsetModule/MapModule/ListHeapModule/ChainModule())`，同时注册表达式 intrinsic provider），再调用 `SugarStatements.installParsers()` 与 `DataModules.registerParsers()` 向 `LAssembler.customParsers` 注册全部 token 解析器（含 `forend` / `whileend` / `switchend` 三个旧开发版本标记的只读兼容，以及 `record` / `stack` / `queue` / `bitset` / `map` / `list` / `heap` / `chain` 八张数据声明卡）。整个 `registerStatements()` 由静态 `registered` 守卫，重复 `init()` 不会重复添加卡片或解析器。这是与反编译器、自测共享的唯一注册点。
+1. **注册语句**：`registerStatements()` 把 16 种 `SugarStatements` 卡片（`ForBegin` / `WhileBegin` / `SwitchBegin` / `IfBegin` / `Case` / `ElseIf` / `Else` / `Break` / `Continue` / `BlockEnd` / `FuncDef` / `FuncCall` / `Return` / `Array` / `Matrix` / `ArrayInit`）加入 `LogicIO.allStatements`；随后注册数据子系统模块（`DataModules.register(new ArrayBulkModule/RecordModule/ContainerModule/BitsetModule/MapModule/SetModule/ListHeapModule/ChainModule())`，同时注册表达式 intrinsic provider），再调用 `SugarStatements.installParsers()` 与 `DataModules.registerParsers()` 向 `LAssembler.customParsers` 注册全部 token 解析器（含 `forend` / `whileend` / `switchend` 三个旧开发版本标记的只读兼容，以及 `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 十张数据声明卡）。整个 `registerStatements()` 由静态 `registered` 守卫，重复 `init()` 不会重复添加卡片或解析器。这是与反编译器、自测共享的唯一注册点。
 2. **接管编辑器**：`ClientLoadEvent` 后把 `Vars.ui.logic` 换成 `SugarLogicDialog`（构造函数内使用 `SugarCanvas`）。替换前把旧对话框上除 canvas/buttons 外的子元素（如 MindustryX 的逻辑辅助浮层）按 z 顺序迁移到新对话框。
 3. **挂辅助功能**：`BoxSelect.init()`（框选）、`ExprHook.init()`（表达式语句）、`VarDisplayFilter.init()`（隐藏 `__ls_*` 内部变量），并注册关闭对话框时清空跳转线着色缓存。
 
@@ -41,7 +41,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - `ShortCircuitCompiler`：把 `&&` / `||` 谓词下降为条件 `jump`，按控制流顺序发射（不产生先行求值的布尔临时变量）；不依赖任何 Mindustry 类，便于在编译期与反编译恢复两侧复用。`whilebegin exprsc …` 等带 `c` 后缀的解析变体对应"折叠式表达式条件"（collapsed）。
 - `RecoveryPredicate`：无依赖的谓词树模型（`EAGER` / `SHORT_CIRCUIT` / `UNKNOWN` 求值方式、loss/score 度量），供恢复代码在触碰游戏 API 之前构建与打分候选。
 
-## 数据子系统（数组批量运算 / 矩阵 / 记录 / 容器 / 位集 / 哈希表 / 列表 / 堆 / 链表）
+## 数据子系统（数组批量运算 / 矩阵 / 记录 / 容器 / 位集 / 哈希表 / 集合 / 列表 / 堆 / 链表）
 
 数据子系统把「内存块上的结构化数据」做成纯编译期抽象：声明卡只是元数据，lower 阶段整体跳过、不产指令；所有运算降级为原版 `read` / `write` / `op` / `funccall` / `jump`，产物仍是原版可解析的 mlog，联机（含自建服）与单机行为一致。
 
@@ -58,19 +58,21 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 数组 | `array <name> <memory> <base> <size>` | `buf[i]`、`len(buf)` | `read` / `write`；`len` 折叠为 `size` |
 | 数组初始化 | `arrayinit <name> <v0>…<v7>` | —（卡片位置即写入位置） | 最多 8 条 `write`（`~` 跳过） |
 | 矩阵 | `matrix <name> <memory> <base> <rows> <cols>` | `m[i][j]` 读 / 写 | 地址 = `base + i*cols + j`；字面量编译期折叠，越界报错 |
-| 批量数组运算 | 复用 `array` / `matrix` | `sum` `avg` `min` `max` `count` `indexof` `fill` `copy` `sortasc` `sortdesc` | 注入函数 `__ls_builtin_arr*` |
+| 批量数组运算 | 复用 `array` / `matrix` | `sum` `avg` `min` `max` `count` `indexof` `fill` `copy` `sortasc` `sortdesc` `reverse` `replace` `swap` `bsearch` | 注入函数 `__ls_builtin_arr*` |
 | 记录 | `record <name> <f1>…<f8>` | `p.f1` 读 / `p.f1 = expr` 写 | 普通变量 `<name>_<field>` |
 | 栈 | `stack <name> <memory> <base> <size>` | `spush` `spop` `speek` `ssize` `sclear` | `read` / `write` + `__ls_stk_<name>_top` |
 | 队列 | `queue <name> <memory> <base> <size>` | `qpush` `qpop` `qpeek` `qsize` `qclear` | `read` / `write` + `__ls_que_<name>_head/_tail/_count` |
+| 双端队列 | `deque <name> <memory> <base> <size>` | `dpushf` `dpushb` `dpopf` `dpopb` `dpeekf` `dpeekb` `dsize` `dclear` | 与队列同一环形缓冲；前端 push 走 `__ls_builtin_deqpushf`，后端 push 复用队列 builtin；状态 `__ls_deq_<name>_head/_tail/_count` |
 | 位集 | `bitset <name> <memory> <base> <words>` | `bset` `bclr` `btest` `bcount` | 每 word 64 位，`and` / `or` / `shl` / `shr` + `read` / `write` |
 | 哈希表 | `map <name> <memory> <base> <capacity>` | `mapset` `mapget` `maphas` `mapdel` `mapsize` `mapclear` | 开放寻址；键区 `[base, base+capacity)`、值区 `[base+capacity, base+2*capacity)`；`hash = abs(key) % capacity`，线性探测 |
+| 集合 | `uset <name> <memory> <base> <capacity>` | `uadd` `uhas` `udel` `usize` `uclear` | 只占用键区 `[base, base+capacity)`，探测与哈希表相同；token 不能是 `set`（原版 opcode） |
 | 列表 | `list <name> <memory> <base> <size>` | `lappend` `lget` `lset` `linsert` `lremove` `lfind` `lsize` | `read` / `write` + `__ls_lst_<name>_count` |
 | 堆（小顶） | `heap <name> <memory> <base> <size>` | `hpush` `hpop` `hsize` | `read` / `write` + `__ls_hep_<name>_count` |
 | 链表 | `chain <name> <memory> <base> <size>` | `cinit` `cclear` `cnew` `cfree` `cget` `cset` `cnext` `clink` `cshead` `chead` `clen` | 节点 i 的值槽 `base+2*i`、next 槽 `base+2*i+1`（`next = -1` 为链尾）；`read` / `write` + `__ls_chn_<name>_head/_free` |
 
-- **容量检查**：`memory` 形如 `cellN` 容量 64、`bankN` / `worldN` 容量 512（大小写不敏感），`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`）超容量编译期报错；其它名字跳过。
+- **容量检查**：`memory` 形如 `cellN` 容量 64、`bankN` / `worldN` 容量 512（大小写不敏感），`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`，集合为 `base+capacity`）超容量编译期报错；其它名字跳过。
 - **越界断言**：仅 `AssertEmit=emit` 的调试构建下、下标为非常量时，在 `read` / `write` 前发射 `assertBounds`（复用 `SugarAsserts` 线格式）；`strip` 模式不发射。数组/矩阵字面量越界始终是编译错误。
-- **空容器语义**：pop / peek 在空时返回 NaN（`op div <tmp> 0 0` 或越界 `read`）；push 在满时返回当前长度且不写入；`lget` 越界返回 NaN，`lset` / `linsert` / `hpush` 失败返回 0，`lremove` 越界返回 NaN、成功返回被删除值，`lfind` 未找到返回 -1，`mapget` 未命中返回 NaN，`mapset` 在 NaN/±Inf 键上返回 -1；链表 `cget` 越界返回 NaN，`cset` / `clink` / `cfree` 越界返回 0，`cnext` 越界返回 -1，`cnew` 在空闲链为空时返回 -1，`clen` 空链返回 0。
+- **空容器语义**：pop / peek 在空时返回 NaN（`op div <tmp> 0 0` 或越界 `read`）；push 在满时返回当前长度且不写入；`lget` 越界返回 NaN，`lset` / `linsert` / `hpush` 失败返回 0，`lremove` 越界返回 NaN、成功返回被删除值，`lfind` 未找到返回 -1，`mapget` 未命中返回 NaN，`mapset` / `uadd` 在 NaN/±Inf 键上返回 -1；链表 `cget` 越界返回 NaN，`cset` / `clink` / `cfree` 越界返回 0，`cnext` 越界返回 -1，`cnew` 在空闲链为空时返回 -1，`clen` 空链返回 0。`bsearch` 在升序数组上未命中返回 -1。
 - **保留命名空间**：隐藏状态变量与注入函数名都以 `__ls_` 开头（`VarDisplayFilter` 自动隐藏，用户声明名使用该前缀会被模块拒绝）。记录字段变量 `<name>_<field>` 是普通用户变量，不隐藏、可调试。
 
 ### 单机 / 联机与 1000 指令约束
@@ -81,9 +83,9 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 ### 已知限制
 
 - **跨模块校验未统一**：每个模块只严格校验「自己声明的结构 + `array`/`matrix`」。不同模块之间（如 `stack` 与 `list` 共用同一内存块且区间重叠，或跨结构重名）不做统一校验，需要用户自行避免；统一程序级名字/区间表需要改各模块的 `collect` 口径，属后续工作。
-- **哈希表**：不支持字符串键；键比较沿用原版 `equal` 的 1e-6 容差；首次使用前必须调用 `mapclear(m)`（未初始化槽读回数字 0，会被当作「已占用且 key = 0」）；删除是墓碑策略——只把 key 槽写成 NaN，value 槽保留，探测是整表环形扫描因此墓碑不会截断探测链。
+- **哈希表 / 集合**：不支持字符串键；键比较沿用原版 `equal` 的 1e-6 容差；首次使用前必须调用 `mapclear(m)` / `uclear(s)`（未初始化槽读回数字 0，会被当作「已占用且 key = 0」）；删除是墓碑策略——只把 key 槽写成 NaN，探测是整表环形扫描因此墓碑不会截断探测链。集合只占用 `capacity` 个槽，没有 value 区。
 - **链表**：首次使用前必须调用一次 `cinit(c)` / `cclear(c)`——未赋值变量读作 0，不初始化直接 `cnew` 会把 0 号节点当成空闲节点；`cfree` 不检测重复释放，把已在空闲链上的节点再次释放会让空闲链成环；`clen` / `cfree` 的遍历在用户手工 `clink` 造出环时不会终止，链表不变量（next 槽只由本模块写入、指向合法下标或 -1）由使用者维护。
-- **状态变量不随存档持久化**：隐藏计数是普通 mlog 变量，处理器代码重新载入（存档往返 / 重编译 / 换处理器）后归零，而内存块内容保留；跨存档运行的结构需要在程序开头显式重建状态（`sclear` / `qclear` / 重新初始化内存或计数）。
+- **状态变量不随存档持久化**：隐藏计数是普通 mlog 变量，处理器代码重新载入（存档往返 / 重编译 / 换处理器）后归零，而内存块内容保留；跨存档运行的结构需要在程序开头显式重建状态（`sclear` / `qclear` / `dclear` / 重新初始化内存或计数）。
 - 矩阵不支持 `len()`（用 `rows*cols`）；`len(a, b)` 仍是原版向量长度。
 
 ## 断言子系统（调试构建）
@@ -136,6 +138,19 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 复制变量/打印缓冲 | `assist.VarClipboard` | SugarLogicDialog 按钮行，全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示按钮 |
 | 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器（`Groups.build`，视野外按 hitbox 裁剪）：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；扫描预算按帧时长换算（`min(delta*60,5) × 每帧扫描数`，低帧率不爆发）；设置三滑杆（阈值 0 关闭 / 每帧扫描数 1–5000 档位 / 警告特效）+ 断点三开关（禁用断点 / 断言失败即断点 / 断点分离视角） |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
+| 撤销/重做 | `assist.EditHistory` + `SugarLogicDialog` | 快照栈（最多 80 层）记录 `canvas.save()`；桌面 Ctrl+Z / Ctrl+Y，移动端底部 Undo/Redo 按钮。纯编辑器状态，不改保存产物 |
+
+### 调色板分类
+
+Sugar 卡片不再全部挤在原版 Flow Control 里：
+
+| 分类 id | 文案 | 卡片 |
+| --- | --- | --- |
+| `advcontrol` | Advanced Flow Control | For / While / Switch / If / Case / Elif / Else / Break / Continue / BlockEnd / FuncDef / FuncCall / Return |
+| `datastruct` | Data Structures | record / stack / queue / deque / bitset / map / uset / list / heap / chain |
+| `arrayalgo` | Array Algorithms | array / matrix / arrayinit（`sum`/`reverse`/`bsearch` 等仍是表达式，不是额外卡片） |
+| `asserts` | Assertions | 既有断言卡 |
+| 原版 `control` / `operation` | Flow Control / Operations | 原版 jump/end 与 `ExprStatement` |
 
 ### 结构语句布局
 
@@ -143,13 +158,19 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ## 上游版本适配笔记（v155.4 → v160 前瞻）
 
-LogicSugar 编译与测试钉在上游 Mindustry v155.4（`build.gradle` 的 `mindustryVersion`，`mod.json` 的 `minGameVersion: "155"`）。本节记录上游（Anuken/Mindustry）v159.4 之后、面向 v160 的 Logic 相关改动（基于 Mindustry-master 工作区核实，区间 `894bab4ecd..c81d0eb025`，2026-08-26 ~ 09-05），每条给出上游变化、对 LogicSugar 的影响与适配时机。本节涉及的 `mindustry.logic.*` 成员访问结论必须与 `AGENTS.md` 保持一致，冲突时以 `AGENTS.md` 为准。
+本分支运行口径是 Mindustry BE 27771（`mod.json` 的 `minGameVersion`）；CI 仍钉 Anuken/Mindustry v155.4 快照，用来保证功能代码不绑死 BE 独有 API。本节记录上游（Anuken/Mindustry）v159.4 之后、面向 v160 的 Logic 相关改动（基于 Mindustry-master 核实，区间 `894bab4ecd..c81d0eb025`，2026-08-26 ~ 09-05；MemoryBlock 对象存储于 2026-09-09 再对 master 核对），每条给出上游变化、对 LogicSugar 的影响与适配时机。本节涉及的 `mindustry.logic.*` 成员访问结论必须与 `AGENTS.md` 保持一致，冲突时以 `AGENTS.md` 为准。
 
 ### 内存对象存储（上游 #12459，fac33d08d）
 
-- **上游变化**：`MemoryBlock` 改为双数组（数字数组 + 对象数组 + 哨兵），logic 的 `read` / `write` 可存取对象（单位、方块等）；存档经 `TypeIO.writeObject` 序列化并带 version 迁移（旧存档全按数字读回）。**行为变化：越界 `read` 从返回 NaN 改为返回 null**。
-- **影响/风险**：v155.4 的内存 cell 只存数字、越界 `read` 返回 NaN，LogicSugar 的产物与测试目前都建立在这套语义上（`assertTypeTest` 已为「内存对象存储」场景预留 number/对象分型）。`MlogLint` 当前只做 token 形状检查、不涉及内存语义；未来若加入内存/类型检查，必须按 `minGameVersion` 区分「越界=NaN（旧语义）」与「越界=null（新语义）」两套规则。
-- **适配动作**：现在无需改动。升级 `minGameVersion` 时：复查内存相关文档与测试的 NaN 假设，为 `MlogLint` 的内存/类型规则引入按版本分叉的语义。
+- **上游变化**：`MemoryBlock` 改为双数组（数字数组 + 对象数组 + 哨兵），logic 的 `read` / `write` 可存取对象（单位、方块等）；存档经 `TypeIO.writeObject` 序列化并带 version 迁移（旧存档全按数字读回）。**行为变化：越界 `read` 从返回 NaN 改为返回 null**。2026-09-09 的 Anuken/Mindustry master 已落地：`MemoryBuild.read` 越界走 `output.setobj(null)`。
+- **影响/风险**：v155.4 / v159.7 的内存 cell 只存数字、越界 `read` 返回 NaN，LogicSugar 的产物与测试目前都建立在这套语义上（`assertTypeTest` 已为「内存对象存储」场景预留 number/对象分型）。栈/队列/双端队列的空 pop/peek 用越界 `read` 地址 −1 作为 NaN 哨兵，因此在已含 #12459 的 BE/master 上会读回 **null** 而不是 NaN；哈希表/集合的空槽仍靠 `op div 0 0` 写出 NaN 再用 `strictEqual` 判定，不受越界语义影响。`MlogLint` 当前只做 token 形状检查、不涉及内存语义。
+- **适配动作**：现在不改 lowering（与既有栈/队列一致，且 27771 是否已含 #12459 随 BE 构建而变）。bump 到确定含 #12459 的 `minGameVersion` 时：空容器哨兵改为不依赖越界 `read`（例如 `op div 0 0`），并为 `MlogLint` 引入按版本分叉的越界语义。空槽判定保持 `strictEqual`，不要改成 `equal`。
+
+### 本批功能与 BE 新 logic（deque / uset / 数组算法 / 撤销）
+
+- **结论**：不依赖 BE 新增 opcode。声明卡与 bulk 运算仍降级为 `read`/`write`/`op`/`jump`/`funccall`；撤销/重做只改编辑器内存里的 sugar 文本，保存产物不变。本仓库调色板按钮走 `name()` / `logicsugar.localizeCards`，不调用 `localizedName()`。
+- **本地化**：上游 `LStatement.statementKey()` 默认是 `typeName().toLowerCase()`；数据声明卡的 `typeName()` 是 token，因此键是 `instruction.deque` / `instruction.uset` 等，而不是类名 `dequedecl`。集合声明 token 必须是 `uset`，避免与原版 opcode `set` 冲突。
+- **适配动作**：现在无需为这些功能分叉 v159.7 / v160 API。调色板继续用 `name()`；bundle 同时保留 `instruction.<token>` 与旧的 `instruction.*decl` 别名。bump `minGameVersion` 时按上一节复查 MemoryBlock 对象存储即可。
 
 ### LAccess cleanup（b9189a5570 + 023a4ff1）
 
@@ -190,11 +211,11 @@ bump 到新上游版本时按序执行：
 ```text
 src/logicsugar/           模组侧：入口、设置、函数库、FunctionLibraryDialog
 src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter、MlogLint、
-                          VarClipboard、ProcessorStatus、AssertInstructions
+                          VarClipboard、ProcessorStatus、AssertInstructions、EditHistory、InstructionBudget
 src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ArrayRegistry、
                           ShortCircuitCompiler、ExprIntrinsics 与各数据结构的 *Intrinsics
 src/logicsugar/assist/data/  数据子系统：DataModule/DataModules/DataDeclaration 框架 +
-                          ArrayBulkModule、RecordModule、ContainerModule、BitsetModule、MapModule、ListHeapModule
+                          ArrayBulkModule、RecordModule、ContainerModule、BitsetModule、MapModule、SetModule、ListHeapModule
 src/mindustry/logic/      与游戏同包名的扩展层：SugarCompiler、SugarDecompiler、SugarStatements、
                           SugarAsserts、SugarCanvas、SugarLogicDialog、SugarFunctions、RecoveryPredicate、MlogCFG
 test/                     与 src 同构的 main() 式自测（无 JUnit）

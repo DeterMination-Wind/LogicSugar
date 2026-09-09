@@ -67,6 +67,10 @@ public class SugarCanvas extends LCanvas{
     private static final Field addressLabelField = optionalField(LCanvas.StatementElem.class, "addressLabel");
     private static final Field needsLayoutField = optionalField(WidgetGroup.class, "needsLayout");
 
+    public Runnable afterMutate;
+    /** 为 true 时 {@link #add}/{@link #addAt} 不通知历史（{@link #load} 期间）。 */
+    public boolean suppressHistory;
+
     public SugarCanvas(){
         super();
         setLayoutSpace();
@@ -79,14 +83,20 @@ public class SugarCanvas extends LCanvas{
 
     @Override
     public void load(String asm){
-        BoxSelect.canvasWillChange(this);
-        super.load(asm);
-        BoxSelect.canvasDidChange(this);
-        // super.load() 先清空了 jumpLayer（statements.jumps.clear()），结构引导线层
-        // 随之被移除；installGuideLayer 只在 rebuild() 里调用（重开才触发），所以
-        // 这里必须重装，否则粘贴导入后所有结构竖线消失且新增/删除语句都无法恢复。
-        installGuideLayer();
-        ExprHook.foldAll(this);
+        boolean previous = suppressHistory;
+        suppressHistory = true;
+        try{
+            BoxSelect.canvasWillChange(this);
+            super.load(asm);
+            BoxSelect.canvasDidChange(this);
+            // super.load() 先清空了 jumpLayer（statements.jumps.clear()），结构引导线层
+            // 随之被移除；installGuideLayer 只在 rebuild() 里调用（重开才触发），所以
+            // 这里必须重装，否则粘贴导入后所有结构竖线消失且新增/删除语句都无法恢复。
+            installGuideLayer();
+            ExprHook.foldAll(this);
+        }finally{
+            suppressHistory = previous;
+        }
     }
 
     @Override
@@ -379,6 +389,7 @@ public class SugarCanvas extends LCanvas{
     @Override
     public void add(LStatement statement){
         statements.addChild(new SugarStatementElem(statement));
+        notifyMutate();
     }
 
     @Override
@@ -394,6 +405,12 @@ public class SugarCanvas extends LCanvas{
             markJumpHeightsDirty(this);
         }
         structure.refresh();
+        notifyMutate();
+    }
+
+    private void notifyMutate(){
+        if(suppressHistory || afterMutate == null) return;
+        afterMutate.run();
     }
 
     public static void refreshCurrent(){

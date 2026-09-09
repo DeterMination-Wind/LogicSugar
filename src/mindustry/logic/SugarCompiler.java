@@ -163,6 +163,16 @@ public final class SugarCompiler{
         return null;
     }
 
+    /**
+     * Counts executable lines the same way the instruction-limit check does: labels are
+     * skipped, and the comment marker block is stripped so it does not inflate the total.
+     * Used by the editor budget banner; vanilla programs (no markers) are counted as-is.
+     */
+    public static int emittedInstructionCount(String code){
+        if(code == null || code.isEmpty()) return 0;
+        return countInstructions(new StringBuilder(stripMarkers(code)));
+    }
+
     /** Removes the comment marker block (the redundant sugar source) from compiled code.
      *  The persistence carriers are kept, so restore() still works afterwards. */
     public static String stripMarkers(String code){

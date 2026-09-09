@@ -33,7 +33,7 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
                                       # varClipboardTest, processorStatusTest, assertTest, assertTypeTest, arrayTest,
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
-                                      # mapTest, listHeapTest, chainTest, dataSubsystemTest
+                                      # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 
@@ -89,7 +89,9 @@ so saved programs stay vanilla-parseable and multiplayer-safe.
   plus exactly one `DataModules.register(new <Module>())` line in
   `LogicSugarMod.registerStatements()` (registration is idempotent by `id()`, and
   `DataModules.registerParsers()` installs the declaration-card parsers). Do not hardcode a module in
-  production code outside that registration list.
+  production code outside that registration list. Deque is **not** a new module: it extends
+  `ContainerModule` / `ContainerIntrinsics`. Unordered set uses token `uset` (vanilla opcode `set`
+  is forbidden).
 - Injected functions use the `__ls_builtin_*` prefix. They are merged into the compile-time
   `LibraryIndex` via `SugarFunctions.withBuiltins` but must never enter the user function library or
   the `__ls_lib` carrier (`extractLibrarySource` only sees user library text). Unused builtins stay out
@@ -116,7 +118,7 @@ the Neon main repo's docs:
   pipelines, expression subsystem, cross-loader constraint, decompiler gate, layout map.
 - `docs/development.md` — environment, Gradle commands, artifact chain, style rules.
 - `docs/release.md` — version scheme, `deploy`/D8 pipeline, Release asset safety rules.
-- `docs/testing.md` — the twenty-three JavaExec self-test tasks, new-test conventions, manual
+- `docs/testing.md` — the twenty-five JavaExec self-test tasks, new-test conventions, manual
   checklist.
 - `docs/glossary.md` — project terminology (carrier, FuncMode, SwitchStrategy, gate, …).
 

@@ -7,7 +7,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 数组批量运算的表达式扩展（{@code sum/avg/min/max/count/indexof/fill/copy/sortasc/sortdesc}）。
+ * 数组批量运算的表达式扩展（{@code sum/avg/min/max/count/indexof/fill/copy/sortasc/sortdesc}、
+ * {@code reverse/replace/swap/bsearch}）。
  *
  * <p>参数必须是<b>已声明数组名</b>（{@link ArrayRegistry} 的一维 {@code array} 或二维
  * {@code matrix}；矩阵按行主序摊平为 {@code rows*cols} 个元素）。编译期解析出
@@ -32,9 +33,14 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
     public static final String BUILTIN_FILL = "__ls_builtin_arrfill";
     public static final String BUILTIN_COPY = "__ls_builtin_arrcopy";
     public static final String BUILTIN_SORT = "__ls_builtin_arrsort";
+    public static final String BUILTIN_REVERSE = "__ls_builtin_arrrev";
+    public static final String BUILTIN_REPLACE = "__ls_builtin_arrrepl";
+    public static final String BUILTIN_SWAP = "__ls_builtin_arrswap";
+    public static final String BUILTIN_BSEARCH = "__ls_builtin_arrbsearch";
 
     private static final String[] CALL_NAMES = {
-        "sum", "avg", "min", "max", "count", "indexof", "fill", "copy", "sortasc", "sortdesc"
+        "sum", "avg", "min", "max", "count", "indexof", "fill", "copy", "sortasc", "sortdesc",
+        "reverse", "replace", "swap", "bsearch"
     };
 
     private ArrayBulkIntrinsics(){}
@@ -53,12 +59,17 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
             case "max":
             case "sortasc":
             case "sortdesc":
+            case "reverse":
                 return 1;
             case "count":
             case "indexof":
             case "fill":
             case "copy":
+            case "bsearch":
                 return 2;
+            case "replace":
+            case "swap":
+                return 3;
             default:
                 return -1;
         }
@@ -77,6 +88,10 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
             case "sortasc": return arrayOp(BUILTIN_SORT, name, args, ctx, "1");
             case "sortdesc": return arrayOp(BUILTIN_SORT, name, args, ctx, "-1");
             case "copy": return copyOp(args, ctx);
+            case "reverse": return arrayOp(BUILTIN_REVERSE, name, args, ctx);
+            case "replace": return replaceOp(args, ctx);
+            case "swap": return swapOp(args, ctx);
+            case "bsearch": return valueOp(BUILTIN_BSEARCH, name, args, ctx);
             default: return null;
         }
     }
@@ -114,6 +129,10 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
         result.add(fill());
         result.add(copy());
         result.add(sort());
+        result.add(reverse());
+        result.add(replace());
+        result.add(swap());
+        result.add(bsearch());
         return result;
     }
 
@@ -130,6 +149,10 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
             case "sortasc":
             case "sortdesc":
                 return BUILTIN_SORT;
+            case "reverse": return BUILTIN_REVERSE;
+            case "replace": return BUILTIN_REPLACE;
+            case "swap": return BUILTIN_SWAP;
+            case "bsearch": return BUILTIN_BSEARCH;
             default:
                 return null;
         }
@@ -166,6 +189,26 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
         List<String> operands = new ArrayList<>();
         Collections.addAll(operands, dst[0], dst[1], src[0], src[1], dst[2]);
         return emit(BUILTIN_COPY, ctx, operands);
+    }
+
+    private static List<ExprCompiler.Line> replaceOp(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        String[] flat = flat("replace", args.get(0), ctx);
+        String oldValue = ctx.compile(args.get(1));
+        String newValue = ctx.compile(args.get(2));
+        List<String> operands = new ArrayList<>();
+        Collections.addAll(operands, flat);
+        operands.add(oldValue);
+        operands.add(newValue);
+        return emit(BUILTIN_REPLACE, ctx, operands);
+    }
+
+    private static List<ExprCompiler.Line> swapOp(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
+        String[] flat = flat("swap", args.get(0), ctx);
+        String i = ctx.compile(args.get(1));
+        String j = ctx.compile(args.get(2));
+        List<String> operands = new ArrayList<>();
+        Collections.addAll(operands, flat[0], flat[1], i, j);
+        return emit(BUILTIN_SWAP, ctx, operands);
     }
 
     /** 解析「已声明数组名」实参，返回 {memory, base, size} 三个操作数文本。 */
@@ -325,6 +368,82 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
         f.write("__ls_bs_key", "mem", "__ls_bs_aj3");
         f.blockEnd("L_OUTER");
         f.line("return \"size\"");
+        return f.build();
+    }
+
+    /** 原地反转 [base, base+size)。 */
+    private static String reverse(){
+        Fn f = new Fn(BUILTIN_REVERSE, "mem,base,size");
+        f.set("__ls_bs_i", "0");
+        f.op("sub", "__ls_bs_j", "size", "1");
+        f.whileBegin("__ls_bs_i", "lessThan", "__ls_bs_j", "L_END");
+        f.op("add", "__ls_bs_a", "base", "__ls_bs_i");
+        f.op("add", "__ls_bs_b", "base", "__ls_bs_j");
+        f.read("__ls_bs_x", "mem", "__ls_bs_a");
+        f.read("__ls_bs_y", "mem", "__ls_bs_b");
+        f.write("__ls_bs_x", "mem", "__ls_bs_b");
+        f.write("__ls_bs_y", "mem", "__ls_bs_a");
+        f.op("add", "__ls_bs_i", "__ls_bs_i", "1");
+        f.op("sub", "__ls_bs_j", "__ls_bs_j", "1");
+        f.blockEnd("L_END");
+        f.line("return \"size\"");
+        return f.build();
+    }
+
+    /** 把等于 old 的元素换成 neu，返回替换次数。 */
+    private static String replace(){
+        Fn f = new Fn(BUILTIN_REPLACE, "mem,base,size,old,neu");
+        f.set("__ls_bs_acc", "0");
+        f.forBegin("__ls_bs_i", "0", "1", "lessThan", "size", "L_END");
+        f.op("add", "__ls_bs_addr", "base", "__ls_bs_i");
+        f.read("__ls_bs_v", "mem", "__ls_bs_addr");
+        f.jump("L_SKIP", "notEqual", "__ls_bs_v", "old");
+        f.write("neu", "mem", "__ls_bs_addr");
+        f.op("add", "__ls_bs_acc", "__ls_bs_acc", "1");
+        f.label("L_SKIP");
+        f.blockEnd("L_END");
+        f.line("return \"__ls_bs_acc\"");
+        return f.build();
+    }
+
+    /** 交换下标 i 与 j（不做运行时越界检查，与 fill 等一致）。 */
+    private static String swap(){
+        Fn f = new Fn(BUILTIN_SWAP, "mem,base,i,j");
+        f.op("add", "__ls_bs_a", "base", "i");
+        f.op("add", "__ls_bs_b", "base", "j");
+        f.read("__ls_bs_x", "mem", "__ls_bs_a");
+        f.read("__ls_bs_y", "mem", "__ls_bs_b");
+        f.write("__ls_bs_x", "mem", "__ls_bs_b");
+        f.write("__ls_bs_y", "mem", "__ls_bs_a");
+        f.line("return \"i\"");
+        return f.build();
+    }
+
+    /** 升序数组上的二分查找：命中返回下标，否则 -1。 */
+    private static String bsearch(){
+        Fn f = new Fn(BUILTIN_BSEARCH, "mem,base,size,v");
+        f.set("__ls_bs_lo", "0");
+        f.set("__ls_bs_hi", "size");
+        f.label("LOOP");
+        f.jump("DONE", "greaterThanEq", "__ls_bs_lo", "__ls_bs_hi");
+        f.op("add", "__ls_bs_mid", "__ls_bs_lo", "__ls_bs_hi");
+        f.op("idiv", "__ls_bs_mid", "__ls_bs_mid", "2");
+        f.op("add", "__ls_bs_addr", "base", "__ls_bs_mid");
+        f.read("__ls_bs_cur", "mem", "__ls_bs_addr");
+        f.jump("GO_LO", "lessThan", "__ls_bs_cur", "v");
+        f.set("__ls_bs_hi", "__ls_bs_mid");
+        f.jump("LOOP", "always", "x", "false");
+        f.label("GO_LO");
+        f.op("add", "__ls_bs_lo", "__ls_bs_mid", "1");
+        f.jump("LOOP", "always", "x", "false");
+        f.label("DONE");
+        f.jump("MISS", "greaterThanEq", "__ls_bs_lo", "size");
+        f.op("add", "__ls_bs_addr", "base", "__ls_bs_lo");
+        f.read("__ls_bs_cur", "mem", "__ls_bs_addr");
+        f.jump("MISS", "notEqual", "__ls_bs_cur", "v");
+        f.line("return \"__ls_bs_lo\"");
+        f.label("MISS");
+        f.line("return \"-1\"");
         return f.build();
     }
 

@@ -66,6 +66,10 @@ public class ArrayBulkTest{
             checkLine("funccall __ls_builtin_arrfill \"cell1, 0, 8, 5\" x", textOf(ExprCompiler.compile("x", "fill(buf, 5)")));
             checkLine("funccall __ls_builtin_arrsort \"cell1, 0, 8, 1\" x", textOf(ExprCompiler.compile("x", "sortasc(buf)")));
             checkLine("funccall __ls_builtin_arrsort \"cell1, 0, 8, -1\" x", textOf(ExprCompiler.compile("x", "sortdesc(buf)")));
+            checkLine("funccall __ls_builtin_arrrev \"cell1, 0, 8\" x", textOf(ExprCompiler.compile("x", "reverse(buf)")));
+            checkLine("funccall __ls_builtin_arrrepl \"cell1, 0, 8, 1, 9\" x", textOf(ExprCompiler.compile("x", "replace(buf, 1, 9)")));
+            checkLine("funccall __ls_builtin_arrswap \"cell1, 0, i, j\" x", textOf(ExprCompiler.compile("x", "swap(buf, i, j)")));
+            checkLine("funccall __ls_builtin_arrbsearch \"cell1, 0, 8, 3\" x", textOf(ExprCompiler.compile("x", "bsearch(buf, 3)")));
             // 大小写不敏感（与 ExprCompiler 的数学内置一致）
             checkLine("funccall __ls_builtin_arrsum \"cell1, 0, 8\" x", textOf(ExprCompiler.compile("x", "SUM(buf)")));
             // 表达式链里与其它运算组合：实参先编译，再发调用
@@ -227,7 +231,7 @@ public class ArrayBulkTest{
             && SugarFunctions.paramsOf("__ls_builtin_arrsum", null).equals(Arrays.asList("mem", "base", "size")),
             "builtin params are not visible to paramsOf");
         check(DataModules.builtinFunctionNames().contains("__ls_builtin_arrsort"), "builtin names are not exposed");
-        check(ArrayBulkIntrinsics.builtinSugar().size() == 9, "expected 9 builtin function bodies");
+        check(ArrayBulkIntrinsics.builtinSugar().size() == 13, "expected 13 builtin function bodies");
     }
 
     private static final Set<String> vanillaOpcodes = new HashSet<>(Arrays.asList(

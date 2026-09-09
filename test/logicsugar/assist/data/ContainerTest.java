@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 栈 + 队列自测（{@link ContainerModule} + {@link ContainerIntrinsics}）。
+ * 栈 + 队列 + 双端队列自测（{@link ContainerModule} + {@link ContainerIntrinsics}）。
  *
  * <p>覆盖：</p>
  * <ul>
@@ -46,9 +46,11 @@ public class ContainerTest{
 
         stackSequences();
         queueSequences();
+        dequeSequences();
         builtinBodies();
         stackBehaviour();
         queueBehaviourAndWraparound();
+        dequeBehaviour();
         builtinInjectionAndSharing();
         unusedBuiltinStaysOut();
         declarationErrors();
@@ -151,9 +153,77 @@ public class ContainerTest{
         });
     }
 
+    private static void dequeSequences(){
+        withRegistry("deque d cell2 0 4", () -> {
+            checkLine("op add x __ls_deq_d_count 0", textOf(ExprCompiler.compile("x", "dsize(d)")));
+            checkLine("op add __ls_deq_d_head 0 0\n"
+                + "op add __ls_deq_d_tail 0 0\n"
+                + "op add __ls_deq_d_count 0 0\n"
+                + "op add x 0 0",
+                textOf(ExprCompiler.compile("x", "dclear(d)")));
+            checkLine("op lessThanEq _0 __ls_deq_d_count 0\n"
+                + "op add _1 0 __ls_deq_d_head\n"
+                + "op add _2 _1 1\n"
+                + "op mul _0 _0 _2\n"
+                + "op sub _1 _1 _0\n"
+                + "read x cell2 _1",
+                textOf(ExprCompiler.compile("x", "dpeekf(d)")));
+            checkLine("op lessThanEq _0 __ls_deq_d_count 0\n"
+                + "op add _3 __ls_deq_d_head __ls_deq_d_count\n"
+                + "op add _3 _3 4\n"
+                + "op sub _3 _3 1\n"
+                + "op mod _3 _3 4\n"
+                + "op add _1 0 _3\n"
+                + "op add _2 _1 1\n"
+                + "op mul _0 _0 _2\n"
+                + "op sub _1 _1 _0\n"
+                + "read x cell2 _1",
+                textOf(ExprCompiler.compile("x", "dpeekb(d)")));
+            checkLine("funccall __ls_builtin_quepush \"cell2, 0, 4, __ls_deq_d_head, __ls_deq_d_count, 7\" __ls_deq_d_count\n"
+                + "op add __ls_deq_d_tail __ls_deq_d_head __ls_deq_d_count\n"
+                + "op mod __ls_deq_d_tail __ls_deq_d_tail 4\n"
+                + "op add x __ls_deq_d_count 0",
+                textOf(ExprCompiler.compile("x", "dpushb(d, 7)")));
+            checkLine("funccall __ls_builtin_deqpushf \"cell2, 0, 4, __ls_deq_d_head, __ls_deq_d_count, 7\" __ls_deq_d_head\n"
+                + "op add _0 __ls_deq_d_count 1\n"
+                + "op min __ls_deq_d_count _0 4\n"
+                + "op add __ls_deq_d_tail __ls_deq_d_head __ls_deq_d_count\n"
+                + "op mod __ls_deq_d_tail __ls_deq_d_tail 4\n"
+                + "op add x __ls_deq_d_count 0",
+                textOf(ExprCompiler.compile("x", "dpushf(d, 7)")));
+            checkLine("op lessThanEq _0 __ls_deq_d_count 0\n"
+                + "op add _1 0 __ls_deq_d_head\n"
+                + "op add _2 _1 1\n"
+                + "op mul _0 _0 _2\n"
+                + "op sub _1 _1 _0\n"
+                + "op min _3 __ls_deq_d_count 1\n"
+                + "op add _4 __ls_deq_d_head _3\n"
+                + "op mod __ls_deq_d_head _4 4\n"
+                + "op sub __ls_deq_d_count __ls_deq_d_count 1\n"
+                + "op max __ls_deq_d_count __ls_deq_d_count 0\n"
+                + "read x cell2 _1",
+                textOf(ExprCompiler.compile("x", "dpopf(d)")));
+            checkLine("op lessThanEq _0 __ls_deq_d_count 0\n"
+                + "op add _1 __ls_deq_d_head __ls_deq_d_count\n"
+                + "op add _1 _1 4\n"
+                + "op sub _1 _1 1\n"
+                + "op mod _1 _1 4\n"
+                + "op add _2 0 _1\n"
+                + "op add _3 _2 1\n"
+                + "op mul _0 _0 _3\n"
+                + "op sub _2 _2 _0\n"
+                + "op sub __ls_deq_d_count __ls_deq_d_count 1\n"
+                + "op max __ls_deq_d_count __ls_deq_d_count 0\n"
+                + "op add __ls_deq_d_tail __ls_deq_d_head __ls_deq_d_count\n"
+                + "op mod __ls_deq_d_tail __ls_deq_d_tail 4\n"
+                + "read x cell2 _2",
+                textOf(ExprCompiler.compile("x", "dpopb(d)")));
+        });
+    }
+
     private static void builtinBodies(){
         List<String> bodies = ContainerIntrinsics.builtinSugar();
-        check(bodies.size() == 2, "expected two injected push bodies");
+        check(bodies.size() == 3, "expected three injected push bodies");
         checkLine("funcdef __ls_builtin_stkpush mem,base,size,top,v 8\n"
             + "jump 6 greaterThanEq top size\n"
             + "op add __ls_ct_a base top\n"
@@ -174,6 +244,18 @@ public class ContainerTest{
             + "op add __ls_ct_r size 0\n"
             + "return \"__ls_ct_r\"\n"
             + "blockend\n", bodies.get(1));
+        checkLine("funcdef __ls_builtin_deqpushf mem,base,size,head,count,v 11\n"
+            + "jump 9 greaterThanEq count size\n"
+            + "op add __ls_ct_h head size\n"
+            + "op sub __ls_ct_h __ls_ct_h 1\n"
+            + "op mod __ls_ct_h __ls_ct_h size\n"
+            + "op add __ls_ct_a base __ls_ct_h\n"
+            + "write v mem __ls_ct_a\n"
+            + "op add __ls_ct_r __ls_ct_h 0\n"
+            + "jump 10 always x false\n"
+            + "op add __ls_ct_r head 0\n"
+            + "return \"__ls_ct_r\"\n"
+            + "blockend\n", bodies.get(2));
         // 编辑器可见性：注入函数参数表与名字集合
         check(SugarFunctions.paramsOf(ContainerIntrinsics.BUILTIN_STACK_PUSH, null) != null
             && SugarFunctions.paramsOf(ContainerIntrinsics.BUILTIN_STACK_PUSH, null)
@@ -310,10 +392,67 @@ public class ContainerTest{
         });
     }
 
+    private static void dequeBehaviour(){
+        withRegistry("deque d cell2 0 4", () -> {
+            double[] memory = new double[64];
+            Map<String, Double> vars = new HashMap<>();
+
+            exec("dsize(d)", vars, memory);
+            check(num(vars, "x") == 0, "empty deque size must be 0");
+            exec("dpeekf(d)", vars, memory);
+            check(Double.isNaN(raw(vars, "x")), "empty dpeekf must return NaN");
+            exec("dpeekb(d)", vars, memory);
+            check(Double.isNaN(raw(vars, "x")), "empty dpeekb must return NaN");
+            exec("dpopf(d)", vars, memory);
+            check(Double.isNaN(raw(vars, "x")), "empty dpopf must return NaN");
+            exec("dpopb(d)", vars, memory);
+            check(Double.isNaN(raw(vars, "x")), "empty dpopb must return NaN");
+
+            exec("dpushb(d, 1)", vars, memory);
+            exec("dpushb(d, 2)", vars, memory);
+            exec("dpushf(d, 0)", vars, memory);
+            check(num(vars, "x") == 3, "mixed deque pushes must report 3");
+            check(dequeTailOk(vars, "d", 4), "tail invariant broken after mixed pushes");
+            exec("dpeekf(d)", vars, memory);
+            check(num(vars, "x") == 0, "front after dpushf must be 0");
+            exec("dpeekb(d)", vars, memory);
+            check(num(vars, "x") == 2, "back after dpushb must be 2");
+            exec("dpopf(d)", vars, memory);
+            check(num(vars, "x") == 0, "pop front must return the most recent front push");
+            exec("dpopb(d)", vars, memory);
+            check(num(vars, "x") == 2, "pop back must return the most recent back push");
+            exec("dpopf(d)", vars, memory);
+            check(num(vars, "x") == 1, "remaining element must be the first back push");
+            check(num(vars, "__ls_deq_d_count") == 0, "deque must be empty after draining");
+
+            for(int v = 1; v <= 4; v++){
+                exec("dpushb(d, " + v + ")", vars, memory);
+            }
+            exec("dpushf(d, 99)", vars, memory);
+            check(num(vars, "x") == 4, "full dpushf must return size");
+            exec("dpushb(d, 99)", vars, memory);
+            check(num(vars, "x") == 4, "full dpushb must return size");
+            exec("dpopf(d)", vars, memory);
+            check(num(vars, "x") == 1, "full-push must not have overwritten the front");
+
+            exec("dclear(d)", vars, memory);
+            check(num(vars, "x") == 0, "dclear must return 0");
+            check(num(vars, "__ls_deq_d_head") == 0 && num(vars, "__ls_deq_d_tail") == 0
+                && num(vars, "__ls_deq_d_count") == 0, "dclear must reset all state");
+        });
+    }
+
     private static boolean tailOk(Map<String, Double> vars, String name, int size){
         long head = (long)num(vars, "__ls_que_" + name + "_head");
         long count = (long)num(vars, "__ls_que_" + name + "_count");
         long tail = (long)num(vars, "__ls_que_" + name + "_tail");
+        return tail == Math.floorMod(head + count, (long)size);
+    }
+
+    private static boolean dequeTailOk(Map<String, Double> vars, String name, int size){
+        long head = (long)num(vars, "__ls_deq_" + name + "_head");
+        long count = (long)num(vars, "__ls_deq_" + name + "_count");
+        long tail = (long)num(vars, "__ls_deq_" + name + "_tail");
         return tail == Math.floorMod(head + count, (long)size);
     }
 
@@ -493,6 +632,8 @@ public class ContainerTest{
         String mlog = stripCompile("stack s cell1 0 4\nifbegin expr \"ssize(s) > 0\" 3\nset x 1\nblockend\n");
         check(!mlog.contains("__ls_builtin"), "unused push builtin leaked into the product:\n" + mlog);
         check(!mlog.contains("__ls_ct_"), "unused push body leaked into the product:\n" + mlog);
+        String dequeOnly = stripCompile("deque d cell1 0 4\nifbegin expr \"dsize(d) > 0\" 3\nset x 1\nblockend\n");
+        check(!dequeOnly.contains("__ls_builtin"), "unused deque push builtin leaked into the product:\n" + dequeOnly);
     }
 
     // ===== 声明校验 =====
@@ -500,7 +641,9 @@ public class ContainerTest{
     private static void declarationErrors(){
         checkRegistryThrows("stack s cell1 0 8\nstack s cell1 8 8", "duplicate stack name");
         checkRegistryThrows("stack s cell1 0 8\nqueue s cell1 8 8", "stack/queue name collision");
+        checkRegistryThrows("stack s cell1 0 8\ndeque s cell1 8 8", "stack/deque name collision");
         checkRegistryThrows("queue q cell1 0 8\nqueue q cell1 8 8", "duplicate queue name");
+        checkRegistryThrows("deque d cell1 0 8\ndeque d cell1 8 8", "duplicate deque name");
         checkRegistryThrows("stack __ls_bad cell1 0 8", "reserved prefix");
         checkRegistryThrows("stack 1bad cell1 0 8", "invalid identifier");
         checkRegistryThrows("stack s cell1 ~ 8", "non-integer base");
@@ -512,16 +655,22 @@ public class ContainerTest{
         checkRegistryThrows("queue q bank1 510 4", "bank capacity overflow");
         checkReadThrows("stack s ~ 0 8", "missing memory cell");
         checkReadThrows("queue q ~ 0 8", "missing memory cell");
+        checkReadThrows("deque d ~ 0 8", "missing memory cell");
 
         // 与 array/matrix 重名：走完整编译（此时 ArrayRegistry 上下文才可见）
         checkCompileThrows("array s cell1 0 4\nstack s cell2 0 8\nset x 1\n", "conflict with an array name");
         checkCompileThrows("matrix m cell1 0 2 2\nqueue m cell2 0 8\nset x 1\n", "conflict with a matrix name");
+        checkCompileThrows("deque d cell1 0 4\nifbegin expr \"qpush(d, 1) > 0\" 3\nset x 1\nblockend\n",
+            "queue op on a deque");
         // 与函数重名
         checkCompileThrows("funcdef s a 3\nop add __ls_dummy a 1\nreturn \"__ls_dummy\"\nblockend\n"
             + "stack s cell1 0 8\nset x 1\n", "conflict with a function name");
         // 同内存块不同区间可以共存（同一注册表内不重叠即合法）
         withRegistry("stack s cell1 0 8\nqueue q cell1 8 8", () -> {
             check(ContainerModule.active().size() == 2, "two containers on one block must be accepted");
+        });
+        withRegistry("deque d cell1 0 4\nqueue q cell1 4 4", () -> {
+            check(ContainerModule.active().size() == 2, "deque and queue on one block must be accepted");
         });
         // 跨模块区间重叠是已知限制（契约 §7）：array 与 stack 重叠不报错
         String crossModule = "array a cell1 0 8\nstack s cell1 0 8\nset x 1\n";

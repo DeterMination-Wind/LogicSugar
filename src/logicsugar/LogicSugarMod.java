@@ -25,6 +25,7 @@ import logicsugar.assist.data.DataModules;
 import logicsugar.assist.data.ListHeapModule;
 import logicsugar.assist.data.MapModule;
 import logicsugar.assist.data.RecordModule;
+import logicsugar.assist.data.SetModule;
 import logicsugar.assist.expr.ExprHook;
 
 import static arc.Events.on;
@@ -110,12 +111,13 @@ public class LogicSugarMod extends Mod{
         DataModules.register(new ContainerModule());
         DataModules.register(new BitsetModule());
         DataModules.register(new MapModule());
+        DataModules.register(new SetModule());
         DataModules.register(new ListHeapModule());
         DataModules.register(new ChainModule());
 
         // single registration point shared with the decompiler preflight and the self-tests
         SugarStatements.installParsers();
-        // record/stack/queue/bitset/map/list/heap/chain declaration cards + parsers
+        // record/stack/queue/deque/bitset/map/uset/list/heap/chain declaration cards + parsers
         DataModules.registerParsers();
     }
 

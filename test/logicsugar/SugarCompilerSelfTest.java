@@ -77,6 +77,7 @@ public class SugarCompilerSelfTest{
         functionRecursionRejected();
         functionUnreachableCostsNothing();
         functionInstructionLimitHint();
+        instructionBudgetDetectsOverLimit();
         functionProgramsExecute();
         libraryFunctions();
         libraryValidationRejected();
@@ -1296,6 +1297,35 @@ public class SugarCompilerSelfTest{
         // the same program in normal mode shares the body and fits
         String normal = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal);
         check(normal.contains("__ls_func_f_entry:"), "normal mode did not share the function body");
+    }
+
+    private static void instructionBudgetDetectsOverLimit(){
+        StringBuilder body = new StringBuilder();
+        for(int i = 0; i < 40; i++) body.append("set v").append(i).append(' ').append(i).append('\n');
+        StringBuilder calls = new StringBuilder();
+        for(int i = 0; i < 30; i++) calls.append("funccall f \"\" ~\n");
+        String sugar = "funcdef f ~ " + (40 + 1) + "\n" + body + "blockend\n" + calls;
+
+        logicsugar.assist.InstructionBudget.Snapshot inline = logicsugar.assist.InstructionBudget.of(
+            sugar, SugarCompiler.FuncMode.inline, null, null);
+        check(inline.over(), "inline blowup should exceed the processor budget");
+        check(inline.displayCount() > LExecutor.maxInstructions, "over-limit count should exceed maxInstructions");
+        check(logicsugar.assist.InstructionBudget.parseLimitCount(
+            "Compiled program has 1401 instructions; maximum is 1000.") == 1401,
+            "limit-error parser should read the compiled count");
+
+        logicsugar.assist.InstructionBudget.Snapshot normal = logicsugar.assist.InstructionBudget.of(
+            sugar, SugarCompiler.FuncMode.normal, null, null);
+        check(!normal.over(), "shared function bodies should fit the processor budget");
+        check(normal.compiled != null, "in-budget compile should keep the compiled text");
+
+        StringBuilder vanilla = new StringBuilder();
+        for(int i = 0; i < LExecutor.maxInstructions + 5; i++){
+            vanilla.append("set x ").append(i).append('\n');
+        }
+        logicsugar.assist.InstructionBudget.Snapshot passthrough = logicsugar.assist.InstructionBudget.of(
+            vanilla.toString(), SugarCompiler.FuncMode.normal, null, null);
+        check(passthrough.over(), "vanilla programs longer than the cap should still flag the budget");
     }
 
     /** Runs a compiled program headless and returns the value of a variable after it ends. */

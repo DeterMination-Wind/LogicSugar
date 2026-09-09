@@ -89,7 +89,7 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 一个数据结构 = 一个 `DataModule` 子类（声明卡解析器 + 编译期注册表 + intrinsic provider + 注入函数源文本）。`DataModules` 是统一驱动点：`register` 登记模块并注册 provider（按 `id()` 幂等），`registerParsers` 安装声明卡解析器，`collectAll`/`restore` 在每次编译前后配对建立/清理程序级注册表（`SugarCompiler` 的 `finally` 保证异常路径也恢复），`markInvalid` 供编辑期标红。
 
 ### 隐藏状态变量
-栈/队列/列表/堆/链表等结构的运行时状态（如 `__ls_stk_<name>_top`、`__ls_que_<name>_head/_tail/_count`、`__ls_lst_<name>_count`、`__ls_chn_<name>_head/_free`）是普通 mlog 变量，用 `__ls_` 保留前缀声明，`VarDisplayFilter` 自动隐藏、用户不得使用同前缀命名。mlog 变量未赋值读取为 0，因此初始状态不需要初始化指令；代价是它们不随存档持久化——处理器代码重新载入后计数归零而内存块内容保留。链表是例外：`head`/`free` 读作 0 会被当成合法节点下标，首次使用前必须显式 `cinit(c)` / `cclear(c)` 重建空闲链。
+栈/队列/列表/堆/链表/双端队列等结构的运行时状态（如 `__ls_stk_<name>_top`、`__ls_que_<name>_head/_tail/_count`、`__ls_deq_<name>_head/_tail/_count`、`__ls_lst_<name>_count`、`__ls_chn_<name>_head/_free`）是普通 mlog 变量，用 `__ls_` 保留前缀声明，`VarDisplayFilter` 自动隐藏、用户不得使用同前缀命名。mlog 变量未赋值读取为 0，因此初始状态不需要初始化指令；代价是它们不随存档持久化——处理器代码重新载入后计数归零而内存块内容保留。链表是例外：`head`/`free` 读作 0 会被当成合法节点下标，首次使用前必须显式 `cinit(c)` / `cclear(c)` 重建空闲链。
 
 ### 注入函数（`__ls_builtin_*`）
 模块提供的 `funcdef` 源文本，经 `SugarFunctions.withBuiltins` 并入本次编译的函数索引。循环型/写内存型操作（push、sort、find、哈希探测等）走注入函数，normal 模式全程序共享一份子程序、未使用不进产物，且不会进入 `__ls_lib` 载体或用户函数库。
@@ -102,6 +102,12 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 
 ### 哈希表（map）
 `map <name> <memory> <base> <capacity>` 声明的开放寻址哈希表：键区 `[base, base+capacity)`、值区 `[base+capacity, base+2*capacity)`，`hash = abs(key) % capacity` 线性探测。首次使用前必须 `mapclear(m)`（未初始化槽读回 0 会被当作已占用 key=0）；不支持字符串键。
+
+### 无序集合（uset）
+`uset <name> <memory> <base> <capacity>` 声明的开放寻址键集合（token 不能是 `set`，那是原版 opcode）。只占用 `[base, base+capacity)`，探测与墓碑策略与哈希表相同；表达式 `uadd`/`uhas`/`udel`/`usize`/`uclear`。首次使用前必须 `uclear(s)`。
+
+### 双端队列（deque）
+`deque <name> <memory> <base> <size>` 声明的双端环形缓冲，状态变量 `__ls_deq_<name>_head/_tail/_count`。`dpushf`/`dpopf`/`dpeekf` 操作前端，`dpushb`/`dpopb`/`dpeekb` 操作后端；满 push 不写入，空 pop/peek 返回 NaN。
 
 ### 链表（chain）
 `chain <name> <memory> <base> <size>` 声明的单链 + 空闲链结构：节点 i 的值槽在 `base+2*i`、next 槽在 `base+2*i+1`，`next = -1` 表示链尾；声明区间 `[base, base+2*size)`。`cnew` 从空闲链 LIFO 取节点并返回下标（空闲链空返回 -1），`cfree` 摘链后挂回空闲链（非法下标返回 0 且不改状态），`clink` 只改 next 槽不校验目标（`-1` 合法），`clen` 沿 next 遍历计数。首次使用前必须 `cinit(c)` / `cclear(c)`。

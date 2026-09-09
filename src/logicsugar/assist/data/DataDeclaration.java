@@ -7,8 +7,8 @@ import mindustry.logic.SugarStatements;
  * 因此产物始终是纯原版指令，联机（含自建服）与单机行为一致。
  *
  * <p>继承 {@link SugarStatements.SugarStatement}：共享「build(LAssembler) 返回 NoopI」与
- * control 分类，并让 {@code SugarCompiler.containsSugar} 把「只有声明卡的程序」也当作
- * sugar 程序编译（否则纯声明卡程序会被原样返回，卡片文本泄漏到产物）。</p>
+ * {@link SugarStatements#dataStructures} 分类，并让 {@code SugarCompiler.containsSugar} 把
+ * 「只有声明卡的程序」也当作 sugar 程序编译（否则纯声明卡程序会被原样返回，卡片文本泄漏到产物）。</p>
  *
  * <p>子类必须实现 {@code write(StringBuilder)} 与 {@code build(Table)}；文本格式必须是
  * 固定 token 数的原版 sugar 行（空槽写 {@code ~}），并配一个
@@ -22,5 +22,10 @@ public abstract class DataDeclaration extends SugarStatements.SugarStatement{
     @Override
     public String typeName(){
         return token();
+    }
+
+    @Override
+    public mindustry.logic.LCategory category(){
+        return SugarStatements.dataStructures;
     }
 }

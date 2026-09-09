@@ -11,7 +11,8 @@ import java.util.Set;
  * 数组批量运算模块（示例模块 + 契约 §1 功能）：
  * {@code sum(buf)} {@code avg(buf)} {@code min(buf)} {@code max(buf)} {@code count(buf,v)}
  * {@code indexof(buf,v)} {@code fill(buf,v)} {@code copy(dst,src)} {@code sortasc(buf)}
- * {@code sortdesc(buf)}。
+ * {@code sortdesc(buf)} {@code reverse(buf)} {@code replace(buf,old,neu)} {@code swap(buf,i,j)}
+ * {@code bsearch(buf,v)}。
  *
  * <p>复用 F1 的 {@code array}/{@code matrix} 声明卡，不新增卡片，因此
  * {@link #registerParsers()} 与 {@link #markInvalid} 都是空操作；数组的严格校验
