@@ -8,7 +8,7 @@ LogicSugar 的版本号体系、本地构建产物链与发布资产规则。原
 - `mod.json` 是运行时身份：发布态为 `name: "LogicSugar"`、`version` 与 build.gradle 一致。
 - **本地开发态**（工作区默认约定，见上级 `codex/AGENTS.md` 的 Mod Task Default Mode）：`mod.json` 临时改为 `name: "LogicSugar-dev"`、`version: "0.0.0"`，只出 `构建/LogicSugar/LogicSugar-dev.jar` 本地测试产物，不做发布打包。切回发布身份时两处要同步改回。
 - 历史版本沿 `v<主>.<次>.<补丁>` 线演进（`release_notes_v2.1.4.md` 起到 `release_notes_v3.0.1.md`），每个已发布版本配一份双语 `release_notes_v<版本>.md`（中文 + English）。`release_notes_v2.3.1-dev.md` 属于本地开发验证说明，未对应 Release。
-- 要求 **Mindustry BE 27771+**（`mod.json` 的 `minGameVersion: "27771"`）。本次 `v4.1.0-be.27771` 为 BE 预发布版本，不面向普通稳定版。
+- 要求 **Mindustry BE 27771+**（`mod.json` 的 `minGameVersion: "27771"`）。本次 `v4.3.0-be.27771` 为 BE 预发布版本（beta 3），不面向普通稳定版。
 
 ## 构建产物链
 

@@ -275,7 +275,7 @@ public class SugarLogicDialog extends LogicDialog{
             return;
         }
         budgetLabel = new Label("");
-        budgetLabel.setName("instruction-budget");
+        budgetLabel.name = "instruction-budget";
         budgetLabel.setAlignment(arc.util.Align.left);
         budgetLabel.setWrap(true);
         buttons.add(budgetLabel).name("instruction-budget").left().growX().padLeft(8f).minWidth(160f).height(40f);
@@ -819,8 +819,9 @@ public class SugarLogicDialog extends LogicDialog{
 
     private int compressedSize(InstructionBudget.Snapshot snapshot){
         if(snapshot == null || snapshot.compiled == null) return -1;
-        if(executor == null || !(executor.build instanceof LogicBlock.LogicBuild build)) return -1;
+        if(executor == null || !(executor.build instanceof LogicBlock.LogicBuild)) return -1;
         try{
+            LogicBlock.LogicBuild build = (LogicBlock.LogicBuild)executor.build;
             return LogicBlock.compress(snapshot.compiled, build.relativeConnections()).length;
         }catch(Throwable ignored){
             return -1;
