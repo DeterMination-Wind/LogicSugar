@@ -4,7 +4,7 @@
   "author": "DeterMination-Wind",
   "main": "logicsugar.LogicSugarMod",
   "description": "Adds structured for, while, switch, and function blocks to the logic editor while storing vanilla-compatible mlog.",
-  "version": "4.3.0-be.27771",
+  "version": "5.0.0",
   "minGameVersion": "27771",
   "hidden": true,
   "java": true

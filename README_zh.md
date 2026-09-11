@@ -32,7 +32,7 @@ Logic Sugar 面向希望让逻辑更易读、更易修改、更易分享的 Mind
 
 ## 安装
 
-这是面向 BE 的预发布版本，需要 **Mindustry BE 构建 27771 或更高版本**（桌面或 Android），不适用于普通稳定版 Mindustry。从 [Releases](https://github.com/DeterMination-Wind/LogicSugar/releases) 下载通用 JAR——一个文件同时支持两个平台——放进 Mindustry 的 mods 目录，启动游戏后在模组列表里启用，再打开逻辑处理器编辑器即可使用。
+这是面向 BE 的预发布版本 **v5.0.0**，需要 **Mindustry BE 构建 27771 或更高版本**（桌面或 Android），不适用于普通稳定版 Mindustry。从 [Releases](https://github.com/DeterMination-Wind/LogicSugar/releases) 下载通用 JAR——一个文件同时支持两个平台——放进 Mindustry 的 mods 目录，启动游戏后在模组列表里启用，再打开逻辑处理器编辑器即可使用。
 
 ## 从源码构建
 
