@@ -65,11 +65,14 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 ### 短路求值（short-circuit）
 `&&` / `||` 按控制流顺序求值：右侧只在需要时执行。`ShortCircuitCompiler` 把短路谓词下降为条件 `jump`，不产生先行求值的布尔临时变量。
 
-### 恢复（recovery / 反编译）
-打开普通 mlog 时自动识别其中的 `if` / `for` / `while` / `switch` / 函数结构并还原为 Sugar 视图（`SugarDecompiler`）。
+### 恢复 / 重建（recovery / reconstruction）
+打开已保存处理器时，把原版 mlog 还原成 Sugar 积木。两条路径：**载体还原**（decode `__ls_sugar`，优先、无损，数据声明卡只走这条路）和 **反编译推断**（从 jump/op 认回 `if`/`for`/`while`/`switch`/函数）。详见[架构总览](architecture.md)「重建」。
+
+### destIndex（跳转注释）
+`ifbegin` / `forbegin` / `whilebegin` / `switchbegin` / `funcdef` 行尾的整数，指向对应 `blockend` 的语句下标。它是注释而不是结构本身：嵌套由 begin/end 配对决定。注释过期（越界、交叉）时按最内层 `blockend` 重配对，不因此把整份程序当成「被外部改过」。
 
 ### 安全门（verification gate）
-恢复结果的强制闸口：候选 Sugar 必须重新编译并与输入的规范化指令流比对一致才被接受；不识别的内容回退为原样 vanilla 语句。失败方向永远是"多显示原版代码"。
+恢复结果的强制闸口：候选 Sugar 必须重新编译并与输入的规范化**可执行**指令流比对一致才被接受（比对前剥掉载体与标记块）；不识别的内容回退为原样 vanilla 语句。失败方向永远是"多显示原版代码"。
 
 ### flat 模式
 安全门未通过（或输入无结构）时的结果：逐语句保留规范化 vanilla mlog，不呈现任何 Sugar 结构。

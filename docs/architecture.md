@@ -103,7 +103,37 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - 库语义（方案2）：库函数不得改写调用方变量——函数体写入的每个名字（含参数）都被重整为 `__ls_func_<name>_<name>`；`@` 系统变量与 `cellN` / `bankN` / `memoryN` 存储设备豁免，只读名字不动。
 - 编辑入口 `FunctionLibraryDialog` 复用逻辑处理器编辑器（不绑定处理器），关闭时自动校验保存；保存失败会重开编辑器且修改不丢（`passThroughSugarOnError` + `discardButton` 逃生口）。
 
-## 反编译器与恢复安全门
+## 重建（reconstruction）：打开已保存程序
+
+玩家重开处理器时，编辑器要把已存的原版 mlog 尽量还原成当初的 Sugar 积木。这是功能是否「完成」的一部分：**每加一种会进存档的新结构，都必须先想清楚它怎么被重建回来。** 两条路径，都要过安全门；失败方向永远是「多显示原版代码」。
+
+```text
+打开处理器
+  │
+  ├─ 1. 载体还原（优先、无损）
+  │     decode __ls_sugar / __ls_lib
+  │     按 begin/blockend 嵌套重配对过期 destIndex（跳转注释）
+  │     再 compile，与可执行 mlog 比对（剥掉载体/标记块）
+  │     通过 → 显示 Sugar（含数据声明卡）
+  │
+  └─ 2. 反编译推断（载体缺失或与指令不一致）
+        剥掉陈旧载体 → CFG 分诊 → 恢复 if/for/while/switch/函数
+        重编译比对通过才采用；否则 flat 原版
+        不发明 array/stack/… 声明卡，不把 __ls_builtin_* 当成用户函数
+```
+
+### 路径 1：载体还原
+
+`SugarCompiler.restore` + `verifyRestore`。`ifbegin`/`forbegin`/`whilebegin`/`switchbegin`/`funcdef` 行尾的 `destIndex` 只是跳转注释：嵌套仍然完好、注释指向越界或交叉时，按最内层 `blockend` 重配对后再编译。`matchesStoredStream` 比较的是剥掉载体之后的规范化指令流，所以注释本身的 Base64 差异不会误判「被外部改过」。
+
+数据子系统的声明卡（`array` / `matrix` / `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain`）**只存在于载体里的 Sugar 源码**，lowering 时整张剥离，原版 mlog 里看不到它们。因此：
+
+- 有载体且验证通过 → 声明卡和表达式一并回来（编辑器再 `foldAll` 折回 `buf[i]` / `spush` 等）。
+- 没有载体（别人用手写 mlog、或载体被删）→ **不猜测**声明卡，只显示 `read`/`write`/`op`/`jump`。注入函数 `__ls_builtin_*` 的蹦床也不得恢复成用户 `funcdef`。
+
+反编译预检必须走 `LogicSugarMod.registerStatements()`（模块 + 解析器），否则载体里的声明卡会被当成未知行。
+
+### 路径 2：反编译推断
 
 `mindustry.logic.SugarDecompiler` 把已存的 mlog 反向呈现为 Sugar 视图，流程：
 
@@ -113,7 +143,9 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 4. 结构恢复：`recoverFunctions()` + `parseMain()` 生成候选 Sugar 源。函数区先过静态验证（区间外 jump 不得跳入、区间内 jump 不得跳出；嵌套调用前导跳向其他函数入口的 always 跳转豁免）。同一位置可能有多个候选帧（`tryFrames`），按 `RecoveryPredicate` 的 loss 排序取最优；贪心选择验证失败时，`backtrack()` 会在记录的决策点上逐个提升次优候选重试（有次数预算），每次仍走同一道门。
 5. **安全门（必须保留）**：候选先重新编译，再与输入的规范化指令流比对，比对通过才允许返回恢复结果。验证矩阵覆盖 FuncMode × SwitchStrategy 全部组合（`verify`）——程序可能在另一台机器、另一个 switch 策略设置下保存，不能因本机设置不同而误判。任何识别不了的内容回退为原样保留的 vanilla 语句（`matchedMode = "flat"`）。
 
-失败方向永远是"多显示原版代码"，绝不改写未知程序。新增恢复模式（跳转表、短路谓词等）一律放在这道门之后。
+失败方向永远是"多显示原版代码"，绝不改写未知程序。新增恢复模式（跳转表、短路谓词、新数据结构）一律放在这道门之后；新功能若既不能进载体、也不能被推断，就要在文档写明「重开只显示原版」。
+
+`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。
 
 短路守卫恢复（`tryShortCircuitFrames`）是这套机制的核心用户：`ShortCircuitCompiler` 的 lowering 是若干 `[条件 jump, fallback jump]` 原子对的连续拼接（内部续接标签都落在原子对起点），守卫解析器从对的目标关系重建布尔树（`parseGuardTree`，带换目标环检测的备忘递归），为同一片守卫区域同时给出 `if` / `while` / `for` 候选。由此单原子守卫、顶层 `!`、任意嵌套 `&&`/`||` 树以及 `whilebegin`/`forbegin` 的 `exprsc` 条件都能恢复，不再限于固定四指令布局。体内跳回 while 守卫头的 always 跳转就是 `continue` 的 lowering 形状，由循环上下文恢复为 `continue` 语句。
 
@@ -230,4 +262,5 @@ assets/bundles/           bundle.properties / bundle_zh_CN / bundle_zh_TW（用�
 - 用户可见文案一律走 `logicsugar.*` bundle key，不硬编码。
 - 受保护游戏成员访问只走子类实例方法或反射（见上），静态辅助代码只用 public 游戏 API。
 - 反编译恢复必须留在重编译/规范化流比对门后，失败方向是"多显示原版代码"。
+- **新功能必须考虑重建**：会进存档的语法/卡片/注入函数，要能走载体还原（声明卡只活在 Sugar 源码里），或说明推断路径做不到、重开只显示原版。`destIndex` 是跳转注释，不以它为结构的唯一真相。
 - 上游 API 依赖尽量做成可降级：核心路径硬反射，外围功能 optional 反射。
