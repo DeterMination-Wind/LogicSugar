@@ -29,7 +29,8 @@ this file only adds what is specific to this project.
 ## Build & Test
 
 ```powershell
-cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, recoveryPredicateTest,
+cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, reconstructionTest, recoveryPredicateTest,
+                                      # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
                                       # varClipboardTest, processorStatusTest, assertTest, assertTypeTest, arrayTest,
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
@@ -76,6 +77,26 @@ programs". Two properties of the gate are load-bearing:
   runs only after the greedy candidate failed verification, and every promoted result must
   pass the same gate.
 
+## Reconstruction (every new feature)
+
+Opening a saved processor must prefer restoring the structured Sugar the user edited.
+There are two paths; both stay behind the verify gate (compare the *executable* mlog after
+stripping carriers/markers, not the Base64 metadata):
+
+1. **Carrier restore** (lossless): decode `__ls_sugar` / `__ls_lib`. `destIndex` on
+   `ifbegin`/`forbegin`/… is a jump *comment*. If it is stale but `begin`/`blockend` nesting
+   is well-formed, re-pair from innermost matching before `validatePairs`. Data-structure
+   declaration cards live only in this source — they never appear in vanilla mlog — so a
+   new module/card/intrinsic is not done until a program that uses it round-trips through
+   `restore` + `verifyRestore` + `SugarDecompiler.decompile` (carrier path) and still
+   shows the cards. `reconstructionTest` pins this.
+2. **Decompiler inference**: pattern-match vanilla jumps back into `if`/`for`/`while`/
+   `switch`/functions. Do **not** invent declaration cards or recover `__ls_builtin_*`
+   trampolines as user `funcdef`s. Failure direction remains "more vanilla".
+
+New features that touch saved programs must say which path restores them. If neither can,
+document the gap (show vanilla) rather than guessing.
+
 ## Data subsystem (arrays / matrix / record / containers / bitset / map / list / heap / chain)
 
 The data subsystem is a compile-time abstraction layer: declaration cards are metadata and never
@@ -118,7 +139,7 @@ the Neon main repo's docs:
   pipelines, expression subsystem, cross-loader constraint, decompiler gate, layout map.
 - `docs/development.md` — environment, Gradle commands, artifact chain, style rules.
 - `docs/release.md` — version scheme, `deploy`/D8 pipeline, Release asset safety rules.
-- `docs/testing.md` — the twenty-five JavaExec self-test tasks, new-test conventions, manual
+- `docs/testing.md` — the twenty-six JavaExec self-test tasks, new-test conventions, manual
   checklist.
 - `docs/glossary.md` — project terminology (carrier, FuncMode, SwitchStrategy, gate, …).
 

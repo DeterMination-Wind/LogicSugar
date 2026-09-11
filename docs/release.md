@@ -37,7 +37,7 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 ## 发布前本地必做步骤
 
 1. 确认版本号：`build.gradle` 与 `mod.json` 同步为发布身份（`LogicSugar` / `<version>`）。
-2. 全量自测绿：`./gradlew check`（二十五个任务全过，见 [testing.md](testing.md)）。
+2. 全量自测绿：`./gradlew check`（二十六个任务全过，见 [testing.md](testing.md)）。
 3. 本地完整构建：`./gradlew.bat clean deploy`（需要 Android SDK 的 D8 + `android.jar`）。
 4. 撰写 `release_notes_v<version>.md`（中文 + English 双语，沿用现有格式）。
 5. 核实产物：`build/libs/LogicSugar-v<version>.jar` 存在且含 `classes.dex`；`-desktop.jar` / `-android.jar` / d8-input jar 不进入发布流程。
