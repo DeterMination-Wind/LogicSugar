@@ -27,6 +27,7 @@ import logicsugar.assist.expr.ExprIntrinsics;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -114,12 +115,12 @@ public final class SugarCompiler{
         // Scan from the end: genuine carriers are always the last sugar-carrying lines, so a
         // user statement that happens to look like a carrier loses the race only in its favor.
         String sharded = joinShardedCarrier(lines, carrierSugarShardPrefix);
-        if(sharded != null) return sharded;
+        if(sharded != null) return rewriteStaleBlockDests(sharded);
         for(int i = lines.length - 1; i >= 0; i--){
             String line = lines[i];
             if(line.startsWith(carrierSugarPrefix) && line.endsWith("\"")){
                 try{
-                    return decode(line.substring(carrierSugarPrefix.length(), line.length() - 1));
+                    return rewriteStaleBlockDests(decode(line.substring(carrierSugarPrefix.length(), line.length() - 1)));
                 }catch(Exception ignored){
                     // damaged carrier: fall back to the marker block below
                 }
@@ -131,14 +132,14 @@ public final class SugarCompiler{
             if(lines[i].equals(markerBegin)) begin = i;
             if(begin >= 0 && lines[i].equals(markerEnd)) end = i;
         }
-        if(begin < 0 || end <= begin) return code;
+        if(begin < 0 || end <= begin) return rewriteStaleBlockDests(code);
 
         StringBuilder result = new StringBuilder();
         for(int i = begin + 1; i < end; i++){
-            if(!lines[i].startsWith(markerLine)) return code;
+            if(!lines[i].startsWith(markerLine)) return rewriteStaleBlockDests(code);
             result.append(lines[i].substring(markerLine.length())).append('\n');
         }
-        return result.toString();
+        return rewriteStaleBlockDests(result.toString());
     }
 
     /** Returns the library source embedded in stored code (the used subset the program was
@@ -271,6 +272,11 @@ public final class SugarCompiler{
         Seq<LStatement> statements = LAssembler.read(sugar, true);
         if(!containsSugar(statements)) return sugar;
 
+        // destIndex on begin cards is a jump comment. Older saves and hand-edited
+        // carriers can leave it pointing past the program while if/for/while/switch
+        // nesting is still well-formed. Re-pair from innermost blockend matching
+        // before validatePairs, so restore does not depend on the comment being fresh.
+        recomputeBlockDests(statements);
         validatePairs(statements);
 
         // F2: 用户函数名（本地 funcdef + 库函数）在表达式展开时遮蔽同名 intrinsic
@@ -798,6 +804,72 @@ public final class SugarCompiler{
         return false;
     }
 
+    /**
+     * Rewrites stale {@code destIndex} comments in restored Sugar source when begin/end
+     * nesting is unambiguous. Byte-identical when dests are already correct, so healthy
+     * carriers keep their exact source. Parse failures and unbalanced blocks leave the
+     * decoded text untouched (verifyRestore / decompiler inference still apply).
+     */
+    static String rewriteStaleBlockDests(String sugar){
+        if(sugar == null || sugar.isEmpty()) return sugar;
+        try{
+            Seq<LStatement> statements = LAssembler.read(sugar, true);
+            int[] before = snapshotDests(statements);
+            if(!recomputeBlockDests(statements)) return sugar;
+            if(Arrays.equals(before, snapshotDests(statements))) return sugar;
+            return writeStatements(statements);
+        }catch(Throwable ignored){
+            return sugar;
+        }
+    }
+
+    /**
+     * Pairs each {@link BeginStatement} with its matching {@link BlockEndStatement} by
+     * innermost-first nesting and writes the resulting dest indices. This is the unique
+     * non-crossing pairing, so a well-formed dest comment is left unchanged. Returns false
+     * when begins and ends cannot be paired (leftover begin or extra {@code blockend}).
+     */
+    static boolean recomputeBlockDests(Seq<LStatement> statements){
+        if(statements == null || statements.isEmpty()) return true;
+        int n = statements.size;
+        int[] paired = new int[n];
+        Arrays.fill(paired, -1);
+        Deque<Integer> stack = new ArrayDeque<>();
+        for(int i = 0; i < n; i++){
+            LStatement statement = statements.get(i);
+            if(statement instanceof BeginStatement){
+                stack.push(i);
+            }else if(statement instanceof BlockEndStatement){
+                if(stack.isEmpty()) return false;
+                paired[stack.pop()] = i;
+            }
+        }
+        if(!stack.isEmpty()) return false;
+        for(int i = 0; i < n; i++){
+            if(paired[i] < 0) continue;
+            ((BeginStatement)statements.get(i)).destIndex = paired[i];
+        }
+        return true;
+    }
+
+    private static int[] snapshotDests(Seq<LStatement> statements){
+        int[] dests = new int[statements.size];
+        for(int i = 0; i < statements.size; i++){
+            LStatement statement = statements.get(i);
+            dests[i] = statement instanceof BeginStatement begin ? begin.destIndex : Integer.MIN_VALUE;
+        }
+        return dests;
+    }
+
+    private static String writeStatements(Seq<LStatement> statements){
+        StringBuilder out = new StringBuilder();
+        for(LStatement statement : statements){
+            statement.write(out);
+            out.append('\n');
+        }
+        return out.toString();
+    }
+
     private static void validatePairs(Seq<LStatement> statements){
         boolean[] claimed = new boolean[statements.size];
         for(int i = 0; i < statements.size; i++){
@@ -1035,18 +1107,48 @@ public final class SugarCompiler{
 
     /** Whether {@code compiled} matches the stored program under either lowering era:
      *  current output is jump-threaded, pre-2.3.1 saves are not; the thread pass is
-     *  idempotent, so normalizing the stored text through it covers both. */
+     *  idempotent, so normalizing the stored text through it covers both.
+     *
+     *  <p>Persistence carriers and the comment marker block are stripped first: they are
+     *  metadata. destIndex comments inside the sugar source can be repaired from begin/end
+     *  nesting without changing the lowered instruction stream, so comparing the carrier
+     *  Base64 would reject programs whose structure is still faithful.</p> */
     public static boolean matchesStoredStream(String recompiled, String stored){
         try{
-            if(LAssembler.write(LAssembler.read(recompiled, true)).equals(LAssembler.write(LAssembler.read(stored, true)))) return true;
+            String left = executableStream(recompiled);
+            String right = executableStream(stored);
+            if(left.equals(right)) return true;
         }catch(RuntimeException ignored){
             return false;
         }
         try{
-            return LAssembler.write(LAssembler.read(recompiled, true))
-                .equals(LAssembler.write(LAssembler.read(threadAlwaysJumpTargets(stored), true)));
+            return executableStream(recompiled)
+                .equals(executableStream(threadAlwaysJumpTargets(stored)));
         }catch(RuntimeException ignored){
             return false;
         }
+    }
+
+    /** Normalized vanilla instruction stream with LogicSugar persistence metadata removed. */
+    private static String executableStream(String code){
+        return LAssembler.write(LAssembler.read(stripPersistence(code), true));
+    }
+
+    /** Drops the comment marker block and {@code __ls_sugar}/{@code __ls_lib} carrier lines
+     *  (single or sharded) so instruction-stream comparisons look at executable mlog only. */
+    private static String stripPersistence(String code){
+        String withoutMarkers = stripMarkers(code);
+        StringBuilder result = new StringBuilder();
+        for(String line : withoutMarkers.replace("\r\n", "\n").split("\n", -1)){
+            if(isPersistenceCarrierLine(line)) continue;
+            result.append(line).append('\n');
+        }
+        return result.toString();
+    }
+
+    private static boolean isPersistenceCarrierLine(String line){
+        if(line.startsWith(carrierSugarPrefix) || line.startsWith(carrierLibPrefix)) return true;
+        return carrierShardNumber(line, carrierSugarShardPrefix) > 0
+            || carrierShardNumber(line, carrierLibShardPrefix) > 0;
     }
 }

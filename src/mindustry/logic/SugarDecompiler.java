@@ -356,12 +356,13 @@ public final class SugarDecompiler{
     private record RecoveryVeto(int cursor, int rank){}
 
     /** Defensive re-registration for headless/self-test environments; the game mod path
-     *  installs them at init via {@link SugarStatements#installParsers()} (idempotent).
-     *  Data declaration cards (record/stack/queue/…) can appear in restored carrier source,
-     *  so their parsers are re-registered here too; both calls are idempotent. */
+     *  installs them at init via {@link logicsugar.LogicSugarMod#registerStatements()}
+     *  (idempotent). Data declaration cards (record/stack/queue/…) can appear in restored
+     *  carrier source, so the full production registration — modules + parsers — runs here
+     *  too. Reconstruction of those cards is otherwise impossible: they never appear in
+     *  vanilla mlog. */
     private static void installSugarParsers(){
-        SugarStatements.installParsers();
-        logicsugar.assist.data.DataModules.registerParsers();
+        logicsugar.LogicSugarMod.registerStatements();
     }
 
     private static void validateInput(String code, boolean privileged){
@@ -839,7 +840,8 @@ public final class SugarDecompiler{
                 Statement s = program.statements.get(i);
                 if(s.kind().equals("set") && s.tokens.length >= 3 && s.token(1).equals("@counter")){
                     String name = functionNameFromReturn(s.token(2));
-                    if(name != null) tails.computeIfAbsent(name, k -> new ArrayList<>()).add(i);
+                    if(name == null || isInjectedBuiltin(name)) continue;
+                    tails.computeIfAbsent(name, k -> new ArrayList<>()).add(i);
                 }
             }
             if(tails.isEmpty()) return;
@@ -851,7 +853,7 @@ public final class SugarDecompiler{
                 if(!set.kind().equals("set") || set.tokens.length < 3 || !set.token(1).startsWith("__ls_func_")
                     || !set.token(2).equals("@counter")) continue;
                 String name = functionNameFromReturn(set.token(1));
-                if(name == null || !matches(i + 1, "op", "add", set.token(1), set.token(1), "2")) continue;
+                if(name == null || isInjectedBuiltin(name) || !matches(i + 1, "op", "add", set.token(1), set.token(1), "2")) continue;
                 Statement jump = program.statements.get(i + 2);
                 if(!jump.isAlways() || jump.target < 0 || !tails.containsKey(name)) continue;
                 entries.putIfAbsent(name, jump.target);
@@ -1036,6 +1038,14 @@ public final class SugarDecompiler{
             if(token == null || !token.startsWith("__ls_func_") || !token.endsWith("_ret")) return null;
             String name = token.substring("__ls_func_".length(), token.length() - "_ret".length());
             return name.isEmpty() ? null : name;
+        }
+
+        /** Injected data-subsystem operations ({@code __ls_builtin_*}) share the function
+         *  trampoline shape but are not user {@code funcdef}s. Recovering them as functions
+         *  would invent cards the declaration-based API cannot round-trip; skip them so the
+         *  region stays vanilla behind the verify gate unless a carrier restores the decls. */
+        private static boolean isInjectedBuiltin(String name){
+            return name.startsWith("__ls_builtin_");
         }
 
         private FunctionInfo functionByName(String name){
