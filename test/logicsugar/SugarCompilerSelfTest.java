@@ -131,7 +131,12 @@ public class SugarCompilerSelfTest{
     }
 
     private static void malformedStructuresFail(){
-        expectFailure("forbegin i 0 1 lessThanEq 3 3\nwhilebegin true 4\nblockend\nblockend\n", "crossing blocks");
+        // destIndex comments that look crossed are repaired from innermost begin/end
+        // nesting (the unique non-crossing pairing). The jump comment is not the structure.
+        String destCrossed = "forbegin i 0 1 lessThanEq 3 3\nwhilebegin true 4\nblockend\nblockend\n";
+        String nested = "forbegin i 0 1 lessThanEq 3 3\nwhilebegin true 2\nblockend\nblockend\n";
+        check(SugarCompiler.matchesStoredStream(SugarCompiler.compile(destCrossed), SugarCompiler.compile(nested)),
+            "crossed dest comments should lower as nested blocks");
         expectFailure("forbegin i 0 1 lessThanEq 3 2\nwhilebegin true 2\nblockend\n", "shared end");
         expectFailure("blockend\n", "orphan end");
     }

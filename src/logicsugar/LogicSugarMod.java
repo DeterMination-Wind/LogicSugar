@@ -81,7 +81,9 @@ public class LogicSugarMod extends Mod{
         }
     }
 
-    private static void registerStatements(){
+    /** Shared registration for game init, the decompiler preflight and headless tests.
+     *  Idempotent: repeated calls do not duplicate palette cards or parsers. */
+    public static void registerStatements(){
         if(registered) return;
         registered = true;
 
