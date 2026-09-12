@@ -554,6 +554,7 @@ public class SugarLogicDialog extends LogicDialog{
                             canvas.addAt(position == -1 ? canvas.statements.getChildren().size : position, prov.get());
                             dialog.hide();
                         }).size(130f, 50f).self(c -> {
+                            configurePaletteButton(c.get());
                             // LogicSugar statements use dedicated hint keys; vanilla ones keep the original lookup
                             String sugarKey = "logicsugar.lst." + example.typeName().toLowerCase(Locale.ROOT);
                             LCanvas.tooltip(c, Core.bundle.has(sugarKey) ? sugarKey : "lst." + example.statementKey());
@@ -568,6 +569,20 @@ public class SugarLogicDialog extends LogicDialog{
         }).fill().maxHeight(Core.graphics.getHeight() * 0.8f);
         dialog.addCloseButton();
         dialog.show();
+    }
+
+    /**
+     * Arc's {@link TextButton} enables word wrapping by default.  In the v160 fallback-font
+     * layout a CJK title that lands exactly on the 130px palette-button boundary can leave the
+     * glyph and advance arrays out of sync and crash in {@code GlyphLayout.setText}; the six
+     * character Chinese title for {@code blockend} reproduced {@code 6 >= 6}.  Palette entries
+     * are single-line names, so truncate unusually long translations instead of wrapping them.
+     */
+    static void configurePaletteButton(TextButton button){
+        if(button == null) return;
+        button.getLabel().setWrap(false);
+        button.getLabel().setEllipsis(true);
+        button.getLabelCell().minWidth(0f);
     }
 
     /** Uses v160's canonical statement localization while preserving Sugar's own bundle keys. */
