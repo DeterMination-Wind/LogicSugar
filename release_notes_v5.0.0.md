@@ -2,13 +2,13 @@
 
 > **BE 预发布版本 / Bleeding-edge pre-release**
 >
-> **最低要求：Mindustry BE 27771。** 尚未确认可在官方稳定版（例如 v155.4 / 当前 v160）上安全运行，因此以预发布形式提供。
+> **最低要求：Mindustry v160.1。** 本版本按 v160 Logic API 适配，仍以预发布形式提供。
 >
 > 本版本未经过完整的正式版客户端验证，可能存在未知 bug。安装前请备份重要地图和逻辑程序，不建议在正式服务器或重要存档中直接替换稳定版本。
 
 ## 中文
 
-这是自正式版 **v4.0.0** 以来的一次大版本更新，面向希望把逻辑写得更像「有结构的程序」的玩家。保存出去的仍是原版能跑的逻辑代码：没装本模组的客户端可以运行，联机也不受影响。请使用 **Mindustry BE 27771 或更高版本**，普通稳定版 Mindustry 不会加载本包。
+这是自正式版 **v4.0.0** 以来的一次大版本更新，面向希望把逻辑写得更像「有结构的程序」的玩家。保存出去的仍是原版能跑的逻辑代码：没装本模组的客户端可以运行，联机也不受影响。请使用 **Mindustry v160.1 或更高版本**。
 
 **数据结构**
 
@@ -49,13 +49,13 @@
 
 **请注意**
 
-- 这是 BE 预发布版本，不是面向普通稳定版的正式发布。
-- **最低 Mindustry BE 版本：27771。** 更低版本和普通稳定版不受支持。尚未把最低版本改到官方 v155.4：较新的正式版客户端在编辑器接口和内存读写语义上已有变化，本包未针对那些变化做适配。
-- 使用前请备份重要地图和逻辑程序；遇到问题时，请提供 Mindustry BE 构建号和复现步骤。
+- 这是面向 Mindustry v160.1 的预发布版本；更低版本不受支持。
+- **最低 Mindustry 版本：v160.1。** 本包已针对 v160 的编辑器接口和内存读写语义完成适配。
+- 使用前请备份重要地图和逻辑程序；遇到问题时，请提供 Mindustry 版本号和复现步骤。
 
 ## English
 
-This is a major update since the last official release **v4.0.0**, for players who want logic that reads like structured programs. Everything you save is still vanilla-compatible mlog: clients without this mod can run it, including in multiplayer. Please use **Mindustry BE 27771 or newer**. Regular stable Mindustry will not load this package.
+This is a major update since the last official release **v4.0.0**, for players who want logic that reads like structured programs. Everything you save is still vanilla-compatible mlog: clients without this mod can run it, including in multiplayer. Please use **Mindustry v160.1 or newer**.
 
 **Data structures**
 
@@ -96,6 +96,6 @@ Declaration cards never enter the saved code. Operations become ordinary vanilla
 
 **Please note**
 
-- This is a BE pre-release, not a stable release for regular Mindustry.
-- **Minimum requirement: Mindustry BE 27771.** Older builds and regular stable releases are not supported. The minimum was not moved to official v155.4: newer stable clients have editor-API and memory-read changes this package does not adapt to yet.
-- Back up important maps and logic programs before installing. When reporting a problem, include your Mindustry BE build number and reproduction steps.
+- This is a pre-release targeting Mindustry v160.1; older versions are not supported.
+- **Minimum requirement: Mindustry v160.1.** The editor API and memory-read semantics introduced in v160 are covered by this adaptation.
+- Back up important maps and logic programs before installing. When reporting a problem, include your Mindustry version and reproduction steps.

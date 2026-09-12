@@ -4,8 +4,8 @@
 
 ## 环境
 
-- **JDK 17**（`build.gradle` 设定 `options.release = 17`，与 Mindustry BE 27771 运行时一致）。CI 用 Temurin 17。
-- **Mindustry 依赖**：默认编译与测试指向工作区本地构建产物 `../Mindustry-master/desktop/build/libs/Mindustry.jar`（`compileOnly` + `testImplementation`）；也可用 `-PmindustryJar=<path>` 指定已构建的 API 包。本次 BE 发布使用 Mindustry BE 27771 桌面构建验证；后续 CI/稳定线版本以对应分支固定 commit 为准。
+- **JDK 17**（`build.gradle` 设定 `options.release = 17`，与 Mindustry v160.1 运行时一致）。CI 用 Temurin 17。
+- **Mindustry 依赖**：默认编译与测试指向工作区本地构建产物 `../Mindustry-master/desktop/build/libs/Mindustry.jar`（`compileOnly` + `testImplementation`）；也可用 `-PmindustryJar=<path>` 指定已构建的 API 包。最低支持版本为 Mindustry v160.1，CI 固定检出对应标签提交。
 - **Android 打包**（只有要出 dex 时才需要）：本地 Android SDK 的 D8 与至少一个 platform 的 `android.jar`，按 `D8_PATH` → `ANDROID_SDK_ROOT` / `ANDROID_HOME` 顺序探测；缺失时 `dexAndroid` 直接失败。
 - `gradle.properties` 给 Gradle JVM 加了 `jdk.compiler` 多个包的 `--add-exports` 与 `--illegal-access=permit`，属环境基础设施，勿随意删减。
 - Windows 下命令用 PowerShell（`.\gradlew.bat …`）；CI 在 Linux 上用 `bash ./gradlew`。

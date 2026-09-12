@@ -29,11 +29,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Check out Mindustry v155.4
+      - name: Check out Mindustry v160.1
         uses: actions/checkout@v4
         with:
           repository: Anuken/Mindustry
-          ref: 6c53474479fc9e11c66621bc953a800d816f3ff8
+          ref: 84cdf2bbfeeee981ff9922f5872b16433591da7b
           path: Mindustry-master
           fetch-depth: 1
 

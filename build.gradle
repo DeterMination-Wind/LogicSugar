@@ -16,7 +16,7 @@ java{
 }
 
 ext{
-    mindustryVersion = "v27771"
+    mindustryVersion = "v160.1"
     isWindows = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows")
 }
 
