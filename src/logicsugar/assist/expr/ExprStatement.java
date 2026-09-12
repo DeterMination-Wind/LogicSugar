@@ -29,6 +29,11 @@ import java.util.*;
  */
 public class ExprStatement extends LStatement{
 
+    /** This card already owns a wrapped expression and a dedicated error row. */
+    public boolean useWrapping(){
+        return false;
+    }
+
     /** 目标变量名 */
     public String dest = "result";
     /** 表达式字符串 */

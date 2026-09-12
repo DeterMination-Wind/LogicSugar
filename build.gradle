@@ -21,8 +21,9 @@ ext{
 }
 
 dependencies{
-    compileOnly files("../Mindustry-master/desktop/build/libs/Mindustry.jar")
-    testImplementation files("../Mindustry-master/desktop/build/libs/Mindustry.jar")
+    def mindustryJar = project.findProperty("mindustryJar") ?: "../Mindustry-master/desktop/build/libs/Mindustry.jar"
+    compileOnly files(mindustryJar)
+    testImplementation files(mindustryJar)
 }
 
 tasks.withType(JavaCompile).configureEach{
@@ -209,6 +210,18 @@ tasks.register("dataSubsystemTest", JavaExec){
     mainClass = "logicsugar.DataSubsystemIntegrationTest"
 }
 
+tasks.register("escapePreviewTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.EscapePreviewSelfTest"
+}
+
+tasks.register("v160SensorAccessTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.expr.V160SensorAccessSelfTest"
+}
+
 // Generic main()-based self-test runner: ./gradlew runTestClass -PmainClass=<fully.qualified.Class>
 // (F2 framework tests use this; integration stage may add dedicated tasks / check.dependsOn.)
 tasks.register("runTestClass", JavaExec){
@@ -220,7 +233,7 @@ tasks.register("runTestClass", JavaExec){
 }
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest, escapePreviewTest, v160SensorAccessTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

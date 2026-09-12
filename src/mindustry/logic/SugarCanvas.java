@@ -13,6 +13,7 @@ import arc.scene.style.BaseDrawable;
 import arc.scene.style.Drawable;
 import arc.scene.ui.ImageButton;
 import arc.scene.ui.Label;
+import arc.scene.ui.TextField;
 import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.WidgetGroup;
 import arc.struct.Seq;
@@ -36,6 +37,7 @@ import mindustry.logic.SugarStatements.WhileBeginStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
 import logicsugar.assist.BoxSelect;
 import logicsugar.assist.JumpLineColor;
+import logicsugar.assist.EscapePreview;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprHook;
 import logicsugar.assist.expr.ExprStatement;
@@ -64,8 +66,11 @@ public class SugarCanvas extends LCanvas{
     private static final Field canvasJumpsField = optionalField(LCanvas.class, "jumps");
     private static final Field updateJumpHeightsField = optionalField(LCanvas.DragLayout.class, "updateJumpHeights");
     private static final Method recalculateMethod = optionalMethod(LCanvas.class, "recalculate");
+    private static final Method compactMethod = optionalMethod(LCanvas.class, "isCompact");
+    private static final Method legacyRowsMethod = optionalMethod(LCanvas.class, "useRows");
     private static final Field addressLabelField = optionalField(LCanvas.StatementElem.class, "addressLabel");
     private static final Field needsLayoutField = optionalField(WidgetGroup.class, "needsLayout");
+    private final EscapePreview escapePreview = new EscapePreview();
 
     public Runnable afterMutate;
     /** 为 true 时 {@link #add}/{@link #addAt} 不通知历史（{@link #load} 期间）。 */
@@ -78,6 +83,7 @@ public class SugarCanvas extends LCanvas{
             structure.normalizeElements();
             if(isDragging()) structure.expandAll();
             structure.refresh();
+            escapePreview.update(this);
         });
     }
 
@@ -318,6 +324,21 @@ public class SugarCanvas extends LCanvas{
         }catch(ReflectiveOperationException exception){
             return null;
         }
+    }
+
+    /** Width-mode compatibility across early v160 ({@code useRows}) and current v160
+     *  ({@code isCompact}). This intentionally has no direct linkage to either method. */
+    public static boolean compactStatementLayout(){
+        Method method = compactMethod != null ? compactMethod : legacyRowsMethod;
+        if(method != null){
+            try{
+                return (boolean)method.invoke(null);
+            }catch(ReflectiveOperationException | ClassCastException ignored){}
+        }
+        // Keep the same width threshold as both upstream implementations when reflection is
+        // unavailable (e.g. a fork hides the helper).  Portrait-only fallback misclassifies a
+        // narrow desktop window and can put the For card's growX condition beside its prefix.
+        return Core.graphics != null && Core.graphics.getWidth() < Scl.scl(900f) * 1.2f;
     }
 
     private void installGuideLayer(){

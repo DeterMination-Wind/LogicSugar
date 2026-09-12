@@ -4,6 +4,7 @@ import arc.Core;
 import mindustry.logic.LAccess;
 import mindustry.logic.SugarCompiler;
 
+import java.lang.reflect.Field;
 import java.util.*;
 
 /**
@@ -63,17 +64,53 @@ public class ExprCompiler{
      * 跟随游戏版本自动同步；mod 无法扩展 LAccess（Java 枚举固定），无需手工维护。
      */
     static final Map<String, String> SENSOR_MEMBERS = new HashMap<>();
+    static final Map<String, String> PRIVILEGED_SENSOR_MEMBERS = new HashMap<>();
+    private static boolean privilegedSensors = true;
     static{
         for(LAccess access : LAccess.senseable){
-            SENSOR_MEMBERS.put(access.name().toLowerCase(), access.name());
+            SENSOR_MEMBERS.put(access.name().toLowerCase(Locale.ROOT), access.name());
         }
+        for(LAccess access : privilegedSenseable()){
+            PRIVILEGED_SENSOR_MEMBERS.put(access.name().toLowerCase(Locale.ROOT), access.name());
+        }
+    }
+
+    /**
+     * v160 split the public sensor list into {@code senseable} and
+     * {@code senseablePrivileged}.  The latter field does not exist in v159, so it must not be
+     * linked from the mod bytecode: a mod built against v160 still has to load on the minimum
+     * game version.  On old clients the ordinary list is already the complete list, which is the
+     * correct fallback for their pre-privilege semantics.
+     */
+    private static LAccess[] privilegedSenseable(){
+        try{
+            Field field = LAccess.class.getDeclaredField("senseablePrivileged");
+            field.setAccessible(true);
+            Object value = field.get(null);
+            if(value instanceof LAccess[] accesses) return accesses;
+        }catch(ReflectiveOperationException | RuntimeException ignored){
+            // v159 and other forks have no split list; use their complete senseable list.
+        }
+        return LAccess.senseable;
+    }
+
+    /** Installs the processor privilege context for one compile and returns the old value. */
+    public static boolean enterPrivilegedSensors(boolean privileged){
+        boolean previous = privilegedSensors;
+        privilegedSensors = privileged;
+        return previous;
+    }
+
+    public static void restorePrivilegedSensors(boolean previous){
+        privilegedSensors = previous;
     }
 
     /** 成员名 → LAccess 规范名（大小写不敏感，容忍前导 @）；未知属性返回 null。 */
     static String resolveMember(String prop){
         String name = prop;
         if(name.startsWith("@")) name = name.substring(1);
-        return SENSOR_MEMBERS.get(name.toLowerCase());
+        Map<String, String> members = privilegedSensors ? PRIVILEGED_SENSOR_MEMBERS : SENSOR_MEMBERS;
+        return members.get(name.toLowerCase(Locale.ROOT));
     }
 
     /** 去掉 type 的 @ 前缀，用于逆向重建时展示成员名（如 @maxHealth → maxHealth）。 */

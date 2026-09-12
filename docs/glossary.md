@@ -55,12 +55,12 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 表达式编译的栈式编号临时变量，每个一次写一次读形成线性链——这是反向把 `op` 链重建为表达式的关键前提。
 
 ### 内存对象存储（memory object storage）
-上游 #12459（v160 前瞻）的 `MemoryBlock` 改动：内部改为数字 + 对象双数组（含哨兵），logic 的 `read` / `write` 可存取对象（单位、方块等），存档经 `TypeIO.writeObject` 带版本迁移（旧档全按数字读回）；越界 `read` 从返回 NaN 改为返回 null。LogicSugar 钉在 v155.4（内存只存数字、越界=NaN），升级 `minGameVersion` 时 `MlogLint` 的内存/类型语义需按版本区分。详见[架构总览](architecture.md)「上游版本适配笔记」。
+上游 #12459（v160）的 `MemoryBlock` 改动：内部改为数字 + 对象双数组（含哨兵），logic 的 `read` / `write` 可存取对象（单位、方块等），存档经 `TypeIO.writeObject` 带版本迁移（旧档全按数字读回）；越界 `read` 从返回 NaN 改为返回 null。LogicSugar 当前按 BE 27771 基线生成原版 `read`/`write`，`assertTypeTest` 覆盖 number/对象分型；若未来扩展 `MlogLint` 内存/类型检查，需明确区分旧版与当前语义。详见[架构总览](architecture.md)「上游版本适配笔记」。
 
 ## 表达式与恢复
 
 ### 数组（array）
-`array` 声明卡定义的纯 sugar 抽象：把内存块变量（如 `cell1`）上 `[base, base+size)` 的一段物理地址登记为命名数组。卡片本身不产出任何 mlog 行（lower 时剥离，产物保持纯原版指令）；表达式下标 `buf[i]` / 下标赋值 `buf[i] = x` 在编译期查 `ArrayRegistry` 换算物理地址（= base + 逻辑下标）后发射原版 `read` / `write`。v0 限制：base/size 仅接受整数字面量，重名与同内存块区间重叠是编译错误，数组名不得与函数重名。编辑器折叠只在注册表把 `read`/`write` 的内存块命中到已声明数组时把该行折回下标表达式——纯原版 mlog（无声明卡）不做数组推断恢复；字面量下标越界是编译错误，变量下标不做静态越界检查，运行时保持原版内存语义（v155.4 越界读返回 NaN）。由 `arrayTest` 钉住。
+`array` 声明卡定义的纯 sugar 抽象：把内存块变量（如 `cell1`）上 `[base, base+size)` 的一段物理地址登记为命名数组。卡片本身不产出任何 mlog 行（lower 时剥离，产物保持纯原版指令）；表达式下标 `buf[i]` / 下标赋值 `buf[i] = x` 在编译期查 `ArrayRegistry` 换算物理地址（= base + 逻辑下标）后发射原版 `read` / `write`。v0 限制：base/size 仅接受整数字面量，重名与同内存块区间重叠是编译错误，数组名不得与函数重名。编辑器折叠只在注册表把 `read`/`write` 的内存块命中到已声明数组时把该行折回下标表达式——纯原版 mlog（无声明卡）不做数组推断恢复；字面量下标越界是编译错误，变量下标不做静态越界检查，运行时保持 BE 27771 的内存语义（越界读返回 null）。由 `arrayTest` 钉住。
 
 ### 短路求值（short-circuit）
 `&&` / `||` 按控制流顺序求值：右侧只在需要时执行。`ShortCircuitCompiler` 把短路谓词下降为条件 `jump`，不产生先行求值的布尔临时变量。
@@ -144,7 +144,7 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 可选地图叠加：设置 `logicsugar.showUnitFlags` 打开后，在每个单位正上方用红色绘制其逻辑 `flag`（`ucontrol flag` / `@unit.@flag`）。默认 0 与非有限值不显示；视野外与迷雾中的单位跳过。纯展示，不改保存产物，不受单机门禁限制。由 `unitFlagsTest` 钉住判定与格式。
 
 ### 逻辑语句本地化（logic localization）
-上游 #12158 + #12569 的改动：`LStatement` 增加 `bundle()` / `localizedName()` / `statementKey()`，卡片标题、语句菜单与搜索文案走 bundle，约定键 `instruction.<statementKey小写>`（上游设置项 `logiclocalization`，默认开）。LogicSugar 自身的卡片本地化沿用 `logicsugar.*` 键与设置 `logicsugar.localizeCards`，键名与该约定对齐。详见[架构总览](architecture.md)「上游版本适配笔记」。
+上游 #12158 + #12569 的改动：`LStatement` 增加 `bundle()` / `localizedName()` / `statementKey()`，卡片标题、语句菜单与搜索文案走 bundle，约定键 `instruction.<statementKey小写>`（上游设置项 `logiclocalization`，默认开）。LogicSugar 自身卡片标题跟随同一个 `logiclocalization` 开关，文案仍使用 `logicsugar.*` 键，不再维护重复的 `logicsugar.localizeCards` 开关。详见[架构总览](architecture.md)「上游版本适配笔记」。
 
 ## 构建与发布
 

@@ -79,6 +79,7 @@ public class SugarLogicDialog extends LogicDialog{
     /** Content hash of the library file when the dialog opened; used to refresh the stale
      *  session snapshot when the library is edited while the processor editor stays open. */
     private int libraryHashAtOpen;
+    private boolean editingPrivileged;
     /** Shown only during library-file editing sessions: closes without saving. */
     private Button discardButton;
     private Element editButton;
@@ -323,7 +324,8 @@ public class SugarLogicDialog extends LogicDialog{
             try{
                 // copy with the session's effective library, so the embedded functions survive
                 Core.app.setClipboardText(SugarCompiler.compile(canvas.save(), SugarCompiler.currentMode(),
-                    effectiveLibrary.index, effectiveLibrary.text));
+                    effectiveLibrary.index, effectiveLibrary.text, SugarCompiler.currentStrategy(),
+                    SugarCompiler.currentAssertEmit(), editingPrivileged));
                 dialog.hide();
                 Vars.ui.showInfoFade("@logicsugar.copy.compiled.done");
             }catch(IllegalArgumentException exception){
@@ -514,8 +516,11 @@ public class SugarLogicDialog extends LogicDialog{
 
                     for(Prov<LStatement> prov : LogicIO.allStatements){
                         LStatement example = prov.get();
+                        String displayName = statementDisplayName(example);
                         if(example instanceof LStatements.InvalidStatement || example.hidden() || (example.privileged() && !priv) || (example.nonPrivileged() && priv) ||
-                            (!text.isEmpty() && !example.name().toLowerCase(Locale.ROOT).contains(text) && !example.typeName().toLowerCase(Locale.ROOT).contains(text)) ||
+                            (!text.isEmpty() && !displayName.toLowerCase(Locale.ROOT).contains(text)
+                                && !example.name().toLowerCase(Locale.ROOT).contains(text)
+                                && !example.typeName().toLowerCase(Locale.ROOT).contains(text)) ||
                             (!priv && !Vars.state.rules.logicUnitControl && example.category() == LCategory.unit)) continue;
 
                         if(matched[0] == null){
@@ -545,13 +550,13 @@ public class SugarLogicDialog extends LogicDialog{
                         style.fontColor = category.color;
                         style.font = Fonts.outline;
 
-                        cat.button(example.name(), style, () -> {
+                        cat.button(displayName, style, () -> {
                             canvas.addAt(position == -1 ? canvas.statements.getChildren().size : position, prov.get());
                             dialog.hide();
                         }).size(130f, 50f).self(c -> {
                             // LogicSugar statements use dedicated hint keys; vanilla ones keep the original lookup
                             String sugarKey = "logicsugar.lst." + example.typeName().toLowerCase(Locale.ROOT);
-                            LCanvas.tooltip(c, Core.bundle.has(sugarKey) ? sugarKey : "lst." + example.name());
+                            LCanvas.tooltip(c, Core.bundle.has(sugarKey) ? sugarKey : "lst." + example.statementKey());
                         }).top().left();
 
                         if(cat.getChildren().size % 3 == 0) cat.row();
@@ -565,9 +570,16 @@ public class SugarLogicDialog extends LogicDialog{
         dialog.show();
     }
 
+    /** Uses v160's canonical statement localization while preserving Sugar's own bundle keys. */
+    private static String statementDisplayName(LStatement statement){
+        if(statement instanceof SugarStatements.SugarStatement) return statement.name();
+        return Core.settings.getBool("logiclocalization", true) ? statement.localizedName() : statement.name();
+    }
+
     @Override
     public void show(String code, LExecutor executor, boolean privileged, Cons<String> modified){
         this.executor = executor;
+        this.editingPrivileged = privileged;
         discardButton.visible = executor == null;
         this.openedCode = code;
         this.originalCode = null;
@@ -656,7 +668,8 @@ public class SugarLogicDialog extends LogicDialog{
             }
         }
         try{
-            String compiled = SugarCompiler.compile(sugar, SugarCompiler.currentMode(), effectiveLibrary.index, effectiveLibrary.text);
+            String compiled = SugarCompiler.compile(sugar, SugarCompiler.currentMode(), effectiveLibrary.index,
+                effectiveLibrary.text, SugarCompiler.currentStrategy(), SugarCompiler.currentAssertEmit(), editingPrivileged);
             if(executor != null && executor.build != null && !executor.build.isValid()){
                 drafts.remove(key);
                 return;

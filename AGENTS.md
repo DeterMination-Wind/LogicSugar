@@ -31,10 +31,10 @@ this file only adds what is specific to this project.
 ```powershell
 cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, reconstructionTest, recoveryPredicateTest,
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
-                                      # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
                                       # varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest,
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
-                                      # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest
+                                      # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest,
+                                      # escapePreviewTest, v160SensorAccessTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 
@@ -139,7 +139,7 @@ the Neon main repo's docs:
   pipelines, expression subsystem, cross-loader constraint, decompiler gate, layout map.
 - `docs/development.md` — environment, Gradle commands, artifact chain, style rules.
 - `docs/release.md` — version scheme, `deploy`/D8 pipeline, Release asset safety rules.
-- `docs/testing.md` — the twenty-seven JavaExec self-test tasks, new-test conventions, manual
+- `docs/testing.md` — the twenty-nine JavaExec self-test tasks, new-test conventions, manual
   checklist.
 - `docs/glossary.md` — project terminology (carrier, FuncMode, SwitchStrategy, gate, …).
 

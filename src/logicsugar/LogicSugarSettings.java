@@ -49,7 +49,6 @@ public final class LogicSugarSettings{
         addHideVarsPref(table);
         addBoxSelectPrefs(table);
         addCompactCardsPref(table);
-        addLocalizeCardsPref(table);
         if(includeJumpLines){
             logicsugar.assist.JumpLineColor.buildSettings(table);
         }
@@ -67,13 +66,6 @@ public final class LogicSugarSettings{
         table.checkPref(mindustry.logic.SugarCanvas.settingCompactCards, true, b -> {
             mindustry.logic.SugarCanvas.refreshLayoutSpace();
         });
-    }
-
-    /** Checkbox for localized statement-card titles. No refresh callback: open cards keep
-     *  their title until rebuilt, so the change applies on the next logic editor open
-     *  (stated in the setting description). */
-    static void addLocalizeCardsPref(SettingsMenuDialog.SettingsTable table){
-        table.checkPref(mindustry.logic.SugarStatements.settingLocalizeCards, true);
     }
 
     /** Checkboxes for BoxSelect drag behavior (Ctrl+click copy and Ctrl+drag copy). */

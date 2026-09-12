@@ -189,9 +189,9 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 
 `SugarStatements` 中的 `For`、`If`、`While` 和 `ElseIf` 将条件标签、条件编辑器和 `OP/Expr` 切换分别放在安全行；`For` 的循环变量、初值、步长和 `until` 也各自换行，折叠按钮单独放在末行。这样嵌套卡片只增加垂直高度，不依赖横向滚动，也不会让行尾控件被结构缩进推出卡片。条件字段使用紧凑宽度，`SugarCanvas.SugarStatementElem` 则按卡片实际宽度计算可用缩进，避免使用固定嵌套层数上限。布局行为需在不同方向、UI scale、语言和 MindustryX LogicSupport 侧栏状态下手测。
 
-## 上游版本适配笔记（v155.4 → v160 前瞻）
+## 上游版本适配笔记（v160）
 
-本分支运行口径是 Mindustry BE 27771（`mod.json` 的 `minGameVersion`）；CI 仍钉 Anuken/Mindustry v155.4 快照，用来保证功能代码不绑死 BE 独有 API。本节记录上游（Anuken/Mindustry）v159.4 之后、面向 v160 的 Logic 相关改动（基于 Mindustry-master 核实，区间 `894bab4ecd..c81d0eb025`，2026-08-26 ~ 09-05；MemoryBlock 对象存储于 2026-09-09 再对 master 核对），每条给出上游变化、对 LogicSugar 的影响与适配时机。本节涉及的 `mindustry.logic.*` 成员访问结论必须与 `AGENTS.md` 保持一致，冲突时以 `AGENTS.md` 为准。
+本分支运行口径是 Mindustry BE 27771（`mod.json` 的 `minGameVersion`）；本节记录上游 v160 的 Logic 相关改动及本分支的兼容策略。默认 Gradle 依赖仍是工作区 `../Mindustry-master/desktop/build/libs/Mindustry.jar`，也可用 `-PmindustryJar=<path>` 指定另一份 API 包。每条给出上游变化、对 LogicSugar 的影响与适配动作；涉及 `mindustry.logic.*` 的成员访问必须与 `AGENTS.md` 保持一致，冲突时以 `AGENTS.md` 为准。
 
 ### 内存对象存储（上游 #12459，fac33d08d）
 
@@ -201,15 +201,15 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 
 ### 本批功能与 BE 新 logic（deque / uset / 数组算法 / 撤销）
 
-- **结论**：不依赖 BE 新增 opcode。声明卡与 bulk 运算仍降级为 `read`/`write`/`op`/`jump`/`funccall`；撤销/重做只改编辑器内存里的 sugar 文本，保存产物不变。本仓库调色板按钮走 `name()` / `logicsugar.localizeCards`，不调用 `localizedName()`。
+- **结论**：不依赖 BE 新增 opcode。声明卡与 bulk 运算仍降级为 `read`/`write`/`op`/`jump`/`funccall`；撤销/重做只改编辑器内存里的 sugar 文本，保存产物不变。结构卡文案走 `logicsugar.*`，原版菜单按 `logiclocalization` 使用 `localizedName()` / `statementKey()`。
 - **本地化**：上游 `LStatement.statementKey()` 默认是 `typeName().toLowerCase()`；数据声明卡的 `typeName()` 是 token，因此键是 `instruction.deque` / `instruction.uset` 等，而不是类名 `dequedecl`。集合声明 token 必须是 `uset`，避免与原版 opcode `set` 冲突。
-- **适配动作**：现在无需为这些功能分叉 v159.7 / v160 API。调色板继续用 `name()`；bundle 同时保留 `instruction.<token>` 与旧的 `instruction.*decl` 别名。bump `minGameVersion` 时按上一节复查 MemoryBlock 对象存储即可。
+- **适配动作**：现在无需为这些功能分叉 v159.7 / v160 API。Sugar 自有卡片继续用 `name()`；原版语句菜单按 `localizedName()` / `statementKey()` 搜索与显示。bundle 同时保留 `instruction.<token>` 与旧的 `instruction.*decl` 别名。bump `minGameVersion` 时按上一节复查 MemoryBlock 对象存储即可。
 
 ### LAccess cleanup（b9189a5570 + 023a4ff1）
 
-- **上游变化**：`LAccess.isPrivileged()` 方法删除，改为公共字段 `privileged`。
-- **影响/风险**：LogicSugar 当前未引用 `LAccess.isPrivileged()`；`ExprCompiler` 依赖的 `LAccess.senseable` 列表内容未变——升级无 API 风险。注意区分：`SugarCanvas` / `BoxSelect` 里自有同名 `isPrivileged()` 辅助方法读的是 `LCanvas.privileged`（反射），`SugarLogicDialog` 读的是 `LogicDialog.privileged`，均与 `LAccess` 无关，不受此次 cleanup 影响。
-- **适配动作**：现在无需改动；升级时无需调整任何反射目标。
+- **上游变化**：`LAccess.isPrivileged()` 方法删除，改为公共字段 `privileged`；可传感列表拆为普通 `senseable` 与特权 `senseablePrivileged`。
+- **影响/风险**：`ExprCompiler` 不直接链接新增字段，而是反射读取 `senseablePrivileged`；旧版没有该字段时回退到完整 `senseable`，避免最低版本链接失败。编译上下文按当前处理器的 privileged 状态安装并在 `finally` 恢复。
+- **适配动作**：新增或变更传感器列表时继续通过反射探测并保留旧版回退；运行 `v160SensorAccessTest` 与 `crossLoaderTest`。
 
 ### 新逻辑规则与 marker 控制
 
@@ -220,8 +220,20 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 ### 逻辑语句本地化（上游 #12158 + #12569）
 
 - **上游变化**：新增设置 `logiclocalization`（默认开）；`LStatement` 增加 `bundle()` / `localizedName()` / `statementKey()`，卡片标题、语句菜单与搜索文案走 bundle，约定键 `instruction.<statementKey小写>`。
-- **影响/风险**：LogicSugar 自身的卡片本地化走 `logicsugar.*` 键并新增设置 `logicsugar.localizeCards`（另一任务并行实现），键名与上游约定对齐：三份 bundle 的 `instruction.*` 键以此为准。升级时需确认上游 `logiclocalization` 与 `logicsugar.localizeCards` 两层开关叠加后行为符合预期。
-- **适配动作**：现在：保持 `instruction.<statementKey小写>` 键名约定一致。升级时：复查两层本地化开关的叠加行为。
+- **影响/风险**：LogicSugar 卡片标题跟随同一个 `logiclocalization` 开关；不再维护重复的 `logicsugar.localizeCards`。原生语句菜单搜索使用 `localizedName()`，提示键使用 `statementKey()`，Sugar 自有文案仍走 `logicsugar.*` bundle 键。
+- **适配动作**：保持 `instruction.<statementKey小写>` 键名约定一致，升级时复查上游方法签名与菜单搜索行为。
+
+### 语句卡片自动换行（上游 v160）
+
+- **上游变化**：`LStatement.useWrapping()` 默认返回 `true`，`LCanvas` 对启用的语句使用 `WrapTable`；紧凑布局查询从 `useRows()` 迁移为 `isCompact()`。
+- **影响/风险**：`WrapTable` 不保证显式 `row()`、`grow` 或 `colspan` 与普通 `Table` 相同。LogicSugar 的结构化卡片统一继承 `SugarStatement.useWrapping() == false`，保留自有行布局；`ExprStatement` 同样 opt-out。`ForBegin` 在自身普通表格内部按新版 `isCompact()`/旧版 `useRows()` 选择布局，两个方法均通过反射探测，失败时按上游宽度阈值回退。
+- **适配动作**：新卡片默认继承 opt-out；只有完全由原子控件组成并验证过 `WrapTable` 行为的卡片才显式 opt-in。
+
+### 字符串转义预览
+
+- **适用范围**：`EscapePreview` 是只读浮层，只观察当前聚焦且仍在 Sugar 画布内的 `TextField`；仅接受完整 quoted mlog token，因此不会把变量名或表达式误报为字符串。
+- **解码规则**：严格匹配上游的 `\\n`、`\\"`、`\\\\`、`\\uXXXX`；未知转义原样保留，坏的四位 Unicode 转义显示错误，Unicode 按 UTF-16 code unit 追加。现代能力通过反射实际调用运行时 `LAssembler.unescape` 探测，而不是只检测方法存在。
+- **浮层限制**：预览不改写源文本、不参与卡片布局；滚动窗内无完整位置时隐藏，失焦、字段/画布不可见或画布销毁时清理。
 
 ### 无新 opcode 与逻辑显示器修复
 

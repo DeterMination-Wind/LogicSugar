@@ -332,7 +332,7 @@ public final class SugarDecompiler{
                 for(SugarCompiler.SwitchStrategy strategy : SugarCompiler.SwitchStrategy.values()){
                     for(SugarCompiler.AssertEmit emit : emitShapes){
                         try{
-                            String compiled = SugarCompiler.compile(candidate, mode, SugarFunctions.library(), null, strategy, emit);
+                            String compiled = SugarCompiler.compile(candidate, mode, SugarFunctions.library(), null, strategy, emit, privileged);
                             String stripped = normalize(stripGeneratedMetadata(compiled), privileged);
                             if(stripped.equals(target) || stripped.equals(threadedTarget)){
                                 return new Verification(true, mode.name() + "/" + strategy.name() + "/" + emit.name());

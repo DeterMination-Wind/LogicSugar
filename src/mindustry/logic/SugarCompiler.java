@@ -269,7 +269,13 @@ public final class SugarCompiler{
     /** Compiles with an explicit switch strategy and assertion emission shape. */
     public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
                                  SwitchStrategy switchStrategy, AssertEmit assertEmit){
-        Seq<LStatement> statements = LAssembler.read(sugar, true);
+        return compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, true);
+    }
+
+    /** Compiles in the same privileged/non-privileged context as the edited processor. */
+    public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
+                                 SwitchStrategy switchStrategy, AssertEmit assertEmit, boolean privileged){
+        Seq<LStatement> statements = LAssembler.read(sugar, privileged);
         if(!containsSugar(statements)) return sugar;
 
         // destIndex on begin cards is a jump comment. Older saves and hand-edited
@@ -288,6 +294,7 @@ public final class SugarCompiler{
         }
         if(library != null) userFunctionNames.addAll(library.functions.keySet());
         Set<String> previousUserFunctions = ExprIntrinsics.enterUserFunctions(userFunctionNames);
+        boolean previousPrivilegedSensors = ExprCompiler.enterPrivilegedSensors(privileged);
         // F2: 数据模块注入的内置函数库并入本次编译使用的 LibraryIndex（只影响本次编译；
         // extractLibrarySource 仍只作用于纯用户库文本，内置函数不会进入 __ls_lib 载体）。
         SugarFunctions.LibraryIndex compileLibrary = SugarFunctions.withBuiltins(library, DataModules.builtinSugar());
@@ -404,6 +411,7 @@ public final class SugarCompiler{
         }finally{
             if(modulesCollected) DataModules.restore();
             if(arraysEntered) ArrayRegistry.restore(previousArrays);
+            ExprCompiler.restorePrivilegedSensors(previousPrivilegedSensors);
             ExprIntrinsics.restoreUserFunctions(previousUserFunctions);
         }
     }

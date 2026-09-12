@@ -30,8 +30,8 @@ import mindustry.logic.SugarAsserts.AssertDataType;
  * can store objects, so a memory read can hand back an object LVar instead of a number.
  * asserttype's number(!isobj) vs building/unit/... (isobj instanceof) distinction is what
  * lets a debug build tell "this read produced a building/unit/string" from "this read
- * produced a number" — the coverage below pins that split on v155.4, where object LVars
- * already exist through sensors and linked blocks, so no v160 feature is required.</p>
+ * produced a number". The v160 memory-object change makes this distinction relevant for
+ * memory reads as well; the coverage below pins both sides of the split.</p>
  */
 public class AssertTypeTest{
     public static void main(String[] args){

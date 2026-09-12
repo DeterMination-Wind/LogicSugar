@@ -24,9 +24,6 @@ import java.util.List;
 public final class SugarStatements{
     private SugarStatements(){}
 
-    /** Settings key for localized card titles (checkbox registered in LogicSugarSettings). */
-    public static final String settingLocalizeCards = "logicsugar.localizeCards";
-
     /** For / while / switch / if / functions: not mixed with vanilla jump/end. */
     public static final LCategory advancedControl = new LCategory("advcontrol", Color.valueOf("ff8a65"), Icon.rightOpen);
     /** Declaration cards: stack, queue, deque, map, set, list, heap, bitset, chain, record. */
@@ -86,11 +83,9 @@ public final class SugarStatements{
         return Core.bundle.get("logicsugar." + key, fallback);
     }
 
-    /** Whether Sugar card titles render in the game language (setting
-     *  {@link #settingLocalizeCards}, default on). Read live, so toggling it applies the
-     *  next time the logic editor is opened — no settings refresh callback needed. */
+    /** Sugar follows v160's one canonical logic-localization setting. */
     public static boolean cardsLocalized(){
-        return Core.settings.getBool(settingLocalizeCards, true);
+        return Core.settings.getBool("logiclocalization", true);
     }
 
     /** {@link #text} for card titles only ({@code name()} overrides): returns the
@@ -101,6 +96,12 @@ public final class SugarStatements{
     }
 
     public abstract static class SugarStatement extends LStatement{
+        /** Structured cards own explicit rows and fold controls, so they opt out of the
+         *  v160 default WrapTable layout. Kept without @Override for BE27771 source support. */
+        public boolean useWrapping(){
+            return false;
+        }
+
         @Override
         public LInstruction build(LAssembler builder){
             return new NoopI();
@@ -330,7 +331,7 @@ public final class SugarStatements{
             // 字段列宽分配。宽屏合并为一行，窄屏只在步长后换一次行。
             table.table(content -> {
                 content.left();
-                if(LCanvas.useRows()){
+                if(SugarCanvas.compactStatementLayout()){
                     content.table(this::buildForPrefix).left();
                     content.row();
                     content.table(this::buildForCondition).growX().fillX().left();
