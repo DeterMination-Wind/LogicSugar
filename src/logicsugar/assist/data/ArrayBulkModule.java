@@ -6,6 +6,8 @@ import mindustry.logic.LStatement;
 
 import java.util.List;
 import java.util.Set;
+import mindustry.logic.LCategory;
+import mindustry.logic.SugarStatements;
 
 /**
  * 数组批量运算模块（示例模块 + 契约 §1 功能）：
@@ -46,6 +48,12 @@ public class ArrayBulkModule extends DataModule{
     @Override
     public ExprIntrinsics.Provider intrinsics(){
         return ArrayBulkIntrinsics.INSTANCE;
+    }
+
+    @Override
+    public List<PaletteCall> paletteCalls(){
+        return callsWithFirst(SugarStatements.arrayAlgo, "buf", "sum", "avg", "min", "max", "count", "indexof",
+            "fill", "copy", "sortasc", "sortdesc", "reverse", "replace", "swap", "bsearch");
     }
 
     @Override

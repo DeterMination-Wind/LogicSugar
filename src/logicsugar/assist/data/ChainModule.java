@@ -72,6 +72,12 @@ public class ChainModule extends DataModule{
         return ID;
     }
 
+    @Override
+    public List<PaletteCall> paletteCalls(){
+        return callsWithFirst(SugarStatements.chainOps, "c", "cinit", "cclear", "cnew", "cfree", "cget", "cset",
+            "cnext", "clink", "cshead", "chead", "clen");
+    }
+
     // ===== 声明卡 =====
 
     /** {@code chain <name> <memory> <base> <size>} 声明卡（纯元数据，lower 跳过）。 */

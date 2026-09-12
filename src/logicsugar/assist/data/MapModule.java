@@ -110,6 +110,11 @@ public class MapModule extends DataModule{
     }
 
     @Override
+    public List<PaletteCall> paletteCalls(){
+        return callsWithFirst(SugarStatements.mapOps, "map", "mapset", "mapget", "maphas", "mapdel", "mapsize", "mapclear");
+    }
+
+    @Override
     public void registerParsers(){
         LAssembler.customParsers.put(TOKEN, MapModule::parseMap);
         if(!paletteRegistered){

@@ -57,6 +57,11 @@ public class BitsetModule extends DataModule{
         LAssembler.customParsers.put(BitsetStatement.TOKEN, BitsetModule::parseBitset);
     }
 
+    @Override
+    public List<PaletteCall> paletteCalls(){
+        return callsWithFirst(SugarStatements.bitsetOps, "bits", "bset", "bclr", "btest", "bcount");
+    }
+
     /** {@code bitset <name> <memory> <base> <words>} 解析器（空槽 {@code ~}）。 */
     public static LStatement parseBitset(String[] tokens){
         BitsetStatement result = new BitsetStatement();

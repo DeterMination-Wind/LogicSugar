@@ -2,6 +2,8 @@ package mindustry.logic;
 
 import arc.struct.Seq;
 import logicsugar.assist.data.DataModules;
+import logicsugar.assist.data.DataCallStatement;
+import logicsugar.assist.data.DataModule;
 import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprIntrinsics;
@@ -946,6 +948,8 @@ public final class SugarFunctions{
         }else if(statement instanceof FuncCallStatement call){
             // 嵌套调用：g(foo(x)) —— foo 也要进调用图
             registerExprCalls(call.args, owner, set, index);
+        }else if(statement instanceof DataCallStatement call){
+            registerExprCalls(call.operation + "(" + call.arguments + ")", owner, set, index);
         }else if(statement instanceof IfBeginStatement ifBegin && ifBegin.expressionMode){
             registerExprCalls(ifBegin.conditionExpr, owner, set, index);
         }else if(statement instanceof ElseIfStatement elseIf && elseIf.expressionMode){
@@ -1074,6 +1078,9 @@ public final class SugarFunctions{
         }
         if(statement instanceof FuncCallStatement call){
             collectTempToken(call.args, function, map);
+        }else if(statement instanceof DataCallStatement call){
+            collectTempToken(call.destination, function, map);
+            collectTempToken(call.arguments, function, map);
         }else if(statement instanceof ReturnStatement ret){
             collectTempToken(ret.expr, function, map);
         }
@@ -1111,6 +1118,8 @@ public final class SugarFunctions{
                 result.add(packcolor.result);
             }else if(statement instanceof FuncCallStatement call){
                 if(!call.result.isEmpty()) result.add(call.result);
+            }else if(statement instanceof DataCallStatement call){
+                if(!call.destination.isEmpty()) result.add(call.destination);
             }else if(statement instanceof ForBeginStatement forBegin){
                 result.add(forBegin.variable);
             }
@@ -1144,6 +1153,14 @@ public final class SugarFunctions{
                 copy.name = call.name;
                 copy.args = rewriteExpression(call.args, map);
                 copy.result = map.getOrDefault(call.result, call.result);
+                rewritten.add(copy);
+                continue;
+            }
+            if(statement instanceof DataCallStatement call){
+                DataCallStatement copy = new DataCallStatement();
+                copy.operation = call.operation;
+                copy.destination = rewriteTokens(call.destination, map);
+                copy.arguments = rewriteExpression(call.arguments, map);
                 rewritten.add(copy);
                 continue;
             }
@@ -1490,6 +1507,8 @@ public final class SugarFunctions{
                 }
             }else if(statement instanceof FuncCallStatement call){
                 expandCall(call, functions, mode, out, ids, strategy, assertEmit);
+            }else if(statement instanceof DataCallStatement call){
+                emitDataCall(call, prefix, functions, mode, out, ids, strategy, assertEmit);
             }else if(statement instanceof ReturnStatement){
                 if(funcName == null) throw error("return", i, "is outside a function");
                 emitReturn((ReturnStatement)statement, prefix, mode, out, funcName, functions, ids, strategy, assertEmit);
@@ -1522,6 +1541,65 @@ public final class SugarFunctions{
             }
         }
         if(statementLabels[statements.size]) out.append(label(prefix, "stmt_", statements.size)).append(":\n");
+    }
+
+    /** Lowers one persistent intrinsic card through the normal expression provider chain. */
+    private static void emitDataCall(DataCallStatement call, String prefix, FunctionSet functions, FuncMode mode,
+                                     StringBuilder out, CallIds ids, SugarCompiler.SwitchStrategy strategy,
+                                     SugarCompiler.AssertEmit assertEmit){
+        DataModule.PaletteCall spec = DataModules.paletteCall(call.operation);
+        if(spec == null) throw new IllegalArgumentException("unknown data intrinsic '" + call.operation + "'");
+        String args = call.arguments == null ? "" : call.arguments;
+        List<ExprCompiler.Line> lines;
+        try{
+            lines = ExprCompiler.compile(call.destination, call.operation + "(" + args + ")", null,
+                assertEmit == SugarCompiler.AssertEmit.emit);
+        }catch(Exception e){
+            throw new IllegalArgumentException("Invalid data call '" + call.operation + "': " + e.getMessage());
+        }
+        for(ExprCompiler.Line line : lines){
+            if(line instanceof ExprCompiler.CallLine nested){
+                ExprCompiler.CallLine renamed = new ExprCompiler.CallLine(nested.name,
+                    renameDataArgs(nested.args, prefix), renameDataTemp(nested.dest, prefix));
+                expandCallLine(renamed, functions, mode, out, ids, strategy, assertEmit);
+            }else if(line instanceof ExprCompiler.AssertBoundsLine bounds){
+                out.append(bounds.withValue(renameDataTemp(bounds.value, prefix)).toText()).append('\n');
+            }else if(line instanceof ExprCompiler.RawLine raw){
+                out.append(raw.toText()).append('\n');
+            }else if(line instanceof ExprCompiler.SensorLine sensor){
+                out.append("sensor ").append(renameDataTemp(sensor.dest, prefix)).append(' ')
+                    .append(renameDataTemp(sensor.a, prefix)).append(' ')
+                    .append(renameDataTemp(sensor.b, prefix)).append('\n');
+            }else if(line instanceof ExprCompiler.ReadLine read){
+                out.append("read ").append(renameDataTemp(read.dest, prefix)).append(' ')
+                    .append(renameDataTemp(read.a, prefix)).append(' ')
+                    .append(renameDataTemp(read.b, prefix)).append('\n');
+            }else if(line instanceof ExprCompiler.WriteLine write){
+                out.append("write ").append(renameDataTemp(write.value, prefix)).append(' ')
+                    .append(renameDataTemp(write.memory, prefix)).append(' ')
+                    .append(renameDataTemp(write.address, prefix)).append('\n');
+            }else{
+                ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
+                out.append("op ").append(op.op).append(' ')
+                    .append(renameDataTemp(op.dest, prefix)).append(' ')
+                    .append(renameDataTemp(op.a, prefix)).append(' ')
+                    .append(renameDataTemp(op.b, prefix)).append('\n');
+            }
+        }
+    }
+
+    private static String renameDataArgs(String args, String prefix){
+        StringBuilder out = new StringBuilder();
+        for(String value : ExprCompiler.splitValues(args)){
+            if(out.length() > 0) out.append(", ");
+            out.append(renameDataTemp(value, prefix));
+        }
+        return out.toString();
+    }
+
+    private static String renameDataTemp(String value, String prefix){
+        if(value == null || !ExprCompiler.isTemp(value) || prefix == null || prefix.isEmpty()) return value;
+        return "__ls_" + prefix.replace('-', '_') + "dc" + value.substring(1);
     }
 
     /** 数组初始化卡（{@code arrayinit}）lowering：卡片位置发射 write <v> <memory> <base+k>，

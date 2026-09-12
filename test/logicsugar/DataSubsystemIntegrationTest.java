@@ -56,7 +56,10 @@ public class DataSubsystemIntegrationTest{
 
         // 每个数据声明卡在调色板里恰好出现一次
         check(countClass(SugarStatements.MatrixStatement.class) == 1, "matrix card registered " + countClass(SugarStatements.MatrixStatement.class) + " times");
-        check(countClass(SugarStatements.ArrayInitStatement.class) == 1, "arrayinit card registered " + countClass(SugarStatements.ArrayInitStatement.class) + " times");
+        check(countClass(SugarStatements.ArrayInitStatement.class) == 0,
+            "legacy arrayinit card must not remain in the palette");
+        check(LAssembler.customParsers.containsKey("arrayinit"),
+            "legacy arrayinit parser must remain available for saved carriers");
         check(countClass(logicsugar.assist.data.RecordModule.RecordStatement.class) == 1, "record card registered more than once");
         check(countClass(logicsugar.assist.data.ContainerModule.StackDeclStatement.class) == 1, "stack card registered more than once");
         check(countClass(logicsugar.assist.data.ContainerModule.QueueDeclStatement.class) == 1, "queue card registered more than once");

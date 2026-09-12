@@ -105,7 +105,8 @@ public class LogicSugarMod extends Mod{
         LogicIO.allStatements.add(SugarStatements.ReturnStatement::new);
         LogicIO.allStatements.add(SugarStatements.ArrayStatement::new);
         LogicIO.allStatements.add(SugarStatements.MatrixStatement::new);
-        LogicIO.allStatements.add(SugarStatements.ArrayInitStatement::new);
+        // The old eight-slot arrayinit card remains parser-compatible for existing carriers,
+        // but new programs use the array module's fill(buf, value) operation card instead.
 
         // Data subsystem modules (F2 framework): registering a module installs its
         // expression intrinsics provider (needed before the first compile/editor use);

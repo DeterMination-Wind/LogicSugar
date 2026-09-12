@@ -66,6 +66,14 @@ public class ListHeapModule extends DataModule{
         return ID;
     }
 
+    @Override
+    public List<PaletteCall> paletteCalls(){
+        List<PaletteCall> result = new ArrayList<>();
+        result.addAll(callsWithFirst(SugarStatements.listOps, "l", "lappend", "lget", "lset", "linsert", "lremove", "lfind", "lsize"));
+        result.addAll(callsWithFirst(SugarStatements.heapOps, "h", "hpush", "hpop", "hsize"));
+        return result;
+    }
+
     // ===== 声明卡 =====
 
     /** {@code list <name> <memory> <base> <size>} 声明卡（纯元数据，lower 跳过）。 */

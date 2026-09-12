@@ -28,8 +28,18 @@ public final class SugarStatements{
     public static final LCategory advancedControl = new LCategory("advcontrol", Color.valueOf("ff8a65"), Icon.rightOpen);
     /** Declaration cards: stack, queue, deque, map, set, list, heap, bitset, chain, record. */
     public static final LCategory dataStructures = new LCategory("datastruct", Color.valueOf("81c784"), Icon.fileText);
-    /** Array / matrix / array-init cards (bulk ops stay expression-only). */
+    /** Array / matrix declarations and persistent bulk-operation cards. */
     public static final LCategory arrayAlgo = new LCategory("arrayalgo", Color.valueOf("64b5f6"), Icon.pencil);
+    /** Per-family intrinsic cards; declaration cards remain in dataStructures. */
+    public static final LCategory stackOps = new LCategory("stackops", Color.valueOf("8bc34a"), Icon.rightOpen);
+    public static final LCategory queueOps = new LCategory("queueops", Color.valueOf("8bc34a"), Icon.rightOpen);
+    public static final LCategory dequeOps = new LCategory("dequeops", Color.valueOf("8bc34a"), Icon.rightOpen);
+    public static final LCategory bitsetOps = new LCategory("bitsetops", Color.valueOf("9575cd"), Icon.pencil);
+    public static final LCategory mapOps = new LCategory("mapops", Color.valueOf("ffb74d"), Icon.fileText);
+    public static final LCategory setOps = new LCategory("setops", Color.valueOf("ffb74d"), Icon.fileText);
+    public static final LCategory listOps = new LCategory("listops", Color.valueOf("4db6ac"), Icon.fileText);
+    public static final LCategory heapOps = new LCategory("heapops", Color.valueOf("4db6ac"), Icon.fileText);
+    public static final LCategory chainOps = new LCategory("chainops", Color.valueOf("90a4ae"), Icon.fileText);
 
     private static boolean parsersInstalled;
 

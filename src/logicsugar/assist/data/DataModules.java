@@ -37,6 +37,8 @@ public final class DataModules{
     private static List<DataModule> current;
     private static Set<String> builtinNamesCache;
     private static Map<String, List<String>> builtinParamsCache;
+    private static Map<String, DataModule.PaletteCall> paletteCallsCache;
+    private static boolean paletteStatementsRegistered;
 
     /** 登记一个模块（按 {@link DataModule#id()} 幂等）并注册其 intrinsic provider。 */
     public static void register(DataModule module){
@@ -49,6 +51,7 @@ public final class DataModules{
         if(provider != null) ExprIntrinsics.register(provider);
         builtinNamesCache = null;
         builtinParamsCache = null;
+        paletteCallsCache = null;
     }
 
     /** 注册全部模块的声明卡解析器（集成阶段调用；模块实现须幂等）。 */
@@ -56,6 +59,43 @@ public final class DataModules{
         for(DataModule module : new ArrayList<>(modules)){
             module.registerParsers();
         }
+        if(!paletteStatementsRegistered){
+            paletteStatementsRegistered = true;
+            LAssembler.customParsers.put(DataCallStatement.TOKEN, DataCallStatement::parse);
+            for(DataModule.PaletteCall call : paletteCalls().values()){
+                boolean exists = false;
+                for(arc.func.Prov<LStatement> provider : mindustry.gen.LogicIO.allStatements){
+                    LStatement statement = provider.get();
+                    if(statement instanceof DataCallStatement data
+                        && call.name.equalsIgnoreCase(data.operation)){
+                        exists = true;
+                        break;
+                    }
+                }
+                if(!exists) mindustry.gen.LogicIO.allStatements.add(() -> new DataCallStatement(call));
+            }
+        }
+    }
+
+    /** Intrinsic palette metadata, keyed case-insensitively by source operation. */
+    public static Map<String, DataModule.PaletteCall> paletteCalls(){
+        if(paletteCallsCache != null) return paletteCallsCache;
+        Map<String, DataModule.PaletteCall> result = new LinkedHashMap<>();
+        for(DataModule module : new ArrayList<>(modules)){
+            List<DataModule.PaletteCall> calls = module.paletteCalls();
+            if(calls == null) continue;
+            for(DataModule.PaletteCall call : calls){
+                if(call != null && call.name != null && !call.name.isEmpty()){
+                    result.putIfAbsent(call.name.toLowerCase(java.util.Locale.ROOT), call);
+                }
+            }
+        }
+        paletteCallsCache = Collections.unmodifiableMap(result);
+        return paletteCallsCache;
+    }
+
+    public static DataModule.PaletteCall paletteCall(String name){
+        return name == null ? null : paletteCalls().get(name.toLowerCase(java.util.Locale.ROOT));
     }
 
     /** 进入编译期上下文：每个模块建立/进入自己的注册表（与 {@link #restore} 配对）。 */
@@ -155,6 +195,8 @@ public final class DataModules{
         current = null;
         builtinNamesCache = null;
         builtinParamsCache = null;
+        paletteCallsCache = null;
+        paletteStatementsRegistered = false;
         ExprIntrinsics.clearProviders();
     }
 }

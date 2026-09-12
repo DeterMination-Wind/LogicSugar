@@ -74,6 +74,15 @@ public class ContainerModule extends DataModule{
         return ID;
     }
 
+    @Override
+    public List<PaletteCall> paletteCalls(){
+        List<PaletteCall> result = new ArrayList<>();
+        result.addAll(callsWithFirst(SugarStatements.stackOps, "s", "spush", "spop", "speek", "ssize", "sclear"));
+        result.addAll(callsWithFirst(SugarStatements.queueOps, "q", "qpush", "qpop", "qpeek", "qsize", "qclear"));
+        result.addAll(callsWithFirst(SugarStatements.dequeOps, "d", "dpushf", "dpushb", "dpopf", "dpopb", "dpeekf", "dpeekb", "dsize", "dclear"));
+        return result;
+    }
+
     // ===== 声明卡 =====
 
     /** {@code stack <name> <memory> <base> <size>} 声明卡（纯元数据，lower 跳过）。 */

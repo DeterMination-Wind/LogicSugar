@@ -94,6 +94,11 @@ public class SetModule extends DataModule{
     }
 
     @Override
+    public List<PaletteCall> paletteCalls(){
+        return callsWithFirst(SugarStatements.setOps, "s", "uadd", "uhas", "udel", "usize", "uclear");
+    }
+
+    @Override
     public void registerParsers(){
         LAssembler.customParsers.put(TOKEN, SetModule::parseSet);
         if(!paletteRegistered){

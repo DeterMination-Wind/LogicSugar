@@ -6,6 +6,8 @@ import mindustry.logic.LStatement;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import mindustry.logic.LCategory;
+import mindustry.logic.SugarStatements;
 
 /**
  * 一个数据结构模块：声明卡（{@link DataDeclaration} 子类）+ 编译期注册表 + 表达式/语句展开。
@@ -31,6 +33,22 @@ import java.util.Set;
  */
 public abstract class DataModule{
 
+    /** Metadata for one editable intrinsic card.  Modules own this list, so the
+     * framework does not need a production switch over every data structure. */
+    public static final class PaletteCall{
+        public final String name;
+        public final LCategory category;
+        public final String destination;
+        public final String arguments;
+
+        public PaletteCall(String name, LCategory category, String destination, String arguments){
+            this.name = name;
+            this.category = category == null ? SugarStatements.dataStructures : category;
+            this.destination = destination == null ? "result" : destination;
+            this.arguments = arguments == null ? "" : arguments;
+        }
+    }
+
     /** 模块唯一 id（{@link DataModules#register} 据此去重）。 */
     public abstract String id();
 
@@ -42,6 +60,43 @@ public abstract class DataModule{
 
     /** 编辑期字段级校验：把有问题的声明卡标红（{@code invalid[i] = true}），不抛错。 */
     public abstract void markInvalid(List<LStatement> statements, boolean[] invalid, Set<String> functionNames);
+
+    /** Editable/persistent intrinsic cards supplied by this module. */
+    public List<PaletteCall> paletteCalls(){
+        ExprIntrinsics.Provider provider = intrinsics();
+        if(provider == null || provider.callNames() == null) return Collections.emptyList();
+        List<PaletteCall> result = new java.util.ArrayList<>();
+        for(String name : provider.callNames()){
+            int arity = provider.arity(name);
+            result.add(new PaletteCall(name, SugarStatements.dataStructures,
+                "result", defaultArguments(name, arity)));
+        }
+        return result;
+    }
+
+    protected List<PaletteCall> calls(LCategory category, String... names){
+        return callsWithFirst(category, "data", names);
+    }
+
+    protected List<PaletteCall> callsWithFirst(LCategory category, String firstArgument, String... names){
+        List<PaletteCall> result = new java.util.ArrayList<>();
+        ExprIntrinsics.Provider provider = intrinsics();
+        for(String name : names){
+            int arity = provider == null ? -1 : provider.arity(name);
+            result.add(new PaletteCall(name, category, "result", defaultArguments(firstArgument, arity)));
+        }
+        return result;
+    }
+
+    private static String defaultArguments(String first, int arity){
+        if(arity <= 0) return "";
+        StringBuilder out = new StringBuilder();
+        for(int i = 0; i < arity; i++){
+            if(i > 0) out.append(", ");
+            out.append(i == 0 ? first : "value").append(i > 1 ? i : "");
+        }
+        return out.toString();
+    }
 
     /** 表达式扩展 provider（无表达式能力时返回 null）。 */
     public ExprIntrinsics.Provider intrinsics(){
