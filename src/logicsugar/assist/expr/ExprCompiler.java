@@ -379,11 +379,17 @@ public class ExprCompiler{
     static class Parser{
         final List<Token> tokens;
         final FunctionChecker checker;
+        boolean forceRootCall;
         int pos = 0;
 
         Parser(List<Token> tokens, FunctionChecker checker){
+            this(tokens, checker, false);
+        }
+
+        Parser(List<Token> tokens, FunctionChecker checker, boolean forceRootCall){
             this.tokens = tokens;
             this.checker = checker;
+            this.forceRootCall = forceRootCall;
         }
 
         Token peek(){ return tokens.get(pos); }
@@ -514,6 +520,8 @@ public class ExprCompiler{
                 next();
                 String name = tok.text;
                 if(peek().type == TokType.LPAREN){
+                    boolean forcedRootCall = forceRootCall;
+                    forceRootCall = false;
                     next();
                     List<Node> args = new ArrayList<>();
                     if(peek().type != TokType.RPAREN){
@@ -527,7 +535,9 @@ public class ExprCompiler{
                         throw new ParseException(msg("la.err.expected_rparen_func"));
                     next();
                     String funcName = resolveFuncName(name);
-                    if(funcName != null){
+                    if(forcedRootCall){
+                        base = new Call(name, args);
+                    }else if(funcName != null){
                         // 数学函数优先：用户函数重名被遮蔽（与既有一致）
                         if(UNARY_OPS.contains(funcName)){
                             if(args.size() != 1) throw new ParseException(msg("la.err.requires_1_arg", funcName));
@@ -689,6 +699,40 @@ public class ExprCompiler{
         }
     }
 
+    /**
+     * Compiles a persistent data-card operation as a forced root intrinsic. The operation
+     * itself cannot be shadowed by a user function; expressions nested in its arguments are
+     * still compiled by the ordinary provider path and therefore retain shadowing semantics.
+     */
+    public static List<Line> compileForcedIntrinsic(String dest, String operation, String arguments,
+                                                    boolean emitBoundsAsserts){
+        if(dest == null || dest.trim().isEmpty())
+            throw new ParseException(msg("la.err.assign_target", "<empty>"));
+        if(operation == null || operation.trim().isEmpty())
+            throw new ParseException(msg("la.err.unknown_func", "<empty>"));
+        boolean previous = boundsAsserts;
+        boundsAsserts = emitBoundsAsserts;
+        try{
+            String source = operation + "(" + (arguments == null ? "" : arguments) + ")";
+            Parser parser = new Parser(tokenize(source), null, true);
+            Node ast = parser.parse();
+            if(!(ast instanceof Call call))
+                throw new ParseException(msg("la.err.unknown_func", operation));
+            List<Line> ops = new ArrayList<>();
+            List<Line> expanded = ExprIntrinsics.tryExpandRootCall(call.name, call.args,
+                new IntrinsicCtx(ops, new TempStack()));
+            if(expanded == null || expanded.isEmpty())
+                throw new ParseException(msg("la.err.unknown_func", operation));
+            ops.addAll(expanded);
+            String result = lineDest(expanded.get(expanded.size() - 1));
+            if(result == null)
+                throw new ParseException("intrinsic '" + operation + "' did not produce a result operand");
+            return finishResult(dest, ops, result);
+        }finally{
+            boundsAsserts = previous;
+        }
+    }
+
     private static List<Line> compileInternal(String dest, String expr, FunctionChecker checker){
         List<Token> tokens = tokenize(expr);
         Parser parser = new Parser(tokens, checker);
@@ -729,6 +773,10 @@ public class ExprCompiler{
         TempStack temps = new TempStack();
         String result = compileNode(ast, ops, temps);
 
+        return finishResult(dest, ops, result);
+    }
+
+    private static List<Line> finishResult(String dest, List<Line> ops, String result){
         if(isTemp(result)){
             if(ops.isEmpty()){
                 // dest 本身就是 temp 且结果是简单值（如 compile("_0", "_0")：
@@ -1484,11 +1532,21 @@ public class ExprCompiler{
      * 未知函数名与未知成员名在此不报错——文本可能引用尚未定义的位置。
      */
     public static List<CallSite> collectCalls(String expr){
+        return collectCalls(expr, null);
+    }
+
+    /**
+     * Collects calls while forcing the first call expression to remain a Call node. This is
+     * used for a data card root such as {@code max(buf)}, where the operation name may also be
+     * a vanilla binary function or a same-named user function; nested argument calls remain
+     * subject to the ordinary parser rules.
+     */
+    public static List<CallSite> collectCalls(String expr, String forcedRoot){
         List<CallSite> result = new ArrayList<>();
         if(expr == null || expr.isEmpty()) return result;
         try{
             List<Token> tokens = tokenize(expr);
-            collectCallNodes(new Parser(tokens, null).parse(), result);
+            collectCallNodes(new Parser(tokens, null, forcedRoot != null).parse(), result);
         }catch(Exception ignored){
             // 解析失败的文本（编辑中间态）不产生调用记录；编译路径会另行报错
         }

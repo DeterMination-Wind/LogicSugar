@@ -96,6 +96,12 @@ public final class ExprIntrinsics{
     /** intrinsic 的规范名（provider 注册时的大小写）；不可展开时返回 null。 */
     public static String canonicalName(String name, int argc){
         if(name == null || isUserFunction(name)) return null;
+        return canonicalNameIgnoringUser(name, argc);
+    }
+
+    /** Intrinsic canonicalization for a fixed data-card root; deliberately ignores user shadowing. */
+    private static String canonicalNameIgnoringUser(String name, int argc){
+        if(name == null) return null;
         for(Provider provider : providers){
             String[] names = provider.callNames();
             if(names == null) continue;
@@ -112,6 +118,23 @@ public final class ExprIntrinsics{
     public static List<Line> tryExpandCall(String name, List<Node> args, Ctx ctx){
         int argc = args == null ? 0 : args.size();
         String canonical = canonicalName(name, argc);
+        if(canonical == null) return null;
+        for(Provider provider : providers){
+            if(!hasCallName(provider, canonical)) continue;
+            List<Line> lines = provider.expandCall(canonical, args, ctx);
+            if(lines != null && !lines.isEmpty()) return lines;
+        }
+        return null;
+    }
+
+    /**
+     * Expands a data-card operation as the root intrinsic, ignoring a same-named user
+     * function.  Nested calls compiled through {@link Ctx#compile(Node)} retain the normal
+     * user-function shadowing rules.
+     */
+    public static List<Line> tryExpandRootCall(String name, List<Node> args, Ctx ctx){
+        int argc = args == null ? 0 : args.size();
+        String canonical = canonicalNameIgnoringUser(name, argc);
         if(canonical == null) return null;
         for(Provider provider : providers){
             if(!hasCallName(provider, canonical)) continue;
@@ -155,6 +178,15 @@ public final class ExprIntrinsics{
     /** 一次 intrinsic 展开会调用的注入函数名（可达性登记用）。 */
     public static List<String> calleesOf(String name, int argc){
         String canonical = canonicalName(name, argc);
+        return calleesOfCanonical(canonical, argc);
+    }
+
+    /** Callee lookup for a fixed data-card root; ignores user-function shadowing. */
+    public static List<String> calleesOfRoot(String name, int argc){
+        return calleesOfCanonical(canonicalNameIgnoringUser(name, argc), argc);
+    }
+
+    private static List<String> calleesOfCanonical(String canonical, int argc){
         if(canonical == null) return Collections.emptyList();
         List<String> result = new ArrayList<>();
         for(Provider provider : providers){

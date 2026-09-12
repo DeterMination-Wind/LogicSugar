@@ -65,7 +65,77 @@ public final class DataCallTest{
             "fill card did not lower through the shared array fill builtin:\n" + fillProduct);
         check(!fillProduct.contains("datacall "), "fill datacall leaked into product:\n" + fillProduct);
         check(SugarCompiler.restore(fillCompiled).equals(fillSugar), "fill card did not survive carrier restore");
+
+        checkCompileThrows("stack s cell1 0 4\n"
+            + "datacall spush ~ \"s, 7\"\n", "requires a destination variable");
+
+        // A dedicated operation card must choose its intrinsic even if ordinary expressions
+        // would let a same-named local function shadow it.  Test both lowering modes because
+        // normal mode needs builtin reachability/hoisting and inline expands at the call site.
+        String shadowSugar = "stack s cell1 0 4\n"
+            + "funcdef spush a,b 4\n"
+            + "set hijacked 1\n"
+            + "return \"99\"\n"
+            + "blockend\n"
+            + "datacall spush pushed \"s, 7\"\n";
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            String shadowCompiled = SugarCompiler.compile(shadowSugar, mode, null, null);
+            String shadowProduct = SugarCompiler.stripMarkers(shadowCompiled);
+            check(shadowProduct.contains("__ls_builtin_stkpush"),
+                "datacall spush did not force the stack intrinsic in " + mode + ":\n" + shadowProduct);
+            check(!shadowProduct.contains("set hijacked 1"),
+                "same-named user function hijacked datacall spush in " + mode + ":\n" + shadowProduct);
+            check(SugarCompiler.verifyRestore(shadowCompiled, shadowSugar),
+                "shadowed datacall did not survive carrier verification in " + mode);
+        }
+
+        // Only the fixed root is forced. A user function nested in a card argument must
+        // still be analyzed, retained and lowered normally.
+        String nestedSugar = "stack s cell1 0 4\n"
+            + "funcdef uservalue x 4\n"
+            + "set nestedHit 1\n"
+            + "return \"x\"\n"
+            + "blockend\n"
+            + "datacall spush pushed \"s, uservalue(7)\"\n";
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            String nestedProduct = SugarCompiler.stripMarkers(SugarCompiler.compile(nestedSugar, mode, null, null));
+            check(nestedProduct.contains("set nestedHit 1"),
+                "nested user function was not retained in " + mode + ":\n" + nestedProduct);
+            check(nestedProduct.contains("__ls_builtin_stkpush"),
+                "root stack intrinsic was lost in " + mode + ":\n" + nestedProduct);
+        }
+
+        // Bounds assertions emitted from a card in a function must use that function call's
+        // private temp namespace; a bare _0 would be clobbered by surrounding expressions.
+        String dynamicSugar = "array buf cell1 0 4\n"
+            + "stack s cell1 4 4\n"
+            + "funcdef consume i 5\n"
+            + "datacall spush pushed \"s, buf[i + 1]\"\n"
+            + "return \"pushed\"\n"
+            + "blockend\n"
+            + "funccall consume 1 result\n";
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            String dynamicCompiled = SugarCompiler.compile(dynamicSugar, mode, null, null,
+                SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
+            String dynamicProduct = SugarCompiler.stripMarkers(dynamicCompiled);
+            check(dynamicProduct.contains("assertBounds integer ~ 0 lessThanEq __ls_"),
+                "datacall bounds assert was not namespaced in " + mode + ":\n" + dynamicProduct);
+            check(!dynamicProduct.contains("lessThanEq _0 lessThanEq"),
+                "datacall bounds assert kept a bare temporary in " + mode + ":\n" + dynamicProduct);
+            check(SugarCompiler.verifyRestore(dynamicCompiled, dynamicSugar),
+                "dynamic datacall carrier verification failed in " + mode);
+        }
         System.out.println("DataCallTest passed");
+    }
+
+    private static void checkCompileThrows(String sugar, String expected){
+        try{
+            SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, null, null);
+            throw new AssertionError("expected compile failure containing '" + expected + "'");
+        }catch(IllegalArgumentException exception){
+            check(exception.getMessage().contains(expected),
+                "unexpected compile failure: " + exception.getMessage());
+        }
     }
 
     private static void check(boolean value, String message){

@@ -949,7 +949,7 @@ public final class SugarFunctions{
             // 嵌套调用：g(foo(x)) —— foo 也要进调用图
             registerExprCalls(call.args, owner, set, index);
         }else if(statement instanceof DataCallStatement call){
-            registerExprCalls(call.operation + "(" + call.arguments + ")", owner, set, index);
+            registerDataCallExprCalls(call, owner, set, index);
         }else if(statement instanceof IfBeginStatement ifBegin && ifBegin.expressionMode){
             registerExprCalls(ifBegin.conditionExpr, owner, set, index);
         }else if(statement instanceof ElseIfStatement elseIf && elseIf.expressionMode){
@@ -958,6 +958,35 @@ public final class SugarFunctions{
             registerExprCalls(whileBegin.conditionExpr, owner, set, index);
         }else if(statement instanceof ForBeginStatement forBegin && forBegin.expressionMode){
             registerExprCalls(forBegin.conditionExpr, owner, set, index);
+        }
+    }
+
+    /**
+     * Registers a data card's fixed root intrinsic separately from calls nested in its
+     * arguments. A same-named user function must not replace the card operation, while a
+     * user function used by an argument must still participate in validation/reachability.
+     */
+    private static void registerDataCallExprCalls(DataCallStatement call, Function owner,
+                                                   FunctionSet set, int index){
+        String expression = call.operation + "(" + (call.arguments == null ? "" : call.arguments) + ")";
+        List<ExprCompiler.CallSite> sites = ExprCompiler.collectCalls(expression, call.operation);
+        boolean root = true;
+        for(ExprCompiler.CallSite site : sites){
+            int argc = splitArgs(site.args).size();
+            if(root && site.name.equalsIgnoreCase(call.operation)){
+                for(String callee : ExprIntrinsics.calleesOfRoot(site.name, argc)){
+                    if(set.resolve(callee) != null){
+                        (owner == null ? set.mainCalls : owner.callees).add(callee);
+                    }
+                }
+                root = false;
+                continue;
+            }
+            FuncCallStatement stmt = new FuncCallStatement();
+            stmt.name = site.name;
+            stmt.args = site.args;
+            stmt.result = "_";
+            resolveCall(stmt, owner, set, index);
         }
     }
 
@@ -1547,12 +1576,15 @@ public final class SugarFunctions{
     private static void emitDataCall(DataCallStatement call, String prefix, FunctionSet functions, FuncMode mode,
                                      StringBuilder out, CallIds ids, SugarCompiler.SwitchStrategy strategy,
                                      SugarCompiler.AssertEmit assertEmit){
+        if(call.destination == null || call.destination.trim().isEmpty()){
+            throw new IllegalArgumentException("data call '" + call.operation + "' requires a destination variable");
+        }
         DataModule.PaletteCall spec = DataModules.paletteCall(call.operation);
         if(spec == null) throw new IllegalArgumentException("unknown data intrinsic '" + call.operation + "'");
         String args = call.arguments == null ? "" : call.arguments;
         List<ExprCompiler.Line> lines;
         try{
-            lines = ExprCompiler.compile(call.destination, call.operation + "(" + args + ")", null,
+            lines = ExprCompiler.compileForcedIntrinsic(call.destination, call.operation, args,
                 assertEmit == SugarCompiler.AssertEmit.emit);
         }catch(Exception e){
             throw new IllegalArgumentException("Invalid data call '" + call.operation + "': " + e.getMessage());
