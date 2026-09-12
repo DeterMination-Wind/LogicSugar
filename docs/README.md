@@ -33,7 +33,7 @@ docs/
 - [README.md](../README.md) / [README_zh.md](../README_zh.md)：面向玩家的功能与安装说明（英文 / 中文）。
 - [AGENTS.md](../AGENTS.md)：仓库维护约束，重点是**跨类加载器访问陷阱**、**反编译恢复安全门**与**重建（每加功能都要考虑）**。
 - [mod.json](../mod.json)：模组描述符（入口 `logicsugar.LogicSugarMod`、最低 Mindustry BE 构建 `27771`）。
-- [build.gradle](../build.gradle)：编译依赖、二十六个自测任务与 Android 打包管线的唯一事实来源。
+- [build.gradle](../build.gradle)：编译依赖、二十七个自测任务与 Android 打包管线的唯一事实来源。
 - `release_notes_v<版本>.md`：每个版本的双语（中文/English）发布说明，见 [版本与发布](release.md)。
 
 ## 维护约定

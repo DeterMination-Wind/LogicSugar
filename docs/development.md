@@ -13,7 +13,7 @@
 ## 常用命令
 
 ```powershell
-# 全部自测（二十六个 JavaExec 任务，接线见 testing.md）
+# 全部自测（二十七个 JavaExec 任务，接线见 testing.md）
 .\gradlew.bat check
 
 # 单跑某个自测任务

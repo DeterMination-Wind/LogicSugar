@@ -12,7 +12,7 @@ this file only adds what is specific to this project.
 
 - **调试类功能只在单机启用**：凡是会改变保存产物语义的功能（目前是调试断言构建
   `AssertEmit=emit`），必须在代码层限定为 `!Vars.net.active()`（单机/编辑器）才生效——
-  联机（已连接或自建）一律回落原版行为。纯展示类功能（如处理器状态指示、变量复制按钮）
+  联机（已连接或自建）一律回落原版行为。纯展示类功能（如处理器状态指示、单位 flag 显示、变量复制按钮）
   不产生存档差异，不受此限。不提供改变指令预算的能力：指令上限覆盖曾试做后被移除
   （commit ea97e00），保存产物恒 ≤1000 条是硬不变式，勿再引入。
 - **残余风险必须写进文档**：单机里创建的越界内容（>1000 条程序、带 assert 指令的调试
@@ -32,7 +32,7 @@ this file only adds what is specific to this project.
 cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, reconstructionTest, recoveryPredicateTest,
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
-                                      # varClipboardTest, processorStatusTest, assertTest, assertTypeTest, arrayTest,
+                                      # varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest,
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
                                       # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
@@ -139,7 +139,7 @@ the Neon main repo's docs:
   pipelines, expression subsystem, cross-loader constraint, decompiler gate, layout map.
 - `docs/development.md` — environment, Gradle commands, artifact chain, style rules.
 - `docs/release.md` — version scheme, `deploy`/D8 pipeline, Release asset safety rules.
-- `docs/testing.md` — the twenty-six JavaExec self-test tasks, new-test conventions, manual
+- `docs/testing.md` — the twenty-seven JavaExec self-test tasks, new-test conventions, manual
   checklist.
 - `docs/glossary.md` — project terminology (carrier, FuncMode, SwitchStrategy, gate, …).
 
@@ -155,7 +155,7 @@ Neon aggregate mod. The dual form is handled entirely by `LogicSugarMod`:
   `LogicSugarSettings.setup(...)` is skipped so the mod-owned `@logicsugar.settings`
   category never registers; the host calls `bekBuildSettings(SettingsTable)` instead,
   which currently aggregates func mode, the assert-emit toggle, the function-library entry,
-  the instruction-limit slider, the processor-status sliders, hide-vars, box-select and
+  the processor-status sliders, the unit-flag overlay, hide-vars, box-select and
   jump-line-coloring rows. Do not re-add a self-registered category, and do not move
   `SwitchStrategySetting` into `bekBuildSettings` without updating Neon's sync assertions.
 - No other code path branches on the aggregate form: behavior, compilation output and

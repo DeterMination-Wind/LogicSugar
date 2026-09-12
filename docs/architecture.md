@@ -7,8 +7,8 @@
 LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（id `ls`）。两种形态共用同一套代码，由主类上的静态标记切换：
 
 - `logicsugar.LogicSugarMod#bekBundled`：宿主（Neon）注入时置 `true`。
-- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试断言构建、函数库入口、处理器状态、隐藏内部变量、框选、跳转线着色）。
-- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、处理器状态滑杆、隐藏变量、框选与跳转线着色；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
+- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试断言构建、函数库入口、处理器状态、单位 flag 显示、隐藏内部变量、框选、跳转线着色）。
+- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、处理器状态滑杆、单位 flag 显示、隐藏变量、框选与跳转线着色；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
 
 除设置入口外，两种形态的行为完全一致；不存在单独的聚合分支代码。
 
@@ -18,7 +18,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 1. **注册语句**：`registerStatements()` 把 16 种 `SugarStatements` 卡片（`ForBegin` / `WhileBegin` / `SwitchBegin` / `IfBegin` / `Case` / `ElseIf` / `Else` / `Break` / `Continue` / `BlockEnd` / `FuncDef` / `FuncCall` / `Return` / `Array` / `Matrix` / `ArrayInit`）加入 `LogicIO.allStatements`；随后注册数据子系统模块（`DataModules.register(new ArrayBulkModule/RecordModule/ContainerModule/BitsetModule/MapModule/SetModule/ListHeapModule/ChainModule())`，同时注册表达式 intrinsic provider），再调用 `SugarStatements.installParsers()` 与 `DataModules.registerParsers()` 向 `LAssembler.customParsers` 注册全部 token 解析器（含 `forend` / `whileend` / `switchend` 三个旧开发版本标记的只读兼容，以及 `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 十张数据声明卡）。整个 `registerStatements()` 由静态 `registered` 守卫，重复 `init()` 不会重复添加卡片或解析器。这是与反编译器、自测共享的唯一注册点。
 2. **接管编辑器**：`ClientLoadEvent` 后把 `Vars.ui.logic` 换成 `SugarLogicDialog`（构造函数内使用 `SugarCanvas`）。替换前把旧对话框上除 canvas/buttons 外的子元素（如 MindustryX 的逻辑辅助浮层）按 z 顺序迁移到新对话框。
-3. **挂辅助功能**：`BoxSelect.init()`（框选）、`ExprHook.init()`（表达式语句）、`VarDisplayFilter.init()`（隐藏 `__ls_*` 内部变量），并注册关闭对话框时清空跳转线着色缓存。
+3. **挂辅助功能**：`BoxSelect.init()`（框选）、`ExprHook.init()`（表达式语句）、`VarDisplayFilter.init()`（隐藏 `__ls_*` 内部变量）、`ProcessorStatus.init()`（处理器状态指示）、`UnitFlags.init()`（单位 flag 叠加），并注册关闭对话框时清空跳转线着色缓存。
 
 ## 编译器：Sugar → mlog
 
@@ -169,6 +169,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
 | 复制变量/打印缓冲 | `assist.VarClipboard` | SugarLogicDialog 按钮行，全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示按钮 |
 | 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器（`Groups.build`，视野外按 hitbox 裁剪）：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；扫描预算按帧时长换算（`min(delta*60,5) × 每帧扫描数`，低帧率不爆发）；设置三滑杆（阈值 0 关闭 / 每帧扫描数 1–5000 档位 / 警告特效）+ 断点三开关（禁用断点 / 断言失败即断点 / 断点分离视角） |
+| 单位 flag 显示 | `assist.UnitFlags` | 设置可选；drawOver 遍历 `Groups.unit`，在单位正上方用红色绘制逻辑 `flag`；默认 0 / 非有限值不显示，视野外与迷雾中的单位跳过。纯展示，不改保存产物 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 | 撤销/重做 | `assist.EditHistory` + `SugarLogicDialog` | 快照栈（最多 80 层）记录 `canvas.save()`；桌面 Ctrl+Z / Ctrl+Y，移动端底部 Undo/Redo 按钮。纯编辑器状态，不改保存产物 |
 
@@ -243,7 +244,7 @@ bump 到新上游版本时按序执行：
 ```text
 src/logicsugar/           模组侧：入口、设置、函数库、FunctionLibraryDialog
 src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter、MlogLint、
-                          VarClipboard、ProcessorStatus、AssertInstructions、EditHistory、InstructionBudget
+                          VarClipboard、ProcessorStatus、UnitFlags、AssertInstructions、EditHistory、InstructionBudget
 src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ArrayRegistry、
                           ShortCircuitCompiler、ExprIntrinsics 与各数据结构的 *Intrinsics
 src/logicsugar/assist/data/  数据子系统：DataModule/DataModules/DataDeclaration 框架 +

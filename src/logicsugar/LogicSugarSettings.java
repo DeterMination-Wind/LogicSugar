@@ -12,7 +12,8 @@ import mindustry.ui.dialogs.SettingsMenuDialog;
 
 /**
  * Logic Sugar settings: function expansion mode (normal/inline), the function library
- * editor entry, and (when not bundled elsewhere) jump line coloring.
+ * editor entry, processor-status / unit-flag overlays, and (when not bundled
+ * elsewhere) jump line coloring.
  *
  * <p>Everything is added through the {@link SettingsTable} list API so the "reset" button
  * and category rebuilds cannot drop entries.
@@ -44,6 +45,7 @@ public final class LogicSugarSettings{
         table.pref(new AssertEmitSetting(settingAssertEmit, "strip"));
         table.pref(new LibraryButtonSetting("logicsugar.funclib"));
         addProcessorStatusPrefs(table);
+        addUnitFlagsPref(table);
         addHideVarsPref(table);
         addBoxSelectPrefs(table);
         addCompactCardsPref(table);
@@ -107,6 +109,12 @@ public final class LogicSugarSettings{
                 : i == 0 ? Core.bundle.get("logicsugar.warn.once", "once")
                 : Core.bundle.format("logicsugar.warn.every", i);
         });
+    }
+
+    /** Checkbox for drawing each unit's logic flag in red above the unit. */
+    static void addUnitFlagsPref(SettingsMenuDialog.SettingsTable table){
+        table.checkPref(logicsugar.assist.UnitFlags.settingShowFlags, false,
+            b -> logicsugar.assist.UnitFlags.enabled = b);
     }
 
     /** Click-to-cycle picker for the function expansion mode. */

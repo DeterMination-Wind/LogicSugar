@@ -118,6 +118,12 @@ tasks.register("processorStatusTest", JavaExec){
     mainClass = "logicsugar.assist.ProcessorStatusSelfTest"
 }
 
+tasks.register("unitFlagsTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.UnitFlagsSelfTest"
+}
+
 tasks.register("assertTest", JavaExec){
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
@@ -214,7 +220,7 @@ tasks.register("runTestClass", JavaExec){
 }
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which
