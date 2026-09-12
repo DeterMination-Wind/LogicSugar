@@ -7,8 +7,8 @@
 LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（id `ls`）。两种形态共用同一套代码，由主类上的静态标记切换：
 
 - `logicsugar.LogicSugarMod#bekBundled`：宿主（Neon）注入时置 `true`。
-- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试断言构建、函数库入口、处理器状态、单位 flag 显示、隐藏内部变量、框选、跳转线着色）。
-- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、处理器状态滑杆、单位 flag 显示、隐藏变量、框选与跳转线着色；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
+- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试断言构建、函数库入口、处理器状态、单位 flag 显示/按 flag 着色、隐藏内部变量、框选、跳转线着色）。
+- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、处理器状态滑杆、单位 flag 显示/按 flag 着色、隐藏变量、框选与跳转线着色；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
 
 除设置入口外，两种形态的行为完全一致；不存在单独的聚合分支代码。
 
@@ -169,7 +169,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
 | 复制变量/打印缓冲 | `assist.VarClipboard` | SugarLogicDialog 按钮行，全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示按钮 |
 | 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器（`Groups.build`，视野外按 hitbox 裁剪）：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；扫描预算按帧时长换算（`min(delta*60,5) × 每帧扫描数`，低帧率不爆发）；设置三滑杆（阈值 0 关闭 / 每帧扫描数 1–5000 档位 / 警告特效）+ 断点三开关（禁用断点 / 断言失败即断点 / 断点分离视角） |
-| 单位 flag 显示 | `assist.UnitFlags` | 设置可选；drawOver 遍历 `Groups.unit`，在单位正上方用红色绘制逻辑 `flag`；默认 0 / 非有限值不显示，视野外与迷雾中的单位跳过。纯展示，不改保存产物 |
+| 单位 flag 显示 | `assist.UnitFlags` | 设置可选；drawOver 遍历 `Groups.unit`，在单位正上方绘制逻辑 `flag`。默认使用红色；打开 `logicsugar.colorizeUnitFlags` 后，不同 flag 按首次遇到顺序优先使用 10 种高对比度颜色，超出后分配高饱和度随机色；默认 0 / 非有限值不显示，视野外与迷雾中的单位跳过。纯展示，不改保存产物 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 | 撤销/重做 | `assist.EditHistory` + `SugarLogicDialog` | 快照栈（最多 80 层）记录 `canvas.save()`；桌面 Ctrl+Z / Ctrl+Y，移动端底部 Undo/Redo 按钮。纯编辑器状态，不改保存产物 |
 
@@ -191,13 +191,13 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 
 ## 上游版本适配笔记（v160）
 
-本分支运行口径是 Mindustry BE 27771（`mod.json` 的 `minGameVersion`）；本节记录上游 v160 的 Logic 相关改动及本分支的兼容策略。默认 Gradle 依赖仍是工作区 `../Mindustry-master/desktop/build/libs/Mindustry.jar`，也可用 `-PmindustryJar=<path>` 指定另一份 API 包。每条给出上游变化、对 LogicSugar 的影响与适配动作；涉及 `mindustry.logic.*` 的成员访问必须与 `AGENTS.md` 保持一致，冲突时以 `AGENTS.md` 为准。
+本分支运行口径是 Mindustry v160.1（`mod.json` 的 `minGameVersion`）；本节记录上游 v160 的 Logic 相关改动及本分支的兼容策略。默认 Gradle 依赖仍是工作区 `../Mindustry-master/desktop/build/libs/Mindustry.jar`，也可用 `-PmindustryJar=<path>` 指定另一份 API 包。每条给出上游变化、对 LogicSugar 的影响与适配动作；涉及 `mindustry.logic.*` 的成员访问必须与 `AGENTS.md` 保持一致，冲突时以 `AGENTS.md` 为准。
 
 ### 内存对象存储（上游 #12459，fac33d08d）
 
 - **上游变化**：`MemoryBlock` 改为双数组（数字数组 + 对象数组 + 哨兵），logic 的 `read` / `write` 可存取对象（单位、方块等）；存档经 `TypeIO.writeObject` 序列化并带 version 迁移（旧存档全按数字读回）。**行为变化：越界 `read` 从返回 NaN 改为返回 null**。2026-09-09 的 Anuken/Mindustry master 已落地：`MemoryBuild.read` 越界走 `output.setobj(null)`。
 - **影响/风险**：v155.4 / v159.7 的内存 cell 只存数字、越界 `read` 返回 NaN，LogicSugar 的产物与测试目前都建立在这套语义上（`assertTypeTest` 已为「内存对象存储」场景预留 number/对象分型）。栈/队列/双端队列的空 pop/peek 用越界 `read` 地址 −1 作为 NaN 哨兵，因此在已含 #12459 的 BE/master 上会读回 **null** 而不是 NaN；哈希表/集合的空槽仍靠 `op div 0 0` 写出 NaN 再用 `strictEqual` 判定，不受越界语义影响。`MlogLint` 当前只做 token 形状检查、不涉及内存语义。
-- **适配动作**：现在不改 lowering（与既有栈/队列一致，且 27771 是否已含 #12459 随 BE 构建而变）。bump 到确定含 #12459 的 `minGameVersion` 时：空容器哨兵改为不依赖越界 `read`（例如 `op div 0 0`），并为 `MlogLint` 引入按版本分叉的越界语义。空槽判定保持 `strictEqual`，不要改成 `equal`。
+- **适配动作**：v160.1 已确定含 #12459；空容器哨兵改为不依赖越界 `read`（例如 `op div 0 0`），并为 `MlogLint` 引入按版本分叉的越界语义。空槽判定保持 `strictEqual`，不要改成 `equal`。
 
 ### 本批功能与 BE 新 logic（deque / uset / 数组算法 / 撤销）
 

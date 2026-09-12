@@ -765,7 +765,7 @@ public final class SugarStatements{
 
     public static class BlockEndStatement extends SugarStatement{
         @Override public void build(Table table){}
-        @Override public String name(){ return "}"; }
+        @Override public String name(){ return cardText("block.end", "}"); }
         @Override public String typeName(){ return "BlockEnd"; }
         @Override public void write(StringBuilder out){ out.append("blockend"); }
     }

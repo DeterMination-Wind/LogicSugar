@@ -155,7 +155,7 @@ Neon aggregate mod. The dual form is handled entirely by `LogicSugarMod`:
   `LogicSugarSettings.setup(...)` is skipped so the mod-owned `@logicsugar.settings`
   category never registers; the host calls `bekBuildSettings(SettingsTable)` instead,
   which currently aggregates func mode, the assert-emit toggle, the function-library entry,
-  the processor-status sliders, the unit-flag overlay, hide-vars, box-select and
+  the processor-status sliders, the unit-flag overlay and per-flag coloring, hide-vars, box-select and
   jump-line-coloring rows. Do not re-add a self-registered category, and do not move
   `SwitchStrategySetting` into `bekBuildSettings` without updating Neon's sync assertions.
 - No other code path branches on the aggregate form: behavior, compilation output and

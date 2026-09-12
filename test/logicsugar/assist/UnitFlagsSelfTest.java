@@ -1,5 +1,7 @@
 package logicsugar.assist;
 
+import arc.graphics.Color;
+
 public class UnitFlagsSelfTest{
     public static void main(String[] args){
         zeroAndNonFiniteAreHidden();
@@ -7,6 +9,7 @@ public class UnitFlagsSelfTest{
         wholeNumbersHaveNoTrailingDecimal();
         fractionalAndLargeValuesKeepPrecision();
         labelSitsOnTopOfHitbox();
+        distinctFlagsUsePreferredColorsThenRandomFallbacks();
         System.out.println("LogicSugar UnitFlags self-test passed.");
     }
 
@@ -46,6 +49,31 @@ public class UnitFlagsSelfTest{
         check(UnitFlags.labelY(10f, 8f) == 10f + 4f + UnitFlags.yPad,
             "label was not placed on the top edge of the hitbox");
         check(UnitFlags.labelY(0f, 0f) == UnitFlags.yPad, "zero-size unit was not padded above origin");
+    }
+
+    private static void distinctFlagsUsePreferredColorsThenRandomFallbacks(){
+        UnitFlags.clearColorCache();
+
+        Color[] assigned = new Color[UnitFlags.preferredColors.length + 2];
+        for(int i = 0; i < assigned.length; i++){
+            assigned[i] = UnitFlags.colorForFlag(i + 1d);
+        }
+
+        for(int i = 0; i < UnitFlags.preferredColors.length; i++){
+            check(assigned[i] == UnitFlags.preferredColors[i],
+                "flag " + (i + 1) + " did not receive preferred color " + i);
+            check(isVivid(assigned[i]), "preferred color " + i + " is not vivid");
+        }
+        check(assigned[10] != null && assigned[11] != null, "fallback colors were not generated");
+        check(isVivid(assigned[10]) && isVivid(assigned[11]), "fallback color was not vivid");
+        check(UnitFlags.colorForFlag(1d) == assigned[0], "flag color assignment was not cached");
+        check(UnitFlags.colorForFlag(11d) == assigned[10], "fallback color assignment was not cached");
+    }
+
+    private static boolean isVivid(Color color){
+        float max = Math.max(color.r, Math.max(color.g, color.b));
+        float min = Math.min(color.r, Math.min(color.g, color.b));
+        return max >= 0.7f && max - min >= 0.25f && color.a == 1f;
     }
 
     private static void check(boolean condition, String message){

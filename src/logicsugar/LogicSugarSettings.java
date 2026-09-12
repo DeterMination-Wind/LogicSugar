@@ -103,10 +103,12 @@ public final class LogicSugarSettings{
         });
     }
 
-    /** Checkbox for drawing each unit's logic flag in red above the unit. */
+    /** Checkboxes for drawing unit flags and assigning distinct colors per flag value. */
     static void addUnitFlagsPref(SettingsMenuDialog.SettingsTable table){
         table.checkPref(logicsugar.assist.UnitFlags.settingShowFlags, false,
             b -> logicsugar.assist.UnitFlags.enabled = b);
+        table.checkPref(logicsugar.assist.UnitFlags.settingColorizeFlags, false,
+            b -> logicsugar.assist.UnitFlags.colorize = b);
     }
 
     /** Click-to-cycle picker for the function expansion mode. */
