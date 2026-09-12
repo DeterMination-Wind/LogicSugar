@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有二十九个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了二十九个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了三十个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -34,6 +34,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `listHeapTest` | `logicsugar.assist.data.ListHeapTest` | 列表/小顶堆：`lappend/lget/lset/linsert/lremove/lfind/lsize`、`hpush/hpop/hsize` 展开与边界（越界 NaN/失败 0/未找到 -1/空堆 NaN）、计数回写、容量与区间校验、声明卡不产行、产物纯原版、载体往返 |
 | `chainTest` | `logicsugar.assist.data.ChainTest` | 链表：`cinit/cclear/cnew/cfree/cget/cset/cnext/clink/cshead/chead/clen` 展开（读类直线链、写内存与遍历走注入函数）、空闲链重建与 LIFO 分配、摘链/挂回空闲链、越界守卫（cget 返回 NaN、cset/clink/cfree 返回 0、cnext 返回 -1）、必须显式 `cinit` 的初始化要求、重名/保留前缀/容量/区间校验、声明卡不产行、产物纯原版、载体往返 |
 | `dataSubsystemTest` | `logicsugar.DataSubsystemIntegrationTest` | INT 生产注册路径：`LogicSugarMod.init()` 幂等（重复 init 不重复 `LogicIO.allStatements` 条目、卡片各一份、parser 与 intrinsic 全部可见）、混合结构端到端编译且 `stripMarkers` 产物纯原版、模块 `collect` 抛异常时 `DataModules.restore()` 仍配对执行且后续编译正常、调色板分类（Advanced Flow Control / Data Structures / Array Algorithms） |
+| `dataCallTest` | `logicsugar.assist.data.DataCallTest` | 所有数据 intrinsic 的独立 palette metadata、结构族分类，以及 `datacall` 卡的编辑后持久化、carrier restore/verify 与纯原版 lower |
 | `editHistoryTest` | `logicsugar.assist.EditHistorySelfTest` | 编辑器撤销/重做快照栈：record/undo/redo、未提交改动并入一次撤销、新编辑清空重做、undo 后改写放弃重做、`applied` 对齐 fold 后文本、深度上限 80 |
 | `escapePreviewTest` | `logicsugar.assist.EscapePreviewSelfTest` | quoted mlog 字符串转义预览：换行、引号、反斜杠、Unicode、未知/畸形转义及现代能力探测 |
 | `v160SensorAccessTest` | `logicsugar.assist.expr.V160SensorAccessSelfTest` | `LAccess.senseablePrivileged` 的跨版本反射访问与旧版 fallback |
@@ -43,7 +44,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前二十九个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前三十个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 
@@ -69,5 +70,5 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 11. **断言（调试构建）**：关闭「调试断言构建」时保存含断言的程序，产物 mlog 无 `assert*` 行且无模组客户端可正常打开；开启后保存，断言失败在地图上显示消息（含「(expected X, got Y)」）且程序原地自旋，`breakpoint` 命中时游戏暂停、视角居中到该处理器；开启「断言失败即断点」后失败改为在失败指令处暂停，开启「禁用断点」后 breakpoint 直接跳过；重开编辑器断言卡片完整。与 MlogAssertions 并存装时无重复注册报错。
 12. **联机门禁（兼容底线）**：把断言构建设为 emit，然后加入或自建一个多人游戏——此时保存任何程序，产物必须 ≤1000 条且不含 `assert*` 行（与原版客户端互开无异常）；回到单机重新载入地图后，emit 设置恢复生效。指令上限覆盖功能已移除，保存产物恒 ≤1000 条。
 13. **数组**：放一张 `array` 卡（如 `buf` / `cell1` / base 0 / size 8），写 `x = buf[i] * 2` 与 `buf[i] = 5`，保存后重开表达式卡折回、产物只有原版 `read`/`write` 行；重名或同内存块重叠的声明卡标红且保存被拦截；无模组客户端能运行同一程序。
-14. **数据子系统**：依次放置 `matrix` / `arrayinit` / `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 卡并各写一条读写表达式（`m[i][j]`、`sum(buf)` / `reverse(buf)`、`p.f1`、`spush(s, 1)`、`qpush(q, 1)`、`dpushf(d, 1)`、`btest(b, 0)`、`mapclear(m)` 后 `mapset(m, 1, 2)`、`uclear(u)` 后 `uadd(u, 1)`、`lappend(l, 1)`、`hpush(h, 1)`、`cinit(c)` 后 `cnew(c)` / `cset(c, i, v)`），保存后重开：声明卡完整、表达式折回、产物只有原版指令且无模组客户端可运行；重复 `arrayinit` 槽位越界、`stack` 与 `list` 同内存块重叠（同模块内）等错误卡标红；哈希表忘记 `mapclear`、集合忘记 `uclear`、链表忘记 `cinit` 时确认 hint 提示了初始化要求；检查 `__ls_*` 隐藏变量在变量浏览器中被过滤、记录字段变量 `<name>_<field>` 可见。确认 For 等出现在 Advanced Flow Control，声明卡在 Data Structures，array/matrix 在 Array Algorithms，而不是全部挤在原版 Flow Control。
+14. **数据子系统**：依次放置 `matrix` / `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 声明卡，再从各自分类放置 `fill(buf, value)`、`spush(s, 1)`、`qpush(q, 1)`、`dpushf(d, 1)`、`btest(bits, 0)`、`mapclear(map)` / `mapset(map, 1, 2)`、`uclear(s)` / `uadd(s, 1)`、`lappend(l, 1)`、`hpush(h, 1)`、`cinit(c)` / `cnew(c)` 等操作积木。保存后重开：声明卡和 `datacall` 操作卡完整，产物只有原版指令且无模组客户端可运行；新增面板不再显示八槽 `arrayinit`，但载入旧 carrier 时仍能显示并正确编译旧卡。检查 `__ls_*` 隐藏变量过滤、记录字段变量可见，以及每类操作出现在对应分类而不是全部挤在 Data Structures。
 15. **单位 flag**：设置里打开「显示单位 flag」，给单位设非 0 的 `flag`，确认头顶正上方出现红色数字；再打开「为单位 flag 着色」，给多个单位设置不同 flag，确认同一 flag 颜色一致、不同 flag 优先使用不同鲜明颜色，超过 10 个后仍会分配鲜明随机色；flag 为 0 的单位不显示；关掉显示设置后数字消失。视野外与迷雾中的单位不绘制。

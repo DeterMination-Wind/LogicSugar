@@ -49,6 +49,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - **`ExprIntrinsics`**（`logicsugar.assist.expr`）：表达式函数名 → 原版指令链的展开点。Provider 实现必须放在 `expr` 包（`Node` / `Line` 是 `ExprCompiler` 的包私有类型）。`ExprCompiler` 的 `compileNode(Call)` / `compileNode(Member)` / 成员赋值路径先查 provider，未命中退回普通 `funccall` / sensor 路径。用户 `funcdef` / 库函数同名时优先（`enterUserFunctions` 遮蔽 intrinsic），`min` / `max` 按实参个数分派（1 参 = 数组运算，2 参 = 原版内置），名字匹配大小写不敏感。
 - **`DataModule` / `DataModules`**（`logicsugar.assist.data`）：每个数据结构一个模块（`id()` 去重）。`LogicSugarMod.registerStatements()` 注册全部模块（同时把 `intrinsics()` 注册进 `ExprIntrinsics`）并调用 `DataModules.registerParsers()` 安装声明卡解析器与调色板卡片；`SugarCompiler.compile` 在 `analyze` 之后、`lower` 之前 `DataModules.collectAll(...)` 建立程序级注册表，`finally` 里 `restore()` 清理——配对标记在 `collectAll` 之前置位，任一模块 `collect` 抛异常也会恢复，不把注册表泄漏给下一次编译或编辑器渲染。`markInvalid` 供编辑期标红，`builtinSugar()` 提供注入函数源文本。
+- 数据 intrinsic 还通过 `DataModule.PaletteCall` 提供 palette metadata。`DataModules` 统一注册 `datacall <operation> <destination> "<arguments>"`，每个 intrinsic 都是独立、可编辑、可持久化的卡；lower 阶段把卡的调用转回既有 `ExprIntrinsics` 链，最终只输出原版 mlog。按模块/结构族分别进入 Stack/Queue/Deque/Array Algorithms/Bitset/Hash Map/Set/List/Heap/Linked List Operations 分类，避免把模块细节硬编码在编译器中。
 - **注入函数**：模块把循环型 / 写内存型操作写成 `funcdef __ls_builtin_*`，由 `SugarCompiler` 经 `SugarFunctions.withBuiltins` 并入本次编译的 `LibraryIndex`。normal 模式全程序共享一份子程序，未使用不进产物；`extractLibrarySource` 只处理用户库文本，内置函数不会进入 `__ls_lib` 载体、也不会出现在用户函数库。inline 模式按调用点展开函数体。
 
 ### 语法与降级
@@ -56,7 +57,8 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 结构 | 声明卡（token 定长，空槽 `~`） | 表达式用法 | 降级目标 |
 | --- | --- | --- | --- |
 | 数组 | `array <name> <memory> <base> <size>` | `buf[i]`、`len(buf)` | `read` / `write`；`len` 折叠为 `size` |
-| 数组初始化 | `arrayinit <name> <v0>…<v7>` | —（卡片位置即写入位置） | 最多 8 条 `write`（`~` 跳过） |
+| 数组填充 | 复用 `array` | `fill(buf, value)`（独立积木） | 类似 C++ `fill`：把声明区间整体写成同一值，降级到 `__ls_builtin_arrfill` |
+| 旧数组初始化（兼容） | `arrayinit <name> <v0>…<v7>` | 不再出现在新增面板 | 旧 carrier 仍可解析、显示和原样降级，token 数不变 |
 | 矩阵 | `matrix <name> <memory> <base> <rows> <cols>` | `m[i][j]` 读 / 写 | 地址 = `base + i*cols + j`；字面量编译期折叠，越界报错 |
 | 批量数组运算 | 复用 `array` / `matrix` | `sum` `avg` `min` `max` `count` `indexof` `fill` `copy` `sortasc` `sortdesc` `reverse` `replace` `swap` `bsearch` | 注入函数 `__ls_builtin_arr*` |
 | 记录 | `record <name> <f1>…<f8>` | `p.f1` 读 / `p.f1 = expr` 写 | 普通变量 `<name>_<field>` |
@@ -181,7 +183,7 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 | --- | --- | --- |
 | `advcontrol` | Advanced Flow Control | For / While / Switch / If / Case / Elif / Else / Break / Continue / BlockEnd / FuncDef / FuncCall / Return |
 | `datastruct` | Data Structures | record / stack / queue / deque / bitset / map / uset / list / heap / chain |
-| `arrayalgo` | Array Algorithms | array / matrix / arrayinit（`sum`/`reverse`/`bsearch` 等仍是表达式，不是额外卡片） |
+| `arrayalgo` | Array Algorithms | array / matrix，以及 `fill` / `sum` / `reverse` / `bsearch` 等独立数据调用积木；旧 `arrayinit` 仅兼容读取 |
 | `asserts` | Assertions | 既有断言卡 |
 | 原版 `control` / `operation` | Flow Control / Operations | 原版 jump/end 与 `ExprStatement` |
 

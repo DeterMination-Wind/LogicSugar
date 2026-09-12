@@ -117,6 +117,11 @@ so saved programs stay vanilla-parseable and multiplayer-safe.
   `LibraryIndex` via `SugarFunctions.withBuiltins` but must never enter the user function library or
   the `__ls_lib` carrier (`extractLibrarySource` only sees user library text). Unused builtins stay out
   of the product; normal mode shares one `funcdef` body per operation.
+- Every registered data intrinsic is also exposed as a persistent `datacall` card. Palette
+  metadata belongs to its `DataModule`; the framework registers the common parser and cards,
+  and lowering must reuse `ExprIntrinsics` so carrier restore preserves the operation card while
+  the executable product remains vanilla mlog. The legacy eight-slot `arrayinit` token stays
+  parseable but is not offered for new programs; use the Array Algorithms `fill(buf, value)` card.
 - `SugarCompiler.compile` must keep the `DataModules.collectAll(...)` / `DataModules.restore()`
   pairing in its `try/finally`, with the pairing flag set *before* `collectAll` — a module `collect`
   exception must not leak compile-time registries into the next compile or editor render.
@@ -139,7 +144,7 @@ the Neon main repo's docs:
   pipelines, expression subsystem, cross-loader constraint, decompiler gate, layout map.
 - `docs/development.md` — environment, Gradle commands, artifact chain, style rules.
 - `docs/release.md` — version scheme, `deploy`/D8 pipeline, Release asset safety rules.
-- `docs/testing.md` — the twenty-nine JavaExec self-test tasks, new-test conventions, manual
+- `docs/testing.md` — the thirty JavaExec self-test tasks, new-test conventions, manual
   checklist.
 - `docs/glossary.md` — project terminology (carrier, FuncMode, SwitchStrategy, gate, …).
 

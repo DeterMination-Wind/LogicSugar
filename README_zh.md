@@ -20,7 +20,7 @@ Logic Sugar 面向希望让逻辑更易读、更易修改、更易分享的 Mind
 - **表达式语句** —— `result = (a + b) * 2` 一行搞定：保存时自动展开为等价指令，重新打开自动折叠回来，写错当场标红。
 - **随处表达式** —— 赋值、函数参数、`return` 返回值等任何值的位置都可以写表达式，包括 `@unit.@health` 成员访问。
 - **数组** —— 用 `array` 卡把内存块的一段地址（基址 + 容量）登记为命名数组，表达式里直接写 `buf[i]`、`buf[i] = 5` 这样的下标读写；编译为普通原版 `read` / `write` 指令，重新打开自动折回表达式卡。
-- **数据结构** —— `matrix`（二维数组）、`arrayinit`、`record`、`stack` / `queue` / `deque`、`bitset`、`map`（哈希表）、`uset`（集合）、`list`、`heap`、`chain`（链表）等卡片把内存块的一段地址登记为结构化数据；`sum` / `avg` / `sortasc` / `reverse` / `bsearch`、`spush` / `qpop` / `dpushf`、`btest`、`mapset`、`uadd`、`lappend`、`hpush`、`cinit` / `cnew` 等表达式展开为普通原版指令。声明卡不进入保存的代码，重新打开自动折回，产物在任何原版客户端可运行。
+- **数据结构** —— `matrix`（二维数组）、`record`、`stack` / `queue` / `deque`、`bitset`、`map`（哈希表）、`uset`（集合）、`list`、`heap`、`chain`（链表）等声明卡把内存块的一段地址登记为结构化数据；`fill`（整段同值初始化）、`sum` / `reverse`、`spush` / `qpop` / `dpushf`、`btest`、`mapset`、`uadd`、`lappend`、`hpush`、`cinit` / `cnew` 等均提供对应分类下的独立操作积木，并展开为普通原版指令。旧八槽 `arrayinit` 只保留存档兼容。重新打开会恢复声明与操作卡，产物在任何原版客户端可运行。
 - **函数** —— 定义带参数的函数、调用并返回值；normal（子程序）与 inline（内联）两种模式可在设置中切换。
 - **函数库** —— 所有处理器共享的全局函数，在编辑器内直接编辑，关闭时自动校验保存，文件损坏可自动修复。
 - **恢复结构** —— 打开已保存的处理器时，会尽量还原当初的结构化积木（`if` / `for` / `while` / `switch` / 函数）以及数组、栈、记录等数据声明卡；只还原对得上的部分，认不出的保持原版指令。纯原版 mlog（别人手写、没有 Logic Sugar 源码）只会尝试恢复控制流，不会凭空长出数据结构。
