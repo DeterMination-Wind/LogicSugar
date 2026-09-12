@@ -140,6 +140,9 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 ### 可降级反射（optional reflection）
 `SugarCanvas` 对外围功能字段的策略：`optionalField`/`optionalMethod` 找不到上游成员时该功能静默退化，而不是整个编辑器崩溃；核心字段（如 `LogicDialog.privileged`）则用无降级余地的硬反射。
 
+### 单位 flag 显示
+可选地图叠加：设置 `logicsugar.showUnitFlags` 打开后，在每个单位正上方用红色绘制其逻辑 `flag`（`ucontrol flag` / `@unit.@flag`）。默认 0 与非有限值不显示；视野外与迷雾中的单位跳过。纯展示，不改保存产物，不受单机门禁限制。由 `unitFlagsTest` 钉住判定与格式。
+
 ### 逻辑语句本地化（logic localization）
 上游 #12158 + #12569 的改动：`LStatement` 增加 `bundle()` / `localizedName()` / `statementKey()`，卡片标题、语句菜单与搜索文案走 bundle，约定键 `instruction.<statementKey小写>`（上游设置项 `logiclocalization`，默认开）。LogicSugar 自身的卡片本地化沿用 `logicsugar.*` 键与设置 `logicsugar.localizeCards`，键名与该约定对齐。详见[架构总览](architecture.md)「上游版本适配笔记」。
 

@@ -16,6 +16,7 @@ import mindustry.ui.dialogs.SettingsMenuDialog;
 import logicsugar.assist.BoxSelect;
 import logicsugar.assist.JumpLineColor;
 import logicsugar.assist.ProcessorStatus;
+import logicsugar.assist.UnitFlags;
 import logicsugar.assist.VarDisplayFilter;
 import logicsugar.assist.data.ArrayBulkModule;
 import logicsugar.assist.data.BitsetModule;
@@ -53,6 +54,8 @@ public class LogicSugarMod extends Mod{
                 VarDisplayFilter.init();
                 ProcessorStatus.init();
                 ProcessorStatus.applySettings();
+                UnitFlags.init();
+                UnitFlags.applySettings();
                 // When bundled into Neon, every settings row is registered through
                 // bekBuildSettings (host sets bekBundled, host calls bekBuildSettings), so the
                 // mod-owned category is skipped entirely to avoid duplicate entries.
@@ -123,12 +126,13 @@ public class LogicSugarMod extends Mod{
         DataModules.registerParsers();
     }
 
-    /** Host (Neon) settings aggregation: function mode, library entry and jump line coloring. */
+    /** Host (Neon) settings aggregation: function mode, library entry, overlays and jump line coloring. */
     public void bekBuildSettings(SettingsMenuDialog.SettingsTable table){
         table.pref(new LogicSugarSettings.FuncModeSetting(LogicSugarSettings.settingFuncMode, "normal"));
         table.pref(new LogicSugarSettings.AssertEmitSetting(LogicSugarSettings.settingAssertEmit, "strip"));
         table.pref(new LogicSugarSettings.LibraryButtonSetting("logicsugar.funclib"));
         LogicSugarSettings.addProcessorStatusPrefs(table);
+        LogicSugarSettings.addUnitFlagsPref(table);
         LogicSugarSettings.addHideVarsPref(table);
         LogicSugarSettings.addBoxSelectPrefs(table);
         LogicSugarSettings.addCompactCardsPref(table);
