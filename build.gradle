@@ -71,6 +71,14 @@ tasks.register("reconstructionTest", JavaExec){
     mainClass = "mindustry.logic.ReconstructionFixtureTest"
 }
 
+// 100+ carrier/inference fixtures covering every current control block and data card.
+tasks.register("reconstructionMatrixTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "mindustry.logic.ReconstructionMatrixTest"
+}
+
+
 tasks.register("recoveryPredicateTest", JavaExec){
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
@@ -252,9 +260,23 @@ tasks.register("funclibLimitTest", JavaExec){
     mainClass = "logicsugar.FunctionLibraryLimitTest"
 }
 
+// Data structures executed end to end on the real LExecutor with fake cell/message blocks.
+tasks.register("dataRuntimeTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.data.DataRuntimeTest"
+}
+
+// Loop-condition label wording must match the documented continue-while-true lowering.
+tasks.register("conditionLabelTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.ConditionLabelTest"
+}
+
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, conditionLabelTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which
@@ -378,3 +400,4 @@ tasks.register("copyAndroidJar", Copy){
 tasks.named("deploy").configure{
     finalizedBy tasks.named("copyAndroidJar")
 }
+

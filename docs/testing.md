@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十二个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十五个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了三十二个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了三十五个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -12,6 +12,8 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `ifElseTest` | `mindustry.logic.IfElseCompileTest` | `if` / `elif` / `else` / `while` 三段式条件的 lowering 冒烟（负分支取反、标签、出口跳转） |
 | `decompileTest` | `mindustry.logic.SugarDecompilerTest` | 反编译恢复：vanilla 程序保持原样、各结构恢复 round-trip、跳转表识别、陈旧载体回退推断、短路守卫重建布尔树（单原子 / 顶层 `!` / 嵌套 `&&`\|\|` / 左深链 / `whilebegin`/`forbegin` 的 `exprsc` / `continue` 内部回边）、贪心候选失败后的回溯提升、验证矩阵（chainOnly 保存的程序在 auto 默认设置下仍验证）、动态 `@counter` 分诊保持 flat、函数区杂散跳转验证、不支持的模式保持 flat、引号/转义、坏输入不崩 |
 | `reconstructionTest` | `mindustry.logic.ReconstructionFixtureTest` | 重建：过期 `destIndex` 按嵌套重配对后载体仍验证；两份世界处理器样例走载体还原出 `ifbegin`/`forbegin`；`array`/`stack`/`record` 声明卡随载体回来；剥掉载体后不发明声明卡、不把 `__ls_builtin_*` 恢复成用户函数 |
+| `reconstructionMatrixTest` | `mindustry.logic.ReconstructionMatrixTest` | 重建矩阵：166 个 fixture / 678 个 gate 断言，覆盖当前全部控制积木（if/elif/else/for/while/switch/break/continue/函数/折叠变体）与全部数据积木（array/matrix/arrayinit/record/stack/queue/deque/bitset/map/uset/list/heap/chain）及 68 个 `datacall` 操作卡；每个 fixture 都断言 compile → carrier restore → `verifyRestore` → 载体反编译链路，并对 decompiler 可证明的控制流形状额外断言无载体推断路径 |
+
 | `recoveryPredicateTest` | `mindustry.logic.RecoveryPredicateTest` | 谓词树模型：比较运算精确取反、`strictEqual` 不做有损取反、德摩根、优先级打印、求值方式影响代价 |
 | `shortCircuitTest` | `logicsugar.ShortCircuitCompilerTest` | `&&` / `||` 下降为条件 `jump`：操作数顺序、OR 续接标签、嵌套括号、`===` 取反不丢精度、坏谓词拒绝 |
 | `crossLoaderTest` | `mindustry.logic.CrossLoaderAccessTest` | 以 child-first 加载器复现"模组类与游戏类分属不同运行时包"的拓扑，断言子类访问受保护成员的模式不抛 `IllegalAccessError` |
@@ -40,19 +42,23 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `escapePreviewTest` | `logicsugar.assist.EscapePreviewSelfTest` | quoted mlog 字符串转义预览：换行、引号、反斜杠、Unicode、未知/畸形转义及现代能力探测 |
 | `v160SensorAccessTest` | `logicsugar.assist.expr.V160SensorAccessSelfTest` | `LAccess.senseablePrivileged` 的跨版本反射访问与旧版 fallback |
 | `funclibLimitTest` | `logicsugar.FunctionLibraryLimitTest` | 函数库行数上限：`readLibrary` 解析超过 1000 条语句不截断且用完还原 `LExecutor.maxInstructions`；`libraryOverLimit` 在 10000 条边界正确、`withLibraryLimit` 异常路径也还原；`sanitizedLibrary`/`buildLibrary`/`extractLibrarySource` 都能看到第 1000 条之后的库函数；处理器调用尾部库函数时只嵌入用到的子集并可重编译一致；函数库编辑会话整体 round-trip 不丢内容；单函数体超过 1000 条语句也能解析与校验 |
+| `dataRuntimeTest` | `logicsugar.assist.data.DataRuntimeTest` | 数据结构整程序运行：真实 `LExecutor` + 假内存/消息块执行编译产物，覆盖栈/队列/双端队列/位集/列表/小顶堆/链表的 push/pop/peek、满/空边界、非零 base 环回、空容器 NaN 标记，并钉住 `whilebegin` 条件语义（`s.size()` 能抽干容器、`!s.size()` 一次都不进循环）；另含数组排序内置函数 `__ls_builtin_arrsort`（希尔排序）的运行结果：`sortasc`/`sortdesc`、逆序/已排序/重复元素、size=1、非零 base 不越界 |
+| `conditionLabelTest` | `logicsugar.ConditionLabelTest` | 循环条件字段的本地化标签：三份 bundle 键集一致、`while.condition`/`for.condition` 不得写成「结束条件 / 终止条件 / until」、提示语保持「为真时重复」，并断言 `WhileBeginStatement` 使用专用键而非通用 `condition` |
 
 ```powershell
 .\gradlew.bat check        # 全部
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前三十二个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前三十五个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 
 - 保持 `main()` + 断言（失败抛 `AssertionError`）风格，新建 `test/` 下与被测类同包的类，并在 `build.gradle` 注册 JavaExec 任务、加进 `check.dependsOn`——这是 AGENTS.md 明文要求。
 - 纯逻辑（编译、恢复、谓词、阈值策略）优先做成无头可跑的任务；需要游戏状态的部分模拟到能离线断言的程度（如 `crossLoaderTest` 手工构造加载器拓扑）。
 - 触碰 `LAssembler` / 语句解析的测试开头先调 `SugarStatements.installParsers()`（与模组 init 共享的注册点）。
+- **新增/修改积木导致编译出的原版代码变化时，必须同步补 `ReconstructionMatrixTest` fixture**：新卡片走 carrier 路径；控制流新形状同时补可证明的 inference fixture。fixture 数必须保持 100+；只改测试数字不算覆盖，必须有 carrier restore + `verifyRestore` + 载体反编译断言。
+
 - 依赖渲染或交互的行为不写自动测试，走下面的手测清单。
 
 ## 手测清单
@@ -74,3 +80,4 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 13. **数组**：放一张 `array` 卡（如 `buf` / `cell1` / base 0 / size 8），写 `x = buf[i] * 2` 与 `buf[i] = 5`，保存后重开表达式卡折回、产物只有原版 `read`/`write` 行；重名或同内存块重叠的声明卡标红且保存被拦截；无模组客户端能运行同一程序。
 14. **数据子系统**：依次放置 `matrix` / `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 声明卡，再从各自分类放置 `fill(buf, value)`、`spush(s, 1)`、`qpush(q, 1)`、`dpushf(d, 1)`、`btest(bits, 0)`、`mapclear(map)` / `mapset(map, 1, 2)`、`uclear(s)` / `uadd(s, 1)`、`lappend(l, 1)`、`hpush(h, 1)`、`cinit(c)` / `cnew(c)` 等操作积木。保存后重开：声明卡和 `datacall` 操作卡完整，产物只有原版指令且无模组客户端可运行；新增面板不再显示八槽 `arrayinit`，但载入旧 carrier 时仍能显示并正确编译旧卡。检查 `__ls_*` 隐藏变量过滤、记录字段变量可见，以及每类操作出现在对应分类而不是全部挤在 Data Structures。
 15. **单位 flag**：设置里打开「显示单位 flag」，给单位设非 0 的 `flag`，确认头顶正上方出现红色数字；再打开「为单位 flag 着色」，给多个单位设置不同 flag，确认同一 flag 颜色一致、不同 flag 优先使用不同鲜明颜色，超过 10 个后仍会分配鲜明随机色；flag 为 0 的单位不显示；关掉显示设置后数字消失。视野外与迷雾中的单位不绘制。
+
