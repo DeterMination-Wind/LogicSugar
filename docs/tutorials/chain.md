@@ -44,7 +44,7 @@ __ls_chn_c_free     空闲链头，-1 = 无空闲节点
 | `chead(c)` | 链 | 头下标或 -1 | 读隐藏 head |
 | `clen(c)` | 链 | 节点个数 | 从 head 遍历计数；空链 0 |
 
-方法糖：`c[i]` / `c.get(i)` 等价于 `cget(c, i)`，`c.head()` 等价于 `chead(c)`。
+方法糖：`c[i]` / `c.get(i)` 等价于 `cget(c, i)`，`c.head()` 等价于 `chead(c)`，`c.next(i)` 等价于 `cnext(c, i)`，`c.len()` / `c.length()` 等价于 `clen(c)`。
 
 ## 转译示例
 

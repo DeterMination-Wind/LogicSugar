@@ -28,7 +28,7 @@ State is the hidden variable `__ls_lst_l_count`. The unset value is 0, so a list
 | `lfind(l, v)` | list, value | index or -1 | first match |
 | `lsize(l)` | list | element count | O(1) |
 
-Sugar: `l[i]` / `l.get(i)` equal `lget(l, i)`; `l.size()` / `l.length()` / `l.count()` equal `lsize(l)`.
+Sugar: `l[i]` / `l.get(i)` equal `lget(l, i)`; `l.find(v)` / `l.indexOf(v)` equal `lfind(l, v)`; `l.size()` / `l.length()` / `l.count()` equal `lsize(l)`.
 
 ## Lowered examples
 

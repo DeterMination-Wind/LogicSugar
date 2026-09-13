@@ -5,6 +5,7 @@ import mindustry.logic.LStatement;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import mindustry.logic.LCategory;
 import mindustry.logic.SugarStatements;
@@ -165,6 +166,14 @@ public abstract class DataModule{
             out.append(i == 0 ? first : "value").append(i > 1 ? i : "");
         }
         return out.toString();
+    }
+
+    /** 轻量声明扫描（analyze 阶段方法糖解析用）：该语句若声明了本模块的结构，
+     *  返回 名字 → 结构种类；非本模块声明卡返回空 Map。不做严格校验。
+     *  analyze 早于 {@link DataModules#collectAll}，因此该扫描只能读卡片字段，
+     *  不得依赖 compile 期注册表。 */
+    public Map<String, String> declaredKinds(LStatement statement){
+        return Collections.emptyMap();
     }
 
     /** 表达式扩展 provider（无表达式能力时返回 null）。 */

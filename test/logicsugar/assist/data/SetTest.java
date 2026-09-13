@@ -37,6 +37,7 @@ public class SetTest{
         DataModules.registerParsers();
 
         expressionExpansions();
+        builtinMethodSugar();
         argumentErrors();
         declarationValidation();
         declarationCardProducesNoLine();
@@ -359,6 +360,17 @@ public class SetTest{
             executor.runOnce();
         }
         return new RunResult(executor);
+    }
+
+    /** 注入函数型 getter 的方法糖：lower 等价 + analyze 阶段的可达性登记。 */
+    private static void builtinMethodSugar(){
+        withSet("uset s cell1 0 4", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "uhas(s, k)")), textOf(ExprCompiler.compile("x", "s.has(k)")));
+            checkLine(textOf(ExprCompiler.compile("x", "usize(s)")), textOf(ExprCompiler.compile("x", "s.size()")));
+        });
+        String mlog = stripCompile("uset s cell1 0 4\nifbegin expr \"s.has(1) > 0\" 3\nset x 1\nblockend\n");
+        check(mlog.contains("__ls_func___ls_builtin_usethas_entry:"),
+            "s.has() did not register the usethas builtin for normal mode:\n" + mlog);
     }
 
     private static String program(String declaration, String... expressions){

@@ -51,6 +51,7 @@ public class ListHeapTest{
         loadBuiltins();
         expressionExpansions();
         methodSugar();
+        builtinMethodSugar();
         argumentErrors();
         listBehaviour();
         heapBehaviour();
@@ -674,6 +675,16 @@ public class ListHeapTest{
         "sync", "clientdata", "getflag", "setflag", "setprop", "playsound", "playmusic",
         "setmarker", "makemarker", "localeprint"
     ));
+
+    /** 注入函数型 getter：l.find() 与 lfind 等价，且 normal 模式登记 lstfind。 */
+    private static void builtinMethodSugar(){
+        withRegistry("list l cell1 0 4", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "lfind(l, v)")), textOf(ExprCompiler.compile("x", "l.find(v)")));
+        });
+        String mlog = stripCompile("list l cell1 0 4\nifbegin expr \"l.find(5) >= 0\" 3\nset x 1\nblockend\n");
+        check(mlog.contains("__ls_func___ls_builtin_lstfind_entry:"),
+            "l.find() did not register the lstfind builtin for normal mode:\n" + mlog);
+    }
 
     private static String compile(String sugar){
         return SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,

@@ -166,6 +166,7 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
         String m = method.toLowerCase(java.util.Locale.ROOT);
         if(ListHeapModule.KIND_LIST.equals(kind)){
             if(argc == 1 && m.equals("get")) return "lget";
+            if(argc == 1 && (m.equals("find") || m.equals("indexof"))) return "lfind";
             if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "lsize";
         }else if(ListHeapModule.KIND_HEAP.equals(kind)){
             if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "hsize";

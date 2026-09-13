@@ -47,6 +47,7 @@ public class MapTest{
         DataModules.registerParsers();
 
         expressionExpansions();
+        builtinMethodSugar();
         argumentErrors();
         declarationValidation();
         declarationCardProducesNoLine();
@@ -452,6 +453,19 @@ public class MapTest{
      * 生成 main + funcdef 程序：每个表达式放进一个返回它的函数体，依次调用并把结果写入
      * {@code r0..rN}。funcdef 的 blockend 下标按语句位置自动计算，避免手写错位。
      */
+    /** 注入函数型 getter 的方法/下标糖：lower 等价 + analyze 阶段的可达性登记。 */
+    private static void builtinMethodSugar(){
+        withMap("map m cell1 0 4", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "mapget(m, k)")), textOf(ExprCompiler.compile("x", "m.get(k)")));
+            checkLine(textOf(ExprCompiler.compile("x", "maphas(m, k)")), textOf(ExprCompiler.compile("x", "m.has(k)")));
+            checkLine(textOf(ExprCompiler.compile("x", "mapsize(m)")), textOf(ExprCompiler.compile("x", "m.size()")));
+            checkLine(textOf(ExprCompiler.compile("x", "mapget(m, k)")), textOf(ExprCompiler.compile("x", "m[k]")));
+        });
+        String mlog = stripCompile("map m cell1 0 4\nifbegin expr \"m.get(1) > 0\" 3\nset x 1\nblockend\n");
+        check(mlog.contains("__ls_func___ls_builtin_mapget_entry:"),
+            "m.get() did not register the mapget builtin for normal mode:\n" + mlog);
+    }
+
     private static String program(String declaration, String... expressions){
         String[] declLines = declaration.split("\n", -1);
         StringBuilder out = new StringBuilder();

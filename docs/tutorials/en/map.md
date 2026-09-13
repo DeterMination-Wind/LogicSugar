@@ -39,6 +39,7 @@ Call `mapclear(m)` before first use. Uninitialized memory reads as numeric 0 and
 | `mapsize(m)` | map | non-empty key count | O(capacity) scan |
 | `mapclear(m)` | map | 0 sentinel | writes NaN to every key slot; O(capacity) |
 
+Sugar: `m[k]` / `m.get(k)` equal `mapget(m, k)`; `m.has(k)` / `m.containsKey(k)` equal `maphas(m, k)`; `m.size()` / `m.length()` / `m.count()` equal `mapsize(m)`.
 ## Lowered examples
 
 Every operation becomes a funccall to an injected `__ls_builtin_map*` function.
