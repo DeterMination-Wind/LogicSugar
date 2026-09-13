@@ -1,6 +1,7 @@
 package logicsugar.assist.expr;
 
 import logicsugar.assist.data.ContainerModule;
+import mindustry.logic.SugarCompiler;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -256,9 +257,17 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         String top = info.stateVar(ContainerModule.FIELD_TOP);
         // 先编译待写入的值：其指令链追加到外层 ops，位于本展开之前（求值顺序正确）
         String value = ctx.compile(args.get(1));
-        List<ExprCompiler.Line> out = new ArrayList<>(1);
+        List<ExprCompiler.Line> out = new ArrayList<>(SugarCompiler.legacyApi() ? 1 : 5);
+        String old = SugarCompiler.legacyApi() ? null : ctx.temp();
+        if(old != null) out.add(new ExprCompiler.OpLine("add", old, top, "0"));
         out.add(new ExprCompiler.CallLine(BUILTIN_STACK_PUSH,
             info.memory + ", " + info.base + ", " + info.size + ", " + top + ", " + value, top));
+        if(old != null){
+            // v5 API: 满时结果统一报 -1，成功仍返回新元素个数
+            String ok = ctx.temp();
+            out.add(new ExprCompiler.OpLine("notEqual", ok, top, old));
+            ExprCompiler.emitFailureSelect(out, ctx.temp(), ok, top);
+        }
         return out;
     }
 
@@ -337,12 +346,21 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         String count = info.stateVar(ContainerModule.FIELD_COUNT);
         String size = Integer.toString(info.size);
         String value = ctx.compile(args.get(1));
-        List<ExprCompiler.Line> out = new ArrayList<>(4);
+        List<ExprCompiler.Line> out = new ArrayList<>(SugarCompiler.legacyApi() ? 4 : 7);
+        String old = SugarCompiler.legacyApi() ? null : ctx.temp();
+        if(old != null) out.add(new ExprCompiler.OpLine("add", old, count, "0"));
         out.add(new ExprCompiler.CallLine(BUILTIN_QUEUE_PUSH,
             info.memory + ", " + info.base + ", " + info.size + ", " + head + ", " + count + ", " + value, count));
         out.add(new ExprCompiler.OpLine("add", tail, head, count));
         out.add(new ExprCompiler.OpLine("mod", tail, tail, size));
-        out.add(new ExprCompiler.OpLine("add", ctx.temp(), count, "0"));
+        if(old == null){
+            out.add(new ExprCompiler.OpLine("add", ctx.temp(), count, "0"));
+        }else{
+            // v5 API: 满时结果统一报 -1，成功仍返回新元素个数
+            String ok = ctx.temp();
+            out.add(new ExprCompiler.OpLine("notEqual", ok, count, old));
+            ExprCompiler.emitFailureSelect(out, ctx.temp(), ok, count);
+        }
         return out;
     }
 
@@ -430,7 +448,9 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         String count = info.stateVar(ContainerModule.FIELD_COUNT);
         String size = Integer.toString(info.size);
         String value = ctx.compile(args.get(1));
-        List<ExprCompiler.Line> out = new ArrayList<>(6);
+        List<ExprCompiler.Line> out = new ArrayList<>(SugarCompiler.legacyApi() ? 6 : 9);
+        String old = SugarCompiler.legacyApi() ? null : ctx.temp();
+        if(old != null) out.add(new ExprCompiler.OpLine("add", old, count, "0"));
         out.add(new ExprCompiler.CallLine(BUILTIN_DEQUE_PUSH_FRONT,
             info.memory + ", " + info.base + ", " + info.size + ", " + head + ", " + count + ", " + value, head));
         String bump = ctx.temp();
@@ -438,7 +458,14 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         out.add(new ExprCompiler.OpLine("min", count, bump, size));
         out.add(new ExprCompiler.OpLine("add", tail, head, count));
         out.add(new ExprCompiler.OpLine("mod", tail, tail, size));
-        out.add(new ExprCompiler.OpLine("add", ctx.temp(), count, "0"));
+        if(old == null){
+            out.add(new ExprCompiler.OpLine("add", ctx.temp(), count, "0"));
+        }else{
+            // v5 API: 满时结果统一报 -1，成功仍返回新元素个数
+            String ok = ctx.temp();
+            out.add(new ExprCompiler.OpLine("notEqual", ok, count, old));
+            ExprCompiler.emitFailureSelect(out, ctx.temp(), ok, count);
+        }
         return out;
     }
 
@@ -502,12 +529,21 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         String count = info.stateVar(ContainerModule.FIELD_COUNT);
         String size = Integer.toString(info.size);
         String value = ctx.compile(args.get(1));
-        List<ExprCompiler.Line> out = new ArrayList<>(4);
+        List<ExprCompiler.Line> out = new ArrayList<>(SugarCompiler.legacyApi() ? 4 : 7);
+        String old = SugarCompiler.legacyApi() ? null : ctx.temp();
+        if(old != null) out.add(new ExprCompiler.OpLine("add", old, count, "0"));
         out.add(new ExprCompiler.CallLine(BUILTIN_QUEUE_PUSH,
             info.memory + ", " + info.base + ", " + info.size + ", " + head + ", " + count + ", " + value, count));
         out.add(new ExprCompiler.OpLine("add", tail, head, count));
         out.add(new ExprCompiler.OpLine("mod", tail, tail, size));
-        out.add(new ExprCompiler.OpLine("add", ctx.temp(), count, "0"));
+        if(old == null){
+            out.add(new ExprCompiler.OpLine("add", ctx.temp(), count, "0"));
+        }else{
+            // v5 API: 满时结果统一报 -1，成功仍返回新元素个数
+            String ok = ctx.temp();
+            out.add(new ExprCompiler.OpLine("notEqual", ok, count, old));
+            ExprCompiler.emitFailureSelect(out, ctx.temp(), ok, count);
+        }
         return out;
     }
 

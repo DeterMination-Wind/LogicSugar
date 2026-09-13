@@ -127,7 +127,8 @@ public class ChainTest{
                     + "op mul _6 i _3\n"
                     + "op mul _7 __ls_chn_c_free _5\n"
                     + "op add __ls_chn_c_free _6 _7\n"
-                    + "op add x _3 0",
+                    + "op mul _0 _3 2\n"
+                    + "op sub x _0 1",
                 textOf(ExprCompiler.compile("x", "cfree(c, i)")));
             // 大小写不敏感（与 ExprCompiler 的数学内置一致）
             checkLine("op add x __ls_chn_c_head 0", textOf(ExprCompiler.compile("x", "CHEAD(c)")));
@@ -244,7 +245,7 @@ public class ChainTest{
             + "write v mem __ls_ci_a\n"
             + "set __ls_ci_r 1\n"
             + "jump 9 always x false\n"
-            + "set __ls_ci_r 0\n"
+            + "set __ls_ci_r -1\n"
             + "return \"__ls_ci_r\"\n"
             + "blockend\n", bodies.get(3));
         checkLine("funcdef __ls_builtin_chnnext mem,base,size,i 10\n"
@@ -267,7 +268,7 @@ public class ChainTest{
             + "write j mem __ls_ci_a\n"
             + "set __ls_ci_r 1\n"
             + "jump 10 always x false\n"
-            + "set __ls_ci_r 0\n"
+            + "set __ls_ci_r -1\n"
             + "return \"__ls_ci_r\"\n"
             + "blockend\n", bodies.get(5));
         checkLine("funcdef __ls_builtin_chnlen mem,base,head 11\n"
@@ -363,9 +364,9 @@ public class ChainTest{
             exec("cget(c, 4)", vars, memory);
             check(Double.isNaN(raw(vars, "x")), "out-of-range cget must return NaN");
             exec("cset(c, 4, 9)", vars, memory);
-            check(num(vars, "x") == 0, "out-of-range cset must return 0 and write nothing");
+            check(num(vars, "x") == -1, "out-of-range cset must return -1 and write nothing");
             exec("cset(c, -1, 9)", vars, memory);
-            check(num(vars, "x") == 0, "negative cset index must return 0");
+            check(num(vars, "x") == -1, "negative cset index must return -1");
 
             // cnext/clink/cshead 的越界守卫
             exec("cnext(c, 0)", vars, memory);
@@ -377,7 +378,7 @@ public class ChainTest{
             exec("cnext(c, -1)", vars, memory);
             check(num(vars, "x") == -1, "negative cnext index must return -1");
             exec("clink(c, 4, 0)", vars, memory);
-            check(num(vars, "x") == 0, "out-of-range clink must return 0");
+            check(num(vars, "x") == -1, "out-of-range clink must return -1");
             exec("clink(c, 2, -1)", vars, memory);
             check(num(vars, "x") == 1, "clink to -1 (tail) must succeed");
             exec("cshead(c, -1)", vars, memory);
@@ -417,7 +418,7 @@ public class ChainTest{
 
             // 越界 cfree：返回 0 且不改状态
             exec("cfree(c, 4)", vars, memory);
-            check(num(vars, "x") == 0, "out-of-range cfree must return 0");
+            check(num(vars, "x") == -1, "out-of-range cfree must return -1");
             check(num(vars, "__ls_chn_c_free") == 2 && num(vars, "__ls_chn_c_head") == -1,
                 "out-of-range cfree must not touch the state");
 

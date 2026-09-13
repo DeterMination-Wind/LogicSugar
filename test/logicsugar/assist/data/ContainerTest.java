@@ -89,13 +89,21 @@ public class ContainerTest{
                 + "op max __ls_stk_s_top __ls_stk_s_top 0\n"
                 + "read x cell1 _1",
                 textOf(ExprCompiler.compile("x", "spop(s)")));
-            checkLine("funccall __ls_builtin_stkpush \"cell1, 0, 8, __ls_stk_s_top, 5\" __ls_stk_s_top\n"
-                + "set x __ls_stk_s_top",
+            checkLine("op add _0 __ls_stk_s_top 0\n"
+                + "funccall __ls_builtin_stkpush \"cell1, 0, 8, __ls_stk_s_top, 5\" __ls_stk_s_top\n"
+                + "op notEqual _1 __ls_stk_s_top _0\n"
+                + "op mul _2 _1 __ls_stk_s_top\n"
+                + "op sub _2 _2 1\n"
+                + "op add x _2 _1",
                 textOf(ExprCompiler.compile("x", "spush(s, 5)")));
             // 实参是表达式：先编译值（追加到链首），再发 funccall
             checkLine("op add _0 i 1\n"
+                + "op add _1 __ls_stk_s_top 0\n"
                 + "funccall __ls_builtin_stkpush \"cell1, 0, 8, __ls_stk_s_top, _0\" __ls_stk_s_top\n"
-                + "set x __ls_stk_s_top",
+                + "op notEqual _2 __ls_stk_s_top _1\n"
+                + "op mul _3 _2 __ls_stk_s_top\n"
+                + "op sub _3 _3 1\n"
+                + "op add x _3 _2",
                 textOf(ExprCompiler.compile("x", "spush(s, i + 1)")));
         });
         // 非零 base：空栈读地址 = base - base = -1（越界 → NaN）
@@ -107,8 +115,12 @@ public class ContainerTest{
                 + "op sub _1 _1 _2\n"
                 + "read x bank1 _1",
                 textOf(ExprCompiler.compile("x", "speek(s)")));
-            checkLine("funccall __ls_builtin_stkpush \"bank1, 10, 4, __ls_stk_s_top, v\" __ls_stk_s_top\n"
-                + "set x __ls_stk_s_top",
+            checkLine("op add _0 __ls_stk_s_top 0\n"
+                + "funccall __ls_builtin_stkpush \"bank1, 10, 4, __ls_stk_s_top, v\" __ls_stk_s_top\n"
+                + "op notEqual _1 __ls_stk_s_top _0\n"
+                + "op mul _2 _1 __ls_stk_s_top\n"
+                + "op sub _2 _2 1\n"
+                + "op add x _2 _1",
                 textOf(ExprCompiler.compile("x", "spush(s, v)")));
         });
     }
@@ -140,18 +152,26 @@ public class ContainerTest{
                 + "op max __ls_que_q_count __ls_que_q_count 0\n"
                 + "read x cell2 _1",
                 textOf(ExprCompiler.compile("x", "qpop(q)")));
-            checkLine("funccall __ls_builtin_quepush \"cell2, 0, 4, __ls_que_q_head, __ls_que_q_count, 7\" __ls_que_q_count\n"
+            checkLine("op add _0 __ls_que_q_count 0\n"
+                + "funccall __ls_builtin_quepush \"cell2, 0, 4, __ls_que_q_head, __ls_que_q_count, 7\" __ls_que_q_count\n"
                 + "op add __ls_que_q_tail __ls_que_q_head __ls_que_q_count\n"
                 + "op mod __ls_que_q_tail __ls_que_q_tail 4\n"
-                + "op add x __ls_que_q_count 0",
+                + "op notEqual _1 __ls_que_q_count _0\n"
+                + "op mul _2 _1 __ls_que_q_count\n"
+                + "op sub _2 _2 1\n"
+                + "op add x _2 _1",
                 textOf(ExprCompiler.compile("x", "qpush(q, 7)")));
         });
         // 非零 base：地址 = base + pos，push 的 write 在函数体里
         withRegistry("queue q bank1 20 2", () -> {
-            checkLine("funccall __ls_builtin_quepush \"bank1, 20, 2, __ls_que_q_head, __ls_que_q_count, 9\" __ls_que_q_count\n"
+            checkLine("op add _0 __ls_que_q_count 0\n"
+                + "funccall __ls_builtin_quepush \"bank1, 20, 2, __ls_que_q_head, __ls_que_q_count, 9\" __ls_que_q_count\n"
                 + "op add __ls_que_q_tail __ls_que_q_head __ls_que_q_count\n"
                 + "op mod __ls_que_q_tail __ls_que_q_tail 2\n"
-                + "op add x __ls_que_q_count 0",
+                + "op notEqual _1 __ls_que_q_count _0\n"
+                + "op mul _2 _1 __ls_que_q_count\n"
+                + "op sub _2 _2 1\n"
+                + "op add x _2 _1",
                 textOf(ExprCompiler.compile("x", "qpush(q, 9)")));
         });
     }
@@ -182,17 +202,25 @@ public class ContainerTest{
                 + "op sub _1 _1 _0\n"
                 + "read x cell2 _1",
                 textOf(ExprCompiler.compile("x", "dpeekb(d)")));
-            checkLine("funccall __ls_builtin_quepush \"cell2, 0, 4, __ls_deq_d_head, __ls_deq_d_count, 7\" __ls_deq_d_count\n"
+            checkLine("op add _0 __ls_deq_d_count 0\n"
+                + "funccall __ls_builtin_quepush \"cell2, 0, 4, __ls_deq_d_head, __ls_deq_d_count, 7\" __ls_deq_d_count\n"
                 + "op add __ls_deq_d_tail __ls_deq_d_head __ls_deq_d_count\n"
                 + "op mod __ls_deq_d_tail __ls_deq_d_tail 4\n"
-                + "op add x __ls_deq_d_count 0",
+                + "op notEqual _1 __ls_deq_d_count _0\n"
+                + "op mul _2 _1 __ls_deq_d_count\n"
+                + "op sub _2 _2 1\n"
+                + "op add x _2 _1",
                 textOf(ExprCompiler.compile("x", "dpushb(d, 7)")));
-            checkLine("funccall __ls_builtin_deqpushf \"cell2, 0, 4, __ls_deq_d_head, __ls_deq_d_count, 7\" __ls_deq_d_head\n"
-                + "op add _0 __ls_deq_d_count 1\n"
-                + "op min __ls_deq_d_count _0 4\n"
+            checkLine("op add _0 __ls_deq_d_count 0\n"
+                + "funccall __ls_builtin_deqpushf \"cell2, 0, 4, __ls_deq_d_head, __ls_deq_d_count, 7\" __ls_deq_d_head\n"
+                + "op add _1 __ls_deq_d_count 1\n"
+                + "op min __ls_deq_d_count _1 4\n"
                 + "op add __ls_deq_d_tail __ls_deq_d_head __ls_deq_d_count\n"
                 + "op mod __ls_deq_d_tail __ls_deq_d_tail 4\n"
-                + "op add x __ls_deq_d_count 0",
+                + "op notEqual _2 __ls_deq_d_count _0\n"
+                + "op mul _3 _2 __ls_deq_d_count\n"
+                + "op sub _3 _3 1\n"
+                + "op add x _3 _2",
                 textOf(ExprCompiler.compile("x", "dpushf(d, 7)")));
             checkLine("op lessThanEq _0 __ls_deq_d_count 0\n"
                 + "op add _1 0 __ls_deq_d_head\n"
@@ -334,9 +362,9 @@ public class ContainerTest{
 
             // 满栈 push：不写入、返回 size、top 不变
             exec("spush(s, 44)", vars, memory);
-            check(num(vars, "x") == 4, "push into a full stack must return size");
+            check(num(vars, "x") == 4, "push that fills the stack must return 4");
             exec("spush(s, 99)", vars, memory);
-            check(num(vars, "x") == 4, "push into a full stack must still return size");
+            check(num(vars, "x") == -1, "push into a full stack must still return -1");
             check(memory[3] == 44, "full push must not overwrite the last element");
             check(num(vars, "__ls_stk_s_top") == 4, "full push must not change top");
 
@@ -385,7 +413,7 @@ public class ContainerTest{
 
             // 满队列 push：不写入并返回 size
             exec("qpush(q, 99)", vars, memory);
-            check(num(vars, "x") == 4, "push into a full queue must return size");
+            check(num(vars, "x") == -1, "push into a full queue must return -1");
             check(memory[0] == 1 && memory[1] == 2 && memory[2] == 3 && memory[3] == 4,
                 "full qpush must not modify memory: " + Arrays.toString(memory));
             check(tailOk(vars, "q", 4), "tail invariant broken after full push");
@@ -467,9 +495,9 @@ public class ContainerTest{
                 exec("dpushb(d, " + v + ")", vars, memory);
             }
             exec("dpushf(d, 99)", vars, memory);
-            check(num(vars, "x") == 4, "full dpushf must return size");
+            check(num(vars, "x") == -1, "full dpushf must return -1");
             exec("dpushb(d, 99)", vars, memory);
-            check(num(vars, "x") == 4, "full dpushb must return size");
+            check(num(vars, "x") == -1, "full dpushb must return -1");
             exec("dpopf(d)", vars, memory);
             check(num(vars, "x") == 1, "full-push must not have overwritten the front");
 
@@ -578,6 +606,7 @@ public class ContainerTest{
             case "min": return Math.min(a, b);
             case "max": return Math.max(a, b);
             case "mod": return a % b;
+            case "notEqual": return a != b ? 1 : 0;
             case "lessThanEq": return a <= b ? 1 : 0;
             case "greaterThanEq": return a >= b ? 1 : 0;
             default: throw new AssertionError("unexpected op in a container expansion: " + op);

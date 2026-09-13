@@ -1551,6 +1551,19 @@ public class ExprCompiler{
     }
 
     /** 行写入的变量名（op/sensor 的 dest、funccall 的 result），null 表示不写变量 */
+    /** Appends {@code dest = ok ? 1 : -1} for a 0/1 ok flag (two ops, no branch). */
+    public static void emitSuccessFlag(List<Line> out, String dest, String ok){
+        out.add(new OpLine("mul", dest, ok, "2"));
+        out.add(new OpLine("sub", dest, dest, "1"));
+    }
+
+    /** Appends {@code dest = ok ? value : -1} for a 0/1 ok flag (three ops, no branch). */
+    public static void emitFailureSelect(List<Line> out, String dest, String ok, String value){
+        out.add(new OpLine("mul", dest, ok, value));
+        out.add(new OpLine("sub", dest, dest, "1"));
+        out.add(new OpLine("add", dest, dest, ok));
+    }
+
     static String lineDest(Line line){
         if(line instanceof OpLine op) return op.dest;
         if(line instanceof CallLine call) return call.dest;

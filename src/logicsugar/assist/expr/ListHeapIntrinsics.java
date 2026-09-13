@@ -232,10 +232,18 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
     private static List<ExprCompiler.Line> listAppend(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
         ListHeapModule.Info info = resolve("lappend", args.get(0), ListHeapModule.KIND_LIST, ctx);
         String value = ctx.compile(args.get(1));
-        List<ExprCompiler.Line> out = new ArrayList<>(1);
+        List<ExprCompiler.Line> out = new ArrayList<>(SugarCompiler.legacyApi() ? 1 : 5);
+        String old = SugarCompiler.legacyApi() ? null : ctx.temp();
+        if(old != null) out.add(new ExprCompiler.OpLine("add", old, info.countVar(), "0"));
         out.add(new ExprCompiler.CallLine(BUILTIN_APPEND,
             info.memory + ", " + info.base + ", " + info.size + ", " + info.countVar() + ", " + value,
             info.countVar()));
+        if(old != null){
+            // v5 API: 满时统一报 -1，成功返回新 count
+            String ok = ctx.temp();
+            out.add(new ExprCompiler.OpLine("notEqual", ok, info.countVar(), old));
+            ExprCompiler.emitFailureSelect(out, ctx.temp(), ok, info.countVar());
+        }
         return out;
     }
 
@@ -265,7 +273,12 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
             count));
         String ok = ctx.temp();
         out.add(new ExprCompiler.OpLine("notEqual", ok, count, old));
-        out.add(new ExprCompiler.OpLine("add", ctx.temp(), ok, "0"));
+        if(SugarCompiler.legacyApi()){
+            out.add(new ExprCompiler.OpLine("add", ctx.temp(), ok, "0"));
+        }else{
+            // v5 API: 满时统一报 -1（成功 1）
+            ExprCompiler.emitSuccessFlag(out, ctx.temp(), ok);
+        }
         return out;
     }
 
@@ -318,7 +331,12 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
             info.memory + ", " + info.base + ", " + info.size + ", " + count + ", " + value, count));
         String ok = ctx.temp();
         out.add(new ExprCompiler.OpLine("notEqual", ok, count, old));
-        out.add(new ExprCompiler.OpLine("add", ctx.temp(), ok, "0"));
+        if(SugarCompiler.legacyApi()){
+            out.add(new ExprCompiler.OpLine("add", ctx.temp(), ok, "0"));
+        }else{
+            // v5 API: 满时统一报 -1（成功 1）
+            ExprCompiler.emitSuccessFlag(out, ctx.temp(), ok);
+        }
         return out;
     }
 

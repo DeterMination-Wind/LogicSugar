@@ -94,15 +94,20 @@ public class ListHeapTest{
                     + "read x cell1 _3",
                 textOf(ExprCompiler.compile("x", "lget(l, 0)")));
             // lappend：CallLine dest 就是计数变量，表达式结果是新 count
-            checkLine("funccall __ls_builtin_lstappend \"cell1, 2, 4, __ls_lst_l_count, 7\" __ls_lst_l_count\n"
-                    + "set x __ls_lst_l_count",
+            checkLine("op add _0 __ls_lst_l_count 0\n"
+                    + "funccall __ls_builtin_lstappend \"cell1, 2, 4, __ls_lst_l_count, 7\" __ls_lst_l_count\n"
+                    + "op notEqual _1 __ls_lst_l_count _0\n"
+                    + "op mul _2 _1 __ls_lst_l_count\n"
+                    + "op sub _2 _2 1\n"
+                    + "op add x _2 _1",
                 textOf(ExprCompiler.compile("x", "lappend(l, 7)")));
             checkLine("funccall __ls_builtin_lstset \"cell1, 2, __ls_lst_l_count, i, 5\" x",
                 textOf(ExprCompiler.compile("x", "lset(l, i, 5)")));
             checkLine("op add _0 __ls_lst_l_count 0\n"
                     + "funccall __ls_builtin_lstinsert \"cell1, 2, 4, __ls_lst_l_count, i, 5\" __ls_lst_l_count\n"
                     + "op notEqual _1 __ls_lst_l_count _0\n"
-                    + "op add x _1 0",
+                    + "op mul _2 _1 2\n"
+                    + "op sub x _2 1",
                 textOf(ExprCompiler.compile("x", "linsert(l, i, 5)")));
             checkLine("op add _0 __ls_lst_l_count 0\n"
                     + "op lessThan _1 i 0\n"
@@ -125,7 +130,8 @@ public class ListHeapTest{
             checkLine("op add _0 __ls_hep_h_count 0\n"
                     + "funccall __ls_builtin_heppush \"cell2, 4, 8, __ls_hep_h_count, 5\" __ls_hep_h_count\n"
                     + "op notEqual _1 __ls_hep_h_count _0\n"
-                    + "op add x _1 0",
+                    + "op mul _2 _1 2\n"
+                    + "op sub x _2 1",
                 textOf(ExprCompiler.compile("x", "hpush(h, 5)")));
             checkLine("op add _0 __ls_hep_h_count 0\n"
                     + "op greaterThan _1 _0 0\n"
@@ -187,13 +193,13 @@ public class ListHeapTest{
             check(memory[0] == 30 && memory[1] == 15 && memory[2] == 99 && memory[3] == 20,
                 "linsert must shift elements right: " + Arrays.toString(memory));
             exec("linsert(l, 4, 7)", vars, memory);
-            check(num(vars, "x") == 0 && num(vars, "__ls_lst_l_count") == 4,
-                "linsert into a full list must return 0 and keep count");
+            check(num(vars, "x") == -1 && num(vars, "__ls_lst_l_count") == 4,
+                "linsert into a full list must return -1 and keep count");
             check(memory[3] == 20, "full linsert must not overwrite the last element");
             exec("linsert(l, 5, 7)", vars, memory);
-            check(num(vars, "x") == 0, "linsert past count must return 0");
+            check(num(vars, "x") == -1, "linsert past count must return -1");
             exec("linsert(l, -1, 7)", vars, memory);
-            check(num(vars, "x") == 0, "linsert with a negative index must return 0");
+            check(num(vars, "x") == -1, "linsert with a negative index must return -1");
 
             // lremove：左移语义 [30, 15, 99, 20] → 删除下标 1 → [30, 99, 20]
             exec("lremove(l, 1)", vars, memory);
@@ -261,8 +267,8 @@ public class ListHeapTest{
                 if(right < 8) check(memory[3 + i] <= memory[3 + right], "heap invariant broken at " + i + " (right)");
             }
             exec("hpush(h, 0)", vars, memory);
-            check(num(vars, "x") == 0 && num(vars, "__ls_hep_h_count") == 8,
-                "hpush into a full heap must return 0 and keep count");
+            check(num(vars, "x") == -1 && num(vars, "__ls_hep_h_count") == 8,
+                "hpush into a full heap must return -1 and keep count");
             for(int i = 3; i < 3 + 8; i++){
                 check(memory[i] >= 1, "full hpush must not overwrite memory, got " + memory[i]);
             }

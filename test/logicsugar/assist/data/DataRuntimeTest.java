@@ -133,7 +133,7 @@ public final class DataRuntimeTest{
             + "datacall spush r0 \"s, 4\"\n"
             + "datacall spush r0 \"s, 5\"\n"
             + "datacall ssize r1 \"s\"\n");
-        checkNum(full, "r0", 4, "push on a full stack still reports the size");
+        checkNum(full, "r0", -1, "push on a full stack reports -1");
         checkNum(full, "r1", 4, "full stack must not grow");
         checkMem(full, "cell1", 3, 4, "full stack keeps its last stored element");
         checkMem(full, "cell1", 4, 0, "push on a full stack must not write past the end");
@@ -152,7 +152,7 @@ public final class DataRuntimeTest{
             + "datacall qpop r4 \"q\"\n"
             + "datacall qpop r5 \"q\"\n"
             + "datacall qsize r6 \"q\"\n");
-        checkNum(result, "r0", 3, "push on a full queue must not grow");
+        checkNum(result, "r0", 3, "re-push after a pop returns the new count");
         checkNum(result, "r1", 1, "queue is FIFO");
         checkNum(result, "r2", 2, "queue is FIFO after a wraparound push");
         checkNum(result, "r3", 3, "queue keeps FIFO order across the ring");
@@ -210,7 +210,7 @@ public final class DataRuntimeTest{
         checkNum(front, "r1", 4, "the last front push becomes the front");
         checkNum(front, "r2", 1, "the first front push becomes the back");
         checkNum(front, "r3", 4, "full deque size");
-        checkNum(front, "r4", 4, "push on a full deque returns the old head");
+        checkNum(front, "r4", -1, "push on a full deque reports -1");
         checkNum(front, "r5", 4, "push on a full deque must not grow");
         checkMem(front, "cell1", 0, 4, "wrapped front element");
         checkMem(front, "cell1", 1, 3, "second element");
@@ -292,9 +292,9 @@ public final class DataRuntimeTest{
             + "datacall lsize r1 \"l\"\n"
             + "datacall linsert r2 \"l, 0, 4\"\n"
             + "datacall lget r3 \"l, 0\"\n");
-        checkNum(full, "r0", 2, "append on a full list returns the unchanged count");
+        checkNum(full, "r0", -1, "append on a full list reports -1");
         checkNum(full, "r1", 2, "full list must not grow");
-        checkNum(full, "r2", 0, "insert on a full list reports failure");
+        checkNum(full, "r2", -1, "insert on a full list reports -1");
         checkNum(full, "r3", 1, "failed insert must not shift");
 
         Run misses = run("list l cell1 0 4\n"
@@ -337,7 +337,7 @@ public final class DataRuntimeTest{
             + "datacall hpush z \"h, 2\"\n"
             + "datacall hpush r0 \"h, 3\"\n"
             + "datacall hsize r1 \"h\"\n");
-        checkNum(full, "r0", 0, "push on a full heap reports failure (1/0 flag, unlike lappend)");
+        checkNum(full, "r0", -1, "push on a full heap reports -1");
         checkNum(full, "r1", 2, "full heap must not grow");
     }
 

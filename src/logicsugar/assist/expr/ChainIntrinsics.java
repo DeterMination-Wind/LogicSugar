@@ -303,7 +303,12 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
         out.add(new ExprCompiler.OpLine("mul", take, index, valid));
         out.add(new ExprCompiler.OpLine("mul", keep, info.freeVar(), invalid));
         out.add(new ExprCompiler.OpLine("add", info.freeVar(), take, keep));
-        out.add(new ExprCompiler.OpLine("add", result, valid, "0"));
+        if(SugarCompiler.legacyApi()){
+            out.add(new ExprCompiler.OpLine("add", result, valid, "0"));
+        }else{
+            // v5 API: 非法下标统一报 -1（成功 1）
+            ExprCompiler.emitSuccessFlag(out, result, valid);
+        }
         return out;
     }
 
@@ -477,7 +482,8 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
         f.set("__ls_ci_r", "1");
         f.jump("L_end", "always", "x", "false");
         f.label("L_bad");
-        f.set("__ls_ci_r", "0");
+        // v5 API: 非法下标统一报 -1（旧口径 0 由 legacyApi 复现）
+        f.set("__ls_ci_r", SugarCompiler.failValue());
         f.label("L_end");
         f.line("return \"__ls_ci_r\"");
         return f.build();
@@ -512,7 +518,8 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
         f.set("__ls_ci_r", "1");
         f.jump("L_end", "always", "x", "false");
         f.label("L_bad");
-        f.set("__ls_ci_r", "0");
+        // v5 API: 非法下标统一报 -1（旧口径 0 由 legacyApi 复现）
+        f.set("__ls_ci_r", SugarCompiler.failValue());
         f.label("L_end");
         f.line("return \"__ls_ci_r\"");
         return f.build();
