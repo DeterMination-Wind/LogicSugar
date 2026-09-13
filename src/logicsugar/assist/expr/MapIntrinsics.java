@@ -1,6 +1,7 @@
 package logicsugar.assist.expr;
 
 import logicsugar.assist.data.MapModule;
+import mindustry.logic.SugarCompiler;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -346,7 +347,8 @@ public final class MapIntrinsics implements ExprIntrinsics.Provider{
         f.set(RES, "1");
         f.ret(RES);
         f.label("MISS");
-        f.set(RES, "0");
+        // v5 API: 没找到键 = 删除失败，统一报 -1（旧口径 0 由 legacyApi 复现）
+        f.set(RES, SugarCompiler.failValue());
         f.ret(RES);
         return f.build();
     }

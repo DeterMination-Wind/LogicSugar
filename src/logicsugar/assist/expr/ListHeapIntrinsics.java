@@ -1,6 +1,7 @@
 package logicsugar.assist.expr;
 
 import logicsugar.assist.data.ListHeapModule;
+import mindustry.logic.SugarCompiler;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -388,7 +389,8 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
         f.set("__ls_lh_r", "1");
         f.jump("L_end", "always", "x", "false");
         f.label("L_bad");
-        f.set("__ls_lh_r", "0");
+        // v5 API: 越界写入失败统一报 -1（异常返回 0 的旧口径由 legacyApi 复现）
+        f.set("__ls_lh_r", SugarCompiler.failValue());
         f.label("L_end");
         f.line("return \"__ls_lh_r\"");
         return f.build();

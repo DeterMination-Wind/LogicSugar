@@ -203,7 +203,7 @@ public class SetTest{
         checkNum(run, "r8", 1);
         checkNum(run, "r9", 0);
         checkNum(run, "r10", 0);
-        checkNum(run, "r11", 0);
+        checkNum(run, "r11", -1);
 
         String full = program("uset s cell1 0 4",
             "uclear(s)",
@@ -244,7 +244,7 @@ public class SetTest{
         checkNum(run, "r0", 0);
         checkNum(run, "r1", -1);
         checkNum(run, "r2", 0);
-        checkNum(run, "r3", 0);
+        checkNum(run, "r3", -1);
         checkNum(run, "r4", 0);
 
         String collisions = program("uset s cell1 0 4",

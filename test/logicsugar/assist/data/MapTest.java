@@ -259,7 +259,7 @@ public class MapTest{
             "mapdel(m, 1)",     // r10: 1
             "mapget(m, 1)",     // r11: NaN（删除后未命中）
             "mapsize(m)",       // r12: 0
-            "mapdel(m, 1)");    // r13: 0（再删不存在）
+            "mapdel(m, 1)");    // r13: -1（再删不存在）
         RunResult run = run(basic, 64);
         checkNum(run, "r0", 0);
         checkNum(run, "r1", 0);
@@ -274,7 +274,7 @@ public class MapTest{
         checkNum(run, "r10", 1);
         checkNaN(run, "r11", "mapget after mapdel must return NaN");
         checkNum(run, "r12", 0);
-        checkNum(run, "r13", 0);
+        checkNum(run, "r13", -1);
 
         // 满表：容量 4，key 1..4 哈希互不相同，第 5 个键必须返回 -1 且不覆盖任何已有键
         String full = program("map m cell1 0 4",
@@ -306,20 +306,20 @@ public class MapTest{
         checkNum(run, "r11", 60);
         checkNum(run, "r12", 4);
 
-        // NaN 键：set 返回 -1，get 返回 NaN，has/del 返回 0（空表也不被污染）
+        // NaN 键：set / del 返回 -1（操作被拒绝），get 返回 NaN，has 返回 0（空表不被污染）
         String nanKeys = program("map m cell1 0 4",
             "mapclear(m)",            // r0
             "mapset(m, 0 / 0, 1)",    // r1: -1
             "mapget(m, 0 / 0)",       // r2: NaN
             "maphas(m, 0 / 0)",       // r3: 0
-            "mapdel(m, 0 / 0)",       // r4: 0
+            "mapdel(m, 0 / 0)",       // r4: -1
             "mapsize(m)");            // r5: 0
         run = run(nanKeys, 64);
         checkNum(run, "r0", 0);
         checkNum(run, "r1", -1);
         checkNaN(run, "r2", "mapget with a NaN key must return NaN");
         checkNum(run, "r3", 0);
-        checkNum(run, "r4", 0);
+        checkNum(run, "r4", -1);
         checkNum(run, "r5", 0);
 
         // 冲突探测：capacity 4 全用 key = 1 的不同副本（哈希相同），验证线性探测与删除后的链完整

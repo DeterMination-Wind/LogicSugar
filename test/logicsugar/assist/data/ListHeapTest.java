@@ -177,9 +177,9 @@ public class ListHeapTest{
             exec("lset(l, 1, 99)", vars, memory);
             check(num(vars, "x") == 1 && memory[1] == 99, "lset in range must return 1 and write");
             exec("lset(l, 3, 5)", vars, memory);
-            check(num(vars, "x") == 0 && memory[3] == 0, "lset at count must return 0 and not write");
+            check(num(vars, "x") == -1 && memory[3] == 0, "lset at count must return -1 and not write");
             exec("lset(l, -1, 5)", vars, memory);
-            check(num(vars, "x") == 0, "lset with a negative index must return 0");
+            check(num(vars, "x") == -1, "lset with a negative index must return -1");
 
             // linsert：右移语义 [30, 99, 20] → [30, 15, 99, 20]
             exec("linsert(l, 1, 15)", vars, memory);

@@ -47,6 +47,40 @@ public final class SugarCompiler{
      */
     public static final int FORMAT_VERSION = 2;
 
+    /**
+     * Lowering API used by the current compile. {@link #v2} is the v5 API; {@link #v1}
+     * reproduces the pre-v5 failure/void lowering so {@link #verifyRestore} can still verify
+     * saves written before the API change (their stored instruction stream keeps the old
+     * failure values). v1 is only ever entered for that comparison.
+     */
+    public enum Api{
+        v2, v1
+    }
+
+    private static Api api = Api.v2;
+
+    /** True while re-lowering a pre-v5 save to reproduce its stored instruction stream. */
+    public static boolean legacyApi(){
+        return api == Api.v1;
+    }
+
+    /** Enters an API mode, returning the previous one for {@link #leaveApi} (pair in finally). */
+    public static Api enterApi(Api value){
+        Api previous = api;
+        api = value;
+        return previous;
+    }
+
+    /** Restores the API mode returned by {@link #enterApi}. */
+    public static void leaveApi(Api previous){
+        api = previous;
+    }
+
+    /** Failure result of a data operation: {@code -1} in the v5 API, {@code 0} before it. */
+    public static String failValue(){
+        return legacyApi() ? "0" : "-1";
+    }
+
     private static final String markerBegin = "# @logic-sugar-v" + FORMAT_VERSION + " begin";
     private static final String markerLine = "# @logic-sugar-line ";
     private static final String markerEnd = "# @logic-sugar-v" + FORMAT_VERSION + " end";

@@ -1,6 +1,7 @@
 package logicsugar.assist.expr;
 
 import logicsugar.assist.data.ChainModule;
+import mindustry.logic.SugarCompiler;
 
 import java.util.ArrayList;
 import java.util.Collections;
