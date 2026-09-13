@@ -10,6 +10,16 @@
 
 这是自正式版 **v4.0.0** 以来的一次大版本更新，把 Logic Sugar 的结构化编辑体验补齐成一套完整工具：
 控制流、表达式、函数，以及一整套「像数组一样好写」的数据结构。所有保存的代码仍然可以在原版客户端运行。
+所有 v4 老存档都能正常打开，重新保存时自动升级。
+
+v5.0.0 曾以预发布形式提供过数据子系统与 v5 API，本版把它们一并带出，并新增了下面这些内容。
+
+**本版新增**
+
+- 每一种数据结构操作都有独立积木卡，并按结构分类；表达式里也能用更自然的 getter 写法（见下）。
+- 数组排序换成希尔排序，明显更快；函数库上限提高到 10000 条语句。
+- 单位 flag 彩色显示、卡片标题本地化、编辑器底部栏与断言卡片布局等一系列体验改进。
+- 修复 `while` 条件文字误导，以及对象、单位、字符串、空值在传递中被悄悄转成 `1` / `0` 的问题。
 
 **数据结构操作卡**
 
@@ -73,7 +83,16 @@
 
 ## English
 
-This is a major update since the last official release **v4.0.0**. It rounds Logic Sugar out into a complete structured editor: control flow, expressions, functions, and a full set of data structures that are as easy to write as an array. Everything you save still runs on a vanilla client.
+This is a major update since the last official release **v4.0.0**. It rounds Logic Sugar out into a complete structured editor: control flow, expressions, functions, and a full set of data structures that are as easy to write as an array. Everything you save still runs on a vanilla client. Every v4 save opens normally and upgrades itself on the next save.
+
+v5.0.0 offered the data subsystem and the v5 API as a pre-release; this release carries them out and adds the following.
+
+**New in this release**
+
+- Every data-structure operation is its own palette block, grouped by structure, and expressions accept the more natural getter spellings (below).
+- Array sorting uses Shell sort for a clear speed-up, and the function library holds up to 10,000 statements.
+- Unit-flag coloring, card localization, bottom-bar and assert-card layout polish, and more.
+- Fixed the misleading `while` condition label and values such as objects, units, strings and null being silently folded to `1` / `0` in transit.
 
 **Data-structure operation cards**
 
