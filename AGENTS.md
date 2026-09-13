@@ -13,8 +13,13 @@ this file only adds what is specific to this project.
 - **调试类功能只在单机启用**：凡是会改变保存产物语义的功能（目前是调试断言构建
   `AssertEmit=emit`），必须在代码层限定为 `!Vars.net.active()`（单机/编辑器）才生效——
   联机（已连接或自建）一律回落原版行为。纯展示类功能（如处理器状态指示、单位 flag 显示、变量复制按钮）
-  不产生存档差异，不受此限。不提供改变指令预算的能力：指令上限覆盖曾试做后被移除
-  （commit ea97e00），保存产物恒 ≤1000 条是硬不变式，勿再引入。
+  不产生存档差异，不受此限。不提供改变处理器指令预算的能力：指令上限覆盖曾试做后被移除
+  （commit ea97e00），处理器保存产物恒 ≤1000 条是硬不变式，勿再引入。
+- **函数库不是处理器产物**：全局函数库 `functions.txt` 不算"保存到处理器的代码"，不受上面
+  1000 条硬不变式约束；它有独立上限 `SugarFunctions.libraryInstructionLimit`（当前 10000 条
+  语句）。库文本必须用 `SugarFunctions.readLibrary` 解析（临时抬高 `LExecutor.maxInstructions`
+  后 `finally` 还原，绝不放开处理器检查），超限由 `libraryOverLimit` 在保存/打开编辑器时明确
+  拒绝。使用库函数的处理器产物仍然 ≤1000 条，只嵌入被调用到的函数子集。
 - **残余风险必须写进文档**：单机里创建的越界内容（>1000 条程序、带 assert 指令的调试
   构建）若之后被分享到多人环境，原版客户端仍会截断/清空/静默降级——代码无法阻止分享，
   只能靠设置描述与文档把后果讲清（见 bundle 的 maxInstructions/assertEmit 描述）。
@@ -34,7 +39,8 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
                                       # varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest,
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
                                       # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest,
-                                      # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest
+                                      # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest,
+                                       # funclibLimitTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 

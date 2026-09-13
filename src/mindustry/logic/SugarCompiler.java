@@ -110,6 +110,18 @@ public final class SugarCompiler{
      *  numbering from 1 — any gap means "not a shard set"), then the single
      *  {@code set __ls_sugar "..."} shape, then the marker block. */
     public static String restore(String code){
+        return restoreInternal(code);
+    }
+
+    /** {@link #restore(String)} for function-library text, which may exceed the processor
+     *  instruction cap: the stale-dest rewrite pass parses the text with the raised library
+     *  limit instead of the vanilla cap. */
+    public static String restore(String code, boolean libraryText){
+        return libraryText ? SugarFunctions.withLibraryLimitValue(() -> restoreInternal(code))
+            : restoreInternal(code);
+    }
+
+    private static String restoreInternal(String code){
         String normalized = code.replace("\r\n", "\n");
         String[] lines = normalized.split("\n", -1);
         // Scan from the end: genuine carriers are always the last sugar-carrying lines, so a
@@ -275,7 +287,19 @@ public final class SugarCompiler{
     /** Compiles in the same privileged/non-privileged context as the edited processor. */
     public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
                                  SwitchStrategy switchStrategy, AssertEmit assertEmit, boolean privileged){
-        Seq<LStatement> statements = LAssembler.read(sugar, privileged);
+        return compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged, false);
+    }
+
+    /** {@code librarySource} marks {@code sugar} as the function-library text itself rather
+     *  than a processor program: it is parsed with the raised library statement limit, while
+     *  the emitted program still obeys the vanilla processor instruction cap (the library's
+     *  used subset is only inlined into a processor that fits 1000 instructions). */
+    public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
+                                 SwitchStrategy switchStrategy, AssertEmit assertEmit, boolean privileged,
+                                 boolean librarySource){
+        Seq<LStatement> statements = librarySource
+            ? SugarFunctions.readLibrary(sugar, privileged)
+            : LAssembler.read(sugar, privileged);
         if(!containsSugar(statements)) return sugar;
 
         // destIndex on begin cards is a jump comment. Older saves and hand-edited

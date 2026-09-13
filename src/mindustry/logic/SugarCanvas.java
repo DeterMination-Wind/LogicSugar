@@ -75,6 +75,10 @@ public class SugarCanvas extends LCanvas{
     public Runnable afterMutate;
     /** 为 true 时 {@link #add}/{@link #addAt} 不通知历史（{@link #load} 期间）。 */
     public boolean suppressHistory;
+    /** True while this canvas shows the global function library (executor == null session):
+     *  the library file may exceed the processor instruction cap, so {@link #load} parses it
+     *  with the raised library limit. {@link SugarLogicDialog} sets it on every show. */
+    public boolean librarySession;
 
     public SugarCanvas(){
         super();
@@ -93,7 +97,13 @@ public class SugarCanvas extends LCanvas{
         suppressHistory = true;
         try{
             BoxSelect.canvasWillChange(this);
-            super.load(asm);
+            if(librarySession){
+                // The function library may hold far more statements than a processor program;
+                // vanilla LCanvas.load parses through LParser, which stops at the processor cap.
+                SugarFunctions.withLibraryLimit(() -> loadSuper(asm));
+            }else{
+                super.load(asm);
+            }
             BoxSelect.canvasDidChange(this);
             // super.load() 先清空了 jumpLayer（statements.jumps.clear()），结构引导线层
             // 随之被移除；installGuideLayer 只在 rebuild() 里调用（重开才触发），所以
@@ -103,6 +113,11 @@ public class SugarCanvas extends LCanvas{
         }finally{
             suppressHistory = previous;
         }
+    }
+
+    /** {@code super.load} behind a method reference so the library-limit wrapper can call it. */
+    private void loadSuper(String asm){
+        super.load(asm);
     }
 
     @Override

@@ -86,6 +86,80 @@ public final class SugarFunctions{
     /** Sentinels for jumps inside a function body that target the function's own end block. */
     public static final int exitTarget = -2;
 
+    /**
+     * Function-library statement ceiling. The library file is not a saved processor program:
+     * vanilla's {@link LExecutor#maxInstructions} cap applies to the mlog stored in a processor,
+     * while the library is shared sugar text whose used subset is inlined at compile time.
+     * {@link LAssembler#read} stops at that cap (through {@code LParser}), so library text is
+     * parsed with this raised limit instead. A processor that inlines library functions still has
+     * to fit the vanilla 1000-instruction cap; only the library file itself is allowed to be
+     * larger. 10000 is the current supported ceiling.
+     */
+    public static final int libraryInstructionLimit = 10000;
+
+    /**
+     * Parses function-library text with {@link #libraryInstructionLimit} instead of the processor
+     * cap. The global parse cap is always restored before returning (including on parse failure),
+     * so processor programs keep the vanilla limit. Text over the ceiling is truncated by the
+     * parser here; write paths gate it explicitly with {@link #libraryOverLimit(String)}.
+     */
+    public static Seq<LStatement> readLibrary(String text, boolean privileged){
+        if(text == null || text.isEmpty()) return new Seq<>();
+        int previous = LExecutor.maxInstructions;
+        if(previous >= libraryInstructionLimit) return LAssembler.read(text, privileged);
+        try{
+            LExecutor.maxInstructions = libraryInstructionLimit;
+            return LAssembler.read(text, privileged);
+        }finally{
+            LExecutor.maxInstructions = previous;
+        }
+    }
+
+    /**
+     * True when {@code text} holds more statements than {@link #libraryInstructionLimit}. Parses
+     * with a probe limit one past the ceiling, so an oversized library is reported instead of
+     * being silently truncated. Unparseable text returns false; the normal parse path reports
+     * the syntax error with its own message.
+     */
+    public static boolean libraryOverLimit(String text){
+        if(text == null || text.isEmpty()) return false;
+        int previous = LExecutor.maxInstructions;
+        try{
+            LExecutor.maxInstructions = Math.max(previous, libraryInstructionLimit + 1);
+            return LAssembler.read(text, true).size > libraryInstructionLimit;
+        }catch(Throwable ignored){
+            return false;
+        }finally{
+            LExecutor.maxInstructions = previous;
+        }
+    }
+
+    /**
+     * Runs {@code action} with the library parse limit installed. Needed where vanilla code
+     * parses the text itself ({@code LCanvas.load}) during a function-library editing session.
+     * The previous limit is restored even when {@code action} throws.
+     */
+    public static void withLibraryLimit(Runnable action){
+        int previous = LExecutor.maxInstructions;
+        if(previous < libraryInstructionLimit) LExecutor.maxInstructions = libraryInstructionLimit;
+        try{
+            action.run();
+        }finally{
+            LExecutor.maxInstructions = previous;
+        }
+    }
+
+    /** {@link #withLibraryLimit(Runnable)} for actions that return a value. */
+    public static <T> T withLibraryLimitValue(java.util.function.Supplier<T> action){
+        int previous = LExecutor.maxInstructions;
+        if(previous < libraryInstructionLimit) LExecutor.maxInstructions = libraryInstructionLimit;
+        try{
+            return action.get();
+        }finally{
+            LExecutor.maxInstructions = previous;
+        }
+    }
+
     /** Where library statements come from. Installed by the mod; tests install their own. */
     public interface LibrarySource{
         /** @return the parsed and validated library index, or null when unavailable. */
@@ -511,7 +585,7 @@ public final class SugarFunctions{
             LibraryIndex index;
             try{
                 // 内置函数名使用保留的 __ls_builtin_ 前缀，走 allowReserved 内部通道
-                index = buildLibrary(LAssembler.read(part.trim(), true), true);
+                index = buildLibrary(readLibrary(part.trim(), true), true);
             }catch(IllegalArgumentException e){
                 throw new IllegalArgumentException("internal error: the injected builtin library is invalid (" + e.getMessage() + ")");
             }
@@ -536,7 +610,7 @@ public final class SugarFunctions{
      * into {@link #exitTarget} as usual, and body targets become body-relative.
      */
     public static String extractLibrarySource(String libraryText, Set<String> usedNames){
-        Seq<LStatement> statements = LAssembler.read(libraryText, true);
+        Seq<LStatement> statements = readLibrary(libraryText, true);
         int n = statements.size;
         int[] endOf = new int[n];
         Arrays.fill(endOf, -1);
@@ -642,7 +716,7 @@ public final class SugarFunctions{
         List<String> warnings = new ArrayList<>();
         Seq<LStatement> statements;
         try{
-            statements = LAssembler.read(text, true);
+            statements = readLibrary(text, true);
         }catch(Throwable t){
             String message = "the library text cannot be parsed: " + t.getMessage();
             return new SanitizedLibrary("", new LibraryIndex(), List.of(message), true);
@@ -653,7 +727,7 @@ public final class SugarFunctions{
             return new SanitizedLibrary(text, buildLibrary(statements), List.of(), false);
         }catch(IllegalArgumentException ignored){
             // buildLibrary remaps the bodies it processed before failing; parse again fresh
-            statements = LAssembler.read(text, true);
+            statements = readLibrary(text, true);
         }
 
         // identify top-level funcdef slices in source order
@@ -683,7 +757,7 @@ public final class SugarFunctions{
             try{
                 StringBuilder copyText = new StringBuilder();
                 copySlice(statements, slice[0], slice[1], copyText, 0);
-                Seq<LStatement> single = LAssembler.read(copyText.toString(), true);
+                Seq<LStatement> single = readLibrary(copyText.toString(), true);
                 if(single.size != slice[1] - slice[0] + 1){
                     throw new IllegalArgumentException("slice round-trip changed the statement count");
                 }
@@ -721,7 +795,7 @@ public final class SugarFunctions{
         LibraryIndex index = new LibraryIndex();
         while(true){
             try{
-                index = buildLibrary(LAssembler.read(output, true));
+                index = buildLibrary(readLibrary(output, true));
                 break;
             }catch(IllegalArgumentException e){
                 if(survivorSlices.isEmpty()){
