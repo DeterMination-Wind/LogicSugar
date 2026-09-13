@@ -75,6 +75,23 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
         }
     }
 
+    /** In-place array transformations are statement-like cards; their legacy size/index
+     * sentinels remain available to expression callers but are not source-level results. */
+    @Override
+    public boolean returnsValue(String name){
+        switch(name){
+            case "fill":
+            case "copy":
+            case "sortasc":
+            case "sortdesc":
+            case "reverse":
+            case "swap":
+                return false;
+            default:
+                return true;
+        }
+    }
+
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
         switch(name){

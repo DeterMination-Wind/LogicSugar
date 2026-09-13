@@ -706,8 +706,6 @@ public class ExprCompiler{
      */
     public static List<Line> compileForcedIntrinsic(String dest, String operation, String arguments,
                                                     boolean emitBoundsAsserts){
-        if(dest == null || dest.trim().isEmpty())
-            throw new ParseException(msg("la.err.assign_target", "<empty>"));
         if(operation == null || operation.trim().isEmpty())
             throw new ParseException(msg("la.err.unknown_func", "<empty>"));
         boolean previous = boundsAsserts;
@@ -727,6 +725,9 @@ public class ExprCompiler{
             String result = lineDest(expanded.get(expanded.size() - 1));
             if(result == null)
                 throw new ParseException("intrinsic '" + operation + "' did not produce a result operand");
+            // Void data cards still use the expression expansion machinery, but discard
+            // the intrinsic's legacy sentinel instead of inventing a result assignment.
+            if(dest == null || dest.trim().isEmpty()) return ops;
             return finishResult(dest, ops, result);
         }finally{
             boundsAsserts = previous;

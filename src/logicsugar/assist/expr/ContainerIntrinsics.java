@@ -101,6 +101,12 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         }
     }
 
+    /** clear operations mutate only hidden container state and have no source-level result. */
+    @Override
+    public boolean returnsValue(String name){
+        return !"sclear".equals(name) && !"qclear".equals(name) && !"dclear".equals(name);
+    }
+
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
         switch(name){

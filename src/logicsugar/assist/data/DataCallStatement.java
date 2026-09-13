@@ -7,6 +7,8 @@ import mindustry.logic.LAssembler;
 import mindustry.logic.LStatement;
 import mindustry.logic.SugarStatements;
 
+import java.util.Locale;
+
 /**
  * A persistent, editable card for one data intrinsic call.  The card keeps the
  * source-level call in the Sugar carrier; {@link mindustry.logic.SugarFunctions}
@@ -45,12 +47,16 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
     public void build(Table table){
         // Each palette entry is a distinct operation block. Keeping the operation fixed avoids
         // a generic expression-like card whose title/category can drift after editing.
-        field(table, destination, value -> destination = value).width(78f);
-        table.add(" = ");
-        table.add(operation + "(").self(c -> hint(c, "datacall.operation"));
+        DataModule.PaletteCall call = palette();
+        boolean returnsValue = call == null || call.returnsValue;
+        if(returnsValue){
+            field(table, destination, value -> destination = value).width(78f);
+            table.add(" = ");
+        }
+        table.add(operation + "(").self(c -> hint(c, operationHintKey("operation")));
         table.add(new ExpressionEditor(arguments, "data, value", value -> arguments = value))
             .growX().minWidth(90f);
-        table.add(")").self(c -> hint(c, "datacall.arguments"));
+        table.add(")").self(c -> hint(c, operationHintKey("arguments")));
     }
 
     private static String cardText(String op, String fallback){
@@ -63,7 +69,13 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
     }
 
     @Override public String name(){ return cardText(operation, operation); }
-    @Override public String typeName(){ return TOKEN; }
+    @Override public String typeName(){
+        if(operation == null || operation.isEmpty()) return TOKEN;
+        // SugarLogicDialog derives its add-palette tooltip from typeName().  Keep the
+        // generic token for malformed/legacy cards, and select the per-operation key for
+        // registered cards (e.g. logicsugar.lst.datacall.spop).
+        return TOKEN + "." + operation.toLowerCase(Locale.ROOT);
+    }
     @Override public LCategory category(){
         DataModule.PaletteCall call = palette();
         return call == null ? SugarStatements.dataStructures : call.category;
@@ -79,6 +91,11 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
 
     private static String optional(String value){
         return value == null || value.isEmpty() ? "~" : value;
+    }
+
+    private String operationHintKey(String field){
+        String op = operation == null ? "" : operation.toLowerCase(Locale.ROOT);
+        return DataModules.paletteCall(op) == null ? "datacall." + field : "datacall." + op;
     }
 
     @Override

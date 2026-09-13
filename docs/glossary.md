@@ -92,7 +92,7 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 一个数据结构 = 一个 `DataModule` 子类（声明卡解析器 + 编译期注册表 + intrinsic provider + 注入函数源文本）。`DataModules` 是统一驱动点：`register` 登记模块并注册 provider（按 `id()` 幂等），`registerParsers` 安装声明卡解析器，`collectAll`/`restore` 在每次编译前后配对建立/清理程序级注册表（`SugarCompiler` 的 `finally` 保证异常路径也恢复），`markInvalid` 供编辑期标红。
 
 ### 数据调用积木（DataCallStatement）
-`datacall <operation> <destination> "<arguments>"` 是数据 intrinsic 的通用可编辑卡。其 operation/category/default arguments 来自模块的 `PaletteCall` metadata；保存时进入 Sugar carrier，编译时复用 `ExprIntrinsics` 展开，因此不会把 `datacall` 或内置 `funccall` 泄漏到原版 mlog。
+`datacall <operation> <destination> "<arguments>"` 是数据 intrinsic 的通用可编辑卡。其 operation/category/default arguments/`returnsValue` 来自模块的 `PaletteCall` metadata；有返回值时默认显示 `result = op(args)`，结果写入左侧变量；无返回值时显示 `op(args)`，不要求结果变量。当前数组 `fill/copy/sortasc/sortdesc/reverse/swap` 与结构清空操作属于无返回值卡；保存时仍进入 Sugar carrier，编译时复用 `ExprIntrinsics` 展开，因此不会把 `datacall` 或内置 `funccall` 泄漏到原版 mlog。
 
 ### 隐藏状态变量
 栈/队列/列表/堆/链表/双端队列等结构的运行时状态（如 `__ls_stk_<name>_top`、`__ls_que_<name>_head/_tail/_count`、`__ls_deq_<name>_head/_tail/_count`、`__ls_lst_<name>_count`、`__ls_chn_<name>_head/_free`）是普通 mlog 变量，用 `__ls_` 保留前缀声明，`VarDisplayFilter` 自动隐藏、用户不得使用同前缀命名。mlog 变量未赋值读取为 0，因此初始状态不需要初始化指令；代价是它们不随存档持久化——处理器代码重新载入后计数归零而内存块内容保留。链表是例外：`head`/`free` 读作 0 会被当成合法节点下标，首次使用前必须显式 `cinit(c)` / `cclear(c)` 重建空闲链。

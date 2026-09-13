@@ -37,7 +37,27 @@ public final class DataCallTest{
         check(DataModules.paletteCall("dclear").category == SugarStatements.dequeOps, "deque category missing");
         check(DataModules.paletteCall("sum").category == SugarStatements.arrayAlgo, "array category missing");
         check(DataModules.paletteCall("fill").arguments.equals("buf, value"), "fill defaults must match array declaration");
+        check(!DataModules.paletteCall("fill").returnsValue, "fill cards must be statement-like");
+        check(DataModules.paletteCall("copy").arguments.equals("dst, src"), "copy defaults must name source and destination");
+        check(!DataModules.paletteCall("sortasc").returnsValue && !DataModules.paletteCall("reverse").returnsValue,
+            "in-place array transforms must not expose a result field");
+        for(String operation : new String[]{"fill", "copy", "sortasc", "sortdesc", "reverse", "swap",
+            "sclear", "qclear", "dclear", "mapclear", "uclear"}){
+            check(!DataModules.paletteCall(operation).returnsValue,
+                operation + " must be represented as a void palette card");
+        }
         check(DataModules.paletteCall("spop").arguments.equals("s"), "stack defaults must match stack declaration");
+        check(DataModules.paletteCall("spop").returnsValue, "pop cards must expose their value");
+        check(!DataModules.paletteCall("sclear").returnsValue && !DataModules.paletteCall("mapclear").returnsValue
+            && !DataModules.paletteCall("uclear").returnsValue, "clear cards must not expose a result field");
+
+        DataCallStatement fillCard = new DataCallStatement(DataModules.paletteCall("fill"));
+        StringBuilder fillCardSource = new StringBuilder();
+        fillCard.write(fillCardSource);
+        check(fillCardSource.toString().equals("datacall fill ~ \"buf, value\""),
+            "new void cards must serialize an empty destination: " + fillCardSource);
+        check(new DataCallStatement(DataModules.paletteCall("spop")).typeName().equals("datacall.spop"),
+            "operation-specific datacall tooltip type missing");
 
         check(LogicIO.allStatements.count(prov -> prov.get() instanceof SugarStatements.ArrayInitStatement) == 0,
             "legacy eight-slot arrayinit must be hidden from the palette");
@@ -57,14 +77,20 @@ public final class DataCallTest{
         check(SugarCompiler.verifyRestore(compiled, sugar), "datacall carrier verification failed");
 
         String fillSugar = "array buf cell1 0 4\n"
-            + "datacall fill result \"buf, 9\"\n"
-            + "set x result\n";
+            + "datacall fill ~ \"buf, 9\"\n";
         String fillCompiled = SugarCompiler.compile(fillSugar, SugarCompiler.FuncMode.normal, null, null);
         String fillProduct = SugarCompiler.stripMarkers(fillCompiled);
         check(fillProduct.contains("__ls_func___ls_builtin_arrfill_entry:"),
             "fill card did not lower through the shared array fill builtin:\n" + fillProduct);
         check(!fillProduct.contains("datacall "), "fill datacall leaked into product:\n" + fillProduct);
         check(SugarCompiler.restore(fillCompiled).equals(fillSugar), "fill card did not survive carrier restore");
+
+        String voidSugar = "stack s cell1 0 4\n"
+            + "datacall sclear ~ \"s\"\n";
+        String voidCompiled = SugarCompiler.compile(voidSugar, SugarCompiler.FuncMode.normal, null, null);
+        String voidProduct = SugarCompiler.stripMarkers(voidCompiled);
+        check(voidProduct.contains("__ls_stk_s_top"), "void clear card did not lower safely:\n" + voidProduct);
+        check(SugarCompiler.verifyRestore(voidCompiled, voidSugar), "void card carrier verification failed");
 
         checkCompileThrows("stack s cell1 0 4\n"
             + "datacall spush ~ \"s, 7\"\n", "requires a destination variable");

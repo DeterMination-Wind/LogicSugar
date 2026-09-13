@@ -68,6 +68,12 @@ public final class SetIntrinsics implements ExprIntrinsics.Provider{
         }
     }
 
+    /** uclear only initializes the backing key area; the implementation's zero is not a result. */
+    @Override
+    public boolean returnsValue(String name){
+        return !"uclear".equals(name);
+    }
+
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
         switch(name){

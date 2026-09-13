@@ -65,6 +65,14 @@ public final class ExprIntrinsics{
         default int arity(String name){
             return -1;
         }
+        /**
+         * Whether a palette card should expose the intrinsic's return value.  The
+         * expression path still has a temporary result for backwards compatibility;
+         * this flag only describes the source-level operation card contract.
+         */
+        default boolean returnsValue(String name){
+            return true;
+        }
         /** 展开后会调用的注入函数名（analyze 阶段登记可达性/hoist 用；默认无）。 */
         default List<String> callees(String name, int argc){
             return Collections.emptyList();

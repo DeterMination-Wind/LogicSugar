@@ -40,11 +40,19 @@ public abstract class DataModule{
         public final LCategory category;
         public final String destination;
         public final String arguments;
+        /** Whether the source-level card writes an intrinsic return value. */
+        public final boolean returnsValue;
 
         public PaletteCall(String name, LCategory category, String destination, String arguments){
+            this(name, category, destination, arguments, true);
+        }
+
+        public PaletteCall(String name, LCategory category, String destination, String arguments,
+                           boolean returnsValue){
             this.name = name;
             this.category = category == null ? SugarStatements.dataStructures : category;
-            this.destination = destination == null ? "result" : destination;
+            this.returnsValue = returnsValue;
+            this.destination = destination == null ? (returnsValue ? "result" : "") : destination;
             this.arguments = arguments == null ? "" : arguments;
         }
     }
@@ -68,8 +76,9 @@ public abstract class DataModule{
         List<PaletteCall> result = new java.util.ArrayList<>();
         for(String name : provider.callNames()){
             int arity = provider.arity(name);
+            boolean returnsValue = provider.returnsValue(name);
             result.add(new PaletteCall(name, SugarStatements.dataStructures,
-                "result", defaultArguments(name, arity)));
+                returnsValue ? "result" : "", defaultArguments(name, "data", arity), returnsValue));
         }
         return result;
     }
@@ -83,12 +92,72 @@ public abstract class DataModule{
         ExprIntrinsics.Provider provider = intrinsics();
         for(String name : names){
             int arity = provider == null ? -1 : provider.arity(name);
-            result.add(new PaletteCall(name, category, "result", defaultArguments(firstArgument, arity)));
+            boolean returnsValue = provider == null || provider.returnsValue(name);
+            result.add(new PaletteCall(name, category, returnsValue ? "result" : "",
+                defaultArguments(name, firstArgument, arity), returnsValue));
         }
         return result;
     }
 
-    private static String defaultArguments(String first, int arity){
+    /**
+     * Human-readable source defaults for each intrinsic.  These are deliberately
+     * source parameters rather than the lowered memory operands, so the palette
+     * teaches the same call shape accepted by ExprIntrinsics.
+     */
+    private static String defaultArguments(String name, String first, int arity){
+        switch(name){
+            case "count":
+            case "indexof":
+            case "fill":
+            case "bsearch":
+                return first + ", value";
+            case "copy":
+                return "dst, src";
+            case "replace":
+                return first + ", oldValue, newValue";
+            case "swap":
+                return first + ", i, j";
+            case "spush":
+            case "qpush":
+            case "dpushf":
+            case "dpushb":
+                return first + ", value";
+            case "bset":
+            case "bclr":
+            case "btest":
+                return first + ", index";
+            case "mapset":
+                return first + ", key, value";
+            case "mapget":
+            case "maphas":
+            case "mapdel":
+            case "uadd":
+            case "uhas":
+            case "udel":
+                return first + ", key";
+            case "lappend":
+            case "hpush":
+                return first + ", value";
+            case "lget":
+            case "lremove":
+                return first + ", index";
+            case "lfind":
+                return first + ", value";
+            case "lset":
+            case "linsert":
+                return first + ", index, value";
+            case "cfree":
+            case "cget":
+            case "cnext":
+            case "cshead":
+                return first + ", index";
+            case "cset":
+                return first + ", index, value";
+            case "clink":
+                return first + ", index, next";
+            default:
+                break;
+        }
         if(arity <= 0) return "";
         StringBuilder out = new StringBuilder();
         for(int i = 0; i < arity; i++){

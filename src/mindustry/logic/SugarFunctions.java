@@ -1576,15 +1576,21 @@ public final class SugarFunctions{
     private static void emitDataCall(DataCallStatement call, String prefix, FunctionSet functions, FuncMode mode,
                                      StringBuilder out, CallIds ids, SugarCompiler.SwitchStrategy strategy,
                                      SugarCompiler.AssertEmit assertEmit){
-        if(call.destination == null || call.destination.trim().isEmpty()){
-            throw new IllegalArgumentException("data call '" + call.operation + "' requires a destination variable");
-        }
         DataModule.PaletteCall spec = DataModules.paletteCall(call.operation);
         if(spec == null) throw new IllegalArgumentException("unknown data intrinsic '" + call.operation + "'");
+        // The expression compiler always needs a concrete result operand so the last
+        // intrinsic line can be optimized safely.  Void cards discard that legacy
+        // sentinel into a private, per-function reserved variable; it never becomes a
+        // user-visible `result = ...` assignment and cannot collide with user names.
+        String destination = spec.returnsValue ? call.destination
+            : "__ls_" + (prefix == null ? "" : prefix.replace('-', '_')) + "datacall_discard";
+        if(spec.returnsValue && (destination == null || destination.trim().isEmpty())){
+            throw new IllegalArgumentException("data call '" + call.operation + "' requires a destination variable");
+        }
         String args = call.arguments == null ? "" : call.arguments;
         List<ExprCompiler.Line> lines;
         try{
-            lines = ExprCompiler.compileForcedIntrinsic(call.destination, call.operation, args,
+            lines = ExprCompiler.compileForcedIntrinsic(destination, call.operation, args,
                 assertEmit == SugarCompiler.AssertEmit.emit);
         }catch(Exception e){
             throw new IllegalArgumentException("Invalid data call '" + call.operation + "': " + e.getMessage());

@@ -89,6 +89,12 @@ public final class MapIntrinsics implements ExprIntrinsics.Provider{
         }
     }
 
+    /** mapclear is an initialization/mutation operation; its implementation's zero is a sentinel. */
+    @Override
+    public boolean returnsValue(String name){
+        return !"mapclear".equals(name);
+    }
+
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
         switch(name){

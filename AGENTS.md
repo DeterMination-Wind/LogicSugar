@@ -118,8 +118,11 @@ so saved programs stay vanilla-parseable and multiplayer-safe.
   the `__ls_lib` carrier (`extractLibrarySource` only sees user library text). Unused builtins stay out
   of the product; normal mode shares one `funcdef` body per operation.
 - Every registered data intrinsic is also exposed as a persistent `datacall` card. Palette
-  metadata belongs to its `DataModule`; the framework registers the common parser and cards,
-  and lowering must reuse `ExprIntrinsics` so carrier restore preserves the operation card while
+  metadata belongs to its `DataModule`; it records source-level argument defaults and whether
+  the operation has a source-level result. Result-bearing cards default to `result = op(args)`;
+  void cards omit the destination and lower their implementation sentinel into a private
+  `__ls_*datacall_discard` variable. The framework registers the common parser and cards, and
+  lowering must reuse `ExprIntrinsics` so carrier restore preserves the operation card while
   the executable product remains vanilla mlog. The legacy eight-slot `arrayinit` token stays
   parseable but is not offered for new programs; use the Array Algorithms `fill(buf, value)` card.
 - `SugarCompiler.compile` must keep the `DataModules.collectAll(...)` / `DataModules.restore()`
