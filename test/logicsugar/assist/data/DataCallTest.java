@@ -153,7 +153,41 @@ public final class DataCallTest{
             check(SugarCompiler.verifyRestore(dynamicCompiled, dynamicSugar),
                 "dynamic datacall carrier verification failed in " + mode);
         }
+        apiVersionVerification();
         System.out.println("DataCallTest passed");
+    }
+
+    /**
+     * The v5 API changed failure values (0 to -1). Save written before it must still pass the
+     * restore gate: the gate re-lowers them with the legacy API and compares streams.
+     */
+    private static void apiVersionVerification(){
+        String sugar = "map m cell1 0 4\n"
+            + "datacall mapclear ~ \"m\"\n"
+            + "datacall mapdel r \"m, 1\"\n";
+        String v2 = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, null, null);
+
+        SugarCompiler.Api previous = SugarCompiler.enterApi(SugarCompiler.Api.v1);
+        String v1;
+        try{
+            v1 = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, null, null);
+        }finally{
+            SugarCompiler.leaveApi(previous);
+        }
+        String v1Save = v1.replace("# @logic-sugar-v2", "# @logic-sugar-v1");
+
+        check(SugarCompiler.storedFormat(v2) == 2 && SugarCompiler.storedFormat(v1Save) == 1,
+            "marker versions must differ between the v2 and v1 lowering");
+        check(!SugarCompiler.matchesStoredStream(v2, v1Save),
+            "v1 and v2 failure values must not compare equal without the legacy pass");
+        check(SugarCompiler.verifyRestore(v1Save, sugar),
+            "a pre-v5 save must verify through the legacy lowering API:\n" + v1Save);
+        check(SugarCompiler.verifyRestore(v2, sugar), "a v2 save must verify through the v2 API");
+
+        // Tampered v1 save: the legacy pass must still reject a stream that does not reproduce.
+        String tampered = v1Save.replace("set r ", "set r 1\nset r ");
+        check(!SugarCompiler.verifyRestore(tampered, sugar),
+            "a tampered v1 save must not be accepted");
     }
 
     private static void checkCompileThrows(String sugar, String expected){

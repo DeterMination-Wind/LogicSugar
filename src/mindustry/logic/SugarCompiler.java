@@ -303,6 +303,25 @@ public final class SugarCompiler{
                 embeddedSource = sanitized.text;
             }
         }
+        // The stored stream is the ground truth. Saves written before the v5 API carry the
+        // pre-v5 lowering (older failure values, non-void constant-result cards), so try the
+        // current API first and then re-lower with the legacy one. Only an exact stream match
+        // accepts the carrier -- a v1 save that does not reproduce its own stream still falls
+        // back to vanilla.
+        for(Api attempt : Api.values()){
+            Api previous = enterApi(attempt);
+            try{
+                if(verifyLowering(restored, code, embedded, embeddedSource)) return true;
+            }finally{
+                leaveApi(previous);
+            }
+        }
+        return false;
+    }
+
+    /** One verification pass for the API mode currently entered via {@link #enterApi}. */
+    private static boolean verifyLowering(String restored, String code,
+                                          SugarFunctions.LibraryIndex embedded, String embeddedSource){
         for(FuncMode mode : FuncMode.values()){
             // Programs saved as debug builds carry assert instructions in the stored stream;
             // recompiling with the local (possibly strip) setting would drop them and fail
