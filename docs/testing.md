@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十一个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十二个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了三十一个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了三十二个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -39,13 +39,14 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `bottomBarLayoutTest` | `logicsugar.assist.BottomBarLayoutTest` | 底栏行打包纯函数：单行/恰好放下/按容量换行、预算标签按 196px 计算、超宽单元独占一行不被吞、行宽不超限（除独占行）、不丢单元，`fitsOneRow` 与打包一致 |
 | `escapePreviewTest` | `logicsugar.assist.EscapePreviewSelfTest` | quoted mlog 字符串转义预览：换行、引号、反斜杠、Unicode、未知/畸形转义及现代能力探测 |
 | `v160SensorAccessTest` | `logicsugar.assist.expr.V160SensorAccessSelfTest` | `LAccess.senseablePrivileged` 的跨版本反射访问与旧版 fallback |
+| `funclibLimitTest` | `logicsugar.FunctionLibraryLimitTest` | 函数库行数上限：`readLibrary` 解析超过 1000 条语句不截断且用完还原 `LExecutor.maxInstructions`；`libraryOverLimit` 在 10000 条边界正确、`withLibraryLimit` 异常路径也还原；`sanitizedLibrary`/`buildLibrary`/`extractLibrarySource` 都能看到第 1000 条之后的库函数；处理器调用尾部库函数时只嵌入用到的子集并可重编译一致；函数库编辑会话整体 round-trip 不丢内容；单函数体超过 1000 条语句也能解析与校验 |
 
 ```powershell
 .\gradlew.bat check        # 全部
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前三十一个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前三十二个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 

@@ -29,6 +29,14 @@ public class FunctionLibraryDialog extends Dialog{
     private void editInProcessor(){
         hide();
         String text = FunctionLibrary.loadText();
+        // Opening an oversized library would silently truncate it in the editor canvas and lose
+        // the tail on save; refuse with a clear message instead (the current limit is a hard
+        // ceiling until a future version raises it).
+        if(SugarFunctions.libraryOverLimit(text)){
+            Vars.ui.showErrorMessage(Core.bundle.format("logicsugar.funclib.toolarge",
+                SugarFunctions.libraryInstructionLimit));
+            return;
+        }
         if(!text.trim().isEmpty()){
             // salvage damaged files before they reach the editor: duplicates are deduplicated
             // (last definition wins), broken definitions are skipped, stray junk is dropped;
@@ -56,7 +64,7 @@ public class FunctionLibraryDialog extends Dialog{
 
     private void storeBack(String compiledOrSugar){
         // restore 对不含 marker 的 sugar 文本是幂等的，因此编译失败时回传的 sugar 也能处理
-        String sugar = SugarCompiler.restore(compiledOrSugar);
+        String sugar = SugarCompiler.restore(compiledOrSugar, true);
         try{
             FunctionLibrary.save(sugar);
             Vars.ui.showInfoFade("@logicsugar.funclib.saved");

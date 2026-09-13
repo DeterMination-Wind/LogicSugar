@@ -31,7 +31,7 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 断言卡片的编译开关（设置项 `logicsugar.assertEmit`）。`strip`（默认）把断言编译掉，mlog 保持原版可解析；`emit` 把断言写回为真实自定义指令——原版客户端会把这些行降级为 InvalidStatement 占位（断言静默失效）。**仅单机/编辑器生效**：联机会话强制 `strip`（见"单机门禁"）。
 
 ### 单机门禁（single-player gate）
-项目硬底线的执行机制：**多人联机环境必须兼容原版客户端**，因此会改变保存产物语义的调试类功能（目前是 AssertEmit=emit）只在 `!Vars.net.active()`（单机/地图编辑器）时生效，联机（已连接或自建）一律回落原版行为。门禁在代码层强制（`SugarCompiler.currentAssertEmit`）；不提供改变指令预算的能力（指令上限覆盖曾试做后移除，产物恒 ≤1000 条），不依赖用户自觉；纯展示类功能不受此限。残余风险：单机创建的越界内容被分享到多人环境时原版客户端仍会截断/清空/静默降级，只能靠文档与设置描述讲清。
+项目硬底线的执行机制：**多人联机环境必须兼容原版客户端**，因此会改变保存产物语义的调试类功能（目前是 AssertEmit=emit）只在 `!Vars.net.active()`（单机/地图编辑器）时生效，联机（已连接或自建）一律回落原版行为。门禁在代码层强制（`SugarCompiler.currentAssertEmit`）；不提供改变处理器指令预算的能力（指令上限覆盖曾试做后移除，处理器产物恒 ≤1000 条），不依赖用户自觉；纯展示类功能不受此限。全局函数库文件不是处理器产物，另有 `SugarFunctions.libraryInstructionLimit`（当前 10000 条语句）上限，见"函数库"。残余风险：单机创建的越界内容被分享到多人环境时原版客户端仍会截断/清空/静默降级，只能靠文档与设置描述讲清。
 
 ### 断言语句集（assertions）
 移植自 cardillan/MlogAssertions v0.8.2 的八条运行时检查指令（`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`asserttype`/`error`/`log`/`breakpoint`），线格式逐字节兼容：断言失败程序在失败行自旋并由 `ProcessorStatus` 显示消息（可经「断言失败即断点」改为在失败指令处暂停），`breakpoint` 暂停游戏、居中视角并按设置临时分离视角，全部 accumulator 在本帧结束后归还。与 MlogAssertions 并存时按"先到先得"跳过重复 opcode 注册。
@@ -128,7 +128,7 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[i]` → `lget(list, i)`、`stack.top()` → `speek(stack)`、`bitset.test(i)` → `btest(bitset, i)`、`chain.head()` → `chead(chain)` 等。解析为 `ExprCompiler.Method` / `Index` 节点后，由 `ExprIntrinsics.Provider.kindOf` / `methodIntrinsic` / `indexIntrinsic` 按接收者的已声明结构类型解析；只映射无注入函数的 getter，因此可达性分析 `collectCalls` 直接跳过方法节点。已声明数组优先于同名结构的 `[i]`。下标糖只读，赋值必须用 `lset` / `bset` / `cset`。
 
 ### 函数库（function library）
-全局函数文件 `<game data>/mods/config/LogicSugar/functions.txt`，只含 `funcdef … blockend` 对，所有处理器共享。损坏时按函数逐个抢救为部分索引；在处理器编辑器内直接编辑，关闭自动校验保存。
+全局函数文件 `<game data>/mods/config/LogicSugar/functions.txt`，只含 `funcdef … blockend` 对，所有处理器共享。损坏时按函数逐个抢救为部分索引；在处理器编辑器内直接编辑，关闭自动校验保存。库文件不受处理器 1000 条上限约束，当前上限为 `SugarFunctions.libraryInstructionLimit`（10000 条语句）；库文本统一走 `SugarFunctions.readLibrary` 解析（临时抬高 `LExecutor.maxInstructions` 后还原），超限由 `libraryOverLimit` 在保存/打开编辑时明确拒绝；处理器仍然只保存 ≤1000 条，只嵌入被调用到的函数子集。
 
 ### 名字重整（mangling）
 库函数的隔离语义：函数体写入的每个名字（含参数）重整为 `__ls_func_<name>_<name>`，保证不改写调用方变量；`@` 系统变量与 `cellN`/`bankN`/`memoryN` 豁免，只读名字不动。

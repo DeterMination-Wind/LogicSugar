@@ -4,8 +4,6 @@ import arc.Core;
 import arc.files.Fi;
 import arc.struct.Seq;
 import arc.util.Log;
-import mindustry.logic.LAssembler;
-import mindustry.logic.LStatement;
 import mindustry.logic.SugarFunctions;
 
 /**
@@ -87,9 +85,15 @@ public final class FunctionLibrary{
         return file.exists() ? file.readString("UTF-8") : "";
     }
 
-    /** Validates and writes the library file. Throws IllegalArgumentException when invalid. */
+    /** Validates and writes the library file. Throws IllegalArgumentException when invalid,
+     *  including when the library exceeds {@link SugarFunctions#libraryInstructionLimit}. */
     public static void save(String text){
-        SugarFunctions.buildLibrary(LAssembler.read(text, true));
+        if(SugarFunctions.libraryOverLimit(text)){
+            throw new IllegalArgumentException("the function library has more than "
+                + SugarFunctions.libraryInstructionLimit + " statements; shorten it to "
+                + SugarFunctions.libraryInstructionLimit + " or fewer before saving.");
+        }
+        SugarFunctions.buildLibrary(SugarFunctions.readLibrary(text, true));
         file().parent().mkdirs();
         file().writeString(text, false, "UTF-8");
         cachedHash = null;

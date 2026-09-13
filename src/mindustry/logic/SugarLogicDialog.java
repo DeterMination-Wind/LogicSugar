@@ -765,6 +765,9 @@ public class SugarLogicDialog extends LogicDialog{
     @Override
     public void show(String code, LExecutor executor, boolean privileged, Cons<String> modified){
         this.executor = executor;
+        // Function-library sessions (executor == null) parse with the raised library limit,
+        // including the vanilla LCanvas.load inside super.show below.
+        if(canvas instanceof SugarCanvas sugarCanvas) sugarCanvas.librarySession = executor == null;
         this.editingPrivileged = privileged;
         discardButton.visible = executor == null;
         this.openedCode = code;
@@ -783,7 +786,7 @@ public class SugarLogicDialog extends LogicDialog{
             // a failed compile kept the user's work; trust it over any stored code
             editable = drafts.get(key);
         }else{
-            String restored = SugarCompiler.restore(code);
+            String restored = SugarCompiler.restore(code, executor == null);
             boolean verified;
             try{
                 verified = SugarCompiler.verifyRestore(code, restored);
@@ -822,7 +825,11 @@ public class SugarLogicDialog extends LogicDialog{
         // an untouched empty canvas as "edited", so closing would submit an empty program and
         // silently wipe the processor. Pre-validate with the same parse the canvas performs.
         try{
-            LAssembler.read(editable, privileged);
+            if(executor == null){
+                SugarFunctions.readLibrary(editable, privileged);
+            }else{
+                LAssembler.read(editable, privileged);
+            }
         }catch(Throwable exception){
             hide();
             showCompileError(new IllegalArgumentException("Cannot open the logic editor: " + exception.getMessage()), false);
@@ -855,7 +862,8 @@ public class SugarLogicDialog extends LogicDialog{
         }
         try{
             String compiled = SugarCompiler.compile(sugar, SugarCompiler.currentMode(), effectiveLibrary.index,
-                effectiveLibrary.text, SugarCompiler.currentStrategy(), SugarCompiler.currentAssertEmit(), editingPrivileged);
+                effectiveLibrary.text, SugarCompiler.currentStrategy(), SugarCompiler.currentAssertEmit(), editingPrivileged,
+                executor == null);
             if(executor != null && executor.build != null && !executor.build.isValid()){
                 drafts.remove(key);
                 return;
@@ -989,6 +997,21 @@ public class SugarLogicDialog extends LogicDialog{
         try{
             sugar = canvas.save();
         }catch(Throwable ignored){
+            return;
+        }
+        if(executor == null){
+            // 函数库会话不是一个处理器程序：1000 条处理器保存上限不适用，函数库有独立上限。
+            // 显示「库源码行数 / 函数库上限」，超限标红提示；仍然不写入 lastBudget，
+            // 因为关闭路径只对处理器会话做超限拦截（函数库保存由 FunctionLibrary.save 把关）。
+
+            lastBudget = null;
+            int libraryLines = SugarCompiler.emittedInstructionCount(sugar);
+            boolean libraryOver = libraryLines > SugarFunctions.libraryInstructionLimit;
+            budgetLabel.setText(Core.bundle.format(
+                libraryOver ? "logicsugar.budget.library.over" : "logicsugar.budget.library",
+                libraryLines, SugarFunctions.libraryInstructionLimit));
+
+            budgetLabel.setColor(libraryOver ? Pal.remove : Color.lightGray);
             return;
         }
         lastBudget = InstructionBudget.of(sugar, SugarCompiler.currentMode(),
