@@ -90,12 +90,12 @@ public class ContainerTest{
                 + "read x cell1 _1",
                 textOf(ExprCompiler.compile("x", "spop(s)")));
             checkLine("funccall __ls_builtin_stkpush \"cell1, 0, 8, __ls_stk_s_top, 5\" __ls_stk_s_top\n"
-                + "op add x __ls_stk_s_top 0",
+                + "set x __ls_stk_s_top",
                 textOf(ExprCompiler.compile("x", "spush(s, 5)")));
             // 实参是表达式：先编译值（追加到链首），再发 funccall
             checkLine("op add _0 i 1\n"
                 + "funccall __ls_builtin_stkpush \"cell1, 0, 8, __ls_stk_s_top, _0\" __ls_stk_s_top\n"
-                + "op add x __ls_stk_s_top 0",
+                + "set x __ls_stk_s_top",
                 textOf(ExprCompiler.compile("x", "spush(s, i + 1)")));
         });
         // 非零 base：空栈读地址 = base - base = -1（越界 → NaN）
@@ -108,7 +108,7 @@ public class ContainerTest{
                 + "read x bank1 _1",
                 textOf(ExprCompiler.compile("x", "speek(s)")));
             checkLine("funccall __ls_builtin_stkpush \"bank1, 10, 4, __ls_stk_s_top, v\" __ls_stk_s_top\n"
-                + "op add x __ls_stk_s_top 0",
+                + "set x __ls_stk_s_top",
                 textOf(ExprCompiler.compile("x", "spush(s, v)")));
         });
     }
@@ -517,6 +517,9 @@ public class ContainerTest{
                 runBuiltin(call, vars, memory);
             }else if(line instanceof ExprCompiler.OpLine op){
                 vars.put(op.dest, apply(op.op, num(vars, op.a), num(vars, op.b)));
+            }else if(line instanceof ExprCompiler.CopyLine copy){
+                // v5 值拷贝 `set dest src`：解释器只存 double，按 num() 取值与旧的 op add 等价
+                vars.put(copy.dest, num(vars, copy.src));
             }else{
                 throw new AssertionError("unexpected line in a container expansion: " + line.toText());
             }

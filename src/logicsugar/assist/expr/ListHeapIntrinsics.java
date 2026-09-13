@@ -441,11 +441,12 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
         f.set("__ls_lh_j", "__ls_lh_jn");
         f.jump("L_loop", "always", "x", "false");
         f.label("L_done");
-        f.jump("L_end", "always", "x", "false");
-        f.label("L_bad");
-        f.op("div", "__ls_lh_r", "0", "0");
-        f.label("L_end");
         f.line("return \"__ls_lh_r\"");
+        f.label("L_bad");
+        // 未命中的 NaN 必须直接写进函数结果：若与正常路径共用一个 return "__ls_lh_r"，
+        // 返回值会被 `op add <result> __ls_lh_r 0` 物化，而原版 op 读 NaN 标记（空对象）
+        // 的 num() 是 0，未命中会退化成数字 0。与 mapget 的 miss 路径写法一致。
+        f.line("return \"0 / 0\"");
         return f.build();
     }
 
@@ -533,12 +534,12 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
         f.set("__ls_lh_i", "__ls_lh_s");
         f.jump("L_loop", "always", "x", "false");
         f.label("L_done");
-        f.op("add", "__ls_lh_r", "__ls_lh_min", "0");
-        f.jump("L_end", "always", "x", "false");
-        f.label("L_empty");
-        f.op("div", "__ls_lh_r", "0", "0");
-        f.label("L_end");
+        // 堆里可能存对象/空值：set 原样拷贝（op add 会经 num() 折成 1/0）
+        f.line("set __ls_lh_r __ls_lh_min");
         f.line("return \"__ls_lh_r\"");
+        f.label("L_empty");
+        // 空堆的 NaN 同样直接写入函数结果，理由见 lremove（共享 return 会把标记 num() 成 0）。
+        f.line("return \"0 / 0\"");
         return f.build();
     }
 

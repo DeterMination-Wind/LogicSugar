@@ -95,7 +95,7 @@ public class ListHeapTest{
                 textOf(ExprCompiler.compile("x", "lget(l, 0)")));
             // lappend：CallLine dest 就是计数变量，表达式结果是新 count
             checkLine("funccall __ls_builtin_lstappend \"cell1, 2, 4, __ls_lst_l_count, 7\" __ls_lst_l_count\n"
-                    + "op add x __ls_lst_l_count 0",
+                    + "set x __ls_lst_l_count",
                 textOf(ExprCompiler.compile("x", "lappend(l, 7)")));
             checkLine("funccall __ls_builtin_lstset \"cell1, 2, __ls_lst_l_count, i, 5\" x",
                 textOf(ExprCompiler.compile("x", "lset(l, i, 5)")));
@@ -405,7 +405,10 @@ public class ListHeapTest{
             "pop count argument binding missing:\n" + heapMlog);
         check(heapMlog.contains("__ls_func___ls_builtin_heppop_result"),
             "pop result missing from the product:\n" + heapMlog);
-        check(heapMlog.contains("op div __ls_lh_r 0 0"), "empty-pop NaN sentinel missing:\n" + heapMlog);
+        // 空堆的 NaN 必须直接写进函数结果：共享 `return "__ls_lh_r"` 会被 `op add` 物化，
+        // 而 op 读 NaN 标记（空对象）的 num() 为 0，空 pop 会退化成数字 0（见 DataRuntimeTest）。
+        check(heapMlog.contains("op div __ls_func___ls_builtin_heppop_result 0 0"),
+            "empty-pop NaN sentinel must be written straight into the function result:\n" + heapMlog);
         check(!heapMlog.contains("funccall ") && !heapMlog.contains("heap "),
             "sugar residue in the heap product:\n" + heapMlog);
     }
@@ -513,6 +516,9 @@ public class ListHeapTest{
                 runBuiltin(call, vars, memory);
             }else if(line instanceof ExprCompiler.OpLine op){
                 vars.put(op.dest, apply(op.op, num(vars, op.a), num(vars, op.b)));
+            }else if(line instanceof ExprCompiler.CopyLine copy){
+                // v5 值拷贝 `set dest src`：解释器只存 double，按 num() 取值与旧的 op add 等价
+                vars.put(copy.dest, num(vars, copy.src));
             }else{
                 throw new AssertionError("unexpected line in a list/heap expansion: " + line.toText());
             }
@@ -559,9 +565,32 @@ public class ListHeapTest{
                     }
                     break;
                 }
-                case "return":
-                    vars.put(call.dest, local.get(tokens[1].replace("\"", "")));
+                case "return": {
+                    String line = builtin.body.get(pc);
+                    String value = line.substring(line.indexOf(' ') + 1).trim();
+                    if(value.startsWith("\"") && value.endsWith("\"")){
+                        value = value.substring(1, value.length() - 1);
+                    }
+                    Double resolved = local.get(value);
+                    if(resolved != null){
+                        // `return "<var>"` is materialised as `op add <result> <var> 0`, and op
+                        // reads operands through num(), which maps the NaN marker to 0.  Model
+                        // that coercion here, otherwise this interpreter is more "correct" than
+                        // the real lowering and hides the empty-pop/remove NaN bug.
+                        resolved = num(local, value);
+                    }else{
+                        String[] expr = value.split("\\s+");
+                        if(expr.length == 1){
+                            resolved = num(local, expr[0]);
+                        }else{
+                            // Literal expression sentinel, e.g. `return "0 / 0"` -> `op div <result> 0 0`.
+                            check(expr.length == 3, "unsupported builtin return expression: " + value);
+                            resolved = apply(opName(expr[1]), num(local, expr[0]), num(local, expr[2]));
+                        }
+                    }
+                    vars.put(call.dest, resolved);
                     return;
+                }
                 default:
                     throw new AssertionError("unexpected statement in a builtin body: " + builtin.body.get(pc));
             }
@@ -632,6 +661,18 @@ public class ListHeapTest{
             case "notEqual": return Math.abs(a - b) >= 0.000001;
             default: throw new AssertionError("unexpected jump condition: " + op);
         }
+    }
+
+    /** 表达式符号 → mlog 操作名（注入函数里只有 `0 / 0` 这类字面量哨兵用到）。 */
+    private static String opName(String symbol){
+        return switch(symbol){
+            case "+" -> "add";
+            case "-" -> "sub";
+            case "*" -> "mul";
+            case "/" -> "div";
+            case "%" -> "mod";
+            default -> symbol;
+        };
     }
 
     /** 操作数求值：变量优先，否则数字字面量；NaN/Inf 按原版 {@code LVar.num()} 视作 0。 */

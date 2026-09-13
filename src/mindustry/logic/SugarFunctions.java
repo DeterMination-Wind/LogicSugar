@@ -1675,9 +1675,14 @@ public final class SugarFunctions{
         // intrinsic line can be optimized safely.  Void cards discard that legacy
         // sentinel into a private, per-function reserved variable; it never becomes a
         // user-visible `result = ...` assignment and cannot collide with user names.
-        String destination = spec.returnsValue ? call.destination
+        boolean hasDestination = call.destination != null && !call.destination.trim().isEmpty();
+        // v5 API: result-less operations do not require a destination. A card that still carries
+        // one (pre-v5 saves) keeps writing the intrinsic result there, so the emitted stream is
+        // unchanged and old saves still pass the restore verification gate; only a new `~` card
+        // falls back to the private discard variable.
+        String destination = hasDestination ? call.destination
             : "__ls_" + (prefix == null ? "" : prefix.replace('-', '_')) + "datacall_discard";
-        if(spec.returnsValue && (destination == null || destination.trim().isEmpty())){
+        if(spec.returnsValue && !hasDestination){
             throw new IllegalArgumentException("data call '" + call.operation + "' requires a destination variable");
         }
         String args = call.arguments == null ? "" : call.arguments;
@@ -1695,6 +1700,9 @@ public final class SugarFunctions{
                 expandCallLine(renamed, functions, mode, out, ids, strategy, assertEmit);
             }else if(line instanceof ExprCompiler.AssertBoundsLine bounds){
                 out.append(bounds.withValue(renameDataTemp(bounds.value, prefix)).toText()).append('\n');
+            }else if(line instanceof ExprCompiler.CopyLine copy){
+                out.append("set ").append(renameDataTemp(copy.dest, prefix)).append(' ')
+                    .append(renameDataTemp(copy.src, prefix)).append('\n');
             }else if(line instanceof ExprCompiler.RawLine raw){
                 out.append(raw.toText()).append('\n');
             }else if(line instanceof ExprCompiler.SensorLine sensor){
@@ -1804,6 +1812,10 @@ public final class SugarFunctions{
                 // emit 调试构建的数组/矩阵越界断言：断言操作数也要进入条件命名空间，
                 // 否则断言检查的是其它表达式链留下的裸 _0
                 out.append(bounds.withValue(renameConditionTemp(bounds.value, prefix, statementIndex)).toText()).append('\n');
+            }else if(line instanceof ExprCompiler.CopyLine copy){
+                // 值拷贝 `set dest src`：dest/src 可能是临时变量，必须一起进入条件命名空间
+                out.append("set ").append(renameConditionTemp(copy.dest, prefix, statementIndex)).append(' ')
+                    .append(renameConditionTemp(copy.src, prefix, statementIndex)).append('\n');
             }else if(line instanceof ExprCompiler.RawLine raw){
                 out.append(raw.toText()).append('\n');
             }else{
@@ -1855,6 +1867,10 @@ public final class SugarFunctions{
                     }else if(line instanceof ExprCompiler.AssertBoundsLine bounds){
                         // emit 调试构建的越界断言：断言操作数同样进入函数临时变量命名空间
                         out.append(bounds.withValue(renameReturnTemp(bounds.value, funcName)).toText()).append('\n');
+                    }else if(line instanceof ExprCompiler.CopyLine copy){
+                        // 值拷贝 `set dest src`：dest/src 可能是临时变量，必须一起进入函数命名空间
+                        out.append("set ").append(renameReturnTemp(copy.dest, funcName)).append(' ')
+                            .append(renameReturnTemp(copy.src, funcName)).append('\n');
                     }else if(line instanceof ExprCompiler.RawLine raw){
                         out.append(raw.toText()).append('\n');
                     }else{
@@ -1941,6 +1957,13 @@ public final class SugarFunctions{
             ops = ExprCompiler.compile("_0", arg, null, assertEmit == SugarCompiler.AssertEmit.emit);
         }catch(Exception e){
             throw new IllegalArgumentException("Invalid argument expression '" + arg + "': " + e.getMessage());
+        }
+        // 简单值（变量 / 字面量 / 链接名）直接绑定到形参，不落到临时变量：既省一条指令，
+        // 也避免后面的实参把承载前一个实参的临时变量覆盖掉（实参按顺序物化进同一个 _0）。
+        if(ops.size() == 1 && ops.get(0) instanceof ExprCompiler.CopyLine copy
+            && copy.dest.equals("_0")){
+            out.append("set ").append(param).append(' ').append(copy.src).append('\n');
+            return;
         }
         if(ops.size() == 1 && ops.get(0) instanceof ExprCompiler.OpLine op
             && op.op.equals("add") && op.b.equals("0")){

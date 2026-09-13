@@ -98,7 +98,7 @@ public class ArrayBulkTest{
             checkLine("op min x a b", textOf(ExprCompiler.compile("x", "min(a, b)")));
             checkLine("op max x a b", textOf(ExprCompiler.compile("x", "max(a, b)")));
             checkLine("op len x 3 4", textOf(ExprCompiler.compile("x", "len(3, 4)")));
-            checkLine("op add x 8 0", textOf(ExprCompiler.compile("x", "len(buf)")));
+            checkLine("set x 8", textOf(ExprCompiler.compile("x", "len(buf)")));
             checkLine("op add x 8 1", textOf(ExprCompiler.compile("x", "len(buf) + 1")));
         });
     }

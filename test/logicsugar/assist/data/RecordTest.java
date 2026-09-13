@@ -79,40 +79,40 @@ public class RecordTest{
 
     private static void memberRead(){
         withRecords("record p f1 f2 f3 ~ ~ ~ ~ ~", () -> {
-            checkLine("op add x p_f1 0", textOf(ExprCompiler.compile("x", "p.f1")));
-            checkLine("op add x p_f2 0", textOf(ExprCompiler.compile("x", "p.f2")));
-            checkLine("op add x p_f3 0", textOf(ExprCompiler.compile("x", "p.f3")));
-            // 与其它运算组合：成员读先发一条 op add，再参与外层表达式
-            checkLine("op add _0 p_f1 0\nop add _1 p_f2 0\nop add x _0 _1",
+            checkLine("set x p_f1", textOf(ExprCompiler.compile("x", "p.f1")));
+            checkLine("set x p_f2", textOf(ExprCompiler.compile("x", "p.f2")));
+            checkLine("set x p_f3", textOf(ExprCompiler.compile("x", "p.f3")));
+            // 与其它运算组合：成员读先发一条 set 拷贝，再参与外层表达式
+            checkLine("set _0 p_f1\nset _1 p_f2\nop add x _0 _1",
                 textOf(ExprCompiler.compile("x", "p.f1 + p.f2")));
-            checkLine("op add _0 p_f1 0\nop mul x _0 2", textOf(ExprCompiler.compile("x", "p.f1 * 2")));
+            checkLine("set _0 p_f1\nop mul x _0 2", textOf(ExprCompiler.compile("x", "p.f1 * 2")));
             // 字段名大小写敏感：未知成员报错
             checkThrows(() -> ExprCompiler.compile("x", "p.F1"), "uppercase field name");
         });
         // 8 个字段全部可读
         withRecords("record p f1 f2 f3 f4 f5 f6 f7 f8", () -> {
             for(int i = 1; i <= 8; i++){
-                checkLine("op add x p_f" + i + " 0", textOf(ExprCompiler.compile("x", "p.f" + i)));
+                checkLine("set x p_f" + i, textOf(ExprCompiler.compile("x", "p.f" + i)));
             }
         });
     }
 
     private static void memberWrite(){
         withRecords("record p f1 f2 ~ ~ ~ ~ ~ ~", () -> {
-            // 成员写：op add <name>_<field> <value> 0
-            checkLine("op add p_f1 5 0", textOf(ExprCompiler.compile("p.f1", "5")));
-            checkLine("op add p_f1 x 0", textOf(ExprCompiler.compile("p.f1", "x")));
+            // 成员写：set <name>_<field> <value>（值语义，对象/空值原样保留）
+            checkLine("set p_f1 5", textOf(ExprCompiler.compile("p.f1", "5")));
+            checkLine("set p_f1 x", textOf(ExprCompiler.compile("p.f1", "x")));
             // 右侧是表达式：先编译 value，再写入字段变量
-            checkLine("op add _0 a 1\nop add p_f1 _0 0", textOf(ExprCompiler.compile("p.f1", "a + 1")));
+            checkLine("op add _0 a 1\nset p_f1 _0", textOf(ExprCompiler.compile("p.f1", "a + 1")));
             // 右侧引用另一个字段（临时变量按 TempStack 规则复用）
-            checkLine("op add _0 p_f1 0\nop mul _0 _0 2\nop add p_f2 _0 0",
+            checkLine("set _0 p_f1\nop mul _0 _0 2\nset p_f2 _0",
                 textOf(ExprCompiler.compile("p.f2", "p.f1 * 2")));
             checkThrows(() -> ExprCompiler.compile("p.nosuch", "1"), "write to an unknown field");
         });
         // 8 个字段全部可写
         withRecords("record p f1 f2 f3 f4 f5 f6 f7 f8", () -> {
             for(int i = 1; i <= 8; i++){
-                checkLine("op add p_f" + i + " 7 0", textOf(ExprCompiler.compile("p.f" + i, "7")));
+                checkLine("set p_f" + i + " 7", textOf(ExprCompiler.compile("p.f" + i, "7")));
             }
         });
     }
@@ -131,7 +131,7 @@ public class RecordTest{
             // 名字大小写不同 → 不是 record 变量，继续走 sensor
             checkLine("sensor x P @health", textOf(ExprCompiler.compile("x", "P.health")));
             // 同一个表达式里混用 sensor 成员与 record 字段
-            checkLine("sensor _0 unit @health\nop add _1 p_f1 0\nop add x _0 _1",
+            checkLine("sensor _0 unit @health\nset _1 p_f1\nop add x _0 _1",
                 textOf(ExprCompiler.compile("x", "unit.health + p.f1")));
             // 已声明 record 的未知成员按笔误报错，不静默退回 sensor
             checkThrows(() -> ExprCompiler.compile("x", "p.health"), "record variable with a sensor-like unknown member");
@@ -213,8 +213,8 @@ public class RecordTest{
             + "set x 1\n"
             + "blockend\n";
         String mlog = stripCompile(sugar);
-        check(mlog.contains("op add __ls_cond_1 p_f1 0"), "record read missing in the lowered condition:\n" + mlog);
-        check(mlog.contains("op add __ls_cond_11 p_f2 0"), "second record read missing in the lowered condition:\n" + mlog);
+        check(mlog.contains("set __ls_cond_1 p_f1"), "record read missing in the lowered condition:\n" + mlog);
+        check(mlog.contains("set __ls_cond_11 p_f2"), "second record read missing in the lowered condition:\n" + mlog);
         check(mlog.contains("op greaterThan __ls_cond_1 __ls_cond_1 __ls_cond_11"),
             "condition comparison missing:\n" + mlog);
         check(!mlog.contains("ifbegin") && !mlog.contains("record "), "sugar residue in the product:\n" + mlog);

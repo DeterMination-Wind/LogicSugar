@@ -298,12 +298,12 @@ public class ArraySugarTest{
      *  product carries the literal only (no len() call, no declaration card). */
     private static void lenConstantFolding(){
         withRegistry("array buf cell1 10 8", () -> {
-            checkLine("op add x 8 0", textOf(ExprCompiler.compile("x", "len(buf)")));
+            checkLine("set x 8", textOf(ExprCompiler.compile("x", "len(buf)")));
             checkLine("op add x 8 1", textOf(ExprCompiler.compile("x", "len(buf) + 1")));
         });
         withRegistry("array a cell1 0 3\narray b cell1 4 5", () -> {
-            checkLine("op add x 3 0", textOf(ExprCompiler.compile("x", "len(a)")));
-            checkLine("op add x 5 0", textOf(ExprCompiler.compile("x", "len(b)")));
+            checkLine("set x 3", textOf(ExprCompiler.compile("x", "len(a)")));
+            checkLine("set x 5", textOf(ExprCompiler.compile("x", "len(b)")));
         });
         // compiler layer: the condition lowers with the folded literal in place
         String sugar = "array buf cell1 0 8\n"

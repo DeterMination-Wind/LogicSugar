@@ -284,6 +284,25 @@ public class ExprCompiler{
         }
     }
 
+    /**
+     * 值拷贝：{@code set dest src}。继承 {@link RawLine}，所以所有按 RawLine 分支的下游
+     * （条件 / 返回 / datacall 表达式链）无需改动即可原样输出；额外的 dest/src 字段让
+     * {@code SugarFunctions.emitArg} 这类调用点可以省掉临时变量。
+     *
+     * <p>v5 API 起用它替代 {@code op add dest src 0}：后者经 {@code LVar.num()} 把对象
+     * （单位/建筑/字符串）折成 1、把 NaN 标记（空对象）折成 0，函数 return、条件临时量与
+     * 表达式卡都会因此丢掉值语义。旧存档里的 op 形式由
+     * {@link mindustry.logic.SugarCompiler#stripMarkers} 之外的流归一化兼容。</p>
+     */
+    public static class CopyLine extends RawLine{
+        public final String dest, src;
+        public CopyLine(String dest, String src){
+            super("set " + dest + " " + src);
+            this.dest = dest;
+            this.src = src;
+        }
+    }
+
     /** 数组/矩阵越界断言行（emit 调试构建专用）：线格式与
      *  {@link mindustry.logic.SugarAsserts.AssertBoundsCard} 完全一致——
      *  {@code assertBounds <type> <multiple> <min> <opMin> <value> <opMax> <max> "<message>"}。
@@ -809,6 +828,8 @@ public class ExprCompiler{
                     ops.set(ops.size() - 1, new ReadLine(dest, read.a, read.b));
                 }else if(last instanceof OpLine opLine){
                     ops.set(ops.size() - 1, new OpLine(opLine.op, dest, opLine.a, opLine.b));
+                }else if(last instanceof CopyLine copyLine){
+                    ops.set(ops.size() - 1, new CopyLine(dest, copyLine.src));
                 }else if(last instanceof CallLine callLine){
                     ops.set(ops.size() - 1, new CallLine(callLine.name, callLine.args, dest));
                 }else{
@@ -816,8 +837,11 @@ public class ExprCompiler{
                 }
             }
         }else{
-            // 结果是简单值，生成赋值 op
-            ops.add(new OpLine("add", dest, result, "0"));
+            // 结果是简单值（普通变量 / 字面量 / 链接名）：必须用 set 原样复制。
+            // `op add dest src 0` 会经 LVar.num() 把对象折成 1、把 NaN 标记（空对象）折成 0，
+            // 所以函数 return、条件临时量和表达式卡都会丢掉单位/字符串/空值语义。
+            // SugarCompiler.executableStream 会把旧存档里的 op add 形式归一化，兼容 v1。
+            ops.add(new CopyLine(dest, result));
         }
         return ops;
     }
@@ -1530,6 +1554,7 @@ public class ExprCompiler{
     static String lineDest(Line line){
         if(line instanceof OpLine op) return op.dest;
         if(line instanceof CallLine call) return call.dest;
+        if(line instanceof CopyLine copy) return copy.dest;
         return null;
     }
 

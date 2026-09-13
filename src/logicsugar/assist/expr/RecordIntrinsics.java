@@ -51,7 +51,8 @@ public final class RecordIntrinsics implements ExprIntrinsics.Provider{
         if(info == null) return null;
         List<ExprCompiler.Line> lines = new ArrayList<>(1);
         // 普通变量读取的等价单条原版指令（dest 是临时变量，外层表达式据此接线）
-        lines.add(new ExprCompiler.OpLine("add", ctx.temp(), info.variable(prop), "0"));
+        // 字段值可能存对象/空值：用 set 原样拷贝（op add 会经 num() 折成 1/0）
+        lines.add(new ExprCompiler.CopyLine(ctx.temp(), info.variable(prop)));
         return lines;
     }
 
@@ -63,7 +64,7 @@ public final class RecordIntrinsics implements ExprIntrinsics.Provider{
         // value 的编译行由 ctx.compile 追加到调用方的 ops 列表（writeMember 的返回值接在其后）
         String operand = ctx.compile(value);
         List<ExprCompiler.Line> lines = new ArrayList<>(1);
-        lines.add(new ExprCompiler.OpLine("add", info.variable(prop), operand, "0"));
+        lines.add(new ExprCompiler.CopyLine(info.variable(prop), operand));
         return lines;
     }
 
