@@ -408,7 +408,10 @@ public final class SugarStatements{
 
         @Override
         public void build(Table table){
-            table.add(text("condition", "condition")).self(c -> hint(c, "while.condition"));
+            // 独立键（与 for.condition / if.condition 一致）。不要改回通用的 condition 键：
+            // 该键曾被本地化译成「结束条件」，与 lowering 的「为真时重复」语义相反，会让用户
+            // 写出取反的条件（例如把「栈非空」写成 !s.size()），循环体一次都不执行。
+            table.add(text("while.condition", "while")).self(c -> hint(c, "while.condition"));
             table.table(this::rebuildCondition).growX().fillX();
             foldControlRow(table);
         }
