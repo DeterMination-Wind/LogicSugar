@@ -49,6 +49,7 @@ public class ChainTest{
 
         loadBuiltins();
         expressionExpansions();
+        methodSugar();
         builtinBodies();
         argumentErrors();
         chainBehaviour();
@@ -155,6 +156,17 @@ public class ChainTest{
     }
 
     // ===== 注入函数源文本 =====
+
+    /** 下标/方法糖：c[i]、c.get(i)、c.head() 与 intrinsic 展开逐行一致。 */
+    private static void methodSugar(){
+        withRegistry("chain c cell1 2 4", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "cget(c, i)")), textOf(ExprCompiler.compile("x", "c[i]")));
+            checkLine(textOf(ExprCompiler.compile("x", "cget(c, i)")), textOf(ExprCompiler.compile("x", "c.get(i)")));
+            checkLine(textOf(ExprCompiler.compile("x", "chead(c)")), textOf(ExprCompiler.compile("x", "c.head()")));
+            checkThrowsExpr(() -> ExprCompiler.compile("c[i]", "1"), "indexed assignment to a chain");
+            checkThrowsExpr(() -> ExprCompiler.compile("x", "c.bogus()"), "unknown chain method");
+        });
+    }
 
     private static void builtinBodies(){
         List<String> bodies = ChainIntrinsics.builtinSugar();

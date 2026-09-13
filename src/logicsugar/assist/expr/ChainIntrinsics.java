@@ -151,6 +151,31 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
         }
     }
 
+    // ===== 方法糖 / 下标糖（只读 getter）=====
+
+    @Override
+    public String kindOf(ExprCompiler.Node receiver){
+        if(!(receiver instanceof ExprCompiler.Var var)) return null;
+        ChainModule.Registry registry = ChainModule.active();
+        if(registry == null) return null;
+        ChainModule.Info info = registry.get(var.name);
+        return info == null ? null : ChainModule.KIND_CHAIN;
+    }
+
+    @Override
+    public String methodIntrinsic(String kind, String method, int argc){
+        if(!ChainModule.KIND_CHAIN.equals(kind)) return null;
+        String m = method.toLowerCase(java.util.Locale.ROOT);
+        if(argc == 1 && m.equals("get")) return "cget";
+        if(argc == 0 && m.equals("head")) return "chead";
+        return null;
+    }
+
+    @Override
+    public String indexIntrinsic(String kind){
+        return ChainModule.KIND_CHAIN.equals(kind) ? "cget" : null;
+    }
+
     /** 注入函数的 sugar 源文本（每项一个完整 funcdef 块）。 */
     public static List<String> builtinSugar(){
         List<String> result = new ArrayList<>(7);

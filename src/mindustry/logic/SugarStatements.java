@@ -102,7 +102,12 @@ public final class SugarStatements{
      *  untranslated English fallback while card-title localization is switched off. Public
      *  because the {@link SugarAsserts} card titles share the same policy. */
     public static String cardText(String key, String fallback){
-        return cardsLocalized() ? text(key, fallback) : fallback;
+        try{
+            return cardsLocalized() ? text(key, fallback) : fallback;
+        }catch(Throwable ignored){
+            // 无头环境（Core.settings/Core.bundle 未初始化）：退回英文 fallback
+            return fallback;
+        }
     }
 
     public abstract static class SugarStatement extends LStatement{

@@ -43,6 +43,8 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ## 数据子系统（数组批量运算 / 矩阵 / 记录 / 容器 / 位集 / 哈希表 / 集合 / 列表 / 堆 / 链表）
 
+> 玩家向教程（每种结构的声明、函数、转译、复杂度、使用须知）：[高级数据类型教程](tutorials/README.md)。
+
 数据子系统把「内存块上的结构化数据」做成纯编译期抽象：声明卡只是元数据，lower 阶段整体跳过、不产指令；所有运算降级为原版 `read` / `write` / `op` / `funccall` / `jump`，产物仍是原版可解析的 mlog，联机（含自建服）与单机行为一致。
 
 ### 框架：ExprIntrinsics + DataModules + 注入函数
@@ -72,6 +74,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 堆（小顶） | `heap <name> <memory> <base> <size>` | `hpush` `hpop` `hsize` | `read` / `write` + `__ls_hep_<name>_count` |
 | 链表 | `chain <name> <memory> <base> <size>` | `cinit` `cclear` `cnew` `cfree` `cget` `cset` `cnext` `clink` `cshead` `chead` `clen` | 节点 i 的值槽 `base+2*i`、next 槽 `base+2*i+1`（`next = -1` 为链尾）；`read` / `write` + `__ls_chn_<name>_head/_free` |
 
+- **getter 语法糖（只读）**：已声明结构在 Expr 模式下可用下标/方法写法替代 getter intrinsic——`list` 的 `l[i]` / `l.get(i)`，`list`/`heap` 的 `.size()`/`.length()`/`.count()`，`stack` 的 `.top()`/`.peek()`，`queue` 的 `.front()`/`.peek()`，`deque` 的 `.front()`/`.back()`，`bitset` 的 `b[i]`/`.test(i)`/`.get(i)`，`chain` 的 `c[i]`/`.get(i)`/`.head()`。实现走 `ExprIntrinsics.Provider` 的 `kindOf` / `methodIntrinsic` / `indexIntrinsic` 扩展点，由 `compileNode(Method)` / `compileNode(Index)` 分派；语义与对应 intrinsic 完全一致，已声明数组优先于同名结构的 `[i]`。映射只允许指向**无注入函数**的只读 getter（`lget` / `speek` / `btest` / `cget` / `chead` / `*size`），因此 `analyze` 阶段的 `collectCalls` 跳过方法节点、无需登记 builtin callee；若未来新增映射到 `__ls_builtin_*` 的 getter，必须同步扩展 `collectCalls`/`calleesOf` 的可达性登记。`map`/`set` 的 getter 与 `lfind`/`bcount`/`cnext`/`clen` 暂不提供方法糖（它们走注入函数）。下标糖只读：`l[i] = v` 显式报编译错误并提示使用 `lset` / `bset` / `cset`，避免静默降级为 `write <v> l <i>`。
 - **容量检查**：`memory` 形如 `cellN` 容量 64、`bankN` / `worldN` 容量 512（大小写不敏感），`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`，集合为 `base+capacity`）超容量编译期报错；其它名字跳过。
 - **越界断言**：仅 `AssertEmit=emit` 的调试构建下、下标为非常量时，在 `read` / `write` 前发射 `assertBounds`（复用 `SugarAsserts` 线格式）；`strip` 模式不发射。数组/矩阵字面量越界始终是编译错误。
 - **空容器语义**：pop / peek 在空时返回 NaN（`op div <tmp> 0 0` 或越界 `read`）；push 在满时返回当前长度且不写入；`lget` 越界返回 NaN，`lset` / `linsert` / `hpush` 失败返回 0，`lremove` 越界返回 NaN、成功返回被删除值，`lfind` 未找到返回 -1，`mapget` 未命中返回 NaN，`mapset` / `uadd` 在 NaN/±Inf 键上返回 -1；链表 `cget` 越界返回 NaN，`cset` / `clink` / `cfree` 越界返回 0，`cnext` 越界返回 -1，`cnew` 在空闲链为空时返回 -1，`clen` 空链返回 0。`bsearch` 在升序数组上未命中返回 -1。

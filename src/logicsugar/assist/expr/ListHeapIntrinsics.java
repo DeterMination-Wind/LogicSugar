@@ -150,6 +150,34 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
         }
     }
 
+    // ===== 方法糖 / 下标糖（只读 getter）=====
+
+    @Override
+    public String kindOf(ExprCompiler.Node receiver){
+        if(!(receiver instanceof ExprCompiler.Var var)) return null;
+        ListHeapModule.Registry registry = ListHeapModule.active();
+        if(registry == null) return null;
+        ListHeapModule.Info info = registry.get(var.name);
+        return info == null ? null : info.kind;
+    }
+
+    @Override
+    public String methodIntrinsic(String kind, String method, int argc){
+        String m = method.toLowerCase(java.util.Locale.ROOT);
+        if(ListHeapModule.KIND_LIST.equals(kind)){
+            if(argc == 1 && m.equals("get")) return "lget";
+            if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "lsize";
+        }else if(ListHeapModule.KIND_HEAP.equals(kind)){
+            if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "hsize";
+        }
+        return null;
+    }
+
+    @Override
+    public String indexIntrinsic(String kind){
+        return ListHeapModule.KIND_LIST.equals(kind) ? "lget" : null;
+    }
+
     /** 注入函数的 sugar 源文本（每项一个完整 funcdef 块）。 */
     public static List<String> builtinSugar(){
         List<String> result = new ArrayList<>(7);

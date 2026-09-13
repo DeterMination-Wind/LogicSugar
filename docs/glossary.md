@@ -123,6 +123,10 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 
 ## 函数
 
+### 方法糖 / 下标糖（method / index sugar）
+
+Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[i]` → `lget(list, i)`、`stack.top()` → `speek(stack)`、`bitset.test(i)` → `btest(bitset, i)`、`chain.head()` → `chead(chain)` 等。解析为 `ExprCompiler.Method` / `Index` 节点后，由 `ExprIntrinsics.Provider.kindOf` / `methodIntrinsic` / `indexIntrinsic` 按接收者的已声明结构类型解析；只映射无注入函数的 getter，因此可达性分析 `collectCalls` 直接跳过方法节点。已声明数组优先于同名结构的 `[i]`。下标糖只读，赋值必须用 `lset` / `bset` / `cset`。
+
 ### 函数库（function library）
 全局函数文件 `<game data>/mods/config/LogicSugar/functions.txt`，只含 `funcdef … blockend` 对，所有处理器共享。损坏时按函数逐个抢救为部分索引；在处理器编辑器内直接编辑，关闭自动校验保存。
 

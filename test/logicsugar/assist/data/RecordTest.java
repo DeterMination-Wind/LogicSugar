@@ -1,5 +1,6 @@
 package logicsugar.assist.data;
 
+import arc.Core;
 import arc.struct.Seq;
 import logicsugar.assist.expr.ExprCompiler;
 import mindustry.Vars;
@@ -39,6 +40,7 @@ public class RecordTest{
         unknownFieldErrors();
         nameAndFieldValidation();
         declarationCardProducesNoLine();
+        cardTitleFollowsLocalizationToggle();
         compilerReadsInConditions();
         recordInsideFunctionBody();
         outputIsPureVanilla();
@@ -355,6 +357,17 @@ public class RecordTest{
         }
     }
 
+    /** 关闭游戏逻辑本地化后，record 声明卡标题必须回到英文 fallback。 */
+    private static void cardTitleFollowsLocalizationToggle(){
+        arc.Settings previous = Core.settings;
+        Core.settings = new arc.Settings();
+        Core.settings.put("logiclocalization", false);
+        try{
+            check("Record".equals(new RecordModule.RecordStatement().name()), "record title must be English when logic localization is off");
+        }finally{
+            Core.settings = previous;
+        }
+    }
     private static String textOf(List<ExprCompiler.Line> ops){
         StringBuilder out = new StringBuilder();
         for(int i = 0; i < ops.size(); i++){

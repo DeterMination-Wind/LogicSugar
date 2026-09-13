@@ -93,17 +93,17 @@ public class ContainerModule extends DataModule{
         public String size = "8";
 
         @Override public String token(){ return STACK_TOKEN; }
-        @Override public String name(){ return cardText("stack.card", "Stack"); }
+        @Override public String name(){ return SugarStatements.cardText("stack.card", "Stack"); }
 
         @Override
         public void build(Table table){
-            table.add(cardText("stack.card", "Stack")).self(c -> hint(c, "stack.name"));
+            table.add(SugarStatements.cardText("stack.card", "Stack")).self(c -> hint(c, "stack.name"));
             field(table, name, value -> name = value).width(70f);
-            table.add(cardText("array.memory", "mem")).self(c -> hint(c, "stack.memory"));
+            table.add(labelText("array.memory", "mem")).self(c -> hint(c, "stack.memory"));
             field(table, memory, value -> memory = value).width(70f);
-            table.add(cardText("array.base", "base")).self(c -> hint(c, "stack.base"));
+            table.add(labelText("array.base", "base")).self(c -> hint(c, "stack.base"));
             field(table, base, value -> base = value).width(45f);
-            table.add(cardText("array.size", "size")).self(c -> hint(c, "stack.size"));
+            table.add(labelText("array.size", "size")).self(c -> hint(c, "stack.size"));
             field(table, size, value -> size = value).width(45f);
         }
 
@@ -123,17 +123,17 @@ public class ContainerModule extends DataModule{
         public String size = "8";
 
         @Override public String token(){ return QUEUE_TOKEN; }
-        @Override public String name(){ return cardText("queue.card", "Queue"); }
+        @Override public String name(){ return SugarStatements.cardText("queue.card", "Queue"); }
 
         @Override
         public void build(Table table){
-            table.add(cardText("queue.card", "Queue")).self(c -> hint(c, "queue.name"));
+            table.add(SugarStatements.cardText("queue.card", "Queue")).self(c -> hint(c, "queue.name"));
             field(table, name, value -> name = value).width(70f);
-            table.add(cardText("array.memory", "mem")).self(c -> hint(c, "queue.memory"));
+            table.add(labelText("array.memory", "mem")).self(c -> hint(c, "queue.memory"));
             field(table, memory, value -> memory = value).width(70f);
-            table.add(cardText("array.base", "base")).self(c -> hint(c, "queue.base"));
+            table.add(labelText("array.base", "base")).self(c -> hint(c, "queue.base"));
             field(table, base, value -> base = value).width(45f);
-            table.add(cardText("array.size", "size")).self(c -> hint(c, "queue.size"));
+            table.add(labelText("array.size", "size")).self(c -> hint(c, "queue.size"));
             field(table, size, value -> size = value).width(45f);
         }
 
@@ -153,17 +153,17 @@ public class ContainerModule extends DataModule{
         public String size = "8";
 
         @Override public String token(){ return DEQUE_TOKEN; }
-        @Override public String name(){ return cardText("deque.card", "Deque"); }
+        @Override public String name(){ return SugarStatements.cardText("deque.card", "Deque"); }
 
         @Override
         public void build(Table table){
-            table.add(cardText("deque.card", "Deque")).self(c -> hint(c, "deque.name"));
+            table.add(SugarStatements.cardText("deque.card", "Deque")).self(c -> hint(c, "deque.name"));
             field(table, name, value -> name = value).width(70f);
-            table.add(cardText("array.memory", "mem")).self(c -> hint(c, "deque.memory"));
+            table.add(labelText("array.memory", "mem")).self(c -> hint(c, "deque.memory"));
             field(table, memory, value -> memory = value).width(70f);
-            table.add(cardText("array.base", "base")).self(c -> hint(c, "deque.base"));
+            table.add(labelText("array.base", "base")).self(c -> hint(c, "deque.base"));
             field(table, base, value -> base = value).width(45f);
-            table.add(cardText("array.size", "size")).self(c -> hint(c, "deque.size"));
+            table.add(labelText("array.size", "size")).self(c -> hint(c, "deque.size"));
             field(table, size, value -> size = value).width(45f);
         }
 
@@ -586,7 +586,8 @@ public class ContainerModule extends DataModule{
         return value == null || value.isEmpty() ? "~" : value;
     }
 
-    private static String cardText(String key, String fallback){
+    /** 卡片内字段标签（mem/base/size…）：按既有约定保持本地化，不随 logiclocalization 开关切换。 */
+    private static String labelText(String key, String fallback){
         try{
             if(Core.bundle != null) return Core.bundle.get("logicsugar." + key, fallback);
         }catch(Throwable ignored){

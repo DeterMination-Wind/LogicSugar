@@ -168,6 +168,9 @@ public class ExprCompiler{
     /** 数组下标：buf[i] → read。base 必须是已声明数组的名字（经注册表解析），index 是逻辑下标。
      *  矩阵下标 m[i][j] 解析为 Index(Index(Var m, i), j)，由 {@link #emitArrayAddress} 识别。 */
     static class Index extends Node{ final Node base; final Node index; Index(Node b,Node i){base=b;index=i;} }
+    /** 方法糖：s.top() / l.get(i) / l.size() / b.test(i) / c.head() 等。base 是接收者表达式，
+     *  name 是方法名，args 是括号里的实参；编译期由数据模块 provider 解析成对应 intrinsic。 */
+    static class Method extends Node{ final Node base; final String name; final List<Node> args; Method(Node b,String n,List<Node> a){base=b;name=n;args=a;} }
     /** 单参数 len(buf)：已声明数组的长度，编译期折叠为 size 字面量。len(a,b) 仍是原版向量长度。 */
     static class ArrayLen extends Node{ final Node arg; ArrayLen(Node a){arg=a;} }
     /** 用户函数调用：foo(a, b)。名字不是数学函数时生成，校验推迟到调用方。 */
@@ -522,18 +525,7 @@ public class ExprCompiler{
                 if(peek().type == TokType.LPAREN){
                     boolean forcedRootCall = forceRootCall;
                     forceRootCall = false;
-                    next();
-                    List<Node> args = new ArrayList<>();
-                    if(peek().type != TokType.RPAREN){
-                        args.add(parseExpr());
-                        while(peek().type == TokType.COMMA){
-                            next();
-                            args.add(parseExpr());
-                        }
-                    }
-                    if(peek().type != TokType.RPAREN)
-                        throw new ParseException(msg("la.err.expected_rparen_func"));
-                    next();
+                    List<Node> args = parseArgs();
                     String funcName = resolveFuncName(name);
                     if(forcedRootCall){
                         base = new Call(name, args);
@@ -573,13 +565,15 @@ public class ExprCompiler{
                 throw new ParseException(msg("la.err.unexpected_token", tok.text));
             }
 
-            // 后置成员访问与数组下标：unit.Health、unit.type.id、cos(a).Health、buf[i]、a.b[0]
+            // 后置成员访问、方法糖与数组下标：unit.Health、unit.type.id、cos(a).Health、buf[i]、a.b[0]、
+            // s.top()、l.get(i)、l.size()
             while(isOp(".") || isOp("[")){
                 if(isOp(".")){
                     next();
                     if(peek().type != TokType.IDENT)
                         throw new ParseException(msg("la.err.expected_member"));
-                    base = new Member(base, next().text);
+                    String prop = next().text;
+                    base = peek().type == TokType.LPAREN ? new Method(base, prop, parseArgs()) : new Member(base, prop);
                 }else{
                     next();
                     Node subscript = parseExpr();
@@ -590,6 +584,23 @@ public class ExprCompiler{
                 }
             }
             return base;
+        }
+
+        /** 解析 '(' 起头的实参列表（已消费结尾的 ')'）。 */
+        List<Node> parseArgs(){
+            next(); // consume '('
+            List<Node> args = new ArrayList<>();
+            if(peek().type != TokType.RPAREN){
+                args.add(parseExpr());
+                while(peek().type == TokType.COMMA){
+                    next();
+                    args.add(parseExpr());
+                }
+            }
+            if(peek().type != TokType.RPAREN)
+                throw new ParseException(msg("la.err.expected_rparen_func"));
+            next();
+            return args;
         }
 
         static String resolveFuncName(String name){
@@ -809,6 +820,11 @@ public class ExprCompiler{
     /** 下标赋值写路径：先编译 value 表达式，再编译下标并计算地址（base + idx），
      *  产出 write <value> <memory> <address>。 */
     private static List<Line> compileAssignment(Index target, Node valueAst){
+        // 数据结构下标糖目前只读；写路径必须显式用 lset/bset/cset，否则老行为会把
+        // `l[i] = v` 静默降级成 write <v> l <i>。已声明数组优先，保持既有语义。
+        if(!isDeclaredArrayBase(target.base) && ExprIntrinsics.isIndexSugarBase(target.base)){
+            throw new ParseException(msg("la.err.index_assign_unsupported", nodeToString(target.base)));
+        }
         List<Line> ops = new ArrayList<>();
         TempStack temps = new TempStack();
         String value = compileNode(valueAst, ops, temps);
@@ -824,6 +840,13 @@ public class ExprCompiler{
         }catch(Exception e){
             return null;
         }
+    }
+
+    /** 下标基底是否是已声明的一维数组或矩阵（跨模块重名时数组优先）。 */
+    private static boolean isDeclaredArrayBase(Node base){
+        if(!(base instanceof Var var)) return false;
+        ArrayRegistry registry = ArrayRegistry.active();
+        return registry != null && (registry.get(var.name) != null || registry.getMatrix(var.name) != null);
     }
 
     /**
@@ -1010,9 +1033,35 @@ public class ExprCompiler{
             return temp;
         }
 
+        if(node instanceof Method){
+            // 方法糖：s.top() / l.get(i) / l.size() / b.test(i) / c.head() 等，
+            // 由各数据模块 provider 解析成对应的 intrinsic 展开。
+            Method m = (Method)node;
+            List<Line> expanded = ExprIntrinsics.tryExpandMethod(m.base, m.name, m.args, new IntrinsicCtx(ops, temps));
+            if(expanded != null){
+                ops.addAll(expanded);
+                String result = lineDest(expanded.get(expanded.size() - 1));
+                if(result == null) throw new ParseException("intrinsic method '" + m.name + "' did not produce a result operand");
+                return result;
+            }
+            throw new ParseException(msg("la.err.unknown_method", m.name));
+        }
+
         if(node instanceof Index){
+            Index ix = (Index)node;
+            // 数据结构只读下标糖：list[i] → lget、bitset[i] → btest、chain[i] → cget。
+            // 已声明数组优先（跨模块重名时保持既有数组语义），未命中再走数组/退化路径。
+            if(!isDeclaredArrayBase(ix.base)){
+                List<Line> expanded = ExprIntrinsics.tryExpandIndex(ix.base, ix.index, new IntrinsicCtx(ops, temps));
+                if(expanded != null){
+                    ops.addAll(expanded);
+                    String result = lineDest(expanded.get(expanded.size() - 1));
+                    if(result == null) throw new ParseException("intrinsic index did not produce a result operand");
+                    return result;
+                }
+            }
             // 数组下标读：地址计算 → read <tmp> <memory> <address>
-            String[] memoryAddress = emitArrayAddress((Index)node, ops, temps);
+            String[] memoryAddress = emitArrayAddress(ix, ops, temps);
             String temp = temps.fresh();
             ops.add(new ReadLine(temp, memoryAddress[0], memoryAddress[1]));
             return temp;
@@ -1564,6 +1613,12 @@ public class ExprCompiler{
             }
             out.add(new CallSite(c.name, args.toString()));
             for(Node arg : c.args) collectCallNodes(arg, out);
+        }else if(node instanceof Method){
+            // 方法糖只映射到无注入函数的只读 getter（lget/speek/btest/cget…），
+            // 可达性登记无需额外 callee；receiver 与实参里可能嵌套用户函数调用。
+            Method m = (Method)node;
+            collectCallNodes(m.base, out);
+            for(Node arg : m.args) collectCallNodes(arg, out);
         }else if(node instanceof Index){
             collectCallNodes(((Index)node).base, out);
             collectCallNodes(((Index)node).index, out);
@@ -1598,6 +1653,13 @@ public class ExprCompiler{
             return new Index(
                 substituteTemp(ix.base, tempName, replacement),
                 substituteTemp(ix.index, tempName, replacement));
+        }
+
+        if(node instanceof Method){
+            Method m = (Method)node;
+            List<Node> args = new ArrayList<>(m.args.size());
+            for(Node arg : m.args) args.add(substituteTemp(arg, tempName, replacement));
+            return new Method(substituteTemp(m.base, tempName, replacement), m.name, args);
         }
         if(node instanceof ArrayLen){
             return new ArrayLen(substituteTemp(((ArrayLen)node).arg, tempName, replacement));
@@ -1649,6 +1711,16 @@ public class ExprCompiler{
                 base = "(" + base + ")";
             }
             return base + "[" + nodeToString(ix.index) + "]";
+        }
+
+        if(node instanceof Method){
+            Method m = (Method)node;
+            StringBuilder out = new StringBuilder(nodeToString(m.base)).append('.').append(m.name).append('(');
+            for(int i = 0; i < m.args.size(); i++){
+                if(i > 0) out.append(", ");
+                out.append(nodeToString(m.args.get(i)));
+            }
+            return out.append(')').toString();
         }
 
         if(node instanceof ArrayLen){

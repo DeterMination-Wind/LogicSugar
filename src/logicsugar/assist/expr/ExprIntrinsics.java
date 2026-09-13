@@ -77,6 +77,18 @@ public final class ExprIntrinsics{
         default List<String> callees(String name, int argc){
             return Collections.emptyList();
         }
+        /** 方法糖 receiver.method(args) 的接收者结构种类（stack/queue/deque/list/heap/bitset/chain…）；null = 不参与。 */
+        default String kindOf(Node receiver){
+            return null;
+        }
+        /** kind + 方法名 + 实参个数 → intrinsic 规范名；null = 该方法糖不支持。 */
+        default String methodIntrinsic(String kind, String method, int argc){
+            return null;
+        }
+        /** kind 的下标糖 intrinsic 名（如 list → lget）；null = 不支持。 */
+        default String indexIntrinsic(String kind){
+            return null;
+        }
     }
 
     private static final List<Provider> providers = new ArrayList<>();
@@ -150,6 +162,50 @@ public final class ExprIntrinsics{
             if(lines != null && !lines.isEmpty()) return lines;
         }
         return null;
+    }
+
+    /** 方法糖展开（s.top()、l.get(i)…）：遍历 provider，命中即返回行链；null = 不支持。 */
+    public static List<Line> tryExpandMethod(Node receiver, String method, List<Node> args, Ctx ctx){
+        if(receiver == null || method == null) return null;
+        for(Provider provider : providers){
+            String kind = provider.kindOf(receiver);
+            if(kind == null) continue;
+            String intrinsic = provider.methodIntrinsic(kind, method, args == null ? 0 : args.size());
+            if(intrinsic == null) continue;
+            List<Node> all = new ArrayList<>((args == null ? 0 : args.size()) + 1);
+            all.add(receiver);
+            if(args != null) all.addAll(args);
+            List<Line> lines = provider.expandCall(intrinsic, all, ctx);
+            if(lines != null && !lines.isEmpty()) return lines;
+        }
+        return null;
+    }
+
+    /** 只读下标糖展开（list[i]、bitset[i]、chain[i]）：命中即返回行链；null = 退回数组路径。 */
+    public static List<Line> tryExpandIndex(Node receiver, Node index, Ctx ctx){
+        if(receiver == null || index == null) return null;
+        for(Provider provider : providers){
+            String kind = provider.kindOf(receiver);
+            if(kind == null) continue;
+            String intrinsic = provider.indexIntrinsic(kind);
+            if(intrinsic == null) continue;
+            List<Node> all = new ArrayList<>(2);
+            all.add(receiver);
+            all.add(index);
+            List<Line> lines = provider.expandCall(intrinsic, all, ctx);
+            if(lines != null && !lines.isEmpty()) return lines;
+        }
+        return null;
+    }
+
+    /** 接收者是否为支持下标糖的已声明结构（赋值路径报错用；不编译）。 */
+    public static boolean isIndexSugarBase(Node receiver){
+        if(receiver == null) return false;
+        for(Provider provider : providers){
+            String kind = provider.kindOf(receiver);
+            if(kind != null && provider.indexIntrinsic(kind) != null) return true;
+        }
+        return false;
     }
 
     /** 基底是否是某个 provider 的成员结构（record 变量等）。 */

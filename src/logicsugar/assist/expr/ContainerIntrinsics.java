@@ -155,6 +155,35 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         return Collections.emptyList();
     }
 
+    // ===== 方法糖（只读 getter）=====
+
+    @Override
+    public String kindOf(ExprCompiler.Node receiver){
+        if(!(receiver instanceof ExprCompiler.Var var)) return null;
+        ContainerModule.Registry registry = ContainerModule.active();
+        if(registry == null) return null;
+        ContainerModule.Info info = registry.get(var.name);
+        return info == null ? null : info.kind;
+    }
+
+    @Override
+    public String methodIntrinsic(String kind, String method, int argc){
+        if(argc != 0) return null;
+        String m = method.toLowerCase(java.util.Locale.ROOT);
+        if(ContainerModule.KIND_STACK.equals(kind)){
+            if(m.equals("top") || m.equals("peek")) return "speek";
+            if(m.equals("size") || m.equals("count")) return "ssize";
+        }else if(ContainerModule.KIND_QUEUE.equals(kind)){
+            if(m.equals("front") || m.equals("peek")) return "qpeek";
+            if(m.equals("size") || m.equals("count")) return "qsize";
+        }else if(ContainerModule.KIND_DEQUE.equals(kind)){
+            if(m.equals("front") || m.equals("peekfront")) return "dpeekf";
+            if(m.equals("back") || m.equals("peekback")) return "dpeekb";
+            if(m.equals("size") || m.equals("count")) return "dsize";
+        }
+        return null;
+    }
+
     /** 注入函数的 sugar 源文本（每项一个完整 funcdef 块）。 */
     public static List<String> builtinSugar(){
         List<String> result = new ArrayList<>(3);

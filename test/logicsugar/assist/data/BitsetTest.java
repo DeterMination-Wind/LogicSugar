@@ -46,6 +46,7 @@ public class BitsetTest{
 
         declarationCardProducesNoLine();
         expressionExpansions();
+        methodSugar();
         indexExpressionsAndCapacity();
         bcountBuiltinInjection();
         unusedBuiltinStaysOut();
@@ -147,6 +148,17 @@ public class BitsetTest{
     }
 
     /** base/words 影响地址折叠与越界常量；bank 容量 512。 */
+    /** 下标/方法糖：bs[0]、bs.test(0)、bs.get(0) 与 btest 展开逐行一致。 */
+    private static void methodSugar(){
+        withBitsets("bitset bs cell1 0 2", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "btest(bs, i)")), textOf(ExprCompiler.compile("x", "bs[i]")));
+            checkLine(textOf(ExprCompiler.compile("x", "btest(bs, i)")), textOf(ExprCompiler.compile("x", "bs.test(i)")));
+            checkLine(textOf(ExprCompiler.compile("x", "btest(bs, i)")), textOf(ExprCompiler.compile("x", "bs.get(i)")));
+            checkThrows(() -> ExprCompiler.compile("bs[i]", "1"), "indexed assignment to a bitset");
+            checkThrows(() -> ExprCompiler.compile("x", "bs.bogus()"), "unknown bitset method");
+        });
+    }
+
     private static void indexExpressionsAndCapacity(){
         withBitsets("bitset bs cell1 10 2", () -> {
             String text = textOf(ExprCompiler.compile("x", "bset(bs, i)"));

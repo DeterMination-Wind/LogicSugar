@@ -50,6 +50,7 @@ public class ListHeapTest{
 
         loadBuiltins();
         expressionExpansions();
+        methodSugar();
         argumentErrors();
         listBehaviour();
         heapBehaviour();
@@ -472,6 +473,21 @@ public class ListHeapTest{
     }
 
     // ===== 错误路径 =====
+
+    /** 下标/方法糖：l[i]、l.get(i)、l.size()、h.size() 与 intrinsic 展开逐行一致。 */
+    private static void methodSugar(){
+        withRegistry("list l cell1 2 4", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "lget(l, i)")), textOf(ExprCompiler.compile("x", "l[i]")));
+            checkLine(textOf(ExprCompiler.compile("x", "lget(l, i)")), textOf(ExprCompiler.compile("x", "l.get(i)")));
+            checkLine(textOf(ExprCompiler.compile("x", "lsize(l)")), textOf(ExprCompiler.compile("x", "l.size()")));
+            checkLine(textOf(ExprCompiler.compile("x", "lsize(l)")), textOf(ExprCompiler.compile("x", "l.length()")));
+            checkThrowsExpr(() -> ExprCompiler.compile("l[i]", "1"), "indexed assignment to a list");
+            checkThrowsExpr(() -> ExprCompiler.compile("x", "l.bogus()"), "unknown list method");
+        });
+        withRegistry("heap h cell3 0 8", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "hsize(h)")), textOf(ExprCompiler.compile("x", "h.size()")));
+        });
+    }
 
     private static void argumentErrors(){
         withRegistry("list l cell1 0 4\nheap h cell2 0 4", () -> {

@@ -117,6 +117,12 @@ so saved programs stay vanilla-parseable and multiplayer-safe.
   `LibraryIndex` via `SugarFunctions.withBuiltins` but must never enter the user function library or
   the `__ls_lib` carrier (`extractLibrarySource` only sees user library text). Unused builtins stay out
   of the product; normal mode shares one `funcdef` body per operation.
+- Getter sugar (`list[i]`, `stack.top()`) is resolved through `ExprIntrinsics.Provider.kindOf` /
+  `methodIntrinsic` / `indexIntrinsic`. Every alias must point at a **builtin-free** getter
+  (`lget` / `speek` / `btest` / `cget` / `chead` / `*size`): `collectCalls` skips method nodes, so an
+  alias that lowers through `__ls_builtin_*` would break normal-mode reachability unless
+  `collectCalls`/`calleesOf` is extended in the same change. Index sugar is read-only; `l[i] = v`
+  stays a compile error that points at `lset`/`bset`/`cset`.
 - Every registered data intrinsic is also exposed as a persistent `datacall` card. Palette
   metadata belongs to its `DataModule`; it records source-level argument defaults and whether
   the operation has a source-level result. Result-bearing cards default to `result = op(args)`;

@@ -78,6 +78,25 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
         return Collections.emptyList();
     }
 
+    // ===== 方法糖 / 下标糖（只读 getter）=====
+
+    @Override
+    public String kindOf(ExprCompiler.Node receiver){
+        if(!(receiver instanceof ExprCompiler.Var var)) return null;
+        return BitsetModule.find(var.name) == null ? null : BitsetModule.ID;
+    }
+
+    @Override
+    public String methodIntrinsic(String kind, String method, int argc){
+        if(argc != 1) return null;
+        String m = method.toLowerCase(java.util.Locale.ROOT);
+        return m.equals("test") || m.equals("get") ? "btest" : null;
+    }
+
+    @Override
+    public String indexIntrinsic(String kind){
+        return BitsetModule.ID.equals(kind) ? "btest" : null;
+    }
     // ===== 展开 =====
 
     /**

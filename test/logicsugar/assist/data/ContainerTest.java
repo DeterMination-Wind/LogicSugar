@@ -1,5 +1,6 @@
 package logicsugar.assist.data;
 
+import arc.Core;
 import arc.struct.Seq;
 import logicsugar.assist.expr.ContainerIntrinsics;
 import logicsugar.assist.expr.ExprCompiler;
@@ -47,6 +48,7 @@ public class ContainerTest{
         stackSequences();
         queueSequences();
         dequeSequences();
+        methodSugar();
         builtinBodies();
         stackBehaviour();
         queueBehaviourAndWraparound();
@@ -56,6 +58,7 @@ public class ContainerTest{
         declarationErrors();
         editorMarkInvalid();
         declarationCardProducesNoLine();
+        cardTitlesFollowLocalizationToggle();
         outputIsPureVanilla();
         roundTripAndVerification();
 
@@ -219,6 +222,41 @@ public class ContainerTest{
                 + "read x cell2 _2",
                 textOf(ExprCompiler.compile("x", "dpopb(d)")));
         });
+    }
+
+    /** 方法糖：s.top()/q.front()/d.back()/… 与对应 intrinsic 展开逐行一致，并能在条件表达式里使用。 */
+    private static void methodSugar(){
+        withRegistry("stack s cell1 0 8", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "speek(s)")), textOf(ExprCompiler.compile("x", "s.top()")));
+            checkLine(textOf(ExprCompiler.compile("x", "speek(s)")), textOf(ExprCompiler.compile("x", "s.peek()")));
+            checkLine(textOf(ExprCompiler.compile("x", "ssize(s)")), textOf(ExprCompiler.compile("x", "s.size()")));
+            checkLine(textOf(ExprCompiler.compile("x", "ssize(s)")), textOf(ExprCompiler.compile("x", "s.count()")));
+            checkExprThrows(() -> ExprCompiler.compile("x", "s.front()"), "queue method on a stack");
+            checkExprThrows(() -> ExprCompiler.compile("x", "s.bogus()"), "unknown method");
+        });
+        withRegistry("queue q cell2 0 4", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "qpeek(q)")), textOf(ExprCompiler.compile("x", "q.front()")));
+            checkLine(textOf(ExprCompiler.compile("x", "qpeek(q)")), textOf(ExprCompiler.compile("x", "q.peek()")));
+            checkLine(textOf(ExprCompiler.compile("x", "qsize(q)")), textOf(ExprCompiler.compile("x", "q.size()")));
+        });
+        withRegistry("deque d cell2 0 4", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "dpeekf(d)")), textOf(ExprCompiler.compile("x", "d.front()")));
+            checkLine(textOf(ExprCompiler.compile("x", "dpeekb(d)")), textOf(ExprCompiler.compile("x", "d.back()")));
+            checkLine(textOf(ExprCompiler.compile("x", "dsize(d)")), textOf(ExprCompiler.compile("x", "d.size()")));
+        });
+        // 条件表达式端到端：方法糖能通过 analyze（collectCalls 不把它当未知用户函数）并降级出读链
+        String sugar = stripCompile("stack s cell1 0 8\nforbegin i 0 1 expr \"s.top() > 0\" 3\nset y 1\nblockend\n");
+        check(sugar.contains("set y 1") && sugar.contains("read "),
+            "for-condition method sugar must compile to the intrinsic read chain:\n" + sugar);
+    }
+
+    private static void checkExprThrows(Runnable body, String what){
+        try{
+            body.run();
+        }catch(ExprCompiler.ParseException e){
+            return;
+        }
+        check(false, "expression should have failed (" + what + ")");
     }
 
     private static void builtinBodies(){
@@ -877,6 +915,19 @@ public class ContainerTest{
         check(false, "compile should have failed (" + what + "): " + sugar);
     }
 
+    /** 关闭游戏逻辑本地化后，声明卡标题必须回到英文 fallback（name() 走 cardsLocalized）。 */
+    private static void cardTitlesFollowLocalizationToggle(){
+        arc.Settings previous = Core.settings;
+        Core.settings = new arc.Settings();
+        Core.settings.put("logiclocalization", false);
+        try{
+            check("Stack".equals(new ContainerModule.StackDeclStatement().name()), "stack title must be English when logic localization is off");
+            check("Queue".equals(new ContainerModule.QueueDeclStatement().name()), "queue title must be English when logic localization is off");
+            check("Deque".equals(new ContainerModule.DequeDeclStatement().name()), "deque title must be English when logic localization is off");
+        }finally{
+            Core.settings = previous;
+        }
+    }
     private static void checkLine(String expected, String actual){
         check(expected.equals(actual), "mlog mismatch\n  expected:\n" + expected + "\n  actual:\n" + actual);
     }

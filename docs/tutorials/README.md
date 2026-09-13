@@ -1,0 +1,163 @@
+# LogicSugar 高级数据类型使用教程
+
+面向已经会用 LogicSugar 的 if / for / while 和 Expr 表达式，但还不确定「这种数据该用哪个结构」的玩家。
+
+每章只讲一种数据结构，包含：什么时候用、声明卡、函数速查表、转译后的 mlog 解释、复杂度、使用须知。所有示例都假设你已经知道怎么放积木、怎么切换 Original / Sugar 视图。
+
+> English version: [en/README.md](en/README.md)。先读 [README_zh.md](../../README_zh.md) 的「功能」了解基础；表达式语义和编译器细节见 [架构总览](../architecture.md) 的「表达式子系统」「数据子系统」。
+
+## 章节导航
+
+| 结构 | 一句话 | 典型操作 | 章节 |
+| --- | --- | --- | --- |
+| 一维数组 | 一段连续内存的随机访问容器 | `buf[i]`、`len(buf)` | [array.md](array.md) |
+| 数组批量运算 | 对整段数组求值/变换 | `sum` `fill` `sortasc` `bsearch` | [array-bulk.md](array-bulk.md) |
+| 矩阵 | 行主序的二维数组 | `m[i][j]` | [matrix.md](matrix.md) |
+| 记录 | 编译期的结构体（命名字段） | `p.hp`、`p.hp = x` | [record.md](record.md) |
+| 栈 | 后进先出 | `spush` `spop` `speek` | [stack.md](stack.md) |
+| 队列 | 先进先出 | `qpush` `qpop` `qpeek` | [queue.md](queue.md) |
+| 双端队列 | 两端都能进出的环形缓冲 | `dpushf` `dpopb` `dpeekf` | [deque.md](deque.md) |
+| 位集 | 大量布尔位的紧凑存储 | `bset` `bclr` `btest` `bcount` | [bitset.md](bitset.md) |
+| 哈希表 | 数字键到值的映射 | `mapset` `mapget` | [map.md](map.md) |
+| 无序集合 | 只关心在不在的数字集合 | `uadd` `uhas` `udel` | [uset.md](uset.md) |
+| 列表 | 紧凑的顺序表，可按下标插入/删除 | `lappend` `lget` `lremove` | [list.md](list.md) |
+| 小顶堆 | 反复取最小值的优先队列 | `hpush` `hpop` | [heap.md](heap.md) |
+| 链表 | 空闲链加节点链接 | `cinit` `cnew` `cget` `clink` | [chain.md](chain.md) |
+
+不熟悉这些结构本身？先看下面的「选择指南」，再进入对应章节。
+
+## 共同概念
+
+### 声明卡只是编译期元数据
+
+array / matrix / record / stack / queue / deque / bitset / map / uset / list / heap / chain 这些声明卡不产出任何 mlog 行。它们的作用是把「哪个名字对应哪块内存 / 哪些编译期信息」告诉 LogicSugar；真正写进处理器的只有 `op` / `read` / `write` / `jump` / `funccall` / `sensor` / `end` 等原版指令。
+
+因此：
+
+- 保存后的程序在任何原版客户端都能解析、运行；联机（含自建服）与单机一致。
+- 重开处理器时声明卡通过 Sugar 载体恢复；纯原版 mlog（没有载体）不会凭空长出声明卡。
+- 声明的名字、区间只在编译期存在，不占处理器运行时内存。
+
+### 内存块、地址与容量
+
+声明卡里的 `memory` 是承载数据的内存块变量名：
+
+| 名字 | 例子 | 容量（槽） | 备注 |
+| --- | --- | --- | --- |
+| `cellN` | `cell1` | 64 | 最常见 |
+| `bankN` | `bank1` | 512 | 大容量 |
+| `worldN` | `world1` | 512 | 世界处理器可能受权限限制 |
+| 其它名字 | `mem` | 不检查 | 编译期跳过容量校验 |
+
+`base` 是起始物理地址；`size` / `capacity` / `words` / `rows`×`cols` 是占用长度。`base + 占用长度` 超过容量时编译期报错（只对 `cellN` / `bankN` / `worldN` 检查）。
+
+数组/矩阵/记录/容器的所有内存读写都会落在这段区间内；不同模块之间的区间重叠不会被自动拦截（见每章的使用须知）。
+
+### 名字与保留前缀
+
+- 同一模块内名字必须唯一；不同结构之间由集成阶段尽量拦截，但跨模块区间重叠/重名属于已知限制。
+- 名字不能与 array / matrix / 用户函数重名。
+- `__ls_` 前缀保留给 LogicSugar 的隐藏状态变量和注入函数，用户声明名不能用。
+
+### Expr 模式里的两种写法
+
+同一个操作通常有两种等价写法：
+
+```text
+intrinsic 写法:  speek(s)          lget(list, i)      mapget(m, 1)
+getter 糖写法:   s.top()           list[i] / list.get(i)
+```
+
+方法/下标糖目前只覆盖只读 getter，且只覆盖不需要注入函数的那些。写入、push/pop/clear 这类操作仍用函数写法；map / set 的 getter 也还没有方法糖。
+
+### 隐藏状态变量
+
+栈、队列、双端队列、列表、堆、链表需要维护长度/头/尾等运行状态。LogicSugar 把它们放在普通 mlog 变量里，统一用 `__ls_` 前缀：
+
+```text
+stack s        -> __ls_stk_s_top
+queue q        -> __ls_que_q_head / _tail / _count
+deque d        -> __ls_deq_d_head / _tail / _count
+list l         -> __ls_lst_l_count
+heap h         -> __ls_hep_h_count
+chain c        -> __ls_chn_c_head / _free
+```
+
+这些变量在游戏变量列表里默认被隐藏（隐藏 `__ls_*` 内部变量设置），但你仍然可以在 Original 视图里看到它们。
+
+### 状态不随存档持久化
+
+隐藏状态变量是普通处理器变量，重新载入处理器 / 存档往返 / 换一个处理器之后会回到未赋值等于 0，而内存块里的内容仍在。因此：
+
+- 栈 / 队列 / 双端队列 / 列表 / 堆：默认从长度 0 开始是安全的；如果内存里还有旧数据，记得先 sclear / qclear / dclear 或自己重设计数。
+- 哈希表 / 集合 / 链表：未赋值状态会被误读成有效数据（0 号槽 / 0 号节点），首次使用前必须显式 mapclear(m) / uclear(s) / cinit(c)。
+- map / uset 没有隐藏计数，键值在内存里会随存档保留，但仍需要显式初始化。
+
+### 复杂度和指令预算
+
+处理器的硬限制是 1000 条指令。复杂度直接决定会不会撞上限：
+
+| 复杂度 | 含义 | 例子 |
+| --- | --- | --- |
+| O(1) | 固定几条指令 | `lget`、`speek`、`qpush`、`btest`、`mapget`（平均） |
+| O(log n) | 每次减半/树高 | `hpush`、`hpop` |
+| O(n) | 遍历全部元素 | `lfind`、`linsert`、`lremove`、`clen` |
+| O(n²) | 插入排序 | `sortasc` / `sortdesc` |
+| O(capacity) | 扫描整张表 / 整段内存 | `mapsize`、`mapclear`、`usize`、`uclear`、`cinit` |
+
+> 循环型算法（哈希探测、排序、堆调整、链表遍历等）在 normal 模式下编译成全程序共享的一份 `__ls_builtin_*` 子程序；inline 模式会在每个调用点复制函数体，长程序要留意 1000 条限制。
+
+### 方法糖与下标糖
+
+| 结构 | 可用写法 | 等价于 |
+| --- | --- | --- |
+| list | `l[i]`、`l.get(i)` | `lget(l, i)` |
+| list / heap | `l.size()` / `l.length()` / `l.count()`、`h.size()` | `lsize(l)` / `hsize(h)` |
+| stack | `s.top()`、`s.peek()`、`s.size()` / `s.count()` | `speek(s)` / `ssize(s)` |
+| queue | `q.front()`、`q.peek()`、`q.size()` / `q.count()` | `qpeek(q)` / `qsize(q)` |
+| deque | `d.front()`、`d.back()`、`d.size()` / `d.count()` | `dpeekf(d)` / `dpeekb(d)` / `dsize(d)` |
+| bitset | `b[i]`、`b.test(i)`、`b.get(i)` | `btest(b, i)` |
+| chain | `c[i]`、`c.get(i)`、`c.head()` | `cget(c, i)` / `chead(c)` |
+
+注意：
+
+- 已有同名的 array / matrix 时，`x[i]` 优先按数组解释。
+- 下标糖目前只读：`l[i] = v` 会直接报错，请写 `lset(l, i, v)` / `bset(b, i)` / `cset(c, i, v)`。
+- `map.get(k)` / `set.has(v)` / `lfind` / `bcount` / `cnext` / `clen` 暂不提供方法糖，继续用函数写法。原因见文末。
+
+## 选择指南
+
+| 你想要 | 用 |
+| --- | --- |
+| 按下标随机读写一段数字 | [array.md](array.md) |
+| 对整段数组求和、排序、查找 | [array-bulk.md](array-bulk.md) |
+| 二维表（网格、地图、矩阵乘法） | [matrix.md](matrix.md) |
+| 把几个相关的值打包成一个对象 | [record.md](record.md) |
+| 后进先出（撤销、DFS、括号匹配） | [stack.md](stack.md) |
+| 先进先出（任务队列、BFS） | [queue.md](queue.md) |
+| 两端进出（滑动窗口、双端 BFS） | [deque.md](deque.md) |
+| 很多开关 / 访问标记 | [bitset.md](bitset.md) |
+| 数字键查表（计数器、映射） | [map.md](map.md) |
+| 去重 / 存在性判断 | [uset.md](uset.md) |
+| 顺序表，中间要插入/删除 | [list.md](list.md) |
+| 反复取最小值（Dijkstra、合并） | [heap.md](heap.md) |
+| 自己管理节点与链接（邻接表、LRU） | [chain.md](chain.md) |
+
+## 怎么自己验证转译结果
+
+1. 在编辑器里放声明卡加操作卡（或写 Expr 表达式）。
+2. 保存一次，切换到 Original 视图，对照本章的转译示例看指令。
+3. 需要确认没有模组也能跑时，用复制编译后代码导出纯原版 mlog，在普通客户端里导入。
+
+## 后续计划
+
+- map / uset 的 `m.get(k)` / `u.has(v)`，以及 `lfind` / `bcount` / `cnext` / `clen` 等方法糖，需要把按声明类型解析方法名提前到 analyze 阶段并补齐注入函数的可达性登记；在完成前继续使用函数写法。
+- 数组的 `buf[i] = x` 已经支持；list / bitset / chain 的下标赋值暂不支持。
+
+## 相关文档
+
+- [架构总览](../architecture.md)：编译器、表达式子系统、数据子系统的实现细节。
+- [术语表](../glossary.md)：intrinsic、注入函数、载体、隐藏状态变量等名词。
+- [测试指南](../testing.md)：每个数据结构对应的自测任务和手测清单。
+- [README_zh.md](../../README_zh.md)：功能总览与安装。
+

@@ -1,6 +1,5 @@
 package logicsugar.assist.data;
 
-import arc.Core;
 import arc.scene.Element;
 import arc.scene.ui.layout.Table;
 import logicsugar.assist.expr.ArrayRegistry;
@@ -11,6 +10,7 @@ import mindustry.logic.LAssembler;
 import mindustry.logic.LCanvas;
 import mindustry.logic.LStatement;
 import mindustry.logic.SugarCanvas;
+import mindustry.logic.SugarStatements;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -119,7 +119,7 @@ public class RecordModule extends DataModule{
 
         @Override
         public void build(Table table){
-            table.add(text("logicsugar.record.card", "Record"));
+            table.add(SugarStatements.cardText("record.card", "Record"));
             field(table, name, value -> name = value).width(70f);
             for(int i = 0; i < SLOTS; i++){
                 final int index = i;
@@ -131,7 +131,7 @@ public class RecordModule extends DataModule{
 
         @Override
         public String name(){
-            return text("logicsugar.record.card", "Record");
+            return SugarStatements.cardText("record.card", "Record");
         }
 
         @Override
@@ -464,11 +464,4 @@ public class RecordModule extends DataModule{
         return token == null || token.equals("~") ? "" : token.trim();
     }
 
-    private static String text(String key, String fallback){
-        try{
-            return Core.bundle.get(key, fallback);
-        }catch(Throwable ignored){
-            return fallback;
-        }
-    }
 }

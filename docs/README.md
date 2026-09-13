@@ -8,6 +8,7 @@ LogicSugar 的分类文档。文档以中文为主，功能名保留英文本名
 | --- | --- |
 | 玩家 | [README_zh.md](../README_zh.md)（功能与安装说明） |
 | 想了解 LogicSugar 怎么组织的人 | [架构总览](architecture.md) |
+| 想学高级数据类型 | [中文教程](tutorials/README.md) / [English tutorial](tutorials/en/README.md)（每结构一章：声明卡、函数表、转译、复杂度、使用须知） |
 | 想改 LogicSugar 代码 | [开发指南](development.md) 与[架构总览](architecture.md) |
 | 改动需要验证 | [测试指南](testing.md) |
 | 准备发版 | [版本与发布](release.md) |
@@ -18,6 +19,7 @@ LogicSugar 的分类文档。文档以中文为主，功能名保留英文本名
 ```text
 docs/
 |-- README.md            本页：文档导航
+|-- tutorials/           高级数据类型教程：中文在根目录, English 在 en/（每结构一章）
 |-- architecture.md      架构总览：双形态、编译器、重建（载体/反编译）、表达式子系统、数据子系统、跨类加载器约束、上游版本适配笔记
 |-- development.md       开发指南：环境、构建命令、代码风格、调试建议
 |-- release.md           版本与发布：版本号体系、构建产物链、Release 资产安全
