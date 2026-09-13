@@ -42,7 +42,9 @@ public final class DataCallTest{
         check(!DataModules.paletteCall("sortasc").returnsValue && !DataModules.paletteCall("reverse").returnsValue,
             "in-place array transforms must not expose a result field");
         for(String operation : new String[]{"fill", "copy", "sortasc", "sortdesc", "reverse", "swap",
-            "sclear", "qclear", "dclear", "mapclear", "uclear"}){
+            "sclear", "qclear", "dclear", "mapclear", "uclear",
+            // v5 API: constant results carry no information, so these are void cards too
+            "bset", "bclr", "cshead"}){
             check(!DataModules.paletteCall(operation).returnsValue,
                 operation + " must be represented as a void palette card");
         }

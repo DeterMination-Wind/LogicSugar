@@ -80,6 +80,15 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
         return CALL_NAMES;
     }
 
+    /**
+     * v5 API：{@code cshead} 恒返回 1，没有任何信息量，因此它是无结果卡（卡片可以写 {@code ~}）。
+     * 其余链表操作的结果都有含义（节点下标 / 头 / 长度 / 1 或 -1），保持结果卡。
+     */
+    @Override
+    public boolean returnsValue(String name){
+        return !"cshead".equals(name);
+    }
+
     @Override
     public int arity(String name){
         switch(name){

@@ -44,6 +44,15 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
         return CALL_NAMES;
     }
 
+    /**
+     * v5 API：{@code bset}/{@code bclr} 的写回子程序恒返回 1（越界也返回 1），没有任何信息量，
+     * 因此它们是无结果卡（卡片可以写 {@code ~}）。表达式形式仍保留旧的结果操作数以便兼容。
+     */
+    @Override
+    public boolean returnsValue(String name){
+        return !"bset".equals(name) && !"bclr".equals(name);
+    }
+
     @Override
     public int arity(String name){
         return "bcount".equals(name) ? 1 : 2;
