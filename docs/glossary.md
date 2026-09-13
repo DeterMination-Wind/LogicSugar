@@ -166,3 +166,23 @@ Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[
 
 ### bundle
 Mindustry 的 i18n 文案文件。本模组在 `assets/bundles/` 下维护 `bundle.properties` / `bundle_zh_CN.properties` / `bundle_zh_TW.properties` 三份，key 以 `logicsugar.*` 开头，用户可见文案不允许硬编码。
+
+## v5 API（logic-sugar-v2）
+
+### 值拷贝（CopyLine）
+v5 起「把一个值拷到另一个变量」统一用 `set <dst> <src>`（编译期的 `CopyLine`）。旧写法 `op add <dst> <src> 0` 会经 `LVar.num()` 读操作数，把对象折成 1、把空值（NaN 标记）折成 0，属于会丢值的实现细节，v5 已消除。
+
+### 失败信号（-1）
+可失败的数据操作（push/append/insert/delete/set/free 等）失败时统一返回 `-1`；成功仍返回各自有意义的值（计数、下标或 1）。查询类 `maphas`/`uhas`/`btest` 保持 0/1；`btest` 越界仍为 0（它是「位是否置位」的查询，-1 在 mlog 里是真值）。
+
+### 无结果卡（`~`）
+结果恒定、无信息量的操作不暴露目标变量，卡片可以写 `~`：`bset`/`bclr`/`cshead`，加上本来就无结果的 `fill`/`copy`/`sortasc`/`sortdesc`/`reverse`/`swap`/`sclear`/`qclear`/`dclear`/`mapclear`/`uclear`。旧存档若已带目标变量，编译时仍写进该变量，指令流不变。
+
+### 返回声明
+`funcdef f a ~ 3`（void，体内不得值返回）与 `funcdef f a value 3`（必须值返回一次）；不写声明（`funcdef f a 3`）沿用按函数体推断。声明写在参数之后、`destIndex` 之前，第三种槽是整数即为旧形态，因此老存档字节不变。
+
+### logic-sugar-v2
+v5 的持久化格式标记：新存档写 `# @logic-sugar-v2 begin`/`… end` 注释块。`SugarCompiler.storedFormat()` 返回 2（当前）、1（v1 标记）、0（标记被原版往返冲掉、只剩载体）。
+
+### legacyApi（v1 lowering）
+验证门用的 v5 之前 lowering。`verifyRestore` 先按 v5 重编译比对存储流，不一致再进入 `Api.v1` 复现旧指令流，只有精确匹配才接受载体 —— 老存档行为可复现，验证门没有被放宽。

@@ -11,6 +11,7 @@ LogicSugar 的分类文档。文档以中文为主，功能名保留英文本名
 | 想学高级数据类型 | [中文教程](tutorials/README.md) / [English tutorial](tutorials/en/README.md)（每结构一章：声明卡、函数表、转译、复杂度、使用须知） |
 | 想改 LogicSugar 代码 | [开发指南](development.md) 与[架构总览](architecture.md) |
 | 改动需要验证 | [测试指南](testing.md) |
+| 想知道 v5 的值 / 失败 / 版本语义 | [v5 API 契约](api-v5.md) |
 | 准备发版 | [版本与发布](release.md) |
 | 遇到不认识的词 | [术语表](glossary.md) |
 
@@ -24,6 +25,7 @@ docs/
 |-- development.md       开发指南：环境、构建命令、代码风格、调试建议
 |-- release.md           版本与发布：版本号体系、构建产物链、Release 资产安全
 |-- testing.md           测试指南：JavaExec 自测任务、新增测试约定、手测清单
+|-- api-v5.md           v5 API 契约：logic-sugar-v2 标记、set 值拷贝、失败 -1、无结果卡、函数返回声明、老存档兼容
 `-- glossary.md          术语表
 ```
 
