@@ -175,12 +175,9 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     /**
-     * Keeps the editor actions in a centered group while allowing inspection/debug actions
-     * to live at the right edge of the bar.  LogicDialog's vanilla setup adds every button
-     * directly to one left-aligned table; that makes the action group drift into the frame on
-     * wide screens once Sugar adds its extra actions.  A stack is used deliberately: the
-     * centered table occupies the full bar, and the right table overlays it with its own
-     * right margin, so neither group is coupled to the other group's width.
+     * Keeps editor actions at the true visual center while inspection/debug controls stay at
+     * the right edge. Equal-width left/right regions ensure the action group does not shift
+     * merely because the debug controls are present.
      */
     private void layoutBottomButtons(){
         // Keep vanilla's portrait/mobile row breaks.  The centered stack is only needed for
@@ -239,15 +236,20 @@ public class SugarLogicDialog extends LogicDialog{
             }
         }
 
-        // Stack children fill the available bar, so the action group remains truly centered
-        // even when the debug group grows or is absent in a library editing session.  On a
-        // narrower landscape desktop, however, overlaying both groups would hide the right
-        // end of the action group below the debug controls.  Keep both useful and within the
-        // frame by using separate centered/right-aligned rows until they can coexist safely.
-        float edge = 20f; // outer 8px cell padding + debug table's 12px right margin
-        float wideEnough = centeredTable.getPrefWidth() + 2f * (debugTable.getPrefWidth() + edge);
+        // Never stack these tables: a Stack lets the budget label paint over Variables and can
+        // cover the copy controls. Symmetric side regions preserve actual centering without
+        // placing one interactive table above another.
+        float sideWidth = debugTable.getPrefWidth() + 12f;
+        float wideEnough = centeredTable.getPrefWidth() + 2f * sideWidth + 16f;
         if(Core.graphics.getWidth() >= wideEnough){
-            buttons.stack(centeredTable, debugTable).growX().height(64f).padLeft(8f).padRight(8f);
+            Table debugRegion = new Table();
+            debugRegion.right();
+            debugRegion.add(debugTable).right();
+            // Both growX cells receive the same excess width. The empty left cell balances
+            // the right debug region so the action group remains exactly centered.
+            buttons.add().growX().minWidth(sideWidth).height(64f);
+            buttons.add(centeredTable).height(64f);
+            buttons.add(debugRegion).growX().minWidth(sideWidth).height(64f);
         }else{
             buttons.add(centeredTable).growX().height(64f).padLeft(8f).padRight(8f).row();
             buttons.add(debugTable).growX().height(64f).padLeft(8f).padRight(8f);

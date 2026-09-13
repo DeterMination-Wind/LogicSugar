@@ -8,6 +8,7 @@ import mindustry.gen.Icon;
 import mindustry.logic.LExecutor;
 import mindustry.logic.LVar;
 import mindustry.logic.LogicDialog;
+import mindustry.logic.SugarLogicDialog;
 
 import java.lang.reflect.Field;
 
@@ -49,7 +50,7 @@ public final class VarClipboard{
      *  executor field is unavailable (reflection degraded) or this is a library-file
      *  editing session (no processor to inspect). */
     public static void addButtons(Table buttons, LogicDialog dialog){
-        if(executorField == null || executor(dialog) == null) return;
+        if(executor(dialog) == null) return;
         if(buttons.find(copyVarsButtonName) == null){
             buttons.button("@logicsugar.copyvars", Icon.copy, () -> {
                 LExecutor executor = executor(dialog);
@@ -91,6 +92,11 @@ public final class VarClipboard{
     }
 
     private static LExecutor executor(LogicDialog dialog){
+        // SugarLogicDialog replaces LogicDialog.show(...), so the superclass' hidden
+        // executor field stays empty there. Its public field is the authoritative session
+        // processor; only ordinary dialogs need the reflective fallback.
+        if(dialog instanceof SugarLogicDialog sugar) return sugar.executor;
+        if(executorField == null) return null;
         try{
             return (LExecutor)executorField.get(dialog);
         }catch(Exception e){
