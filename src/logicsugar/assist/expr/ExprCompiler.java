@@ -206,7 +206,12 @@ public class ExprCompiler{
     public static class CallSite{
         public final String name;
         public final String args;
-        CallSite(String name, String args){ this.name = name; this.args = args; }
+        /** true = 方法/下标糖解析出的 root intrinsic 调用点：按 intrinsic 处理，不受用户函数遮蔽。 */
+        public final boolean intrinsic;
+        CallSite(String name, String args){ this(name, args, false); }
+        CallSite(String name, String args, boolean intrinsic){
+            this.name = name; this.args = args; this.intrinsic = intrinsic;
+        }
     }
 
     // ===== Line =====
@@ -1613,15 +1618,29 @@ public class ExprCompiler{
             }
             out.add(new CallSite(c.name, args.toString()));
             for(Node arg : c.args) collectCallNodes(arg, out);
-        }else if(node instanceof Method){
-            // 方法糖只映射到无注入函数的只读 getter（lget/speek/btest/cget…），
-            // 可达性登记无需额外 callee；receiver 与实参里可能嵌套用户函数调用。
-            Method m = (Method)node;
-            collectCallNodes(m.base, out);
-            for(Node arg : m.args) collectCallNodes(arg, out);
-        }else if(node instanceof Index){
-            collectCallNodes(((Index)node).base, out);
-            collectCallNodes(((Index)node).index, out);
+        }else if(node instanceof Method method){
+            collectCallNodes(method.base, out);
+            for(Node arg : method.args) collectCallNodes(arg, out);
+            // 方法糖在 analyze 阶段解析成 root intrinsic：注入函数必须在此登记可达性，
+            // 否则 normal 模式不会 hoist 对应的 __ls_builtin_* 函数体。
+            if(method.base instanceof Var receiver){
+                String intrinsic = ExprIntrinsics.resolveMethodIntrinsic(receiver.name, method.name, method.args.size());
+                if(intrinsic != null){
+                    StringBuilder args = new StringBuilder(receiver.name);
+                    for(Node arg : method.args) args.append(", ").append(nodeToString(arg));
+                    out.add(new CallSite(intrinsic, args.toString(), true));
+                }
+            }
+        }else if(node instanceof Index index){
+            collectCallNodes(index.base, out);
+            collectCallNodes(index.index, out);
+            // 下标糖同理：map[k] → mapget 会调用注入函数，必须在 analyze 阶段登记。
+            if(index.base instanceof Var receiver){
+                String intrinsic = ExprIntrinsics.resolveIndexIntrinsic(receiver.name);
+                if(intrinsic != null){
+                    out.add(new CallSite(intrinsic, receiver.name + ", " + nodeToString(index.index), true));
+                }
+            }
         }else if(node instanceof ArrayLen){
             collectCallNodes(((ArrayLen)node).arg, out);
         }else if(node instanceof Member){

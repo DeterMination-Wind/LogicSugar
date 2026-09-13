@@ -86,6 +86,23 @@ public final class SetIntrinsics implements ExprIntrinsics.Provider{
         }
     }
 
+    // ===== 方法糖（只读 getter）=====
+
+    @Override
+    public String kindOf(ExprCompiler.Node receiver){
+        if(!(receiver instanceof ExprCompiler.Var var)) return null;
+        return SetModule.active(var.name) == null ? null : SetModule.ID;
+    }
+
+    @Override
+    public String methodIntrinsic(String kind, String method, int argc){
+        if(!SetModule.ID.equals(kind)) return null;
+        String m = method.toLowerCase(java.util.Locale.ROOT);
+        if(argc == 1 && (m.equals("has") || m.equals("contains"))) return "uhas";
+        if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "usize";
+        return null;
+    }
+
     @Override
     public boolean isMemberBase(ExprCompiler.Node base){
         return false;

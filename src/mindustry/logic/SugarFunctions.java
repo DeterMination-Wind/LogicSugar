@@ -973,6 +973,16 @@ public final class SugarFunctions{
         boolean root = true;
         for(ExprCompiler.CallSite site : sites){
             int argc = splitArgs(site.args).size();
+            // 方法/下标糖解析出的 root intrinsic：必须按 intrinsic 登记 callee，
+            // 即使存在同名用户函数也不能走用户调用路径（与 lower 阶段的解析一致）。
+            if(site.intrinsic){
+                for(String callee : ExprIntrinsics.calleesOfRoot(site.name, argc)){
+                    if(set.resolve(callee) != null){
+                        (owner == null ? set.mainCalls : owner.callees).add(callee);
+                    }
+                }
+                continue;
+            }
             if(root && site.name.equalsIgnoreCase(call.operation)){
                 for(String callee : ExprIntrinsics.calleesOfRoot(site.name, argc)){
                     if(set.resolve(callee) != null){
@@ -993,6 +1003,15 @@ public final class SugarFunctions{
     private static void registerExprCalls(String expr, Function owner, FunctionSet set, int index){
         for(ExprCompiler.CallSite site : ExprCompiler.collectCalls(expr)){
             int argc = splitArgs(site.args).size();
+            // 方法/下标糖解析出的 root intrinsic：按 intrinsic 登记 callee，绕过用户函数遮蔽。
+            if(site.intrinsic){
+                for(String callee : ExprIntrinsics.calleesOfRoot(site.name, argc)){
+                    if(set.resolve(callee) != null){
+                        (owner == null ? set.mainCalls : owner.callees).add(callee);
+                    }
+                }
+                continue;
+            }
             // F2: intrinsic call sites are not user calls. Register the injected builtin
             // functions they will expand to (during lowering, too late for reachability), so
             // NORMAL mode hoists exactly the bodies that are actually used. A user function of

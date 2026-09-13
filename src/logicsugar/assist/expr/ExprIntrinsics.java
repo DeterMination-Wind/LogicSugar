@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -90,6 +91,9 @@ public final class ExprIntrinsics{
             return null;
         }
     }
+
+    /** analyze 阶段的 名字→结构种类 轻量声明表（由 SugarCompiler 安装；编辑器路径为空）。 */
+    private static Map<String, String> declaredKinds = Collections.emptyMap();
 
     private static final List<Provider> providers = new ArrayList<>();
     private static Set<String> userFunctions = Collections.emptySet();
@@ -275,6 +279,40 @@ public final class ExprIntrinsics{
             }
         }
         return result;
+    }
+
+    /** 安装 analyze 阶段的声明种类表（名字→结构种类），返回先前的表供恢复。 */
+    public static Map<String, String> enterDeclaredKinds(Map<String, String> kinds){
+        Map<String, String> previous = declaredKinds;
+        declaredKinds = kinds == null ? Collections.emptyMap() : kinds;
+        return previous;
+    }
+
+    /** 恢复 {@link #enterDeclaredKinds} 返回的表。 */
+    public static void restoreDeclaredKinds(Map<String, String> previous){
+        declaredKinds = previous == null ? Collections.emptyMap() : previous;
+    }
+
+    /** 方法糖解析：按 analyze 阶段的声明种类把 receiver.method(args) 解析成 intrinsic 名；null = 不处理。 */
+    public static String resolveMethodIntrinsic(String receiverName, String method, int argc){
+        String kind = receiverName == null ? null : declaredKinds.get(receiverName);
+        if(kind == null) return null;
+        for(Provider provider : providers){
+            String intrinsic = provider.methodIntrinsic(kind, method, argc);
+            if(intrinsic != null) return intrinsic;
+        }
+        return null;
+    }
+
+    /** 下标糖解析：按 analyze 阶段的声明种类把 receiver[index] 解析成 intrinsic 名；null = 不处理。 */
+    public static String resolveIndexIntrinsic(String receiverName){
+        String kind = receiverName == null ? null : declaredKinds.get(receiverName);
+        if(kind == null) return null;
+        for(Provider provider : providers){
+            String intrinsic = provider.indexIntrinsic(kind);
+            if(intrinsic != null) return intrinsic;
+        }
+        return null;
     }
 
     /** 安装当前编译的用户函数名集合（遮蔽 intrinsic），返回先前的集合供恢复。 */

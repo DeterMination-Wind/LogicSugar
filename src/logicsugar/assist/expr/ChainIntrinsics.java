@@ -167,7 +167,9 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
         if(!ChainModule.KIND_CHAIN.equals(kind)) return null;
         String m = method.toLowerCase(java.util.Locale.ROOT);
         if(argc == 1 && m.equals("get")) return "cget";
+        if(argc == 1 && m.equals("next")) return "cnext";
         if(argc == 0 && m.equals("head")) return "chead";
+        if(argc == 0 && (m.equals("len") || m.equals("length") || m.equals("size") || m.equals("count"))) return "clen";
         return null;
     }
 

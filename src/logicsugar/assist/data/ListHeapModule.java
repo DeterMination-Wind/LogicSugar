@@ -61,6 +61,14 @@ public class ListHeapModule extends DataModule{
     /** 状态字段名（{@link #stateVar} 用）。 */
     public static final String FIELD_COUNT = "count";
 
+    /** analyze 阶段方法糖解析用的轻量声明扫描（不依赖 collect 注册表）。 */
+    @Override
+    public Map<String, String> declaredKinds(LStatement statement){
+        if(statement instanceof ListDeclStatement card && card.name != null && !card.name.trim().isEmpty()) return Map.of(card.name.trim(), KIND_LIST);
+        if(statement instanceof HeapDeclStatement card && card.name != null && !card.name.trim().isEmpty()) return Map.of(card.name.trim(), KIND_HEAP);
+        return Map.of();
+    }
+
     @Override
     public String id(){
         return ID;

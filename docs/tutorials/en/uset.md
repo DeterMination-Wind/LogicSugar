@@ -29,6 +29,7 @@ Example: `uset s cell1 0 4` uses cell1 addresses 0..3.
 | `usize(s)` | set | element count | O(capacity) scan |
 | `uclear(s)` | set | 0 sentinel | writes NaN to every slot; O(capacity) |
 
+Sugar: `s.has(v)` / `s.contains(v)` equal `uhas(s, v)`; `s.size()` / `s.length()` / `s.count()` equal `usize(s)`.
 ## Lowered examples
 
 ```text

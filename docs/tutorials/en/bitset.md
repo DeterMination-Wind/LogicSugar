@@ -34,7 +34,7 @@ Bit 0 is the least significant bit of word 0.
 | `btest(b, i)` | bitset, index | 1 / 0 | read bit; out of range returns 0 |
 | `bcount(b)` | bitset | number of set bits | scans all words; O(words) |
 
-Sugar: `b[i]`, `b.test(i)`, `b.get(i)` equal `btest(b, i)`.
+Sugar: `b[i]`, `b.test(i)`, `b.get(i)` equal `btest(b, i)`; `b.count()` equals `bcount(b)`.
 
 ## Lowered examples
 

@@ -68,7 +68,7 @@ intrinsic form:  speek(s)      lget(list, i)      mapget(m, 1)
 getter sugar:    s.top()       list[i] / list.get(i)
 ```
 
-Method/index sugar currently covers read-only getters only, and only those that do not call injected functions. Writes and push/pop/clear operations still use the intrinsic form. The map / set getters do not have method sugar yet.
+Method/index sugar covers read-only getters, including injected-function backed `map.get` / `set.has` / `lfind` / `bcount` / `cnext` / `clen` (see the table below). Writes and push/pop/clear operations still use the intrinsic form.
 
 ### Hidden state variables
 
@@ -112,18 +112,21 @@ The processor hard limit is 1000 instructions. Complexity decides whether a desi
 | Structure | Sugar | Equivalent |
 | --- | --- | --- |
 | list | `l[i]`, `l.get(i)` | `lget(l, i)` |
+| list | `l.find(v)` / `l.indexOf(v)` | `lfind(l, v)` |
 | list / heap | `l.size()` / `l.length()` / `l.count()`, `h.size()` | `lsize(l)` / `hsize(h)` |
 | stack | `s.top()`, `s.peek()`, `s.size()` / `s.count()` | `speek(s)` / `ssize(s)` |
 | queue | `q.front()`, `q.peek()`, `q.size()` / `q.count()` | `qpeek(q)` / `qsize(q)` |
 | deque | `d.front()`, `d.back()`, `d.size()` / `d.count()` | `dpeekf(d)` / `dpeekb(d)` / `dsize(d)` |
-| bitset | `b[i]`, `b.test(i)`, `b.get(i)` | `btest(b, i)` |
-| chain | `c[i]`, `c.get(i)`, `c.head()` | `cget(c, i)` / `chead(c)` |
+| bitset | `b[i]`, `b.test(i)`, `b.get(i)`, `b.count()` | `btest(b, i)` / `bcount(b)` |
+| chain | `c[i]`, `c.get(i)`, `c.head()`, `c.next(i)`, `c.len()` | `cget(c, i)` / `chead(c)` / `cnext(c, i)` / `clen(c)` |
+| map | `m[k]`, `m.get(k)`, `m.has(k)`, `m.size()` | `mapget(m, k)` / `maphas(m, k)` / `mapsize(m)` |
+| uset | `s.has(v)`, `s.size()` | `uhas(s, v)` / `usize(s)` |
 
 Notes:
 
 - If an array or matrix shares the name, `x[i]` is resolved as an array first.
 - Index sugar is read-only: `l[i] = v` is a compile error. Use `lset(l, i, v)` / `bset(b, i)` / `cset(c, i, v)`.
-- `map.get(k)` / `set.has(v)` / `lfind` / `bcount` / `cnext` / `clen` do not have method sugar yet; keep using the function form. See the roadmap at the end.
+- The map / uset method sugar receiver must match the declaration card name; for `uset s ...` write `s.has(v)`.
 
 ## Selection guide
 
@@ -151,7 +154,7 @@ Notes:
 
 ## Roadmap
 
-- Method sugar for map / uset (`m.get(k)`, `u.has(v)`) and for `lfind` / `bcount` / `cnext` / `clen` needs method-name resolution to run during the analyze phase plus reachability registration for injected functions. Use the function forms until that lands.
+- Method sugar now covers builtin-backed `mapget` / `uhas` / `lfind` / `bcount` / `cnext` / `clen` (declaration pre-scan during analyze plus reachability registration). Mutator method sugar (`s.push()`, `l.append()`, `m.set()`) is not provided; keep using the function forms.
 - `buf[i] = x` is already supported. Indexed assignment for list / bitset / chain is not.
 
 ## Related docs

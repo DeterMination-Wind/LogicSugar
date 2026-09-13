@@ -28,7 +28,7 @@ list <name> <memory> <base> <size>
 | `lfind(l, v)` | 列表, 值 | 下标或 -1 | 首个匹配；未找到 -1 |
 | `lsize(l)` | 列表 | 元素个数 | O(1) |
 
-方法糖：`l[i]` / `l.get(i)` 等价于 `lget(l, i)`，`l.size()` / `l.length()` / `l.count()` 等价于 `lsize(l)`。
+方法糖：`l[i]` / `l.get(i)` 等价于 `lget(l, i)`，`l.find(v)` / `l.indexOf(v)` 等价于 `lfind(l, v)`，`l.size()` / `l.length()` / `l.count()` 等价于 `lsize(l)`。
 
 ## 转译示例
 

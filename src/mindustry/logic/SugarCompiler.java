@@ -298,6 +298,11 @@ public final class SugarCompiler{
         // F2: 数据模块注入的内置函数库并入本次编译使用的 LibraryIndex（只影响本次编译；
         // extractLibrarySource 仍只作用于纯用户库文本，内置函数不会进入 __ls_lib 载体）。
         SugarFunctions.LibraryIndex compileLibrary = SugarFunctions.withBuiltins(library, DataModules.builtinSugar());
+        // analyze 之前安装轻量声明表：collectCalls 需要按声明类型把方法/下标糖解析成 intrinsic
+        //（包含注入函数可达性登记），而 DataModules.collectAll 要等 analyze 之后才执行。
+        java.util.List<LStatement> statementList = new java.util.ArrayList<>(statements.size);
+        for(LStatement statement : statements) statementList.add(statement);
+        Map<String, String> previousDeclaredKinds = ExprIntrinsics.enterDeclaredKinds(DataModules.declaredKinds(statementList));
         ArrayRegistry previousArrays = null;
         boolean arraysEntered = false;
         boolean modulesCollected = false;
@@ -321,8 +326,6 @@ public final class SugarCompiler{
             // F2: 数据模块编译期上下文（analyze 之后、lower 之前）；restore() 在 finally 统一清理。
             // 标记在 collectAll 之前置位：collectAll 会先安装上下文再逐模块 collect，任一模块
             // collect 抛错都必须由 finally 的 restore() 配对清理，否则注册表泄漏到下一次编译/编辑器渲染。
-            java.util.List<LStatement> statementList = new java.util.ArrayList<>(statements.size);
-            for(LStatement statement : statements) statementList.add(statement);
             modulesCollected = true;
             DataModules.collectAll(statementList, functionNames);
 
@@ -413,6 +416,7 @@ public final class SugarCompiler{
             if(arraysEntered) ArrayRegistry.restore(previousArrays);
             ExprCompiler.restorePrivilegedSensors(previousPrivilegedSensors);
             ExprIntrinsics.restoreUserFunctions(previousUserFunctions);
+            ExprIntrinsics.restoreDeclaredKinds(previousDeclaredKinds);
         }
     }
 

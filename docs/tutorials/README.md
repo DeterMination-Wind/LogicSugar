@@ -68,7 +68,7 @@ intrinsic 写法:  speek(s)          lget(list, i)      mapget(m, 1)
 getter 糖写法:   s.top()           list[i] / list.get(i)
 ```
 
-方法/下标糖目前只覆盖只读 getter，且只覆盖不需要注入函数的那些。写入、push/pop/clear 这类操作仍用函数写法；map / set 的 getter 也还没有方法糖。
+方法/下标糖覆盖只读 getter，包括走注入函数的 `map.get` / `set.has` / `lfind` / `bcount` / `cnext` / `clen`（见下文表格）。写入、push/pop/clear 这类操作仍用函数写法。
 
 ### 隐藏状态变量
 
@@ -112,18 +112,21 @@ chain c        -> __ls_chn_c_head / _free
 | 结构 | 可用写法 | 等价于 |
 | --- | --- | --- |
 | list | `l[i]`、`l.get(i)` | `lget(l, i)` |
+| list | `l.find(v)` / `l.indexOf(v)` | `lfind(l, v)` |
 | list / heap | `l.size()` / `l.length()` / `l.count()`、`h.size()` | `lsize(l)` / `hsize(h)` |
 | stack | `s.top()`、`s.peek()`、`s.size()` / `s.count()` | `speek(s)` / `ssize(s)` |
 | queue | `q.front()`、`q.peek()`、`q.size()` / `q.count()` | `qpeek(q)` / `qsize(q)` |
 | deque | `d.front()`、`d.back()`、`d.size()` / `d.count()` | `dpeekf(d)` / `dpeekb(d)` / `dsize(d)` |
-| bitset | `b[i]`、`b.test(i)`、`b.get(i)` | `btest(b, i)` |
-| chain | `c[i]`、`c.get(i)`、`c.head()` | `cget(c, i)` / `chead(c)` |
+| bitset | `b[i]`、`b.test(i)`、`b.get(i)`、`b.count()` | `btest(b, i)` / `bcount(b)` |
+| chain | `c[i]`、`c.get(i)`、`c.head()`、`c.next(i)`、`c.len()` | `cget(c, i)` / `chead(c)` / `cnext(c, i)` / `clen(c)` |
+| map | `m[k]`、`m.get(k)`、`m.has(k)`、`m.size()` | `mapget(m, k)` / `maphas(m, k)` / `mapsize(m)` |
+| uset | `s.has(v)`、`s.size()` | `uhas(s, v)` / `usize(s)` |
 
 注意：
 
 - 已有同名的 array / matrix 时，`x[i]` 优先按数组解释。
 - 下标糖目前只读：`l[i] = v` 会直接报错，请写 `lset(l, i, v)` / `bset(b, i)` / `cset(c, i, v)`。
-- `map.get(k)` / `set.has(v)` / `lfind` / `bcount` / `cnext` / `clen` 暂不提供方法糖，继续用函数写法。原因见文末。
+- `map` / `uset` 的方法糖接收者名必须与声明卡一致；例如 `uset s ...` 时写 `s.has(v)`。
 
 ## 选择指南
 
@@ -151,7 +154,7 @@ chain c        -> __ls_chn_c_head / _free
 
 ## 后续计划
 
-- map / uset 的 `m.get(k)` / `u.has(v)`，以及 `lfind` / `bcount` / `cnext` / `clen` 等方法糖，需要把按声明类型解析方法名提前到 analyze 阶段并补齐注入函数的可达性登记；在完成前继续使用函数写法。
+- 方法糖已覆盖走注入函数的 `mapget` / `uhas` / `lfind` / `bcount` / `cnext` / `clen`（analyze 阶段先做声明预扫描，再补注入函数可达性）。暂不提供 mutator 方法糖（`s.push()` / `l.append()` / `m.set()` 等）。
 - 数组的 `buf[i] = x` 已经支持；list / bitset / chain 的下标赋值暂不支持。
 
 ## 相关文档

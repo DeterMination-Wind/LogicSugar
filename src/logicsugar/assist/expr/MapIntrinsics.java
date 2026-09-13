@@ -108,6 +108,29 @@ public final class MapIntrinsics implements ExprIntrinsics.Provider{
         }
     }
 
+    // ===== 方法糖 / 下标糖（只读 getter）=====
+
+    @Override
+    public String kindOf(ExprCompiler.Node receiver){
+        if(!(receiver instanceof ExprCompiler.Var var)) return null;
+        return MapModule.active(var.name) == null ? null : MapModule.ID;
+    }
+
+    @Override
+    public String methodIntrinsic(String kind, String method, int argc){
+        if(!MapModule.ID.equals(kind)) return null;
+        String m = method.toLowerCase(java.util.Locale.ROOT);
+        if(argc == 1 && (m.equals("get") || m.equals("lookup"))) return "mapget";
+        if(argc == 1 && (m.equals("has") || m.equals("contains") || m.equals("containskey"))) return "maphas";
+        if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "mapsize";
+        return null;
+    }
+
+    @Override
+    public String indexIntrinsic(String kind){
+        return MapModule.ID.equals(kind) ? "mapget" : null;
+    }
+
     @Override
     public boolean isMemberBase(ExprCompiler.Node base){
         return false;
