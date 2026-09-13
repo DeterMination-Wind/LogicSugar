@@ -991,6 +991,15 @@ public class SugarLogicDialog extends LogicDialog{
         }catch(Throwable ignored){
             return;
         }
+        if(executor == null){
+            // 函数库会话不是一个处理器程序：1000 条保存上限不适用。只显示库源码行数，
+            // 不做超限提示，也不写入 lastBudget（关闭路径不会拦截函数库）。
+            lastBudget = null;
+            budgetLabel.setText(Core.bundle.format("logicsugar.budget.library",
+                SugarCompiler.emittedInstructionCount(sugar)));
+            budgetLabel.setColor(Color.lightGray);
+            return;
+        }
         lastBudget = InstructionBudget.of(sugar, SugarCompiler.currentMode(),
             effectiveLibrary.index, effectiveLibrary.text);
         int storage = compressedSize(lastBudget);
