@@ -76,6 +76,7 @@ public class SugarCompilerSelfTest{
         functionValidationRejected();
         functionRecursionRejected();
         formatVersionAndCopyCompatibility();
+        functionReturnDeclarations();
         functionUnreachableCostsNothing();
         functionInstructionLimitHint();
         instructionBudgetDetectsOverLimit();
@@ -1303,6 +1304,43 @@ public class SugarCompilerSelfTest{
         // A marker-less (vanilla round-tripped) save still reports "unknown".
         check(SugarCompiler.storedFormat(SugarCompiler.stripMarkers(v1)) == 0,
             "marker-less saves must report format 0");
+    }
+
+    /** v5 return declarations: `funcdef f a ~` (void) and `funcdef f a value`. */
+    private static void functionReturnDeclarations(){
+        // The legacy three-token shape keeps inferring from the body and round-trips untouched.
+        String legacy = "funcdef f a 2\nreturn \"a\"\nblockend\nfunccall f \"1\" r\n";
+        String legacyCompiled = SugarCompiler.compile(legacy, SugarCompiler.FuncMode.normal);
+        check(SugarCompiler.restore(legacyCompiled).equals(legacy), "legacy funcdef did not round-trip");
+        check(loweredCode(legacyCompiled).contains("set r __ls_func_f_result"),
+            "legacy value return was not copied");
+
+        // ~ = void: a value return is rejected, a void call compiles, and no result is copied.
+        expectFailure("funcdef f a ~ 2\nreturn \"a\"\nblockend\nfunccall f \"1\" ~\n",
+            "declared void");
+        String voidProgram = "funcdef f a ~ 2\nprint a\nblockend\nfunccall f \"1\" ~\n";
+        String voidCompiled = SugarCompiler.compile(voidProgram, SugarCompiler.FuncMode.normal);
+        check(!loweredCode(voidCompiled).contains("__ls_func_f_result"),
+            "a void function must not materialize a result:\n" + loweredCode(voidCompiled));
+        check(SugarCompiler.restore(voidCompiled).equals(voidProgram),
+            "declared void function did not survive the carrier round trip");
+        check(SugarCompiler.verifyRestore(voidCompiled, voidProgram),
+            "verifyRestore rejected a declared void function");
+
+        // Asking a void function for a result names the declaration.
+        expectFailure("funcdef f a ~ 2\nprint a\nblockend\nfunccall f \"1\" r\n", "declared void (~)");
+
+        // value = the body must return one.
+        expectFailure("funcdef f a value 2\nset x 1\nblockend\nfunccall f \"1\" r\n", "never returns one");
+        String valueProgram = "funcdef f a value 2\nreturn \"a\"\nblockend\nfunccall f \"1\" r\n";
+        String valueCompiled = SugarCompiler.compile(valueProgram, SugarCompiler.FuncMode.normal);
+        check(loweredCode(valueCompiled).contains("set r __ls_func_f_result"),
+            "declared value return was not copied");
+
+        // Spelling aliases.
+        check(SugarStatements.normalizeReturns("void").equals("~")
+            && SugarStatements.normalizeReturns("VAL").equals("value"),
+            "return declaration aliases were not normalized");
     }
 
     private static void functionUnreachableCostsNothing(){
