@@ -34,7 +34,7 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
                                       # varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest,
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
                                       # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest,
-                                      # escapePreviewTest, v160SensorAccessTest
+                                      # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 

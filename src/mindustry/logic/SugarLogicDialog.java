@@ -31,6 +31,7 @@ import mindustry.ui.dialogs.BaseDialog;
 import mindustry.world.blocks.logic.LogicBlock;
 import logicsugar.FunctionLibrary;
 import logicsugar.FunctionLibraryDialog;
+import logicsugar.assist.BottomBarLayout;
 import logicsugar.assist.EditHistory;
 import logicsugar.assist.InstructionBudget;
 import logicsugar.assist.expr.ExprCompiler;
@@ -97,6 +98,14 @@ public class SugarLogicDialog extends LogicDialog{
     private Button redoButton;
     /** Width used by the last desktop bottom-bar layout; changed after the dialog gets a real size. */
     private float bottomButtonsWidth = -1f;
+
+    /** Fixed size of one bottom-bar button cell; vanilla setup() uses the same 160x64. */
+    private static final float barButtonWidth = 160f;
+    private static final float barButtonHeight = 64f;
+    /** Instruction-budget label cell: 180px content plus its 8px side pads. */
+    private static final float barBudgetWidth = 180f + 16f;
+    /** Horizontal padding reserved by every bottom-bar row. */
+    private static final float barRowPad = 16f;
 
     public SugarLogicDialog(){
         super();
@@ -186,9 +195,17 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     /**
-     * Keeps editor actions at the true visual center while inspection/debug controls stay at
-     * the right edge. Equal-width left/right regions ensure the action group does not shift
-     * merely because the debug controls are present.
+     * Rebuilds the desktop bottom bar so that no control is ever squeezed or painted over.
+     *
+     * <p>Vanilla {@code setup()} leaves {@code buttons.defaults().size(160f, 64f)} on this
+     * row. That default sets a positive <em>maximum</em> width as well as a minimum, so every
+     * container cell added here used to be clamped to a single button; the fixed 160px
+     * children of that container then overflowed it and the inspection controls painted
+     * straight over the action controls (buttons-overlapping report, 2026-09). The inherited
+     * maximum is cleared before any container is added — a non-positive maximum means
+     * "unbounded" in Table's layout math. The same fixed cell widths also make it cheap to
+     * check whether a row really fits ({@link BottomBarLayout}), so a narrow dialog wraps the
+     * controls onto more rows instead of squeezing them into each other.</p>
      */
     private void layoutBottomButtons(){
         // Keep vanilla's portrait/mobile row breaks.  The centered stack is only needed for
@@ -225,48 +242,106 @@ public class SugarLogicDialog extends LogicDialog{
         };
 
         buttons.clearChildren();
+        // See the method comment: vanilla's 160px default maximum would clamp the containers
+        // below to a single button and let their fixed-size children overlap each other.
+        buttons.defaults().maxWidth(0f);
 
         Table centeredTable = new Table();
-        centeredTable.defaults().size(160f, 64f);
+        centeredTable.defaults().size(barButtonWidth, barButtonHeight);
         centeredTable.center();
+        int centeredCount = 0;
         for(Element element : centered){
             // Hidden optional actions (for example the library-only discard button) must not
             // reserve an invisible slot, otherwise the visible action group is off-center.
-            if(element != null && element.visible) centeredTable.add(element);
-        }
-
-        Table debugTable = new Table();
-        debugTable.defaults().size(160f, 64f);
-        debugTable.right().marginRight(12f);
-        for(Element element : debug){
-            if(element == null) continue;
-            if(element == budgetLabel){
-                debugTable.add(element).width(180f).height(64f).padLeft(8f).padRight(8f);
-            }else{
-                debugTable.add(element);
+            if(element != null && element.visible){
+                centeredTable.add(element);
+                centeredCount++;
             }
         }
 
-        // The action table and the full-width debug region share a stack only as positioning
-        // layers: their actual controls occupy disjoint horizontal areas. Directly stacking
-        // debugTable gives it only its preferred bounds, so a budget label can paint over the
-        // centered buttons. The wrapper receives the full bar width and anchors that compact
-        // table to its right edge instead.
-        float sideWidth = debugTable.getPrefWidth() + 12f;
-        float wideEnough = centeredTable.getPrefWidth() + 2f * sideWidth + 16f;
-        float availableWidth = buttons.getWidth();
-        if(availableWidth <= 0f) availableWidth = Core.graphics.getWidth();
+        Table debugTable = new Table();
+        debugTable.defaults().size(barButtonWidth, barButtonHeight);
+        debugTable.right().marginRight(12f);
+        int debugCount = 0;
+        for(Element element : debug){
+            if(element == null || !element.visible) continue;
+            addBarCell(debugTable, element);
+            debugCount++;
+        }
+
+        float available = buttons.getWidth();
+        // Before the first layout the row has no measured width yet; the screen is an upper
+        // bound for it (dialog windows fill their parent), so that first pass is only ever
+        // corrected towards a narrower bar by the update() re-check installed above.
+        if(available <= 0f) available = Core.graphics.getWidth();
         bottomButtonsWidth = buttons.getWidth();
-        Table debugRegion = new Table();
-        debugRegion.right();
-        debugRegion.add(debugTable).right();
-        if(availableWidth >= wideEnough){
-            buttons.stack(centeredTable, debugRegion).growX().height(64f).padLeft(8f).padRight(8f);
-        }else{
-            buttons.add(centeredTable).growX().height(64f).padLeft(8f).padRight(8f).row();
-            buttons.add(debugRegion).growX().height(64f).padLeft(8f).padRight(8f);
+
+        // 1) Everything on one row: actions centered, inspection controls anchored to the
+        //    right edge.  Both groups are full-width layers of a stack, so they may only share
+        //    the row while their footprints cannot touch.
+        float sideWidth = debugTable.getPrefWidth() + 12f;
+        float wideEnough = centeredTable.getPrefWidth() + 2f * sideWidth + barRowPad;
+        if(available >= wideEnough){
+            Table debugRegion = new Table();
+            debugRegion.right();
+            debugRegion.add(debugTable).right();
+            buttons.stack(centeredTable, debugRegion).growX().height(barButtonHeight).padLeft(8f).padRight(8f);
+            buttons.invalidateHierarchy();
+            return;
+        }
+
+        // 2) Two rows: actions first, inspection controls right-aligned below them (upstream's
+        //    own narrow arrangement).  Only usable while each group still fits on one row.
+        float rowSpace = available - barRowPad;
+        if(centeredTable.getPrefWidth() <= rowSpace && debugTable.getPrefWidth() <= rowSpace){
+            buttons.add(centeredTable).growX().height(barButtonHeight).padLeft(8f).padRight(8f).row();
+            Table debugRegion = new Table();
+            debugRegion.right();
+            debugRegion.add(debugTable).right();
+            buttons.add(debugRegion).growX().height(barButtonHeight).padLeft(8f).padRight(8f);
+            buttons.invalidateHierarchy();
+            return;
+        }
+
+        // 3) Narrow window: pack the individual cells into rows that really fit.  A cell never
+        //    shares a row unless the row can hold it, so nothing is squeezed into its neighbour
+        //    (worst case a single oversized cell keeps a row to itself and is clipped instead).
+        Element[] items = new Element[centeredCount + debugCount];
+        float[] widths = new float[items.length];
+        int index = 0;
+        for(Element element : centered){
+            if(element == null || !element.visible) continue;
+            items[index] = element;
+            widths[index++] = barButtonWidth;
+        }
+        for(Element element : debug){
+            if(element == null || !element.visible) continue;
+            items[index] = element;
+            widths[index++] = element == budgetLabel ? barBudgetWidth : barButtonWidth;
+        }
+
+        int[] rows = BottomBarLayout.packRows(rowSpace, widths);
+        index = 0;
+        for(int row = 0; row < rows.length; row++){
+            Table rowTable = new Table();
+            rowTable.defaults().size(barButtonWidth, barButtonHeight);
+            rowTable.center();
+            for(int cell = 0; cell < rows[row]; cell++){
+                addBarCell(rowTable, items[index++]);
+            }
+            buttons.add(rowTable).growX().height(barButtonHeight).padLeft(8f).padRight(8f);
+            if(row < rows.length - 1) buttons.row();
         }
         buttons.invalidateHierarchy();
+    }
+
+    /** Adds one bottom-bar cell; the instruction-budget label keeps its wider 196px cell. */
+    private void addBarCell(Table row, Element element){
+        if(element == budgetLabel){
+            row.add(element).width(180f).height(barButtonHeight).padLeft(8f).padRight(8f);
+        }else{
+            row.add(element);
+        }
     }
 
     private void installHistoryButtons(){

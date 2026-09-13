@@ -175,6 +175,16 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 | 撤销/重做 | `assist.EditHistory` + `SugarLogicDialog` | 快照栈（最多 80 层）记录 `canvas.save()`；桌面 Ctrl+Z / Ctrl+Y，移动端底部 Undo/Redo 按钮。纯编辑器状态，不改保存产物 |
 
+### 底部按钮行布局
+
+逻辑编辑器底栏的单元宽度是固定的：普通按钮 `160x64`（与上游 `setup()` 的 `buttons.defaults().size(160f, 64f)` 一致），指令预算标签为 `180px` 内容加左右各 `8px` 内边距（合计 196px）。`SugarLogicDialog.layoutBottomButtons()`（`BottomBarLayout` 提供纯函数行打包，`bottomBarLayoutTest` 钉住）按可用宽度三选一：
+
+1. **单行居中**（`available >= centered + 2*(debug + 12) + 16`）：操作组居中、检查控件贴右，两组是同一个 `Stack` 的两层，互不重叠。
+2. **两行**：操作组一行，检查控件（复制变量 / 复制打印缓冲 / 指令预算）右对齐另起一行——上游自己的窄屏形态。
+3. **按行打包**：任一组自己都放不下时，逐单元贪心装行，宁可多行也不把相邻单元挤在一起。
+
+两个必须保留的约束：① 上游 `setup()` 留在按钮行上的 `defaults().size(160f, 64f)` 同时设了**正的最大宽度**，落在该行的容器（`Stack`/换行 `Table`）会被压到单个按钮宽，固定宽度的子控件随即溢出并互相覆盖（2026-09 按钮重叠报告）；容器必须先把继承的最大宽度清掉（`Table` 的布局把 `maxWidth <= 0` 当作无上限）。② 改单元宽度或内边距时必须同步 `barButtonWidth` / `barBudgetWidth` / `barRowPad`，否则单行判定与行打包都会算错。
+
 ### 调色板分类
 
 Sugar 卡片不再全部挤在原版 Flow Control 里：
