@@ -15,23 +15,80 @@ Logic Sugar improves the Mindustry logic editing experience for people who want 
 
 ## Features
 
-- **Structured control flow** — `if` / `elif` / `else`, `for`, `while`, `switch` / `case` and `break` / `continue` written as blocks, compiled into plain vanilla mlog on save.
-- **Expressions as conditions** — the condition of `if` / `elif` / `while` / `for` (Expr mode) accepts a full expression like `hp < 25 && !shielded`.
-- **One-line expression statements** — write `result = (a + b) * 2`; it expands to equivalent instructions on save, folds back on reopen, and invalid expressions are marked red on the spot.
-- **Expressions anywhere a value goes** — assignments, function arguments, `return` values, and member access like `@unit.@health`.
-- **Arrays** — the `array` card names a range of a memory block (base + size) so expressions can use subscripts like `buf[i]` and `buf[i] = 5`; they compile to plain vanilla `read` / `write` instructions and fold back into the expression card on reopen.
-- **Data structures** — `matrix` (2-D arrays), `record`, `stack` / `queue` / `deque`, `bitset`, `map` (hash table), `uset` (set), `list`, `heap` and `chain` declarations name structured memory regions. `fill` provides whole-range same-value initialization, and every array/container intrinsic now has a persistent operation card in its matching palette category. The old eight-slot `arrayinit` token remains load-compatible only. All operations still lower to plain vanilla instructions and reopen through the Sugar carrier.
-- **Data-structure getter sugar** — in Expr mode a declared structure can use subscript/method spellings for its getters: `l[i]` / `l.get(i)` / `l.size()` for `list`, `s.top()` / `s.peek()` / `s.size()` for `stack`, `q.front()` / `q.peek()` / `q.size()` for `queue`, `d.front()` / `d.back()` / `d.size()` for `deque`, `b[i]` / `b.test(i)` for `bitset`, `c[i]` / `c.get(i)` / `c.head()` for `chain`. They compile exactly like `lget(l, i)` / `speek(s)` and still lower to plain vanilla instructions; map / uset (`m[k]`, `m.get(k)`, `m.has(k)`, `m.size()`, `s.has(v)`, `s.size()`), `l.find(v)`, `b.count()` and `c.next(i)` / `c.len()` are supported too. Index sugar is read-only — use `lset` / `bset` / `cset` to write.
-- **Advanced data-structure tutorial** — one chapter per structure with declaration card, function table, lowered mlog walkthrough, complexity and caveats: see [docs/tutorials/en/README.md](docs/tutorials/en/README.md).
-- **Functions** — define functions with parameters, call them and return values; normal (subroutine) and inline modes switchable in settings.
-- **Global function library** — shared by every processor, edited inside the processor editor, validated and saved automatically on close, and self-repairing if the file gets corrupted.
-- **Structure recovery** — reopening a saved processor restores the structured blocks you edited (`if` / `for` / `while` / `switch` / functions) and data-declaration cards such as arrays, stacks and records when they were part of the original program; only fully verified parts come back, everything else stays vanilla. Plain hand-written mlog without Logic Sugar source recovers control flow only — it will not invent data-structure cards.
-- **Original / Sugar views** — switch between the generated vanilla mlog and the editable Sugar view any time, with unsaved changes protected before switching.
-- **Editor helpers** — colored jump lines, `__ls_*` internals hidden from the variable list, Ctrl+Click / Ctrl+Drag statement copying, hover hints, search highlighting, undo/redo (Ctrl+Z / Ctrl+Y on desktop, buttons on mobile), and a live compiled-instruction count against the processor limit.
-- **Assertions** — eight runtime-check cards: out-of-range array indexes, wrong data types, values that drift from expectations, and print-output comparisons stop the program on the offending line with a message above the processor; a breakpoint freezes the whole game, centers the camera on the processor and reports the failing line; a log statement writes to the game log. Assertions live only in the editor by default and never enter saved code; the single-player "Debug Assert Build" toggle makes them run for real, and multiplayer saves always stay vanilla-compatible. Settings can disable breakpoints, turn failed assertions into breakpoints, and keep the camera detached while paused.
-- **Processor status on the map** — stopped processors show which line they stopped on, long waits draw a progress ring, and failures show their message in place (with expected/actual values when available); threshold, scan rate and warning effects are adjustable in settings, and processors outside the viewport are skipped.
-- **Unit flags on the map** — optional settings draw each unit's logic flag above it, either in red or in a distinct vivid color per flag; the default flag 0 stays hidden. Display only: saves and multiplayer are unaffected.
-- **Copy variables / print buffer** — dump all variables of the processor being edited as a name-sorted, full-precision table ready for spreadsheets, or copy the program's current print output.
+### Structured control flow
+
+Write common control flow as blocks in the editor. On save, everything compiles to plain vanilla mlog.
+
+| Construct | Syntax | What it does |
+| --- | --- | --- |
+| Branching | `if`, `elif`, `else` | Structured conditionals. |
+| Loops | `for`, `while` | Structured loops. |
+| Loop control | `break`, `continue` | Break out of or continue a loop. |
+| Multi-branch | `switch`, `case` | Match a value against cases. |
+
+### Expressions and functions
+
+| Feature | Details |
+| --- | --- |
+| **Expressions as conditions** | Conditions of `if`, `elif`, `while`, and `for` (Expr mode) accept full expressions such as `hp < 25 && !shielded`. |
+| **One-line expression statements** | Write `result = (a + b) * 2`; it expands to equivalent instructions on save, folds back on reopen, and invalid expressions are marked red on the spot. |
+| **Expressions anywhere a value goes** | Assignments, function arguments, `return` values, and member access such as `@unit.@health`. |
+| **Functions** | Define functions with parameters, call them, and return values. Switch between normal (subroutine) and inline modes in settings. |
+| **Global function library** | Shared by every processor and edited inside the processor editor. It is validated and saved automatically on close, and self-repairs if the file gets corrupted. |
+
+### Data structures
+
+Declarations name structured memory regions. They are metadata only: every operation lowers to plain vanilla instructions, so saved programs stay vanilla-compatible and reopen through the Sugar carrier.
+
+| Declaration | Kind |
+| --- | --- |
+| `array` | Range of a memory block (base + size) |
+| `matrix` | 2-D array |
+| `record` | Record |
+| `stack` | Stack |
+| `queue` | Queue |
+| `deque` | Double-ended queue |
+| `bitset` | Bitset |
+| `map` | Hash table |
+| `uset` | Set |
+| `list` | List |
+| `heap` | Heap |
+| `chain` | Linked list |
+
+Array expressions can use subscripts such as `buf[i]` and `buf[i] = 5`; they compile to plain vanilla `read` and `write` instructions and fold back into the expression card on reopen.
+
+`fill` provides whole-range same-value initialization. Every array and container intrinsic now has a persistent operation card in its matching palette category. The old eight-slot `arrayinit` token remains load-compatible only. All operations still lower to plain vanilla instructions and reopen through the Sugar carrier.
+
+Advanced tutorial: one chapter per structure, with declaration card, function table, lowered mlog walkthrough, complexity, and caveats. See [docs/tutorials/en/README.md](docs/tutorials/en/README.md).
+
+### Data-structure getter sugar
+
+In Expr mode, a declared structure can use subscripts or method spellings for its getters. Index sugar is read-only — use `lset`, `bset`, or `cset` to write.
+
+| Structure | Supported spellings |
+| --- | --- |
+| `list` | `l[i]`, `l.get(i)`, `l.size()`, `l.find(v)` |
+| `stack` | `s.top()`, `s.peek()`, `s.size()` |
+| `queue` | `q.front()`, `q.peek()`, `q.size()` |
+| `deque` | `d.front()`, `d.back()`, `d.size()` |
+| `bitset` | `b[i]`, `b.test(i)`, `b.count()` |
+| `map` | `m[k]`, `m.get(k)`, `m.has(k)`, `m.size()` |
+| `uset` | `s.has(v)`, `s.size()` |
+| `chain` | `c[i]`, `c.get(i)`, `c.head()`, `c.next(i)`, `c.len()` |
+
+They compile exactly like the corresponding intrinsic (`lget(l, i)`, `speek(s)`, and so on) and still lower to plain vanilla instructions.
+
+### Editor, debugging, and views
+
+| Feature | Details |
+| --- | --- |
+| **Structure recovery** | Reopening a saved processor restores the structured blocks you edited (`if`, `for`, `while`, `switch`, functions) and data-declaration cards such as arrays, stacks, and records when they were part of the original program. Only fully verified parts come back; everything else stays vanilla. Plain hand-written mlog without Logic Sugar source recovers control flow only — it will not invent data-structure cards. |
+| **Original and Sugar views** | Switch between the generated vanilla mlog and the editable Sugar view at any time, with unsaved changes protected before switching. |
+| **Editor helpers** | Colored jump lines, `__ls_*` internals hidden from the variable list, Ctrl+Click and Ctrl+Drag statement copying, hover hints, search highlighting, undo and redo (Ctrl+Z and Ctrl+Y on desktop, buttons on mobile), and a live compiled-instruction count against the processor limit. |
+| **Assertions** | Eight runtime-check cards: out-of-range array indexes, wrong data types, values that drift from expectations, and print-output comparisons stop the program on the offending line with a message above the processor. A breakpoint freezes the whole game, centers the camera on the processor, and reports the failing line; a log statement writes to the game log. Assertions live only in the editor by default and never enter saved code. The single-player "Debug Assert Build" toggle makes them run for real, and multiplayer saves always stay vanilla-compatible. Settings can disable breakpoints, turn failed assertions into breakpoints, and keep the camera detached while paused. |
+| **Processor status on the map** | Stopped processors show which line they stopped on, long waits draw a progress ring, and failures show their message in place (with expected and actual values when available). Threshold, scan rate, and warning effects are adjustable in settings, and processors outside the viewport are skipped. |
+| **Unit flags on the map** | Optional settings draw each unit's logic flag above it, either in red or in a distinct vivid color per flag; the default flag 0 stays hidden. Display only: saves and multiplayer are unaffected. |
+| **Copy variables and print buffer** | Dump all variables of the processor being edited as a name-sorted, full-precision table ready for spreadsheets, or copy the program's current print output. |
 
 ## Install
 
