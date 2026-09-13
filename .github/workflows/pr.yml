@@ -41,13 +41,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Anuken/Arc
-          ref: a3c7d2cbf36dfcee2c16b3c95a9f4834843d74a1
+          ref: 5a9696f1d41ea32455568876e1f6b553f99dd8b5
           path: Arc
           fetch-depth: 1
-
-      # Arc does not track the empty natives-ios project directory; Gradle 9 requires it to exist.
-      - name: Prepare Arc native project directory
-        run: mkdir -p Arc/natives/natives-ios
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
