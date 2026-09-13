@@ -557,6 +557,17 @@ public final class SugarStatements{
     public static class FuncDefStatement extends BeginStatement{
         public String name = "func";
         public String params = "";
+        /**
+         * Return declaration: "" = infer from the body (the legacy three-token wire shape),
+         * "~" = void (no value return allowed), "value" = must return a value at least once.
+         * v5 saves append it before the destIndex: {@code funcdef f a ~ 3}.
+         */
+        public String returns = "";
+
+        /** True when the return declaration was written explicitly (v5 wire shape). */
+        public boolean declaredReturns(){
+            return returns != null && !returns.trim().isEmpty();
+        }
 
         @Override
         public void build(Table table){
@@ -566,6 +577,9 @@ public final class SugarStatements{
             TextField paramsField = field(table, params, value -> params = value).width(130f).get();
             paramsField.setMessageText(text("func.params.hint", "a,b"));
             table.add(")");
+            table.add(text("func.returns", "returns")).padLeft(6f).self(c -> hint(c, "func.returns"));
+            TextField returnsField = field(table, returns, value -> returns = value).width(60f).get();
+            returnsField.setMessageText(text("func.returns.hint", "~"));
             foldControlRow(table);
         }
 
@@ -574,7 +588,11 @@ public final class SugarStatements{
 
         @Override
         public void write(StringBuilder out){
-            out.append(collapsed ? "funcdefc " : "funcdef ").append(name).append(' ').append(optional(params)).append(' ').append(destIndex);
+            out.append(collapsed ? "funcdefc " : "funcdef ").append(name).append(' ').append(optional(params)).append(' ');
+            // v5 shape appends the return declaration before the destIndex; an empty declaration
+            // keeps the legacy three-token line byte-identical, so old saves round-trip untouched.
+            if(declaredReturns()) out.append(returns.trim()).append(' ');
+            out.append(destIndex);
         }
     }
 
@@ -928,9 +946,39 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
             throw new IllegalArgumentException("Invalid funcdef statement: missing function name");
         }
         result.params = optionalValue(tokens[2]);
-        result.destIndex = parseDestIndex(tokens[3]);
+        // v5 shape: `funcdef <name> <params> <ret> <destIndex>`. Legacy saves only carry
+        // `funcdef <name> <params> <destIndex>`, and a destIndex is always an integer, so an
+        // integer third slot unambiguously means "no declaration, infer from the body".
+        String third = tokens[3] == null ? "" : tokens[3].trim();   // ~ is meaningful here
+        if(isIntegerToken(third)){
+            result.returns = "";
+            result.destIndex = parseDestIndex(tokens[3]);
+        }else{
+            result.returns = normalizeReturns(third);
+            result.destIndex = parseDestIndex(tokens[4]);
+        }
         result.collapsed = collapsed;
         return result;
+    }
+
+    /** True when the token is an optional sign followed by digits (a legacy funcdef destIndex). */
+    private static boolean isIntegerToken(String token){
+        if(token == null || token.isEmpty()) return false;
+        for(int i = 0; i < token.length(); i++){
+            char c = token.charAt(i);
+            if(i == 0 && c == '-') continue;
+            if(c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    /** Normalizes a funcdef return declaration: {@code ~}/void/none and value/val are accepted. */
+    public static String normalizeReturns(String token){
+        String value = token == null ? "" : token.trim();
+        if(value.equals("~") || value.equalsIgnoreCase("void") || value.equalsIgnoreCase("none")) return "~";
+        if(value.equalsIgnoreCase("value") || value.equalsIgnoreCase("val")) return "value";
+        throw new IllegalArgumentException("Invalid funcdef return declaration '" + token
+            + "' (expected ~ for void or value for a value return)");
     }
 
     public static LStatement parseFuncCall(String[] tokens){

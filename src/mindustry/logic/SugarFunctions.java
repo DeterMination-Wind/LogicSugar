@@ -197,6 +197,8 @@ public final class SugarFunctions{
         public final Set<String> callees = new HashSet<>();
         public boolean library;
         public boolean hasValueReturn;
+        /** True when the function is declared {@code ~} (void): it must not return a value. */
+        public boolean declaredVoid;
 
         Function(String name, boolean library){
             this.name = name;
@@ -953,6 +955,8 @@ public final class SugarFunctions{
     private static Function buildFunction(Seq<LStatement> statements, int s, int e, boolean library, boolean allowReserved){
         FuncDefStatement def = (FuncDefStatement)statements.get(s);
         Function function = new Function(def.name, library);
+        String declared = def.declaredReturns() ? def.returns.trim() : "";
+        function.declaredVoid = "~".equals(declared);
         validateName(def.name, "function", allowReserved);
         for(String param : parseParams(def.params)){
             validateName(param, "parameter", allowReserved);
@@ -967,6 +971,10 @@ public final class SugarFunctions{
                 throw error("funcdef", k, "must be at the top level; nested function definitions are not supported");
             }
             if(statement instanceof ReturnStatement ret && !ret.expr.isEmpty()){
+                if(function.declaredVoid){
+                    throw error("return", k, "returns a value from '" + def.name
+                        + "', which is declared void (~)");
+                }
                 function.hasValueReturn = true;
             }
             if(statement instanceof BeginStatement begin){
@@ -979,6 +987,10 @@ public final class SugarFunctions{
                 }
             }
             function.body.add(statement);
+        }
+        if("value".equals(declared) && !function.hasValueReturn){
+            throw error("funcdef", s, "function '" + def.name
+                + "' is declared to return a value but never returns one");
         }
         return function;
     }
@@ -1004,8 +1016,8 @@ public final class SugarFunctions{
                 + " argument(s) but it expects " + target.params.size());
         }
         if(!call.result.isEmpty() && !target.hasValueReturn){
-            throw error("funccall", index, "requests a result from '" + call.name
-                + "' but its body never returns a value");
+            throw error("funccall", index, "requests a result from '" + call.name + "' but "
+                + (target.declaredVoid ? "it is declared void (~)" : "its body never returns a value"));
         }
         (owner == null ? set.mainCalls : owner.callees).add(call.name);
     }
@@ -1922,7 +1934,7 @@ public final class SugarFunctions{
             // Value returns jump here so the caller-side result copy still runs;
             // void returns and jumps to the function end skip it via the exit label.
             out.append("__ls_").append(prefix).append("ret:\n");
-            if(!call.result.isEmpty()){
+            if(!call.result.isEmpty() && target.hasValueReturn){
                 out.append("set ").append(call.result).append(' ').append(target.resultName()).append('\n');
             }
             out.append("__ls_").append(prefix).append("exit:\n");
@@ -1933,7 +1945,9 @@ public final class SugarFunctions{
             out.append("set ").append(target.retName()).append(" @counter\n");
             out.append("op add ").append(target.retName()).append(' ').append(target.retName()).append(" 2\n");
             out.append("jump ").append(target.entryName()).append(" always x false\n");
-            if(!call.result.isEmpty()){
+            // A void callee never writes its result variable, so copying it would expose a
+            // stale value; only value-returning functions hand something back.
+            if(!call.result.isEmpty() && target.hasValueReturn){
                 out.append("set ").append(call.result).append(' ').append(target.resultName()).append('\n');
             }
         }
