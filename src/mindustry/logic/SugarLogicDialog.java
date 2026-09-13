@@ -236,23 +236,21 @@ public class SugarLogicDialog extends LogicDialog{
             }
         }
 
-        // Never stack these tables: a Stack lets the budget label paint over Variables and can
-        // cover the copy controls. Symmetric side regions preserve actual centering without
-        // placing one interactive table above another.
+        // The action table and the full-width debug region share a stack only as positioning
+        // layers: their actual controls occupy disjoint horizontal areas. Directly stacking
+        // debugTable gives it only its preferred bounds, so a budget label can paint over the
+        // centered buttons. The wrapper receives the full bar width and anchors that compact
+        // table to its right edge instead.
         float sideWidth = debugTable.getPrefWidth() + 12f;
         float wideEnough = centeredTable.getPrefWidth() + 2f * sideWidth + 16f;
+        Table debugRegion = new Table();
+        debugRegion.right();
+        debugRegion.add(debugTable).right();
         if(Core.graphics.getWidth() >= wideEnough){
-            Table debugRegion = new Table();
-            debugRegion.right();
-            debugRegion.add(debugTable).right();
-            // Both growX cells receive the same excess width. The empty left cell balances
-            // the right debug region so the action group remains exactly centered.
-            buttons.add().growX().minWidth(sideWidth).height(64f);
-            buttons.add(centeredTable).height(64f);
-            buttons.add(debugRegion).growX().minWidth(sideWidth).height(64f);
+            buttons.stack(centeredTable, debugRegion).growX().height(64f).padLeft(8f).padRight(8f);
         }else{
             buttons.add(centeredTable).growX().height(64f).padLeft(8f).padRight(8f).row();
-            buttons.add(debugTable).growX().height(64f).padLeft(8f).padRight(8f);
+            buttons.add(debugRegion).growX().height(64f).padLeft(8f).padRight(8f);
         }
         buttons.invalidateHierarchy();
     }
