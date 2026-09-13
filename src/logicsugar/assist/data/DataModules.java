@@ -98,6 +98,25 @@ public final class DataModules{
         return name == null ? null : paletteCalls().get(name.toLowerCase(java.util.Locale.ROOT));
     }
 
+    /** 轻量扫描全部声明卡，得到 名字 → 结构种类（供 analyze 阶段解析方法糖）。
+     *  同名冲突按模块注册顺序先到先得；不做严格校验，非法卡片由后续 collect 拦截。 */
+    public static Map<String, String> declaredKinds(List<LStatement> statements){
+        Map<String, String> result = new LinkedHashMap<>();
+        if(statements == null) return result;
+        for(DataModule module : new ArrayList<>(modules)){
+            for(LStatement statement : statements){
+                Map<String, String> declared = module.declaredKinds(statement);
+                if(declared == null || declared.isEmpty()) continue;
+                for(Map.Entry<String, String> entry : declared.entrySet()){
+                    String name = entry.getKey();
+                    if(name == null || name.isEmpty() || entry.getValue() == null) continue;
+                    result.putIfAbsent(name, entry.getValue());
+                }
+            }
+        }
+        return result;
+    }
+
     /** 进入编译期上下文：每个模块建立/进入自己的注册表（与 {@link #restore} 配对）。 */
     public static void collectAll(List<LStatement> statements, Set<String> functionNames){
         List<DataModule> snapshot = new ArrayList<>(modules);

@@ -127,6 +127,7 @@ public final class SugarAsserts{
 
         @Override
         public void build(Table table){
+            table.clearChildren();
             table.add(text("asserts.value", "value of")).padLeft(4);
             field(table, value, s -> value = s).width(85f).pad(2f);
             table.button(b -> {
@@ -190,6 +191,7 @@ public final class SugarAsserts{
 
         @Override
         public void build(Table table){
+            table.clearChildren();
             table.add(text("asserts.expected", "expected")).padLeft(4);
             field(table, expected, s -> expected = s).width(110f).pad(2f);
             table.add(text("asserts.actual", "actual")).padLeft(8);
@@ -224,6 +226,7 @@ public final class SugarAsserts{
 
         @Override
         public void build(Table table){
+            table.clearChildren();
             table.add(text("asserts.position", "position")).padLeft(4);
             field(table, position, s -> position = s).width(110f).pad(2f);
         }
@@ -252,6 +255,7 @@ public final class SugarAsserts{
 
         @Override
         public void build(Table table){
+            table.clearChildren();
             table.add(text("asserts.position", "position")).padLeft(4);
             field(table, position, s -> position = s).width(110f).pad(2f);
             table.add(text("asserts.expected", "expected")).padLeft(8);
@@ -292,6 +296,7 @@ public final class SugarAsserts{
 
         @Override
         public void build(Table table){
+            table.clearChildren();
             table.add(text("asserts.value", "value")).padLeft(4);
             field(table, value, s -> value = s).width(110f).pad(2f);
             table.add(text("asserts.istype", "is of type")).padLeft(8);
@@ -341,6 +346,7 @@ public final class SugarAsserts{
 
         @Override
         public void build(Table table){
+            table.clearChildren();
             table.add(text("asserts.message", "message")).padLeft(4);
             if(hasLevel){
                 table.button(b -> {
@@ -427,6 +433,7 @@ public final class SugarAsserts{
 
         @Override
         public void build(Table table){
+            table.clearChildren();
             table.add(text("asserts.trigger", "trigger")).padLeft(4);
             addCompactOp(table, op, o -> {
                 op = o;

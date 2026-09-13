@@ -44,7 +44,7 @@ Call cinit(c) or cclear(c) before first use. Unset variables read as 0, so cnew 
 | `chead(c)` | chain | head index or -1 | reads the hidden head |
 | `clen(c)` | chain | node count | walks from the head; 0 for an empty chain |
 
-Sugar: `c[i]` / `c.get(i)` equal `cget(c, i)`; `c.head()` equals `chead(c)`.
+Sugar: `c[i]` / `c.get(i)` equal `cget(c, i)`; `c.head()` equals `chead(c)`; `c.next(i)` equals `cnext(c, i)`; `c.len()` / `c.length()` equals `clen(c)`.
 
 ## Lowered examples
 

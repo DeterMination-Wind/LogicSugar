@@ -67,6 +67,13 @@ public class ChainModule extends DataModule{
     public static final String FIELD_HEAD = "head";
     public static final String FIELD_FREE = "free";
 
+    /** analyze 阶段方法糖解析用的轻量声明扫描（不依赖 collect 注册表）。 */
+    @Override
+    public Map<String, String> declaredKinds(LStatement statement){
+        if(statement instanceof ChainDeclStatement card && card.name != null && !card.name.trim().isEmpty()) return Map.of(card.name.trim(), ID);
+        return Map.of();
+    }
+
     @Override
     public String id(){
         return ID;

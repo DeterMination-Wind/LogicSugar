@@ -88,9 +88,10 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public String methodIntrinsic(String kind, String method, int argc){
-        if(argc != 1) return null;
         String m = method.toLowerCase(java.util.Locale.ROOT);
-        return m.equals("test") || m.equals("get") ? "btest" : null;
+        if(argc == 0) return m.equals("count") ? "bcount" : null;
+        if(argc == 1) return m.equals("test") || m.equals("get") ? "btest" : null;
+        return null;
     }
 
     @Override

@@ -34,7 +34,7 @@ mask = 1 << bit
 | `btest(b, i)` | 位集, 位下标 | 1 / 0 | 读该位；越界返回 0 |
 | `bcount(b)` | 位集 | 置 1 的位数 | 扫描全部 words；O(words) |
 
-方法糖：`b[i]`、`b.test(i)`、`b.get(i)` 等价于 `btest(b, i)`。
+方法糖：`b[i]`、`b.test(i)`、`b.get(i)` 等价于 `btest(b, i)`，`b.count()` 等价于 `bcount(b)`。
 
 ## 转译示例
 

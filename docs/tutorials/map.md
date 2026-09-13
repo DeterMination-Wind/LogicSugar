@@ -39,6 +39,7 @@ value 区：[base + capacity, base + 2*capacity)
 | `mapsize(m)` | 表 | 非空 key 数 | O(capacity) 扫描 |
 | `mapclear(m)` | 表 | 0（实现哨兵） | 把所有 key 槽写成 NaN；O(capacity) |
 
+方法糖：`m[k]` / `m.get(k)` 等价于 `mapget(m, k)`，`m.has(k)` / `m.containsKey(k)` 等价于 `maphas(m, k)`，`m.size()` / `m.length()` / `m.count()` 等价于 `mapsize(m)`。
 ## 转译示例
 
 所有操作都编译成对注入函数 `__ls_builtin_map*` 的 `funccall`，参数是内存块名与字面量 base/capacity。

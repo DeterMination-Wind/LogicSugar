@@ -47,6 +47,7 @@ public class BitsetTest{
         declarationCardProducesNoLine();
         expressionExpansions();
         methodSugar();
+        builtinMethodSugar();
         indexExpressionsAndCapacity();
         bcountBuiltinInjection();
         unusedBuiltinStaysOut();
@@ -575,6 +576,16 @@ public class BitsetTest{
         "sync", "clientdata", "getflag", "setflag", "setprop", "playsound", "playmusic",
         "setmarker", "makemarker", "localeprint"
     ));
+
+    /** 注入函数型 getter：b.count() 与 bcount 等价，且 normal 模式登记 bitcount。 */
+    private static void builtinMethodSugar(){
+        withBitsets("bitset bs cell1 0 2", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "bcount(bs)")), textOf(ExprCompiler.compile("x", "bs.count()")));
+        });
+        String mlog = stripCompile("bitset bs cell1 0 2\nifbegin expr \"bs.count() > 0\" 3\nset x 1\nblockend\n");
+        check(mlog.contains("__ls_func___ls_builtin_bitcount_entry:"),
+            "bs.count() did not register the bitcount builtin for normal mode:\n" + mlog);
+    }
 
     private static String compile(String sugar){
         return SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,

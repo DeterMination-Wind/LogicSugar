@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十一个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十二个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了三十一个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了三十二个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -29,8 +29,8 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `recordTest` | `logicsugar.assist.data.RecordTest` | 记录：`record` 卡定长 token 与 `~` 槽位、成员读 `op add <tmp> p_f1 0` / 成员写、未声明成员的 sensor 回退不受影响、重名/字段冲突/保留前缀等严格校验、编辑期标红、声明卡不产行、产物纯原版、载体往返 |
 | `containerTest` | `logicsugar.assist.data.ContainerTest` | 栈/队列/双端队列：`spush/spop/speek/ssize/sclear`、`qpush/qpop/qpeek/qsize/qclear`、`dpushf/dpushb/dpopf/dpopb/dpeekf/dpeekb/dsize/dclear` 的展开（读类直线链、push 走注入函数）、隐藏状态变量与空/满边界（空 pop/peek 返回 NaN、满 push 不写入）、同内存块区间不重叠校验、声明卡不产行、产物纯原版、载体往返与重编译一致、方法糖 `s.top()`/`q.front()`/`d.back()` 与 intrinsic 一致 |
 | `bitsetTest` | `logicsugar.assist.data.BitsetTest` | 位集：`bset/bclr/btest/bcount` 展开为 and/or/shl/shr + read/write（每 word 64 位）、负下标/越界语义、`bcount` 注入函数、容量与区间校验、声明卡不产行、产物纯原版、载体往返、下标糖 `bs[i]` 与方法糖 `bs.test(i)` 与 intrinsic 一致 |
-| `mapTest` | `logicsugar.assist.data.MapTest` | 哈希表：`mapset/mapget/maphas/mapdel/mapsize/mapclear` 展开（开放寻址、NaN 空槽、墓碑删除）、未命中返回 NaN、NaN/±Inf 键拒绝、容量/布局校验、`mapclear` 初始化要求、声明卡不产行、产物纯原版、载体往返 |
-| `setTest` | `logicsugar.assist.data.SetTest` | 无序集合：`uset` 声明卡与 `uadd/uhas/udel/usize/uclear`（开放寻址、仅键区、NaN 墓碑）、满表/重复键/墓碑复用、NaN 键拒绝、`uclear` 初始化要求、声明卡不产行、产物纯原版、载体往返 |
+| `mapTest` | `logicsugar.assist.data.MapTest` | 哈希表：`mapset/mapget/maphas/mapdel/mapsize/mapclear` 展开（开放寻址、NaN 空槽、墓碑删除）、未命中返回 NaN、NaN/±Inf 键拒绝、容量/布局校验、`mapclear` 初始化要求、声明卡不产行、产物纯原版、载体往返、`m.get(k)` / `m.has(k)` / `m.size()` / `m[k]` 方法糖与 `mapget` 可达性 |
+| `setTest` | `logicsugar.assist.data.SetTest` | 无序集合：`uset` 声明卡与 `uadd/uhas/udel/usize/uclear`（开放寻址、仅键区、NaN 墓碑）、满表/重复键/墓碑复用、NaN 键拒绝、`uclear` 初始化要求、声明卡不产行、产物纯原版、载体往返、`s.has(v)` / `s.size()` 方法糖与 `uhas` 可达性 |
 | `listHeapTest` | `logicsugar.assist.data.ListHeapTest` | 列表/小顶堆：`lappend/lget/lset/linsert/lremove/lfind/lsize`、`hpush/hpop/hsize` 展开与边界（越界 NaN/失败 0/未找到 -1/空堆 NaN）、计数回写、容量与区间校验、声明卡不产行、产物纯原版、载体往返、下标糖 `l[i]` 与方法糖 `l.get(i)`/`l.size()`、`h.size()` 与 intrinsic 一致 |
 | `chainTest` | `logicsugar.assist.data.ChainTest` | 链表：`cinit/cclear/cnew/cfree/cget/cset/cnext/clink/cshead/chead/clen` 展开（读类直线链、写内存与遍历走注入函数）、空闲链重建与 LIFO 分配、摘链/挂回空闲链、越界守卫（cget 返回 NaN、cset/clink/cfree 返回 0、cnext 返回 -1）、必须显式 `cinit` 的初始化要求、重名/保留前缀/容量/区间校验、声明卡不产行、产物纯原版、载体往返、下标糖 `c[i]` 与方法糖 `c.get(i)`/`c.head()` 与 intrinsic 一致 |
 | `dataSubsystemTest` | `logicsugar.DataSubsystemIntegrationTest` | INT 生产注册路径：`LogicSugarMod.init()` 幂等（重复 init 不重复 `LogicIO.allStatements` 条目、卡片各一份、parser 与 intrinsic 全部可见）、混合结构端到端编译且 `stripMarkers` 产物纯原版、模块 `collect` 抛异常时 `DataModules.restore()` 仍配对执行且后续编译正常、调色板分类（Advanced Flow Control / Data Structures / Array Algorithms） |
@@ -39,13 +39,14 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `bottomBarLayoutTest` | `logicsugar.assist.BottomBarLayoutTest` | 底栏行打包纯函数：单行/恰好放下/按容量换行、预算标签按 196px 计算、超宽单元独占一行不被吞、行宽不超限（除独占行）、不丢单元，`fitsOneRow` 与打包一致 |
 | `escapePreviewTest` | `logicsugar.assist.EscapePreviewSelfTest` | quoted mlog 字符串转义预览：换行、引号、反斜杠、Unicode、未知/畸形转义及现代能力探测 |
 | `v160SensorAccessTest` | `logicsugar.assist.expr.V160SensorAccessSelfTest` | `LAccess.senseablePrivileged` 的跨版本反射访问与旧版 fallback |
+| `funclibLimitTest` | `logicsugar.FunctionLibraryLimitTest` | 函数库行数上限：`readLibrary` 解析超过 1000 条语句不截断且用完还原 `LExecutor.maxInstructions`；`libraryOverLimit` 在 10000 条边界正确、`withLibraryLimit` 异常路径也还原；`sanitizedLibrary`/`buildLibrary`/`extractLibrarySource` 都能看到第 1000 条之后的库函数；处理器调用尾部库函数时只嵌入用到的子集并可重编译一致；函数库编辑会话整体 round-trip 不丢内容；单函数体超过 1000 条语句也能解析与校验 |
 
 ```powershell
 .\gradlew.bat check        # 全部
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前三十一个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前三十二个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 

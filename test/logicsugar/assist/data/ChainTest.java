@@ -50,6 +50,7 @@ public class ChainTest{
         loadBuiltins();
         expressionExpansions();
         methodSugar();
+        builtinMethodSugar();
         builtinBodies();
         argumentErrors();
         chainBehaviour();
@@ -856,6 +857,20 @@ public class ChainTest{
         "sync", "clientdata", "getflag", "setflag", "setprop", "playsound", "playmusic",
         "setmarker", "makemarker", "localeprint"
     ));
+
+    /** 注入函数型 getter：c.next()/c.len() 与 intrinsic 等价，且 normal 模式登记 builtin。 */
+    private static void builtinMethodSugar(){
+        withRegistry("chain c cell1 2 4", () -> {
+            checkLine(textOf(ExprCompiler.compile("x", "cnext(c, i)")), textOf(ExprCompiler.compile("x", "c.next(i)")));
+            checkLine(textOf(ExprCompiler.compile("x", "clen(c)")), textOf(ExprCompiler.compile("x", "c.len()")));
+        });
+        String nextMlog = stripCompile("chain c cell1 2 4\nifbegin expr \"c.next(0) >= 0\" 3\nset x 1\nblockend\n");
+        check(nextMlog.contains("__ls_func___ls_builtin_chnnext_entry:"),
+            "c.next() did not register the chnnext builtin for normal mode:\n" + nextMlog);
+        String lenMlog = stripCompile("chain c cell1 2 4\nifbegin expr \"c.len() > 0\" 3\nset x 1\nblockend\n");
+        check(lenMlog.contains("__ls_func___ls_builtin_chnlen_entry:"),
+            "c.len() did not register the chnlen builtin for normal mode:\n" + lenMlog);
+    }
 
     private static String compile(String sugar){
         return SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, null, null,

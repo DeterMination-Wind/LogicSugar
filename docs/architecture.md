@@ -74,7 +74,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 堆（小顶） | `heap <name> <memory> <base> <size>` | `hpush` `hpop` `hsize` | `read` / `write` + `__ls_hep_<name>_count` |
 | 链表 | `chain <name> <memory> <base> <size>` | `cinit` `cclear` `cnew` `cfree` `cget` `cset` `cnext` `clink` `cshead` `chead` `clen` | 节点 i 的值槽 `base+2*i`、next 槽 `base+2*i+1`（`next = -1` 为链尾）；`read` / `write` + `__ls_chn_<name>_head/_free` |
 
-- **getter 语法糖（只读）**：已声明结构在 Expr 模式下可用下标/方法写法替代 getter intrinsic——`list` 的 `l[i]` / `l.get(i)`，`list`/`heap` 的 `.size()`/`.length()`/`.count()`，`stack` 的 `.top()`/`.peek()`，`queue` 的 `.front()`/`.peek()`，`deque` 的 `.front()`/`.back()`，`bitset` 的 `b[i]`/`.test(i)`/`.get(i)`，`chain` 的 `c[i]`/`.get(i)`/`.head()`。实现走 `ExprIntrinsics.Provider` 的 `kindOf` / `methodIntrinsic` / `indexIntrinsic` 扩展点，由 `compileNode(Method)` / `compileNode(Index)` 分派；语义与对应 intrinsic 完全一致，已声明数组优先于同名结构的 `[i]`。映射只允许指向**无注入函数**的只读 getter（`lget` / `speek` / `btest` / `cget` / `chead` / `*size`），因此 `analyze` 阶段的 `collectCalls` 跳过方法节点、无需登记 builtin callee；若未来新增映射到 `__ls_builtin_*` 的 getter，必须同步扩展 `collectCalls`/`calleesOf` 的可达性登记。`map`/`set` 的 getter 与 `lfind`/`bcount`/`cnext`/`clen` 暂不提供方法糖（它们走注入函数）。下标糖只读：`l[i] = v` 显式报编译错误并提示使用 `lset` / `bset` / `cset`，避免静默降级为 `write <v> l <i>`。
+- **getter 语法糖（只读）**：已声明结构在 Expr 模式下可用下标/方法写法替代 getter intrinsic——`list` 的 `l[i]` / `l.get(i)`，`list`/`heap` 的 `.size()`/`.length()`/`.count()`，`stack` 的 `.top()`/`.peek()`，`queue` 的 `.front()`/`.peek()`，`deque` 的 `.front()`/`.back()`，`bitset` 的 `b[i]`/`.test(i)`/`.get(i)`，`chain` 的 `c[i]`/`.get(i)`/`.head()`。实现走 `ExprIntrinsics.Provider` 的 `kindOf` / `methodIntrinsic` / `indexIntrinsic` 扩展点，由 `compileNode(Method)` / `compileNode(Index)` 分派；语义与对应 intrinsic 完全一致，已声明数组优先于同名结构的 `[i]`。映射覆盖只读 getter，既包括无注入函数的 `lget` / `speek` / `btest` / `cget` / `chead` / `*size`，也包括走注入函数的 `mapget` / `uhas` / `lfind` / `bcount` / `cnext` / `clen`。`SugarCompiler.compile` 在 `analyze` 之前用 `DataModules.declaredKinds(statements)` 安装轻量声明表；`collectCallNodes` 据此把方法/下标解析成 intrinsic 并发出 root-intrinsic `CallSite`，`registerExprCalls` 再用 `calleesOfRoot` 登记 `__ls_builtin_*` 可达性（否则 normal 模式会漏 hoist）。下标糖只读：`l[i] = v` 显式报编译错误并提示使用 `lset` / `bset` / `cset`，避免静默降级为 `write <v> l <i>`。
 - **容量检查**：`memory` 形如 `cellN` 容量 64、`bankN` / `worldN` 容量 512（大小写不敏感），`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`，集合为 `base+capacity`）超容量编译期报错；其它名字跳过。
 - **越界断言**：仅 `AssertEmit=emit` 的调试构建下、下标为非常量时，在 `read` / `write` 前发射 `assertBounds`（复用 `SugarAsserts` 线格式）；`strip` 模式不发射。数组/矩阵字面量越界始终是编译错误。
 - **空容器语义**：pop / peek 在空时返回 NaN（`op div <tmp> 0 0` 或越界 `read`）；push 在满时返回当前长度且不写入；`lget` 越界返回 NaN，`lset` / `linsert` / `hpush` 失败返回 0，`lremove` 越界返回 NaN、成功返回被删除值，`lfind` 未找到返回 -1，`mapget` 未命中返回 NaN，`mapset` / `uadd` 在 NaN/±Inf 键上返回 -1；链表 `cget` 越界返回 NaN，`cset` / `clink` / `cfree` 越界返回 0，`cnext` 越界返回 -1，`cnew` 在空闲链为空时返回 -1，`clen` 空链返回 0。`bsearch` 在升序数组上未命中返回 -1。
@@ -84,6 +84,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - 声明卡不产指令，全部运算都是原版指令：产物在任何原版客户端可解析、可运行，联机（含自建服）与单机一致；数据子系统不引入任何 `AssertEmit` 例外。
 - 1000 条上限沿用 `SugarCompiler` 既有检查（lowered 指令 + 载体行一起计数），新功能不绕过。循环型操作（push / sort / find / 哈希探测等）在 normal 模式做成共享 `funcdef`，指令预算与调用点数量线性、与结构数量无关；inline 模式会复制函数体，长程序需切回 normal（编译器在超限报错里提示）。
+- **函数库文件不受 1000 条限制**：`functions.txt` 不是保存到处理器的程序，`SugarFunctions.libraryInstructionLimit`（当前 10000 条语句）是库文件自身的安全上限。处理器仍然只能保存 ≤1000 条；调用库函数时只通过 `extractLibrarySource` 嵌入用到的子集，子集与主程序一起计入 1000 条预算。
 
 ### 已知限制
 
@@ -107,6 +108,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - 库文件：`<game data>/mods/config/LogicSugar/functions.txt`，只含 `funcdef … blockend` 对。`FunctionLibrary` 按 lastModified + 内容哈希缓存解析索引；损坏文件按函数逐个抢救，得到部分索引并在日志列出修复警告。
 - 库语义（方案2）：库函数不得改写调用方变量——函数体写入的每个名字（含参数）都被重整为 `__ls_func_<name>_<name>`；`@` 系统变量与 `cellN` / `bankN` / `memoryN` 存储设备豁免，只读名字不动。
 - 编辑入口 `FunctionLibraryDialog` 复用逻辑处理器编辑器（不绑定处理器），关闭时自动校验保存；保存失败会重开编辑器且修改不丢（`passThroughSugarOnError` + `discardButton` 逃生口）。
+- **行数上限（当前 10000 条语句）**：`LAssembler.read` 会静默截断在 `LExecutor.maxInstructions`，所以库文本统一走 `SugarFunctions.readLibrary`（解析期间临时抬高、`finally` 还原，处理器的 1000 条预算不受影响）；库编辑会话里原版 `LCanvas.load` 也走 `SugarFunctions.withLibraryLimit`。`FunctionLibrary.save` 与 `FunctionLibraryDialog.editInProcessor` 用 `libraryOverLimit` 在超限时明确拒绝，避免静默丢尾部；编辑器预算条显示「库源码行数 / 上限」。库文本整体存在本地 `functions.txt`，进入 `__ls_lib` 载体的仍只是被调用的函数子集。
 
 ## 重建（reconstruction）：打开已保存程序
 
@@ -286,7 +288,7 @@ assets/bundles/           bundle.properties / bundle_zh_CN / bundle_zh_TW（用�
 
 ## 设计约束（务必保持）
 
-- **兼容底线（项目所有者明文要求）：多人联机环境下必须兼容原版客户端**——保存到处理器的代码在任何原版客户端上都要能解析、能运行，优先级高于一切新功能。调试类功能（目前是 AssertEmit=emit）只在单机/编辑器（`!Vars.net.active()`）生效，联机会话一律回落原版行为，门禁在代码层强制（`SugarCompiler.currentAssertEmit`）。不提供改变指令预算的能力：指令上限覆盖曾试做后被移除（保存产物恒 ≤1000 条是硬不变式）。残余风险：单机创建的调试构建若分享到多人环境，原版客户端仍会静默降级，代码无法阻止分享，只能靠设置描述与文档讲清。
+- **兼容底线（项目所有者明文要求）：多人联机环境下必须兼容原版客户端**——保存到处理器的代码在任何原版客户端上都要能解析、能运行，优先级高于一切新功能。调试类功能（目前是 AssertEmit=emit）只在单机/编辑器（`!Vars.net.active()`）生效，联机会话一律回落原版行为，门禁在代码层强制（`SugarCompiler.currentAssertEmit`）。不提供改变处理器指令预算的能力：指令上限覆盖曾试做后被移除（处理器保存产物恒 ≤1000 条是硬不变式）。全局函数库文件 `functions.txt` 不是处理器产物，另有 `SugarFunctions.libraryInstructionLimit`（当前 10000 条语句）上限，见"函数与全局函数库"。残余风险：单机创建的调试构建若分享到多人环境，原版客户端仍会静默降级，代码无法阻止分享，只能靠设置描述与文档讲清。
 - 用户可见文案一律走 `logicsugar.*` bundle key，不硬编码。
 - 受保护游戏成员访问只走子类实例方法或反射（见上），静态辅助代码只用 public 游戏 API。
 - 反编译恢复必须留在重编译/规范化流比对门后，失败方向是"多显示原版代码"。

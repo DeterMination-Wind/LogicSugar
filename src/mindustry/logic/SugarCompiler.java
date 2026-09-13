@@ -110,6 +110,18 @@ public final class SugarCompiler{
      *  numbering from 1 — any gap means "not a shard set"), then the single
      *  {@code set __ls_sugar "..."} shape, then the marker block. */
     public static String restore(String code){
+        return restoreInternal(code);
+    }
+
+    /** {@link #restore(String)} for function-library text, which may exceed the processor
+     *  instruction cap: the stale-dest rewrite pass parses the text with the raised library
+     *  limit instead of the vanilla cap. */
+    public static String restore(String code, boolean libraryText){
+        return libraryText ? SugarFunctions.withLibraryLimitValue(() -> restoreInternal(code))
+            : restoreInternal(code);
+    }
+
+    private static String restoreInternal(String code){
         String normalized = code.replace("\r\n", "\n");
         String[] lines = normalized.split("\n", -1);
         // Scan from the end: genuine carriers are always the last sugar-carrying lines, so a
@@ -275,7 +287,19 @@ public final class SugarCompiler{
     /** Compiles in the same privileged/non-privileged context as the edited processor. */
     public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
                                  SwitchStrategy switchStrategy, AssertEmit assertEmit, boolean privileged){
-        Seq<LStatement> statements = LAssembler.read(sugar, privileged);
+        return compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged, false);
+    }
+
+    /** {@code librarySource} marks {@code sugar} as the function-library text itself rather
+     *  than a processor program: it is parsed with the raised library statement limit, while
+     *  the emitted program still obeys the vanilla processor instruction cap (the library's
+     *  used subset is only inlined into a processor that fits 1000 instructions). */
+    public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
+                                 SwitchStrategy switchStrategy, AssertEmit assertEmit, boolean privileged,
+                                 boolean librarySource){
+        Seq<LStatement> statements = librarySource
+            ? SugarFunctions.readLibrary(sugar, privileged)
+            : LAssembler.read(sugar, privileged);
         if(!containsSugar(statements)) return sugar;
 
         // destIndex on begin cards is a jump comment. Older saves and hand-edited
@@ -298,6 +322,11 @@ public final class SugarCompiler{
         // F2: 数据模块注入的内置函数库并入本次编译使用的 LibraryIndex（只影响本次编译；
         // extractLibrarySource 仍只作用于纯用户库文本，内置函数不会进入 __ls_lib 载体）。
         SugarFunctions.LibraryIndex compileLibrary = SugarFunctions.withBuiltins(library, DataModules.builtinSugar());
+        // analyze 之前安装轻量声明表：collectCalls 需要按声明类型把方法/下标糖解析成 intrinsic
+        //（包含注入函数可达性登记），而 DataModules.collectAll 要等 analyze 之后才执行。
+        java.util.List<LStatement> statementList = new java.util.ArrayList<>(statements.size);
+        for(LStatement statement : statements) statementList.add(statement);
+        Map<String, String> previousDeclaredKinds = ExprIntrinsics.enterDeclaredKinds(DataModules.declaredKinds(statementList));
         ArrayRegistry previousArrays = null;
         boolean arraysEntered = false;
         boolean modulesCollected = false;
@@ -321,8 +350,6 @@ public final class SugarCompiler{
             // F2: 数据模块编译期上下文（analyze 之后、lower 之前）；restore() 在 finally 统一清理。
             // 标记在 collectAll 之前置位：collectAll 会先安装上下文再逐模块 collect，任一模块
             // collect 抛错都必须由 finally 的 restore() 配对清理，否则注册表泄漏到下一次编译/编辑器渲染。
-            java.util.List<LStatement> statementList = new java.util.ArrayList<>(statements.size);
-            for(LStatement statement : statements) statementList.add(statement);
             modulesCollected = true;
             DataModules.collectAll(statementList, functionNames);
 
@@ -413,6 +440,7 @@ public final class SugarCompiler{
             if(arraysEntered) ArrayRegistry.restore(previousArrays);
             ExprCompiler.restorePrivilegedSensors(previousPrivilegedSensors);
             ExprIntrinsics.restoreUserFunctions(previousUserFunctions);
+            ExprIntrinsics.restoreDeclaredKinds(previousDeclaredKinds);
         }
     }
 

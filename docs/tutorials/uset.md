@@ -29,6 +29,7 @@ uset <name> <memory> <base> <capacity>
 | `usize(s)` | 集合 | 元素个数 | O(capacity) 扫描 |
 | `uclear(s)` | 集合 | 0（实现哨兵） | 全部槽写成 NaN；O(capacity) |
 
+方法糖：`s.has(v)` / `s.contains(v)` 等价于 `uhas(s, v)`，`s.size()` / `s.length()` / `s.count()` 等价于 `usize(s)`。
 ## 转译示例
 
 ```text
