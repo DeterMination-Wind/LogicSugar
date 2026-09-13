@@ -19,18 +19,18 @@ jobs:
 
     steps:
       - name: Check out LogicSugar
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: LogicSugar
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Check out Mindustry v160.1
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Anuken/Mindustry
           ref: 84cdf2bbfeeee981ff9922f5872b16433591da7b
@@ -38,15 +38,19 @@ jobs:
           fetch-depth: 1
 
       - name: Check out the matching Arc revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Anuken/Arc
           ref: a3c7d2cbf36dfcee2c16b3c95a9f4834843d74a1
           path: Arc
           fetch-depth: 1
 
+      # Arc does not track the empty natives-ios project directory; Gradle 9 requires it to exist.
+      - name: Prepare Arc native project directory
+        run: mkdir -p Arc/natives/natives-ios
+
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Build Mindustry desktop dependency
         working-directory: Mindustry-master
