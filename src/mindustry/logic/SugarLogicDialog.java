@@ -95,6 +95,8 @@ public class SugarLogicDialog extends LogicDialog{
     private float historyIdle;
     private Button undoButton;
     private Button redoButton;
+    /** Width used by the last desktop bottom-bar layout; changed after the dialog gets a real size. */
+    private float bottomButtonsWidth = -1f;
 
     public SugarLogicDialog(){
         super();
@@ -136,6 +138,14 @@ public class SugarLogicDialog extends LogicDialog{
         });
         update(() -> {
             installEditHook();
+            if(!Vars.mobile && !Core.graphics.isPortrait()){
+                float width = buttons.getWidth();
+                if(width > 0f && Math.abs(width - bottomButtonsWidth) > 1f){
+                    // The shown callback can run before the parent table has measured this
+                    // row. Re-run once its actual width is available (and after a resize).
+                    layoutBottomButtons();
+                }
+            }
             menuScanTimer += Time.delta;
             if(menuScanTimer >= 6f){
                 menuScanTimer = 0f;
@@ -171,6 +181,7 @@ public class SugarLogicDialog extends LogicDialog{
         logicsugar.assist.VarClipboard.addButtons(buttons, this);
         installBudgetLabel();
         installHistoryButtons();
+        bottomButtonsWidth = -1f;
         layoutBottomButtons();
     }
 
@@ -243,10 +254,13 @@ public class SugarLogicDialog extends LogicDialog{
         // table to its right edge instead.
         float sideWidth = debugTable.getPrefWidth() + 12f;
         float wideEnough = centeredTable.getPrefWidth() + 2f * sideWidth + 16f;
+        float availableWidth = buttons.getWidth();
+        if(availableWidth <= 0f) availableWidth = Core.graphics.getWidth();
+        bottomButtonsWidth = buttons.getWidth();
         Table debugRegion = new Table();
         debugRegion.right();
         debugRegion.add(debugTable).right();
-        if(Core.graphics.getWidth() >= wideEnough){
+        if(availableWidth >= wideEnough){
             buttons.stack(centeredTable, debugRegion).growX().height(64f).padLeft(8f).padRight(8f);
         }else{
             buttons.add(centeredTable).growX().height(64f).padLeft(8f).padRight(8f).row();
