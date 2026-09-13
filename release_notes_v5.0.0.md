@@ -42,6 +42,15 @@
 - 重新打开自己用 Logic Sugar 保存的处理器时，会尽量把 `if` / `for` / `while` 以及数组、栈、记录等声明卡还原成当初的积木，而不是一堆跳转。
 - 别人手写的纯原版代码只会尝试还原控制流，不会凭空长出数据结构。
 
+**v5 API（`logic-sugar-v2`）**
+
+- **失败判断统一成 -1**：压栈 / 入队 / 追加 / 插入 / 删除 / 越界写入 / 释放节点等操作失败时一律返回 `-1`（旧版有的是 `0`，有的返回原容量）。老程序里写 `== 0` 判失败的表达式请改成 `== -1`。
+- **查询与取值不变**：`maphas` / `uhas` / `btest` 仍是 0/1（`btest` 越界仍是 0）；空容器取值仍是 NaN —— 先用 `size`/`has` 判断再取值。
+- **无结果卡**：`bset` / `bclr` / `cshead` 不再需要目标变量，卡片可以写 `~`；老卡片保留目标变量也能继续用。
+- **函数返回声明**：`funcdef f a ~`（void，体内不得返回値）或 `funcdef f a value`（必须返回值）；不写就沿用原来的「看函数体推断」。
+- **值不再被悄悄折成 1/0**：对象、单位、字符串、空值在赋值 / 传参 / 返回 / 记录字段 / 堆取值时原样保留。
+- **老存档照常打开**：验证门会用 v5 之前的 lowering 复现旧指令流；重新保存时标记升级为 `logic-sugar-v2`，源码不变。
+
 **兼容性**
 
 - 保存的程序仍是纯原版 mlog，指令条数不超过 1000，联机（加入或自建）与原版客户端完全兼容。
@@ -88,6 +97,15 @@ Declaration cards never enter the saved code. Operations become ordinary vanilla
 
 - When you reopen a processor saved with Logic Sugar, structured blocks (`if` / `for` / `while`) and data-declaration cards (arrays, stacks, records, …) are restored whenever they still match the saved instructions — not a wall of jumps.
 - Hand-written vanilla mlog recovers control flow only; it will not invent data-structure cards.
+
+**v5 API (`logic-sugar-v2`)**
+
+- **Failure means -1**: push / enqueue / append / insert / delete / out-of-range write / node-free now all report `-1` when they fail (older builds returned `0` for some and the old capacity for others). Change `== 0` failure tests in existing programs to `== -1`.
+- **Queries and value reads are unchanged**: `maphas` / `uhas` / `btest` still return 0/1 (`btest` out of range is still 0), and reading from an empty container still yields NaN — check `size`/`has` before reading.
+- **Void cards**: `bset` / `bclr` / `cshead` no longer expose a destination and accept `~`; cards that still carry a destination keep the exact same instruction stream.
+- **Declared returns**: `funcdef f a ~` (void, no value return in the body) or `funcdef f a value` (must return one); leaving it out keeps the old infer-from-body behaviour.
+- **Values are no longer silently folded to 1/0**: objects, units, strings and null keep their identity through assignment, arguments, returns, record fields and heap pops.
+- **Old saves still open**: the verification gate re-lowers them with the pre-v5 API; re-saving upgrades the tag to `logic-sugar-v2` without touching the source.
 
 **Compatibility**
 
