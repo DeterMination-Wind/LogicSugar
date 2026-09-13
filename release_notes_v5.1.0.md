@@ -64,11 +64,6 @@ v5.0.0 曾以预发布形式提供过数据子系统与 v5 API，本版把它们
 - 修复 `while` 卡片把「循环条件」误写成「结束条件」，避免玩家照着写反表达式导致循环体不执行。
 - 修复赋值、函数返回、条件临时值与记录字段在传递对象、单位、字符串、空值时被悄悄转成 `1` / `0` 的问题，这些值现在原样保留。
 
-**从 v4 升上来？请确认两处**
-
-- **失败统一返回 `-1`**：压栈、入队、追加、插入、删除、越界写入、释放节点等操作失败时一律返回 `-1`（旧版有的是 `0`，有的返回原容量）。老程序里写 `== 0` 判失败的表达式请改成 `== -1`；查询类 `maphas` / `uhas` / `btest` 仍是 0/1。
-- **函数库更大但处理器上限不变**：单台处理器保存的产物仍然不超过 1000 条指令，与原版客户端联机完全兼容。
-
 **安装与兼容性**
 
 - **最低要求：Mindustry v160.1**（桌面或 Android）。
@@ -78,7 +73,7 @@ v5.0.0 曾以预发布形式提供过数据子系统与 v5 API，本版把它们
 **已知事项**
 
 - 这是面向 Mindustry v160.1 的版本，更低版本不受支持。
-- 旧版排序程序的重新打开说明见上文「数组排序更快」；其余 v4 老存档可以正常打开并自动升级。
+- 之前 beta 版保存过、且用过排序卡的处理器，重新打开时会回落到原版视图（详见上文「数组排序更快」）；其余旧存档可以正常打开并自动升级。
 - 使用前请备份重要地图和逻辑程序。
 
 ## English
@@ -137,11 +132,6 @@ The function library now holds up to **10,000 statements** (it used to be capped
 - Fixed the `while` card labelling its loop condition as a termination condition, which invited an inverted expression and a body that never ran.
 - Fixed values such as objects, units, strings and null being silently folded to `1` / `0` through assignment, returns, condition temporaries and record fields; they now keep their identity.
 
-**Upgrading from v4? Two things to check**
-
-- **Failures report `-1`**: push / enqueue / append / insert / delete / out-of-range write / node-free all report `-1` on failure (older builds returned `0` for some, the old capacity for others). Change `== 0` failure tests in existing programs to `== -1`. Queries such as `maphas` / `uhas` / `btest` still return 0/1.
-- **Bigger library, same processor cap**: a single processor still saves at most 1000 instructions and stays fully compatible with vanilla clients in multiplayer.
-
 **Install and compatibility**
 
 - **Minimum requirement: Mindustry v160.1** (desktop or Android).
@@ -151,5 +141,5 @@ The function library now holds up to **10,000 statements** (it used to be capped
 **Known items**
 
 - This release targets Mindustry v160.1; older versions are not supported.
-- Older sort programs are covered by the note under "Faster array sorting"; other v4 saves open normally and upgrade automatically.
+- Processors saved by a previous beta build that used a sort card reopen in the vanilla view (see "Faster array sorting" above); other old saves open normally and upgrade automatically.
 - Back up important maps and logic programs before installing.
