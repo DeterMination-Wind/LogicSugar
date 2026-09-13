@@ -239,11 +239,11 @@ public final class SugarDecompiler{
         String[] lines = normalized.split("\n", -1);
         int begin = -1, end = -1;
         for(int i = 0; i < lines.length; i++){
-            if(lines[i].equals("# @logic-sugar-v1 begin")){ begin = i; break; }
+            if(SugarCompiler.isMarkerBeginLine(lines[i])){ begin = i; break; }
         }
         if(begin < 0) return normalized;
         for(int i = begin + 1; i < lines.length; i++){
-            if(lines[i].equals("# @logic-sugar-v1 end")){ end = i; break; }
+            if(SugarCompiler.isMarkerEndLine(lines[i])){ end = i; break; }
         }
         if(end < 0) return normalized;
         StringBuilder result = new StringBuilder();
@@ -259,8 +259,8 @@ public final class SugarDecompiler{
         StringBuilder result = new StringBuilder();
         boolean marker = false;
         for(String line : normalizeLineEndings(code).split("\n", -1)){
-            if(line.equals("# @logic-sugar-v1 begin")){ marker = true; continue; }
-            if(line.equals("# @logic-sugar-v1 end")){ marker = false; continue; }
+            if(SugarCompiler.isMarkerBeginLine(line)){ marker = true; continue; }
+            if(SugarCompiler.isMarkerEndLine(line)){ marker = false; continue; }
             if(marker) continue;
             if(isCarrierLine(line)) continue;
             result.append(line).append('\n');

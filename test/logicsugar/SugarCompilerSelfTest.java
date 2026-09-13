@@ -75,6 +75,7 @@ public class SugarCompilerSelfTest{
         functionJumpBoundariesRejected();
         functionValidationRejected();
         functionRecursionRejected();
+        formatVersionAndCopyCompatibility();
         functionUnreachableCostsNothing();
         functionInstructionLimitHint();
         instructionBudgetDetectsOverLimit();
@@ -625,8 +626,12 @@ public class SugarCompilerSelfTest{
     }
 
     private static String loweredCode(String compiled){
-        int marker = compiled.indexOf("# @logic-sugar-v1 begin");
-        return marker < 0 ? compiled : compiled.substring(0, marker);
+        StringBuilder out = new StringBuilder();
+        for(String line : compiled.replace("\r\n", "\n").split("\n", -1)){
+            if(SugarCompiler.isMarkerBeginLine(line)) break;
+            out.append(line).append('\n');
+        }
+        return out.toString();
     }
 
     private static void expressionOpsRoundTrip(){
@@ -1271,6 +1276,33 @@ public class SugarCompilerSelfTest{
         }catch(IllegalArgumentException expected){
             check(expected.getMessage().contains("a -> b -> a"), "recursion error does not show the cycle path");
         }
+    }
+
+    /** v5 API persistence tag + pre-v5 value-copy compatibility. */
+    private static void formatVersionAndCopyCompatibility(){
+        // Sugar-only statements: this self-test installs SugarStatements, not the data-subsystem
+        // cards. `return "y"` compiles to the value-preserving copy `set <result> y`.
+        String sugar = "set y 5\nfuncdef f ~ 3\nreturn \"y\"\nblockend\nfunccall f \"\" r\n";
+        String compiled = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, null, null);
+        check(SugarCompiler.storedFormat(compiled) == SugarCompiler.FORMAT_VERSION,
+            "current saves must carry the v2 marker");
+        check(compiled.contains("# @logic-sugar-v2 begin") && compiled.contains("# @logic-sugar-v2 end"),
+            "v2 marker block missing:\n" + compiled);
+
+        // Pre-v5 saves spell the value copy `op add d s 0`; the stream comparison canonicalizes
+        // both spellings, so restoring them must not fall back to vanilla.
+        String v1 = compiled.replace("# @logic-sugar-v2", "# @logic-sugar-v1")
+            .replace("set __ls_func_f_result y", "op add __ls_func_f_result y 0");
+        check(SugarCompiler.storedFormat(v1) == 1, "v1 marker must be recognized");
+        check(SugarCompiler.restore(v1).equals(sugar), "v1 carrier source did not survive restore");
+        check(SugarCompiler.verifyRestore(v1, sugar), "v1 save failed the canonicalized verification");
+        check(SugarCompiler.matchesStoredStream(
+                SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, null, null), v1),
+            "set/op-add copy spellings must compare equal");
+
+        // A marker-less (vanilla round-tripped) save still reports "unknown".
+        check(SugarCompiler.storedFormat(SugarCompiler.stripMarkers(v1)) == 0,
+            "marker-less saves must report format 0");
     }
 
     private static void functionUnreachableCostsNothing(){

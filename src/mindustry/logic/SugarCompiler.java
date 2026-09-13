@@ -35,9 +35,27 @@ import java.util.Map;
 import java.util.Set;
 
 public final class SugarCompiler{
-    private static final String markerBegin = "# @logic-sugar-v1 begin";
+    /**
+     * Persistence-format / API tag written into every compiled program.
+     *
+     * <p>v2 (LogicSugar v5 API) changes three things that are visible in the instruction stream:
+     * value copies use {@code set} instead of the pre-v5 numeric {@code op add d s 0} (objects,
+     * strings and the NaN marker survive), mutating data operations report failure with
+     * {@code -1}, and result-less operations are cards without a destination variable.
+     * {@link #executableStream} canonicalizes the copy spelling so v1 saves still verify, and
+     * {@link #storedFormat} exposes the tag so the remaining v1 API differences stay detectable.</p>
+     */
+    public static final int FORMAT_VERSION = 2;
+
+    private static final String markerBegin = "# @logic-sugar-v" + FORMAT_VERSION + " begin";
     private static final String markerLine = "# @logic-sugar-line ";
-    private static final String markerEnd = "# @logic-sugar-v1 end";
+    private static final String markerEnd = "# @logic-sugar-v" + FORMAT_VERSION + " end";
+
+    /** Every marker pair this version can read, newest first. */
+    private static final String[][] MARKERS = {
+        {markerBegin, markerEnd},
+        {"# @logic-sugar-v1 begin", "# @logic-sugar-v1 end"},
+    };
 
     /** Persistence carrier prefixes: real "set" statements that survive the vanilla
      *  parse/save round trip (comment markers are dropped by it). The sugar carrier holds
@@ -141,8 +159,8 @@ public final class SugarCompiler{
 
         int begin = -1, end = -1;
         for(int i = 0; i < lines.length; i++){
-            if(lines[i].equals(markerBegin)) begin = i;
-            if(begin >= 0 && lines[i].equals(markerEnd)) end = i;
+            if(markerVersionOf(lines[i], true) >= 0) begin = i;
+            if(begin >= 0 && markerVersionOf(lines[i], false) >= 0) end = i;
         }
         if(begin < 0 || end <= begin) return rewriteStaleBlockDests(code);
 
@@ -190,13 +208,46 @@ public final class SugarCompiler{
      *  The persistence carriers are kept, so restore() still works afterwards. */
     public static String stripMarkers(String code){
         String normalized = code.replace("\r\n", "\n");
-        int begin = normalized.indexOf(markerBegin);
-        if(begin < 0) return code;
-        int end = normalized.indexOf(markerEnd, begin);
-        if(end < 0) return code;
-        int after = end + markerEnd.length();
-        if(after < normalized.length() && normalized.charAt(after) == '\n') after++;
-        return normalized.substring(0, begin) + normalized.substring(after);
+        boolean stripped = false;
+        for(String[] pair : MARKERS){
+            int begin = normalized.indexOf(pair[0]);
+            if(begin < 0) continue;
+            int end = normalized.indexOf(pair[1], begin);
+            if(end < 0) continue;
+            int after = end + pair[1].length();
+            if(after < normalized.length() && normalized.charAt(after) == '\n') after++;
+            normalized = normalized.substring(0, begin) + normalized.substring(after);
+            stripped = true;
+        }
+        return stripped ? normalized : code;
+    }
+
+    /** True when the line opens a LogicSugar source marker block (any readable version). */
+    public static boolean isMarkerBeginLine(String line){
+        return markerVersionOf(line, true) >= 0;
+    }
+
+    /** True when the line closes a LogicSugar source marker block (any readable version). */
+    public static boolean isMarkerEndLine(String line){
+        return markerVersionOf(line, false) >= 0;
+    }
+
+    /** Marker position of one line in {@link #MARKERS}: pair index, or -1 when it is not a marker. */
+    private static int markerVersionOf(String line, boolean begin){
+        for(int i = 0; i < MARKERS.length; i++){
+            if(line.equals(MARKERS[i][begin ? 0 : 1])) return i;
+        }
+        return -1;
+    }
+
+    /** Format tag of stored code: {@link #FORMAT_VERSION} for current saves, {@code 1} for
+     *  {@code @logic-sugar-v1} saves, {@code 0} when no marker survives (carrier-only saves). */
+    public static int storedFormat(String code){
+        for(String line : code.replace("\r\n", "\n").split("\n", -1)){
+            int pair = markerVersionOf(line, true);
+            if(pair >= 0) return pair == 0 ? FORMAT_VERSION : 1;
+        }
+        return 0;
     }
 
     /**
@@ -1167,7 +1218,29 @@ public final class SugarCompiler{
 
     /** Normalized vanilla instruction stream with LogicSugar persistence metadata removed. */
     private static String executableStream(String code){
-        return LAssembler.write(LAssembler.read(stripPersistence(code), true));
+        return canonicalizeCopies(LAssembler.write(LAssembler.read(stripPersistence(code), true)));
+    }
+
+    /**
+     * Canonicalizes the two spellings of a value copy: {@code set d s} (v2; copies the value as
+     * it is, so objects, strings and the NaN marker survive) and the pre-v5 numeric form
+     * {@code op add d s 0}. For numbers both forms are identical, therefore instruction-stream
+     * comparisons (carrier verification, decompiler candidates) must not distinguish them --
+     * otherwise every save written before the v5 API would fail the restore gate.
+     */
+    private static String canonicalizeCopies(String stream){
+        StringBuilder out = new StringBuilder(stream.length());
+        for(String line : stream.replace("\r\n", "\n").split("\n", -1)){
+            String[] tokens = line.trim().split("\\s+");
+            if(tokens.length == 5 && tokens[0].equals("op") && tokens[1].equals("add")
+                && tokens[4].equals("0")){
+                out.append("set ").append(tokens[2]).append(' ').append(tokens[3]);
+            }else{
+                out.append(line);
+            }
+            out.append('\n');
+        }
+        return out.toString();
     }
 
     /** Drops the comment marker block and {@code __ls_sugar}/{@code __ls_lib} carrier lines

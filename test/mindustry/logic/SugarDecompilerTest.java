@@ -459,8 +459,8 @@ public final class SugarDecompilerTest{
         StringBuilder out = new StringBuilder();
         boolean marker = false;
         for(String line : code.replace("\r\n", "\n").split("\n", -1)){
-            if(line.equals("# @logic-sugar-v1 begin")){ marker = true; continue; }
-            if(line.equals("# @logic-sugar-v1 end")){ marker = false; continue; }
+            if(SugarCompiler.isMarkerBeginLine(line)){ marker = true; continue; }
+            if(SugarCompiler.isMarkerEndLine(line)){ marker = false; continue; }
             if(marker || line.startsWith("set __ls_sugar \"") || line.startsWith("set __ls_lib \"")) continue;
             out.append(line).append('\n');
         }
