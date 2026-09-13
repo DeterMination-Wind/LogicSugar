@@ -34,7 +34,7 @@ Write common control flow as blocks in the editor. On save, everything compiles 
 | **One-line expression statements** | Write `result = (a + b) * 2`; it expands to equivalent instructions on save, folds back on reopen, and invalid expressions are marked red on the spot. |
 | **Expressions anywhere a value goes** | Assignments, function arguments, `return` values, and member access such as `@unit.@health`. |
 | **Functions** | Define functions with parameters, call them, and return values. Switch between normal (subroutine) and inline modes in settings. |
-| **Global function library** | Shared by every processor and edited inside the processor editor. It is validated and saved automatically on close, and self-repairs if the file gets corrupted. |
+| **Global function library** | Shared by every processor and edited inside the processor editor. It holds up to 10,000 statements (it is not part of any processor's 1000-instruction budget), is validated and saved automatically on close, and self-repairs if the file gets corrupted. |
 
 ### Data structures
 
@@ -57,7 +57,7 @@ Declarations name structured memory regions. They are metadata only: every opera
 
 Array expressions can use subscripts such as `buf[i]` and `buf[i] = 5`; they compile to plain vanilla `read` and `write` instructions and fold back into the expression card on reopen.
 
-`fill` provides whole-range same-value initialization. Every array and container intrinsic now has a persistent operation card in its matching palette category. The old eight-slot `arrayinit` token remains load-compatible only. All operations still lower to plain vanilla instructions and reopen through the Sugar carrier.
+Every array and container intrinsic has its own persistent operation card, grouped into matching categories (Stack Operations, Queue Operations, Array Algorithms, and so on): `fill`, `sum`, `reverse`, `spush`, `qpop`, `dpushf`, `btest`, `mapset`, `uadd`, `lappend`, `hpush`, `cinit`, `cnew` and the rest. The old eight-slot `arrayinit` token remains load-compatible only. All operations still lower to plain vanilla instructions and reopen through the Sugar carrier. `sortasc` / `sortdesc` now use an in-place Shell sort, which is markedly faster than the previous insertion sort on random or reversed data.
 
 Advanced tutorial: one chapter per structure, with declaration card, function table, lowered mlog walkthrough, complexity, and caveats. See [docs/tutorials/en/README.md](docs/tutorials/en/README.md).
 
@@ -87,12 +87,12 @@ They compile exactly like the corresponding intrinsic (`lget(l, i)`, `speek(s)`,
 | **Editor helpers** | Colored jump lines, `__ls_*` internals hidden from the variable list, Ctrl+Click and Ctrl+Drag statement copying, hover hints, search highlighting, undo and redo (Ctrl+Z and Ctrl+Y on desktop, buttons on mobile), and a live compiled-instruction count against the processor limit. |
 | **Assertions** | Eight runtime-check cards: out-of-range array indexes, wrong data types, values that drift from expectations, and print-output comparisons stop the program on the offending line with a message above the processor. A breakpoint freezes the whole game, centers the camera on the processor, and reports the failing line; a log statement writes to the game log. Assertions live only in the editor by default and never enter saved code. The single-player "Debug Assert Build" toggle makes them run for real, and multiplayer saves always stay vanilla-compatible. Settings can disable breakpoints, turn failed assertions into breakpoints, and keep the camera detached while paused. |
 | **Processor status on the map** | Stopped processors show which line they stopped on, long waits draw a progress ring, and failures show their message in place (with expected and actual values when available). Threshold, scan rate, and warning effects are adjustable in settings, and processors outside the viewport are skipped. |
-| **Unit flags on the map** | Optional settings draw each unit's logic flag above it, either in red or in a distinct vivid color per flag; the default flag 0 stays hidden. Display only: saves and multiplayer are unaffected. |
+| **Unit flags on the map** | Optional setting draws each unit's logic flag above it with a distinct vivid color per flag; flag 0 stays hidden by default. Display only: saves and multiplayer are unaffected. |
 | **Copy variables and print buffer** | Dump all variables of the processor being edited as a name-sorted, full-precision table ready for spreadsheets, or copy the program's current print output. |
 
 ## Install
 
-This **v5.0.0** release requires **Mindustry v160.1 or later** (desktop or Android). Download the universal JAR from [Releases](https://github.com/DeterMination-Wind/LogicSugar/releases) — a single file for both platforms — drop it into Mindustry's mods directory, enable it in the in-game mods list, then open the logic processor editor.
+This **v5.1.0** release requires **Mindustry v160.1 or later** (desktop or Android). Download the universal JAR from [Releases](https://github.com/DeterMination-Wind/LogicSugar/releases) — a single file for both platforms — drop it into Mindustry's mods directory, enable it in the in-game mods list, then open the logic processor editor.
 
 ## Build
 
