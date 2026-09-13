@@ -34,7 +34,7 @@ this file only adds what is specific to this project.
 ## Build & Test
 
 ```powershell
-cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, reconstructionTest, recoveryPredicateTest,
+cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest,
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
                                       # varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest,
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
@@ -83,7 +83,13 @@ programs". Two properties of the gate are load-bearing:
   runs only after the greedy candidate failed verification, and every promoted result must
   pass the same gate.
 
-## Reconstruction (every new feature)
+## Reconstruction (every new block/feature — mandatory)
+
+**Rule: every time a new block/card/feature is added, or an existing one is changed, and the
+change can alter the compiled vanilla mlog product, the corresponding from-vanilla-code
+reconstruction logic must be completed in the same change.** "Compiles" is not done until the
+saved program can be reopened and the source-level card/structure is recovered, or the
+recovery gap is explicitly documented as "show vanilla". Do not land a lowering-only change.
 
 Opening a saved processor must prefer restoring the structured Sugar the user edited.
 There are two paths; both stay behind the verify gate (compare the *executable* mlog after
@@ -95,13 +101,25 @@ stripping carriers/markers, not the Base64 metadata):
    declaration cards live only in this source — they never appear in vanilla mlog — so a
    new module/card/intrinsic is not done until a program that uses it round-trips through
    `restore` + `verifyRestore` + `SugarDecompiler.decompile` (carrier path) and still
-   shows the cards. `reconstructionTest` pins this.
+   shows the cards. `reconstructionTest` pins the gate; `reconstructionMatrixTest` pins a
+   100+ fixture matrix covering every current block/card, every `datacall` operation and
+   the assertion/debug cards.
 2. **Decompiler inference**: pattern-match vanilla jumps back into `if`/`for`/`while`/
    `switch`/functions. Do **not** invent declaration cards or recover `__ls_builtin_*`
-   trampolines as user `funcdef`s. Failure direction remains "more vanilla".
+   trampolines as user `funcdef`s. Failure direction remains "more vanilla". A new
+   executable control-flow shape must either be recoverable by inference (with fixture) or
+   explicitly recorded as carrier-only in this section.
 
-New features that touch saved programs must say which path restores them. If neither can,
-document the gap (show vanilla) rather than guessing.
+**Checklist for any change that touches the compiled product:**
+
+- Update the carrier path so the new card/feature survives `compile → save → restore → verifyRestore`.
+- Update decompiler inference when the shape is expressible from vanilla jumps; otherwise
+  document "carrier-only / show vanilla" here.
+- Add fixtures to `test/mindustry/logic/ReconstructionMatrixTest.java`: at minimum one
+  carrier fixture; add an inference fixture for every provable new shape. The test must stay
+  above 100 fixtures and must fail when a new block has no reconstruction coverage.
+- Run `.\gradlew.bat reconstructionTest reconstructionMatrixTest decompileTest` before
+  claiming the feature complete.
 
 ## Data subsystem (arrays / matrix / record / containers / bitset / map / list / heap / chain)
 

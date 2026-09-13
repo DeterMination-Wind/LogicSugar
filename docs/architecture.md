@@ -112,7 +112,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ## 重建（reconstruction）：打开已保存程序
 
-玩家重开处理器时，编辑器要把已存的原版 mlog 尽量还原成当初的 Sugar 积木。这是功能是否「完成」的一部分：**每加一种会进存档的新结构，都必须先想清楚它怎么被重建回来。** 两条路径，都要过安全门；失败方向永远是「多显示原版代码」。
+玩家重开处理器时，编辑器要把已存的原版 mlog 尽量还原成当初的 Sugar 积木。这是功能是否「完成」的一部分：**只要新增积木/功能会改变编译出的原版 mlog，或修改现有 lowering 会改变产物，就必须在同一次改动里补齐对应的从原版代码重建逻辑；只改 lowering 不算完成。** 两条路径都要过安全门；失败方向永远是「多显示原版代码」。
 
 ```text
 打开处理器
@@ -152,7 +152,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 失败方向永远是"多显示原版代码"，绝不改写未知程序。新增恢复模式（跳转表、短路谓词、新数据结构）一律放在这道门之后；新功能若既不能进载体、也不能被推断，就要在文档写明「重开只显示原版」。
 
-`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。
+`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 174 个 fixture / 710 个 gate 断言覆盖当前全部控制积木、全部声明卡、全部 68 个 `datacall` 操作和 8 张断言/调试卡：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且必须保持 100+，不得只改数字。
 
 短路守卫恢复（`tryShortCircuitFrames`）是这套机制的核心用户：`ShortCircuitCompiler` 的 lowering 是若干 `[条件 jump, fallback jump]` 原子对的连续拼接（内部续接标签都落在原子对起点），守卫解析器从对的目标关系重建布尔树（`parseGuardTree`，带换目标环检测的备忘递归），为同一片守卫区域同时给出 `if` / `while` / `for` 候选。由此单原子守卫、顶层 `!`、任意嵌套 `&&`/`||` 树以及 `whilebegin`/`forbegin` 的 `exprsc` 条件都能恢复，不再限于固定四指令布局。体内跳回 while 守卫头的 always 跳转就是 `continue` 的 lowering 形状，由循环上下文恢复为 `continue` 语句。
 

@@ -12,7 +12,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `ifElseTest` | `mindustry.logic.IfElseCompileTest` | `if` / `elif` / `else` / `while` 三段式条件的 lowering 冒烟（负分支取反、标签、出口跳转） |
 | `decompileTest` | `mindustry.logic.SugarDecompilerTest` | 反编译恢复：vanilla 程序保持原样、各结构恢复 round-trip、跳转表识别、陈旧载体回退推断、短路守卫重建布尔树（单原子 / 顶层 `!` / 嵌套 `&&`\|\|` / 左深链 / `whilebegin`/`forbegin` 的 `exprsc` / `continue` 内部回边）、贪心候选失败后的回溯提升、验证矩阵（chainOnly 保存的程序在 auto 默认设置下仍验证）、动态 `@counter` 分诊保持 flat、函数区杂散跳转验证、不支持的模式保持 flat、引号/转义、坏输入不崩 |
 | `reconstructionTest` | `mindustry.logic.ReconstructionFixtureTest` | 重建：过期 `destIndex` 按嵌套重配对后载体仍验证；两份世界处理器样例走载体还原出 `ifbegin`/`forbegin`；`array`/`stack`/`record` 声明卡随载体回来；剥掉载体后不发明声明卡、不把 `__ls_builtin_*` 恢复成用户函数 |
-| `reconstructionMatrixTest` | `mindustry.logic.ReconstructionMatrixTest` | 重建矩阵：166 个 fixture / 678 个 gate 断言，覆盖当前全部控制积木（if/elif/else/for/while/switch/break/continue/函数/折叠变体）与全部数据积木（array/matrix/arrayinit/record/stack/queue/deque/bitset/map/uset/list/heap/chain）及 68 个 `datacall` 操作卡；每个 fixture 都断言 compile → carrier restore → `verifyRestore` → 载体反编译链路，并对 decompiler 可证明的控制流形状额外断言无载体推断路径 |
+| `reconstructionMatrixTest` | `mindustry.logic.ReconstructionMatrixTest` | 重建矩阵：174 个 fixture / 710 个 gate 断言，覆盖当前全部控制积木（if/elif/else/for/while/switch/break/continue/函数/折叠变体）、全部数据积木（array/matrix/arrayinit/record/stack/queue/deque/bitset/map/uset/list/heap/chain）、68 个 `datacall` 操作卡与 8 张断言/调试卡；每个 fixture 都断言 compile → carrier restore → `verifyRestore` → 载体反编译链路，并自动检查每个已注册 `datacall` 操作都有 fixture；对 decompiler 可证明的控制流形状额外断言无载体推断路径 |
 
 | `recoveryPredicateTest` | `mindustry.logic.RecoveryPredicateTest` | 谓词树模型：比较运算精确取反、`strictEqual` 不做有损取反、德摩根、优先级打印、求值方式影响代价 |
 | `shortCircuitTest` | `logicsugar.ShortCircuitCompilerTest` | `&&` / `||` 下降为条件 `jump`：操作数顺序、OR 续接标签、嵌套括号、`===` 取反不丢精度、坏谓词拒绝 |
@@ -80,4 +80,3 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 13. **数组**：放一张 `array` 卡（如 `buf` / `cell1` / base 0 / size 8），写 `x = buf[i] * 2` 与 `buf[i] = 5`，保存后重开表达式卡折回、产物只有原版 `read`/`write` 行；重名或同内存块重叠的声明卡标红且保存被拦截；无模组客户端能运行同一程序。
 14. **数据子系统**：依次放置 `matrix` / `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 声明卡，再从各自分类放置 `fill(buf, value)`、`spush(s, 1)`、`qpush(q, 1)`、`dpushf(d, 1)`、`btest(bits, 0)`、`mapclear(map)` / `mapset(map, 1, 2)`、`uclear(s)` / `uadd(s, 1)`、`lappend(l, 1)`、`hpush(h, 1)`、`cinit(c)` / `cnew(c)` 等操作积木。保存后重开：声明卡和 `datacall` 操作卡完整，产物只有原版指令且无模组客户端可运行；新增面板不再显示八槽 `arrayinit`，但载入旧 carrier 时仍能显示并正确编译旧卡。检查 `__ls_*` 隐藏变量过滤、记录字段变量可见，以及每类操作出现在对应分类而不是全部挤在 Data Structures。
 15. **单位 flag**：设置里打开「显示单位 flag」，给单位设非 0 的 `flag`，确认头顶正上方出现红色数字；再打开「为单位 flag 着色」，给多个单位设置不同 flag，确认同一 flag 颜色一致、不同 flag 优先使用不同鲜明颜色，超过 10 个后仍会分配鲜明随机色；flag 为 0 的单位不显示；关掉显示设置后数字消失。视野外与迷雾中的单位不绘制。
-
