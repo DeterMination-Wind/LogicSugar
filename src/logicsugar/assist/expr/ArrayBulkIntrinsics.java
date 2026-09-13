@@ -360,30 +360,52 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
         return f.build();
     }
 
-    /** 插入排序：dir=1 升序、dir=-1 降序，两个入口共享同一份子程序。 */
+    /**
+     * 希尔排序：dir=1 升序、dir=-1 降序，两个入口共享同一份子程序。
+     *
+     * <p>间隔序列取 {@code size/2, size/4, …, 1}（Shell 原始序列）：每轮对间隔为 {@code gap}
+     * 的子序列做插入排序，最后一轮 {@code gap=1} 即普通插入排序，因此结果与插入排序完全一致。
+     * 它原地、不需要辅助栈。之所以在 mlog 上值得换：处理器按 tick 限定执行指令数，排序耗时正比
+     * 于执行指令数，而插入排序在随机数据上是 O(n²)；希尔排序把中等规模的随机 / 逆序数据从
+     * O(n²) 降到接近 O(n^1.5)，同时保留「已排序输入只需少量搬移」的适应性。</p>
+     *
+     * <p>为什么不是堆排序 / 快速排序：mlog 没有递归调用栈——{@code SugarFunctions} 显式拒绝
+     * 递归，normal 模式每个函数只有一个返回变量——所以快速排序只能改成显式栈的迭代版本；而
+     * mlog 又没有索引变量，栈访问只能展开成 if 链，函数体约为本实现的 3 倍（且末元素枢轴在
+     * 已排序输入退化成 O(n²)）。原地堆排序可行（原地、最坏 O(n log n)），但 sift-down 在
+     * build / extract 两个阶段要各写一遍，体量约为本实现的 2.4 倍。希尔排序在体积与随机数据
+     * 性能之间取平衡。</p>
+     */
     private static String sort(){
         Fn f = new Fn(BUILTIN_SORT, "mem,base,size,dir");
-        f.forBegin("__ls_bs_i", "1", "1", "lessThan", "size", "L_OUTER");
+        // gap = size/2, size/4, ..., 1；gap 为 0 时结束
+        f.op("idiv", "__ls_bs_gap", "size", "2");
+        f.whileBegin("__ls_bs_gap", "greaterThan", "0", "L_GAP");
+        f.set("__ls_bs_i", "__ls_bs_gap");
+        f.whileBegin("__ls_bs_i", "lessThan", "size", "L_SCAN");
         f.op("add", "__ls_bs_ai", "base", "__ls_bs_i");
         f.read("__ls_bs_key", "mem", "__ls_bs_ai");
         f.set("__ls_bs_j", "__ls_bs_i");
-        f.whileBegin("1", "notEqual", "0", "L_INNER");
-        f.jump("L_DONE", "lessThan", "__ls_bs_j", "0");
-        f.op("sub", "__ls_bs_jm", "__ls_bs_j", "1");
-        f.op("add", "__ls_bs_aj", "base", "__ls_bs_jm");
+        f.whileBegin("1", "notEqual", "0", "L_SHIFT");
+        f.jump("L_PLACE", "lessThan", "__ls_bs_j", "__ls_bs_gap");
+        f.op("sub", "__ls_bs_jg", "__ls_bs_j", "__ls_bs_gap");
+        f.op("add", "__ls_bs_aj", "base", "__ls_bs_jg");
         f.read("__ls_bs_cur", "mem", "__ls_bs_aj");
         f.op("sub", "__ls_bs_d", "__ls_bs_cur", "__ls_bs_key");
         f.op("mul", "__ls_bs_d", "__ls_bs_d", "dir");
-        f.jump("L_DONE", "lessThanEq", "__ls_bs_d", "0");
+        f.jump("L_PLACE", "lessThanEq", "__ls_bs_d", "0");
         f.op("add", "__ls_bs_aj2", "base", "__ls_bs_j");
         f.write("__ls_bs_cur", "mem", "__ls_bs_aj2");
-        f.set("__ls_bs_j", "__ls_bs_jm");
+        f.set("__ls_bs_j", "__ls_bs_jg");
         // 落到 while 的 blockend 即回到条件检查（无需显式回跳，少一条指令）
-        f.blockEnd("L_INNER");
-        f.label("L_DONE");
+        f.blockEnd("L_SHIFT");
+        f.label("L_PLACE");
         f.op("add", "__ls_bs_aj3", "base", "__ls_bs_j");
         f.write("__ls_bs_key", "mem", "__ls_bs_aj3");
-        f.blockEnd("L_OUTER");
+        f.op("add", "__ls_bs_i", "__ls_bs_i", "1");
+        f.blockEnd("L_SCAN");
+        f.op("idiv", "__ls_bs_gap", "__ls_bs_gap", "2");
+        f.blockEnd("L_GAP");
         f.line("return \"size\"");
         return f.build();
     }

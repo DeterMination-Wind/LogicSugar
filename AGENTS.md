@@ -141,6 +141,15 @@ so saved programs stay vanilla-parseable and multiplayer-safe.
   `LibraryIndex` via `SugarFunctions.withBuiltins` but must never enter the user function library or
   the `__ls_lib` carrier (`extractLibrarySource` only sees user library text). Unused builtins stay out
   of the product; normal mode shares one `funcdef` body per operation.
+- **Changing a `__ls_builtin_*` body is a compatibility decision, not a local edit.** The body is
+  baked into the saved program, and `SugarCompiler.verifyRestore` compares the recompiled stream
+  against the stored one instruction by instruction (through `matchesStoredStream` /
+  `executableStream`, carrier stripped). Any body change makes every previously saved processor that
+  used that builtin fail carrier verification and reopen as the vanilla view (the `array` / sort
+  cards live only in the carrier, so they are lost). Accepted break: `sortasc` / `sortdesc` moved from
+  insertion sort to Shell sort in the v5 line — documented in `docs/architecture.md` and the array
+  tutorials. When touching a builtin body, update those docs and decide break-vs-versioning
+  explicitly.
 - Getter sugar (`list[i]`, `stack.top()`, `map.get(k)`, `chain.len()`) is resolved in two phases:
   **lowering** uses `ExprIntrinsics.Provider.kindOf` / `methodIntrinsic` / `indexIntrinsic` against
   the active module registry; **analyze** uses `DataModules.declaredKinds(statements)` plus

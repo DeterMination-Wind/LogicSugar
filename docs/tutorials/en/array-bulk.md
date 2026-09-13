@@ -79,7 +79,7 @@ funccall __ls_builtin_arrsum "cell1, 0, 6" x
 | sum / avg / min / max | O(n) | one pass |
 | count / indexof / replace | O(n) | one pass |
 | fill / copy / reverse | O(n) | one operation per element |
-| sortasc / sortdesc | O(n^2) | insertion sort; watch the instruction budget for large arrays |
+| sortasc / sortdesc | O(n^1.5) ~ O(n^2) | Shell sort (gaps `size/2, size/4, ..., 1`); watch the instruction budget for large arrays |
 | swap | O(1) | four fixed reads/writes |
 | bsearch | O(log n) | requires ascending order; miss returns -1 |
 
@@ -87,7 +87,8 @@ funccall __ls_builtin_arrsum "cell1, 0, 6" x
 
 - Arguments must be declared array names; expressions or other structures are compile errors.
 - copy requires equal lengths (matrices compare by rows x cols).
-- sortasc / sortdesc are in-place insertion sort. They are fine for small arrays and slow for hundreds of elements.
+- sortasc / sortdesc are an in-place Shell sort: each pass insertion-sorts the subsequences at gap `size/2, size/4, ..., 1`, so the last pass is a plain insertion sort. It is in-place, needs no scratch memory, and the shared subroutine is about 33 instructions. It is far faster than the previous insertion sort on random/reversed data, but hundreds of elements are still slow (a processor executes a fixed number of instructions per tick).
+- Compatibility break (v5.0.0 to the next version): the sort builtin's instruction sequence changed. Processors saved by an older version that used `sortasc` / `sortdesc` will fail carrier verification on reopen and fall back to the vanilla view — the `array` declaration card and the sort card show up as raw mlog instructions. Drop the sort card again to recover. This is an unavoidable consequence of the decompiler gate comparing instruction streams one by one, not a bug.
 - bsearch is only correct on ascending arrays. Sort descending arrays with sortasc first.
 - fill / copy / sortasc / sortdesc / reverse / swap have no meaningful expression result.
 - bsearch / swap do not add runtime bounds checks; swap indices must be valid.
