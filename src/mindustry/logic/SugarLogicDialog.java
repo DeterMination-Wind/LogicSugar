@@ -728,7 +728,8 @@ public class SugarLogicDialog extends LogicDialog{
                             configurePaletteButton(c.get());
                             // LogicSugar statements use dedicated hint keys; vanilla ones keep the original lookup
                             String sugarKey = "logicsugar.lst." + example.typeName().toLowerCase(Locale.ROOT);
-                            LCanvas.tooltip(c, Core.bundle.has(sugarKey) ? sugarKey : "lst." + example.statementKey());
+                            String bundleKey = Core.bundle.has(sugarKey) ? sugarKey : statementBundleKey(example);
+                            LCanvas.tooltip(c, bundleKey != null ? bundleKey : sugarKey);
                         }).top().left();
 
                         if(cat.getChildren().size % 3 == 0) cat.row();
@@ -756,10 +757,31 @@ public class SugarLogicDialog extends LogicDialog{
         button.getLabelCell().minWidth(0f);
     }
 
-    /** Uses v160's canonical statement localization while preserving Sugar's own bundle keys. */
+    /**
+     * Uses v160's canonical statement localization while preserving Sugar's own bundle keys.
+     * {@code localizedName()} exists on MindustryX (and on some later v160 cores) but not on
+     * vanilla v159, and Neon compiles this file against a vanilla classpath, so the optional
+     * accessor is resolved reflectively and degrades to {@link LStatement#name()}.
+     */
     private static String statementDisplayName(LStatement statement){
         if(statement instanceof SugarStatements.SugarStatement) return statement.name();
-        return Core.settings.getBool("logiclocalization", true) ? statement.localizedName() : statement.name();
+        if(!Core.settings.getBool("logiclocalization", true)) return statement.name();
+        Object localized = optionalStatementString(statement, "localizedName");
+        return localized instanceof String ? (String)localized : statement.name();
+    }
+
+    /** Bundle key for a statement when the running core exposes it; {@code null} on vanilla. */
+    private static String statementBundleKey(LStatement statement){
+        Object key = optionalStatementString(statement, "statementKey");
+        return key instanceof String ? (String)key : null;
+    }
+
+    private static Object optionalStatementString(LStatement statement, String method){
+        try{
+            return statement.getClass().getMethod(method).invoke(statement);
+        }catch(ReflectiveOperationException | RuntimeException ignored){
+            return null;
+        }
     }
 
     @Override
