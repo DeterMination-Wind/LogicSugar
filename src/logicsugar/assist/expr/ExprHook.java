@@ -611,7 +611,7 @@ public class ExprHook{
     private static void saveUIAll(LCanvas canvas){
         for(Element child : canvas.statements.getChildren()){
             if(child instanceof StatementElem){
-                ((StatementElem)child).st.saveUI();
+                SugarCanvas.normalizeJumpUI(((StatementElem)child).st);
             }
         }
     }

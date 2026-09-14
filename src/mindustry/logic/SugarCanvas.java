@@ -394,6 +394,25 @@ public class SugarCanvas extends LCanvas{
         }
     }
 
+    /**
+     * {@code LStatement.saveUI()} is not null-safe for jumps: the vanilla implementation does
+     * {@code dest.parent.getChildren()} and throws when the jump target element is detached
+     * (removed or not yet re-added during a structural refresh). Drop such stale targets before
+     * rebuilding indices, and keep a stray throw from reaching the render loop.
+     */
+    public static void normalizeJumpUI(LStatement statement){
+        if(statement == null) return;
+        if(statement instanceof JumpStatement jump && jump.dest != null && jump.dest.parent == null){
+            jump.dest = null;
+            jump.destIndex = -1;
+        }
+        try{
+            statement.saveUI();
+        }catch(RuntimeException ignored){
+            // A detached target is already handled above; never let stale jump bookkeeping crash the UI.
+        }
+    }
+
     /** Marks jump heights dirty on modern clients and recalculates them on legacy clients. */
     public static void markJumpHeightsDirty(LCanvas canvas){
         if(canvas == null || canvas.statements == null) return;
@@ -572,7 +591,7 @@ public class SugarCanvas extends LCanvas{
 
         @Override
         public void copy(){
-            st.saveUI();
+            normalizeJumpUI(st);
             LStatement copied = st.copy();
             if(copied == null) return;
 
@@ -614,7 +633,7 @@ public class SugarCanvas extends LCanvas{
                 }
                 newElem = new SugarStatementElem(stNew);
             }else{ //block -> print
-                st.saveUI();
+                normalizeJumpUI(st);
                 StringBuilder thisText = new StringBuilder();
                 st.write(thisText);
                 PrintStatement stNew = new PrintStatement();
@@ -626,7 +645,7 @@ public class SugarCanvas extends LCanvas{
             for(Element c : statements.getChildren()){
                 if(c instanceof StatementElem ste && ste.st instanceof JumpStatement jst && (jst.dest == null || jst.dest == st.elem)){
                     if(jst.destIndex < 0 || jst.destIndex >= statements.getChildren().size) continue;
-                    jst.saveUI();
+                    normalizeJumpUI(jst);
                 }
             }
             statements.addChildBefore(this, newElem);
@@ -740,7 +759,7 @@ public class SugarCanvas extends LCanvas{
 
             // Preserve index-based links before replacing elements created by an external LCanvas path.
             for(Element child : current){
-                ((StatementElem)child).st.saveUI();
+                normalizeJumpUI(((StatementElem)child).st);
             }
 
             for(int i = 0; i < statements.getChildren().size; i++){
@@ -863,7 +882,7 @@ public class SugarCanvas extends LCanvas{
                     jump.dest = null;
                     jump.destIndex = -1;
                 }
-                statement.saveUI();
+                normalizeJumpUI(statement);
             }
         }
 

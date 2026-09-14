@@ -813,7 +813,7 @@ public class BoxSelect{
         Seq<LStatement> copies = new Seq<>();
         List<StatementElem> copySources = new ArrayList<>();
         for(int i = 0; i < sorted.size(); i++){
-            sorted.get(i).st.saveUI();
+            SugarCanvas.normalizeJumpUI(sorted.get(i).st);
             LStatement copy = sorted.get(i).st.copy();
             Log.debug("[LogicAssist] duplicateSelectedBelow: st=@ copy=@", sorted.get(i).st.getClass().getSimpleName(), copy == null ? "null" : copy.getClass().getSimpleName());
             if(copy != null){
@@ -1846,7 +1846,7 @@ public class BoxSelect{
         clipboardCopies = new ArrayList<>();
         clipboardSources = new ArrayList<>();
         for(StatementElem elem : sorted){
-            elem.st.saveUI();
+            SugarCanvas.normalizeJumpUI(elem.st);
             LStatement copy = elem.st.copy();
             Log.debug("[LogicAssist] prepareCopyData: st=@ copy=@", elem.st.getClass().getSimpleName(), copy == null ? "null" : copy.getClass().getSimpleName());
             if(copy != null){
