@@ -86,9 +86,9 @@ public class ContainerModule extends DataModule{
     @Override
     public List<PaletteCall> paletteCalls(){
         List<PaletteCall> result = new ArrayList<>();
-        result.addAll(callsWithFirst(SugarStatements.stackOps, "s", "spush", "spop", "speek", "ssize", "sclear"));
-        result.addAll(callsWithFirst(SugarStatements.queueOps, "q", "qpush", "qpop", "qpeek", "qsize", "qclear"));
-        result.addAll(callsWithFirst(SugarStatements.dequeOps, "d", "dpushf", "dpushb", "dpopf", "dpopb", "dpeekf", "dpeekb", "dsize", "dclear"));
+        result.addAll(callsWithFirst(SugarStatements.stackOps, "s", "stack_push", "stack_pop", "stack_top", "stack_size", "stack_clear"));
+        result.addAll(callsWithFirst(SugarStatements.queueOps, "q", "queue_push", "queue_pop", "queue_front", "queue_size", "queue_clear"));
+        result.addAll(callsWithFirst(SugarStatements.dequeOps, "d", "deque_push_front", "deque_push_back", "deque_pop_front", "deque_pop_back", "deque_front", "deque_back", "deque_size", "deque_clear"));
         return result;
     }
 

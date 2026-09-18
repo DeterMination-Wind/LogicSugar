@@ -77,8 +77,8 @@ public class ListHeapModule extends DataModule{
     @Override
     public List<PaletteCall> paletteCalls(){
         List<PaletteCall> result = new ArrayList<>();
-        result.addAll(callsWithFirst(SugarStatements.listOps, "l", "lappend", "lget", "lset", "linsert", "lremove", "lfind", "lsize"));
-        result.addAll(callsWithFirst(SugarStatements.heapOps, "h", "hpush", "hpop", "hsize"));
+        result.addAll(callsWithFirst(SugarStatements.listOps, "l", "vector_push_back", "vector_at", "vector_set", "vector_insert", "vector_erase", "vector_find", "vector_size"));
+        result.addAll(callsWithFirst(SugarStatements.heapOps, "h", "heap_push", "heap_pop", "heap_size"));
         return result;
     }
 

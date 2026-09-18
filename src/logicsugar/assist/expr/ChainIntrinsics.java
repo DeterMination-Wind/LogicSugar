@@ -70,9 +70,29 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
     public static final String BUILTIN_LEN = "__ls_builtin_chnlen";
 
     private static final String[] CALL_NAMES = {
+        "chain_init", "chain_clear", "chain_alloc", "chain_free", "chain_get", "chain_set",
+        "chain_next", "chain_link", "chain_set_head", "chain_head", "chain_len",
         "cinit", "cclear", "cnew", "cfree", "cget", "cset",
         "cnext", "clink", "cshead", "chead", "clen"
     };
+
+    /** 旧拼写 → 规范名。保存产物（carrier）可能携带旧名，解析时统一归一到新名再分派。 */
+    static String canonical(String name){
+        switch(name == null ? "" : name){
+            case "cinit": return "chain_init";
+            case "cclear": return "chain_clear";
+            case "cnew": return "chain_alloc";
+            case "cfree": return "chain_free";
+            case "cget": return "chain_get";
+            case "cset": return "chain_set";
+            case "cnext": return "chain_next";
+            case "clink": return "chain_link";
+            case "cshead": return "chain_set_head";
+            case "chead": return "chain_head";
+            case "clen": return "chain_len";
+            default: return name;
+        }
+    }
 
     private ChainIntrinsics(){}
 
@@ -87,25 +107,25 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
      */
     @Override
     public boolean returnsValue(String name){
-        return !"cshead".equals(name);
+        return !"chain_set_head".equals(canonical(name));
     }
 
     @Override
     public int arity(String name){
-        switch(name){
-            case "cinit":
-            case "cclear":
-            case "cnew":
-            case "chead":
-            case "clen":
+        switch(canonical(name)){
+            case "chain_init":
+            case "chain_clear":
+            case "chain_alloc":
+            case "chain_head":
+            case "chain_len":
                 return 1;
-            case "cfree":
-            case "cget":
-            case "cnext":
-            case "cshead":
+            case "chain_free":
+            case "chain_get":
+            case "chain_next":
+            case "chain_set_head":
                 return 2;
-            case "cset":
-            case "clink":
+            case "chain_set":
+            case "chain_link":
                 return 3;
             default:
                 return -1;
@@ -114,18 +134,18 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        switch(name){
-            case "cinit": return init("cinit", args, ctx);
-            case "cclear": return init("cclear", args, ctx);
-            case "cnew": return newNode(args, ctx);
-            case "cfree": return freeNode(args, ctx);
-            case "cget": return getValue(args, ctx);
-            case "cset": return setValue(args, ctx);
-            case "cnext": return nextNode(args, ctx);
-            case "clink": return link(args, ctx);
-            case "cshead": return setHead(args, ctx);
-            case "chead": return head(args, ctx);
-            case "clen": return length(args, ctx);
+        switch(canonical(name)){
+            case "chain_init": return init("chain_init", args, ctx);
+            case "chain_clear": return init("chain_clear", args, ctx);
+            case "chain_alloc": return newNode(args, ctx);
+            case "chain_free": return freeNode(args, ctx);
+            case "chain_get": return getValue(args, ctx);
+            case "chain_set": return setValue(args, ctx);
+            case "chain_next": return nextNode(args, ctx);
+            case "chain_link": return link(args, ctx);
+            case "chain_set_head": return setHead(args, ctx);
+            case "chain_head": return head(args, ctx);
+            case "chain_len": return length(args, ctx);
             default: return null;
         }
     }
@@ -147,16 +167,16 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public List<String> callees(String name, int argc){
-        switch(name){
-            case "cinit":
-            case "cclear":
+        switch(canonical(name)){
+            case "chain_init":
+            case "chain_clear":
                 return Collections.singletonList(BUILTIN_INIT);
-            case "cnew": return Collections.singletonList(BUILTIN_NEW);
-            case "cfree": return Collections.singletonList(BUILTIN_FREE);
-            case "cset": return Collections.singletonList(BUILTIN_SET);
-            case "cnext": return Collections.singletonList(BUILTIN_NEXT);
-            case "clink": return Collections.singletonList(BUILTIN_LINK);
-            case "clen": return Collections.singletonList(BUILTIN_LEN);
+            case "chain_alloc": return Collections.singletonList(BUILTIN_NEW);
+            case "chain_free": return Collections.singletonList(BUILTIN_FREE);
+            case "chain_set": return Collections.singletonList(BUILTIN_SET);
+            case "chain_next": return Collections.singletonList(BUILTIN_NEXT);
+            case "chain_link": return Collections.singletonList(BUILTIN_LINK);
+            case "chain_len": return Collections.singletonList(BUILTIN_LEN);
             default: return Collections.emptyList();
         }
     }
@@ -176,16 +196,16 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
     public String methodIntrinsic(String kind, String method, int argc){
         if(!ChainModule.KIND_CHAIN.equals(kind)) return null;
         String m = method.toLowerCase(java.util.Locale.ROOT);
-        if(argc == 1 && m.equals("get")) return "cget";
-        if(argc == 1 && m.equals("next")) return "cnext";
-        if(argc == 0 && m.equals("head")) return "chead";
-        if(argc == 0 && (m.equals("len") || m.equals("length") || m.equals("size") || m.equals("count"))) return "clen";
+        if(argc == 1 && m.equals("get")) return "chain_get";
+        if(argc == 1 && m.equals("next")) return "chain_next";
+        if(argc == 0 && m.equals("head")) return "chain_head";
+        if(argc == 0 && (m.equals("len") || m.equals("length") || m.equals("size") || m.equals("count"))) return "chain_len";
         return null;
     }
 
     @Override
     public String indexIntrinsic(String kind){
-        return ChainModule.KIND_CHAIN.equals(kind) ? "cget" : null;
+        return ChainModule.KIND_CHAIN.equals(kind) ? "chain_get" : null;
     }
 
     /** 注入函数的 sugar 源文本（每项一个完整 funcdef 块）。 */
@@ -205,7 +225,7 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code chead(c)}：{@code op add <r> head 0}。 */
     private static List<ExprCompiler.Line> head(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ChainModule.Info info = resolve("chead", args.get(0), ctx);
+        ChainModule.Info info = resolve("chain_head", args.get(0), ctx);
         List<ExprCompiler.Line> out = new ArrayList<>(1);
         out.add(new ExprCompiler.OpLine("add", ctx.temp(), info.headVar(), "0"));
         return out;
@@ -213,7 +233,7 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code cshead(c, i)}：head = i（不校验），返回 1。 */
     private static List<ExprCompiler.Line> setHead(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ChainModule.Info info = resolve("cshead", args.get(0), ctx);
+        ChainModule.Info info = resolve("chain_set_head", args.get(0), ctx);
         String value = ctx.compile(args.get(1));
         List<ExprCompiler.Line> out = new ArrayList<>(2);
         out.add(new ExprCompiler.OpLine("add", info.headVar(), value, "0"));
@@ -227,7 +247,7 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
      * invalid 时回落到 -1，原版越界读返回 NaN。
      */
     private static List<ExprCompiler.Line> getValue(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ChainModule.Info info = resolve("cget", args.get(0), ctx);
+        ChainModule.Info info = resolve("chain_get", args.get(0), ctx);
         String index = ctx.compile(args.get(1));
         String result = ctx.temp();
         String negative = ctx.temp();
@@ -266,7 +286,7 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
      * 注入函数摘链并返回新的空闲链头，调用点把它写回 {@code free}。
      */
     private static List<ExprCompiler.Line> newNode(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ChainModule.Info info = resolve("cnew", args.get(0), ctx);
+        ChainModule.Info info = resolve("chain_alloc", args.get(0), ctx);
         String result = ctx.temp();
         String old = ctx.temp();
         List<ExprCompiler.Line> out = new ArrayList<>(3);
@@ -282,7 +302,7 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
      * 调用点按有效标志回写 head/free 并返回 1/0。
      */
     private static List<ExprCompiler.Line> freeNode(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ChainModule.Info info = resolve("cfree", args.get(0), ctx);
+        ChainModule.Info info = resolve("chain_free", args.get(0), ctx);
         String index = ctx.compile(args.get(1));
         String result = ctx.temp();
         String low = ctx.temp();
@@ -314,7 +334,7 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code cset(c, i, v)}：注入函数写 value 槽并返回 1/0。 */
     private static List<ExprCompiler.Line> setValue(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ChainModule.Info info = resolve("cset", args.get(0), ctx);
+        ChainModule.Info info = resolve("chain_set", args.get(0), ctx);
         String index = ctx.compile(args.get(1));
         String value = ctx.compile(args.get(2));
         List<ExprCompiler.Line> out = new ArrayList<>(1);
@@ -325,7 +345,7 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code cnext(c, i)}：注入函数返回 next，越界返回 -1。 */
     private static List<ExprCompiler.Line> nextNode(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ChainModule.Info info = resolve("cnext", args.get(0), ctx);
+        ChainModule.Info info = resolve("chain_next", args.get(0), ctx);
         String index = ctx.compile(args.get(1));
         List<ExprCompiler.Line> out = new ArrayList<>(1);
         out.add(new ExprCompiler.CallLine(BUILTIN_NEXT,
@@ -335,7 +355,7 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code clink(c, i, j)}：注入函数把节点 i 的 next 设为 j 并返回 1/0（j 不校验）。 */
     private static List<ExprCompiler.Line> link(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ChainModule.Info info = resolve("clink", args.get(0), ctx);
+        ChainModule.Info info = resolve("chain_link", args.get(0), ctx);
         String index = ctx.compile(args.get(1));
         String target = ctx.compile(args.get(2));
         List<ExprCompiler.Line> out = new ArrayList<>(1);
@@ -346,7 +366,7 @@ public final class ChainIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code clen(c)}：注入函数从头遍历计数，空链返回 0。 */
     private static List<ExprCompiler.Line> length(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ChainModule.Info info = resolve("clen", args.get(0), ctx);
+        ChainModule.Info info = resolve("chain_len", args.get(0), ctx);
         List<ExprCompiler.Line> out = new ArrayList<>(1);
         out.add(new ExprCompiler.CallLine(BUILTIN_LEN,
             info.memory + ", " + info.base + ", " + info.headVar(), ctx.temp()));

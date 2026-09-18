@@ -118,7 +118,7 @@ public class MapModule extends DataModule{
 
     @Override
     public List<PaletteCall> paletteCalls(){
-        return callsWithFirst(SugarStatements.mapOps, "map", "mapset", "mapget", "maphas", "mapdel", "mapsize", "mapclear");
+        return callsWithFirst(SugarStatements.mapOps, "map", "map_set", "map_get", "map_contains", "map_erase", "map_size", "map_clear");
     }
 
     @Override

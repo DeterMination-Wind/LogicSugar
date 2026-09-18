@@ -107,54 +107,50 @@ public abstract class DataModule{
      */
     private static String defaultArguments(String name, String first, int arity){
         switch(name){
-            case "count":
-            case "indexof":
-            case "fill":
-            case "bsearch":
+            case "array_count":
+            case "array_find":
+            case "array_fill":
+            case "array_lower_bound":
                 return first + ", value";
-            case "copy":
+            case "array_copy":
                 return "dst, src";
-            case "replace":
+            case "array_replace":
                 return first + ", oldValue, newValue";
-            case "swap":
+            case "array_swap":
                 return first + ", i, j";
-            case "spush":
-            case "qpush":
-            case "dpushf":
-            case "dpushb":
+            case "stack_push":
+            case "queue_push":
+            case "deque_push_front":
+            case "deque_push_back":
+            case "vector_push_back":
+            case "heap_push":
+            case "vector_find":
                 return first + ", value";
-            case "bset":
-            case "bclr":
-            case "btest":
+            case "bitset_set":
+            case "bitset_reset":
+            case "bitset_test":
                 return first + ", index";
-            case "mapset":
+            case "map_set":
                 return first + ", key, value";
-            case "mapget":
-            case "maphas":
-            case "mapdel":
-            case "uadd":
-            case "uhas":
-            case "udel":
+            case "map_get":
+            case "map_contains":
+            case "map_erase":
+            case "set_add":
+            case "set_contains":
+            case "set_remove":
                 return first + ", key";
-            case "lappend":
-            case "hpush":
-                return first + ", value";
-            case "lget":
-            case "lremove":
+            case "vector_at":
+            case "vector_erase":
+            case "chain_free":
+            case "chain_get":
+            case "chain_next":
+            case "chain_set_head":
                 return first + ", index";
-            case "lfind":
-                return first + ", value";
-            case "lset":
-            case "linsert":
+            case "vector_set":
+            case "vector_insert":
+            case "chain_set":
                 return first + ", index, value";
-            case "cfree":
-            case "cget":
-            case "cnext":
-            case "cshead":
-                return first + ", index";
-            case "cset":
-                return first + ", index, value";
-            case "clink":
+            case "chain_link":
                 return first + ", index, next";
             default:
                 break;

@@ -10,6 +10,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,8 +33,86 @@ public final class DataModules{
     private DataModules(){}
 
     private static final List<DataModule> modules = new ArrayList<>();
+
+    /** v5.2：旧操作名（v5.1 及更早的 carrier/卡片文本）→ 规范新名。
+     *  仅为加载/解析兼容，永不写回 {@link #paletteCalls()} 缓存，避免旧名重新出现在加号菜单。 */
+    private static final Map<String, String> LEGACY_ALIASES = legacyAliases();
+
     /** 允许 null 的上下文栈（ArrayDeque 拒绝 null 元素）。 */
     private static final List<List<DataModule>> contextStack = new ArrayList<>();
+
+    private static Map<String, String> legacyAliases(){
+        Map<String, String> map = new HashMap<>();
+        map.put("spush", "stack_push");
+        map.put("spop", "stack_pop");
+        map.put("speek", "stack_top");
+        map.put("ssize", "stack_size");
+        map.put("sclear", "stack_clear");
+        map.put("qpush", "queue_push");
+        map.put("qpop", "queue_pop");
+        map.put("qpeek", "queue_front");
+        map.put("qsize", "queue_size");
+        map.put("qclear", "queue_clear");
+        map.put("dpushf", "deque_push_front");
+        map.put("dpushb", "deque_push_back");
+        map.put("dpopf", "deque_pop_front");
+        map.put("dpopb", "deque_pop_back");
+        map.put("dpeekf", "deque_front");
+        map.put("dpeekb", "deque_back");
+        map.put("dsize", "deque_size");
+        map.put("dclear", "deque_clear");
+        map.put("lappend", "vector_push_back");
+        map.put("lget", "vector_at");
+        map.put("lset", "vector_set");
+        map.put("linsert", "vector_insert");
+        map.put("lremove", "vector_erase");
+        map.put("lfind", "vector_find");
+        map.put("lsize", "vector_size");
+        map.put("hpush", "heap_push");
+        map.put("hpop", "heap_pop");
+        map.put("hsize", "heap_size");
+        map.put("mapset", "map_set");
+        map.put("mapget", "map_get");
+        map.put("maphas", "map_contains");
+        map.put("mapdel", "map_erase");
+        map.put("mapsize", "map_size");
+        map.put("mapclear", "map_clear");
+        map.put("uadd", "set_add");
+        map.put("uhas", "set_contains");
+        map.put("udel", "set_remove");
+        map.put("usize", "set_size");
+        map.put("uclear", "set_clear");
+        map.put("cinit", "chain_init");
+        map.put("cclear", "chain_clear");
+        map.put("cnew", "chain_alloc");
+        map.put("cfree", "chain_free");
+        map.put("cget", "chain_get");
+        map.put("cset", "chain_set");
+        map.put("cnext", "chain_next");
+        map.put("clink", "chain_link");
+        map.put("cshead", "chain_set_head");
+        map.put("chead", "chain_head");
+        map.put("clen", "chain_len");
+        map.put("bset", "bitset_set");
+        map.put("bclr", "bitset_reset");
+        map.put("btest", "bitset_test");
+        map.put("bcount", "bitset_count");
+        map.put("sum", "array_sum");
+        map.put("avg", "array_avg");
+        map.put("min", "array_min");
+        map.put("max", "array_max");
+        map.put("count", "array_count");
+        map.put("indexof", "array_find");
+        map.put("fill", "array_fill");
+        map.put("copy", "array_copy");
+        map.put("sortasc", "array_sort");
+        map.put("sortdesc", "array_sort_desc");
+        map.put("reverse", "array_reverse");
+        map.put("replace", "array_replace");
+        map.put("swap", "array_swap");
+        map.put("bsearch", "array_lower_bound");
+        return Collections.unmodifiableMap(map);
+    }
     private static List<DataModule> current;
     private static Set<String> builtinNamesCache;
     private static Map<String, List<String>> builtinParamsCache;
@@ -95,7 +174,12 @@ public final class DataModules{
     }
 
     public static DataModule.PaletteCall paletteCall(String name){
-        return name == null ? null : paletteCalls().get(name.toLowerCase(java.util.Locale.ROOT));
+        if(name == null) return null;
+        DataModule.PaletteCall direct = paletteCalls().get(name.toLowerCase(java.util.Locale.ROOT));
+        if(direct != null) return direct;
+        // 旧名只作为解析别名：映射到规范新名后查 palette，不把旧名写入 paletteCallsCache。
+        String canonical = LEGACY_ALIASES.get(name.toLowerCase(java.util.Locale.ROOT));
+        return canonical == null ? null : paletteCalls().get(canonical);
     }
 
     /** 轻量扫描全部声明卡，得到 名字 → 结构种类（供 analyze 阶段解析方法糖）。

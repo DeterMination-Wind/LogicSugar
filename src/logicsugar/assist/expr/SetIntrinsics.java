@@ -31,8 +31,21 @@ public final class SetIntrinsics implements ExprIntrinsics.Provider{
     public static final String BUILTIN_CLEAR = "__ls_builtin_usetclear";
 
     private static final String[] CALL_NAMES = {
+        "set_add", "set_contains", "set_remove", "set_size", "set_clear",
         "uadd", "uhas", "udel", "usize", "uclear"
     };
+
+    /** 旧拼写 → 规范名。保存产物（carrier）可能携带旧名，解析时统一归一到新名再分派。 */
+    static String canonical(String name){
+        switch(name == null ? "" : name){
+            case "uadd": return "set_add";
+            case "uhas": return "set_contains";
+            case "udel": return "set_remove";
+            case "usize": return "set_size";
+            case "uclear": return "set_clear";
+            default: return name;
+        }
+    }
 
     private static final String NAN = "__ls_us_nan";
     private static final String BAD = "__ls_us_bad";
@@ -56,33 +69,33 @@ public final class SetIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public int arity(String name){
-        switch(name){
-            case "uadd":
-            case "uhas":
-            case "udel":
+        switch(canonical(name)){
+            case "set_add":
+            case "set_contains":
+            case "set_remove":
                 return 2;
-            case "usize":
-            case "uclear":
+            case "set_size":
+            case "set_clear":
                 return 1;
             default:
                 return -1;
         }
     }
 
-    /** uclear only initializes the backing key area; the implementation's zero is not a result. */
+    /** set_clear only initializes the backing key area; the implementation's zero is not a result. */
     @Override
     public boolean returnsValue(String name){
-        return !"uclear".equals(name);
+        return !"set_clear".equals(canonical(name));
     }
 
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        switch(name){
-            case "uadd": return call(BUILTIN_ADD, name, args, ctx, 1);
-            case "uhas": return call(BUILTIN_HAS, name, args, ctx, 1);
-            case "udel": return call(BUILTIN_DEL, name, args, ctx, 1);
-            case "usize": return call(BUILTIN_SIZE, name, args, ctx, 0);
-            case "uclear": return call(BUILTIN_CLEAR, name, args, ctx, 0);
+        switch(canonical(name)){
+            case "set_add": return call(BUILTIN_ADD, name, args, ctx, 1);
+            case "set_contains": return call(BUILTIN_HAS, name, args, ctx, 1);
+            case "set_remove": return call(BUILTIN_DEL, name, args, ctx, 1);
+            case "set_size": return call(BUILTIN_SIZE, name, args, ctx, 0);
+            case "set_clear": return call(BUILTIN_CLEAR, name, args, ctx, 0);
             default: return null;
         }
     }
@@ -99,8 +112,8 @@ public final class SetIntrinsics implements ExprIntrinsics.Provider{
     public String methodIntrinsic(String kind, String method, int argc){
         if(!SetModule.ID.equals(kind)) return null;
         String m = method.toLowerCase(java.util.Locale.ROOT);
-        if(argc == 1 && (m.equals("has") || m.equals("contains"))) return "uhas";
-        if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "usize";
+        if(argc == 1 && (m.equals("has") || m.equals("contains"))) return "set_contains";
+        if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "set_size";
         return null;
     }
 
@@ -136,12 +149,12 @@ public final class SetIntrinsics implements ExprIntrinsics.Provider{
     }
 
     private static String builtinOf(String name){
-        switch(name){
-            case "uadd": return BUILTIN_ADD;
-            case "uhas": return BUILTIN_HAS;
-            case "udel": return BUILTIN_DEL;
-            case "usize": return BUILTIN_SIZE;
-            case "uclear": return BUILTIN_CLEAR;
+        switch(canonical(name)){
+            case "set_add": return BUILTIN_ADD;
+            case "set_contains": return BUILTIN_HAS;
+            case "set_remove": return BUILTIN_DEL;
+            case "set_size": return BUILTIN_SIZE;
+            case "set_clear": return BUILTIN_CLEAR;
             default: return null;
         }
     }

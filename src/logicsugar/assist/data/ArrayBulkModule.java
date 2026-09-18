@@ -52,8 +52,8 @@ public class ArrayBulkModule extends DataModule{
 
     @Override
     public List<PaletteCall> paletteCalls(){
-        return callsWithFirst(SugarStatements.arrayAlgo, "buf", "sum", "avg", "min", "max", "count", "indexof",
-            "fill", "copy", "sortasc", "sortdesc", "reverse", "replace", "swap", "bsearch");
+        return callsWithFirst(SugarStatements.arrayAlgo, "buf", "array_sum", "array_avg", "array_min", "array_max", "array_count", "array_find",
+            "array_fill", "array_copy", "array_sort", "array_sort_desc", "array_reverse", "array_replace", "array_swap", "array_lower_bound");
     }
 
     @Override

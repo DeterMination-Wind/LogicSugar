@@ -47,8 +47,22 @@ public final class MapIntrinsics implements ExprIntrinsics.Provider{
     public static final String BUILTIN_CLEAR = "__ls_builtin_mapclear";
 
     private static final String[] CALL_NAMES = {
+        "map_set", "map_get", "map_contains", "map_erase", "map_size", "map_clear",
         "mapset", "mapget", "maphas", "mapdel", "mapsize", "mapclear"
     };
+
+    /** 旧拼写 → 规范名。保存产物（carrier）可能携带旧名，解析时统一归一到新名再分派。 */
+    static String canonical(String name){
+        switch(name == null ? "" : name){
+            case "mapset": return "map_set";
+            case "mapget": return "map_get";
+            case "maphas": return "map_contains";
+            case "mapdel": return "map_erase";
+            case "mapsize": return "map_size";
+            case "mapclear": return "map_clear";
+            default: return name;
+        }
+    }
 
     // 内置函数局部变量（__ls_ 前缀，编译器保留；不参与 mangle，函数间不互相调用因此可共享）
     private static final String NAN = "__ls_mp_nan";
@@ -75,36 +89,36 @@ public final class MapIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public int arity(String name){
-        switch(name){
-            case "mapset":
+        switch(canonical(name)){
+            case "map_set":
                 return 3;
-            case "mapget":
-            case "maphas":
-            case "mapdel":
+            case "map_get":
+            case "map_contains":
+            case "map_erase":
                 return 2;
-            case "mapsize":
-            case "mapclear":
+            case "map_size":
+            case "map_clear":
                 return 1;
             default:
                 return -1;
         }
     }
 
-    /** mapclear is an initialization/mutation operation; its implementation's zero is a sentinel. */
+    /** map_clear is an initialization/mutation operation; its implementation's zero is a sentinel. */
     @Override
     public boolean returnsValue(String name){
-        return !"mapclear".equals(name);
+        return !"map_clear".equals(canonical(name));
     }
 
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        switch(name){
-            case "mapset": return call(BUILTIN_SET, name, args, ctx, 2);
-            case "mapget": return call(BUILTIN_GET, name, args, ctx, 1);
-            case "maphas": return call(BUILTIN_HAS, name, args, ctx, 1);
-            case "mapdel": return call(BUILTIN_DEL, name, args, ctx, 1);
-            case "mapsize": return call(BUILTIN_SIZE, name, args, ctx, 0);
-            case "mapclear": return call(BUILTIN_CLEAR, name, args, ctx, 0);
+        switch(canonical(name)){
+            case "map_set": return call(BUILTIN_SET, name, args, ctx, 2);
+            case "map_get": return call(BUILTIN_GET, name, args, ctx, 1);
+            case "map_contains": return call(BUILTIN_HAS, name, args, ctx, 1);
+            case "map_erase": return call(BUILTIN_DEL, name, args, ctx, 1);
+            case "map_size": return call(BUILTIN_SIZE, name, args, ctx, 0);
+            case "map_clear": return call(BUILTIN_CLEAR, name, args, ctx, 0);
             default: return null;
         }
     }
@@ -121,15 +135,15 @@ public final class MapIntrinsics implements ExprIntrinsics.Provider{
     public String methodIntrinsic(String kind, String method, int argc){
         if(!MapModule.ID.equals(kind)) return null;
         String m = method.toLowerCase(java.util.Locale.ROOT);
-        if(argc == 1 && (m.equals("get") || m.equals("lookup"))) return "mapget";
-        if(argc == 1 && (m.equals("has") || m.equals("contains") || m.equals("containskey"))) return "maphas";
-        if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "mapsize";
+        if(argc == 1 && (m.equals("get") || m.equals("lookup"))) return "map_get";
+        if(argc == 1 && (m.equals("has") || m.equals("contains") || m.equals("containskey"))) return "map_contains";
+        if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "map_size";
         return null;
     }
 
     @Override
     public String indexIntrinsic(String kind){
-        return MapModule.ID.equals(kind) ? "mapget" : null;
+        return MapModule.ID.equals(kind) ? "map_get" : null;
     }
 
     @Override
@@ -166,13 +180,13 @@ public final class MapIntrinsics implements ExprIntrinsics.Provider{
     }
 
     private static String builtinOf(String name){
-        switch(name){
-            case "mapset": return BUILTIN_SET;
-            case "mapget": return BUILTIN_GET;
-            case "maphas": return BUILTIN_HAS;
-            case "mapdel": return BUILTIN_DEL;
-            case "mapsize": return BUILTIN_SIZE;
-            case "mapclear": return BUILTIN_CLEAR;
+        switch(canonical(name)){
+            case "map_set": return BUILTIN_SET;
+            case "map_get": return BUILTIN_GET;
+            case "map_contains": return BUILTIN_HAS;
+            case "map_erase": return BUILTIN_DEL;
+            case "map_size": return BUILTIN_SIZE;
+            case "map_clear": return BUILTIN_CLEAR;
             default: return null;
         }
     }

@@ -81,8 +81,8 @@ public class ChainModule extends DataModule{
 
     @Override
     public List<PaletteCall> paletteCalls(){
-        return callsWithFirst(SugarStatements.chainOps, "c", "cinit", "cclear", "cnew", "cfree", "cget", "cset",
-            "cnext", "clink", "cshead", "chead", "clen");
+        return callsWithFirst(SugarStatements.chainOps, "c", "chain_init", "chain_clear", "chain_alloc", "chain_free", "chain_get", "chain_set",
+            "chain_next", "chain_link", "chain_set_head", "chain_head", "chain_len");
     }
 
     // ===== 声明卡 =====

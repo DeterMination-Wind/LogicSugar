@@ -17,7 +17,7 @@ import java.util.Locale;
 public class DataCallStatement extends SugarStatements.SugarStatement{
     public static final String TOKEN = "datacall";
 
-    public String operation = "spush";
+    public String operation = "stack_push";
     public String destination = "result";
     public String arguments = "s, 1";
     private transient DataModule.PaletteCall palette;
@@ -73,7 +73,7 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
         if(operation == null || operation.isEmpty()) return TOKEN;
         // SugarLogicDialog derives its add-palette tooltip from typeName().  Keep the
         // generic token for malformed/legacy cards, and select the per-operation key for
-        // registered cards (e.g. logicsugar.lst.datacall.spop).
+        // registered cards (e.g. logicsugar.lst.datacall.stack_pop).
         return TOKEN + "." + operation.toLowerCase(Locale.ROOT);
     }
     @Override public LCategory category(){

@@ -66,7 +66,7 @@ public class BitsetModule extends DataModule{
 
     @Override
     public List<PaletteCall> paletteCalls(){
-        return callsWithFirst(SugarStatements.bitsetOps, "bits", "bset", "bclr", "btest", "bcount");
+        return callsWithFirst(SugarStatements.bitsetOps, "bits", "bitset_set", "bitset_reset", "bitset_test", "bitset_count");
     }
 
     /** {@code bitset <name> <memory> <base> <words>} 解析器（空槽 {@code ~}）。 */

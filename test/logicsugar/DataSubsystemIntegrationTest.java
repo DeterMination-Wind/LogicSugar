@@ -42,6 +42,7 @@ public class DataSubsystemIntegrationTest{
         productionRegistrationIsIdempotent(mod);
         dataDeclarationsAreVisible();
         endToEndStructuresCompileToVanilla();
+        renamedOpsLowerIdentically();
         collectFailureRestoresContext();
         stillCompilesAfterCollectFailure();
 
@@ -103,7 +104,22 @@ public class DataSubsystemIntegrationTest{
             "mapset", "mapget", "maphas", "mapdel", "mapsize", "mapclear",
             "uadd", "uhas", "udel", "usize", "uclear",
             "lappend", "lget", "lset", "linsert", "lremove", "lfind", "lsize",
-            "hpush", "hpop", "hsize"
+            "hpush", "hpop", "hsize",
+            "stack_push", "stack_pop", "stack_top", "stack_size", "stack_clear",
+            "queue_push", "queue_pop", "queue_front", "queue_size", "queue_clear",
+            "deque_push_front", "deque_push_back", "deque_pop_front", "deque_pop_back",
+            "deque_front", "deque_back", "deque_size", "deque_clear",
+            "bitset_set", "bitset_reset", "bitset_test", "bitset_count",
+            "map_set", "map_get", "map_contains", "map_erase", "map_size", "map_clear",
+            "set_add", "set_contains", "set_remove", "set_size", "set_clear",
+            "vector_push_back", "vector_at", "vector_set", "vector_insert",
+            "vector_erase", "vector_find", "vector_size",
+            "heap_push", "heap_pop", "heap_size",
+            "chain_init", "chain_clear", "chain_alloc", "chain_free", "chain_get", "chain_set",
+            "chain_next", "chain_link", "chain_set_head", "chain_head", "chain_len",
+            "array_sum", "array_avg", "array_min", "array_max", "array_count", "array_find",
+            "array_fill", "array_copy", "array_sort", "array_sort_desc", "array_reverse",
+            "array_replace", "array_swap", "array_lower_bound"
         ));
         Set<String> actual = ExprIntrinsics.intrinsicNames();
         for(String name : expected){
@@ -112,6 +128,10 @@ public class DataSubsystemIntegrationTest{
         check(ExprIntrinsics.isIntrinsic("sum"), "sum intrinsic not registered by production init");
         check(ExprIntrinsics.isIntrinsic("spush"), "spush intrinsic not registered by production init");
         check(ExprIntrinsics.isIntrinsic("mapset"), "mapset intrinsic not registered by production init");
+        check(ExprIntrinsics.isIntrinsic("array_sum"), "array_sum intrinsic not registered by production init");
+        check(ExprIntrinsics.isIntrinsic("stack_push"), "stack_push intrinsic not registered by production init");
+        check(ExprIntrinsics.isIntrinsic("map_set"), "map_set intrinsic not registered by production init");
+        check(ExprIntrinsics.isIntrinsic("chain_len"), "chain_len intrinsic not registered by production init");
     }
 
     // ===== 端到端：混合数据结构 → 纯原版产物 =====
@@ -201,6 +221,72 @@ public class DataSubsystemIntegrationTest{
         check(mlog.contains("set x 1"), "compilation broken after a recovered collect failure:\n" + mlog);
     }
 
+    // ===== v6 改名：旧名别名与新名降级产物必须完全一致 =====
+
+    private static void renamedOpsLowerIdentically(){
+        checkLowerIdentical("stack s cell1 0 4\n",
+            new String[]{"spush(s, 1) > 0", "spop(s) >= 0", "speek(s) >= 0", "ssize(s) >= 1", "sclear(s) >= 0"},
+            new String[]{"stack_push(s, 1) > 0", "stack_pop(s) >= 0", "stack_top(s) >= 0", "stack_size(s) >= 1", "stack_clear(s) >= 0"});
+        checkLowerIdentical("queue q cell1 0 4\n",
+            new String[]{"qpush(q, 2) > 0", "qpop(q) >= 0", "qpeek(q) >= 0", "qsize(q) >= 1", "qclear(q) >= 0"},
+            new String[]{"queue_push(q, 2) > 0", "queue_pop(q) >= 0", "queue_front(q) >= 0", "queue_size(q) >= 1", "queue_clear(q) >= 0"});
+        checkLowerIdentical("deque d cell1 0 4\n",
+            new String[]{"dpushf(d, 3) > 0", "dpushb(d, 3) > 0", "dpopf(d) >= 0", "dpopb(d) >= 0",
+                "dpeekf(d) >= 0", "dpeekb(d) >= 0", "dsize(d) >= 1", "dclear(d) >= 0"},
+            new String[]{"deque_push_front(d, 3) > 0", "deque_push_back(d, 3) > 0", "deque_pop_front(d) >= 0", "deque_pop_back(d) >= 0",
+                "deque_front(d) >= 0", "deque_back(d) >= 0", "deque_size(d) >= 1", "deque_clear(d) >= 0"});
+        checkLowerIdentical("bitset b cell1 0 2\n",
+            new String[]{"bset(b, 3) > 0", "bclr(b, 3) >= 0", "btest(b, 3) >= 0", "bcount(b) >= 0"},
+            new String[]{"bitset_set(b, 3) > 0", "bitset_reset(b, 3) >= 0", "bitset_test(b, 3) >= 0", "bitset_count(b) >= 0"});
+        checkLowerIdentical("map m cell1 0 4\n",
+            new String[]{"mapset(m, 1, 2) > 0", "mapget(m, 1) >= 0", "maphas(m, 1) >= 0", "mapdel(m, 1) >= 0",
+                "mapsize(m) >= 1", "mapclear(m) >= 0"},
+            new String[]{"map_set(m, 1, 2) > 0", "map_get(m, 1) >= 0", "map_contains(m, 1) >= 0", "map_erase(m, 1) >= 0",
+                "map_size(m) >= 1", "map_clear(m) >= 0"});
+        checkLowerIdentical("uset u cell1 0 4\n",
+            new String[]{"uadd(u, 1) > 0", "uhas(u, 1) >= 0", "udel(u, 1) >= 0", "usize(u) >= 1", "uclear(u) >= 0"},
+            new String[]{"set_add(u, 1) > 0", "set_contains(u, 1) >= 0", "set_remove(u, 1) >= 0", "set_size(u) >= 1", "set_clear(u) >= 0"});
+        checkLowerIdentical("list l cell1 0 4\n",
+            new String[]{"lappend(l, 5) > 0", "lget(l, 0) >= 0", "lset(l, 0, 1) > 0", "linsert(l, 0, 1) > 0",
+                "lremove(l, 0) >= 0", "lfind(l, 1) >= 0", "lsize(l) >= 1"},
+            new String[]{"vector_push_back(l, 5) > 0", "vector_at(l, 0) >= 0", "vector_set(l, 0, 1) > 0", "vector_insert(l, 0, 1) > 0",
+                "vector_erase(l, 0) >= 0", "vector_find(l, 1) >= 0", "vector_size(l) >= 1"});
+        checkLowerIdentical("heap h cell1 0 4\n",
+            new String[]{"hpush(h, 6) > 0", "hpop(h) >= 0", "hsize(h) >= 1"},
+            new String[]{"heap_push(h, 6) > 0", "heap_pop(h) >= 0", "heap_size(h) >= 1"});
+        checkLowerIdentical("chain c cell1 0 8\n",
+            new String[]{"cinit(c) >= 0", "cclear(c) >= 0", "cnew(c) >= 0", "cfree(c, 0) >= 0", "cget(c, 0) >= 0",
+                "cset(c, 0, 1) > 0", "cnext(c, 0) >= 0", "clink(c, 0, 1) > 0", "cshead(c, 0) > 0",
+                "chead(c) >= 0", "clen(c) >= 0"},
+            new String[]{"chain_init(c) >= 0", "chain_clear(c) >= 0", "chain_alloc(c) >= 0", "chain_free(c, 0) >= 0",
+                "chain_get(c, 0) >= 0", "chain_set(c, 0, 1) > 0", "chain_next(c, 0) >= 0",
+                "chain_link(c, 0, 1) > 0", "chain_set_head(c, 0) > 0", "chain_head(c) >= 0", "chain_len(c) >= 0"});
+        checkLowerIdentical("array buf cell1 0 8\n",
+            new String[]{"sum(buf) > 0", "avg(buf) >= 0", "min(buf) >= 0", "max(buf) >= 0",
+                "count(buf, 1) >= 0", "indexof(buf, 1) >= 0", "fill(buf, 1) >= 0", "copy(buf, buf) >= 0",
+                "sortasc(buf) >= 0", "sortdesc(buf) >= 0", "reverse(buf) >= 0", "replace(buf, 1, 2) >= 0",
+                "swap(buf, 0, 1) >= 0", "bsearch(buf, 1) >= 0"},
+            new String[]{"array_sum(buf) > 0", "array_avg(buf) >= 0", "array_min(buf) >= 0", "array_max(buf) >= 0",
+                "array_count(buf, 1) >= 0", "array_find(buf, 1) >= 0", "array_fill(buf, 1) >= 0",
+                "array_copy(buf, buf) >= 0", "array_sort(buf) >= 0", "array_sort_desc(buf) >= 0",
+                "array_reverse(buf) >= 0", "array_replace(buf, 1, 2) >= 0", "array_swap(buf, 0, 1) >= 0",
+                "array_lower_bound(buf, 1) >= 0"});
+    }
+
+    /** 编译一个模块的全部旧名/新名表达式，校验可执行流逐字一致。 */
+    private static void checkLowerIdentical(String declarations, String[] legacy, String[] renamed){
+        check(legacy.length == renamed.length, "rename fixture lists drifted apart");
+        String legacySugar = wrap(declarations, legacy);
+        String renamedSugar = wrap(declarations, renamed);
+        String legacyMlog = stripCompile(legacySugar);
+        String renamedMlog = stripCompile(renamedSugar);
+        if(!legacyMlog.equals(renamedMlog)){
+            throw new AssertionError("renamed operations must lower to the exact same executable stream as their legacy aliases");
+        }
+        check(SugarCompiler.restore(renamedSugar).equals(renamedSugar),
+            "carrier did not preserve the renamed operation source");
+    }
+
     // ===== 工具 =====
 
     /** 一个只在测试武装标志下抛错的模块（模拟模块 collect 校验失败）。 */
@@ -263,7 +349,13 @@ public class DataSubsystemIntegrationTest{
     }
 
     private static String stripCompile(String sugar){
-        return SugarCompiler.stripMarkers(compile(sugar));
+        String mlog = SugarCompiler.stripMarkers(compile(sugar));
+        StringBuilder executable = new StringBuilder();
+        for(String line : mlog.replace("\r\n", "\n").split("\n", -1)){
+            if(line.startsWith("set __ls_sugar") || line.startsWith("set __ls_lib")) continue;
+            executable.append(line).append('\n');
+        }
+        return executable.toString();
     }
 
     private static final Set<String> vanillaOpcodes = new HashSet<>(Arrays.asList(

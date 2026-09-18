@@ -102,7 +102,7 @@ public class SetModule extends DataModule{
 
     @Override
     public List<PaletteCall> paletteCalls(){
-        return callsWithFirst(SugarStatements.setOps, "s", "uadd", "uhas", "udel", "usize", "uclear");
+        return callsWithFirst(SugarStatements.setOps, "s", "set_add", "set_contains", "set_remove", "set_size", "set_clear");
     }
 
     @Override

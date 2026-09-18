@@ -39,9 +39,33 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
     public static final String BUILTIN_BSEARCH = "__ls_builtin_arrbsearch";
 
     private static final String[] CALL_NAMES = {
+        "array_sum", "array_avg", "array_min", "array_max", "array_count", "array_find", "array_fill",
+        "array_copy", "array_sort", "array_sort_desc", "array_reverse", "array_replace", "array_swap",
+        "array_lower_bound",
         "sum", "avg", "min", "max", "count", "indexof", "fill", "copy", "sortasc", "sortdesc",
         "reverse", "replace", "swap", "bsearch"
     };
+
+    /** 旧拼写 → 规范名。保存产物（carrier）可能携带旧名，解析时统一归一到新名再分派。 */
+    static String canonical(String name){
+        switch(name == null ? "" : name){
+            case "sum": return "array_sum";
+            case "avg": return "array_avg";
+            case "min": return "array_min";
+            case "max": return "array_max";
+            case "count": return "array_count";
+            case "indexof": return "array_find";
+            case "fill": return "array_fill";
+            case "copy": return "array_copy";
+            case "sortasc": return "array_sort";
+            case "sortdesc": return "array_sort_desc";
+            case "reverse": return "array_reverse";
+            case "replace": return "array_replace";
+            case "swap": return "array_swap";
+            case "bsearch": return "array_lower_bound";
+            default: return name;
+        }
+    }
 
     private ArrayBulkIntrinsics(){}
 
@@ -52,23 +76,23 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public int arity(String name){
-        switch(name){
-            case "sum":
-            case "avg":
-            case "min":
-            case "max":
-            case "sortasc":
-            case "sortdesc":
-            case "reverse":
+        switch(canonical(name)){
+            case "array_sum":
+            case "array_avg":
+            case "array_min":
+            case "array_max":
+            case "array_sort":
+            case "array_sort_desc":
+            case "array_reverse":
                 return 1;
-            case "count":
-            case "indexof":
-            case "fill":
-            case "copy":
-            case "bsearch":
+            case "array_count":
+            case "array_find":
+            case "array_fill":
+            case "array_copy":
+            case "array_lower_bound":
                 return 2;
-            case "replace":
-            case "swap":
+            case "array_replace":
+            case "array_swap":
                 return 3;
             default:
                 return -1;
@@ -79,13 +103,13 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
      * sentinels remain available to expression callers but are not source-level results. */
     @Override
     public boolean returnsValue(String name){
-        switch(name){
-            case "fill":
-            case "copy":
-            case "sortasc":
-            case "sortdesc":
-            case "reverse":
-            case "swap":
+        switch(canonical(name)){
+            case "array_fill":
+            case "array_copy":
+            case "array_sort":
+            case "array_sort_desc":
+            case "array_reverse":
+            case "array_swap":
                 return false;
             default:
                 return true;
@@ -94,21 +118,21 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        switch(name){
-            case "sum": return arrayOp(BUILTIN_SUM, name, args, ctx);
-            case "avg": return arrayOp(BUILTIN_AVG, name, args, ctx);
-            case "min": return arrayOp(BUILTIN_MIN, name, args, ctx);
-            case "max": return arrayOp(BUILTIN_MAX, name, args, ctx);
-            case "count": return valueOp(BUILTIN_COUNT, name, args, ctx);
-            case "indexof": return valueOp(BUILTIN_INDEXOF, name, args, ctx);
-            case "fill": return valueOp(BUILTIN_FILL, name, args, ctx);
-            case "sortasc": return arrayOp(BUILTIN_SORT, name, args, ctx, "1");
-            case "sortdesc": return arrayOp(BUILTIN_SORT, name, args, ctx, "-1");
-            case "copy": return copyOp(args, ctx);
-            case "reverse": return arrayOp(BUILTIN_REVERSE, name, args, ctx);
-            case "replace": return replaceOp(args, ctx);
-            case "swap": return swapOp(args, ctx);
-            case "bsearch": return valueOp(BUILTIN_BSEARCH, name, args, ctx);
+        switch(canonical(name)){
+            case "array_sum": return arrayOp(BUILTIN_SUM, name, args, ctx);
+            case "array_avg": return arrayOp(BUILTIN_AVG, name, args, ctx);
+            case "array_min": return arrayOp(BUILTIN_MIN, name, args, ctx);
+            case "array_max": return arrayOp(BUILTIN_MAX, name, args, ctx);
+            case "array_count": return valueOp(BUILTIN_COUNT, name, args, ctx);
+            case "array_find": return valueOp(BUILTIN_INDEXOF, name, args, ctx);
+            case "array_fill": return valueOp(BUILTIN_FILL, name, args, ctx);
+            case "array_sort": return arrayOp(BUILTIN_SORT, name, args, ctx, "1");
+            case "array_sort_desc": return arrayOp(BUILTIN_SORT, name, args, ctx, "-1");
+            case "array_copy": return copyOp(args, ctx);
+            case "array_reverse": return arrayOp(BUILTIN_REVERSE, name, args, ctx);
+            case "array_replace": return replaceOp(args, ctx);
+            case "array_swap": return swapOp(args, ctx);
+            case "array_lower_bound": return valueOp(BUILTIN_BSEARCH, name, args, ctx);
             default: return null;
         }
     }
@@ -154,22 +178,22 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
     }
 
     private static String builtinOf(String name){
-        switch(name){
-            case "sum": return BUILTIN_SUM;
-            case "avg": return BUILTIN_AVG;
-            case "min": return BUILTIN_MIN;
-            case "max": return BUILTIN_MAX;
-            case "count": return BUILTIN_COUNT;
-            case "indexof": return BUILTIN_INDEXOF;
-            case "fill": return BUILTIN_FILL;
-            case "copy": return BUILTIN_COPY;
-            case "sortasc":
-            case "sortdesc":
+        switch(canonical(name)){
+            case "array_sum": return BUILTIN_SUM;
+            case "array_avg": return BUILTIN_AVG;
+            case "array_min": return BUILTIN_MIN;
+            case "array_max": return BUILTIN_MAX;
+            case "array_count": return BUILTIN_COUNT;
+            case "array_find": return BUILTIN_INDEXOF;
+            case "array_fill": return BUILTIN_FILL;
+            case "array_copy": return BUILTIN_COPY;
+            case "array_sort":
+            case "array_sort_desc":
                 return BUILTIN_SORT;
-            case "reverse": return BUILTIN_REVERSE;
-            case "replace": return BUILTIN_REPLACE;
-            case "swap": return BUILTIN_SWAP;
-            case "bsearch": return BUILTIN_BSEARCH;
+            case "array_reverse": return BUILTIN_REVERSE;
+            case "array_replace": return BUILTIN_REPLACE;
+            case "array_swap": return BUILTIN_SWAP;
+            case "array_lower_bound": return BUILTIN_BSEARCH;
             default:
                 return null;
         }
@@ -197,8 +221,8 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
     }
 
     private static List<ExprCompiler.Line> copyOp(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        String[] dst = flat("copy", args.get(0), ctx);
-        String[] src = flat("copy", args.get(1), ctx);
+        String[] dst = flat("array_copy", args.get(0), ctx);
+        String[] src = flat("array_copy", args.get(1), ctx);
         if(!dst[2].equals(src[2])){
             throw ctx.error(ExprIntrinsics.text("la.err.intrinsic_copy_size",
                 "copy() requires arrays of equal size ({0} vs {1})", dst[2], src[2]));
@@ -209,7 +233,7 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
     }
 
     private static List<ExprCompiler.Line> replaceOp(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        String[] flat = flat("replace", args.get(0), ctx);
+        String[] flat = flat("array_replace", args.get(0), ctx);
         String oldValue = ctx.compile(args.get(1));
         String newValue = ctx.compile(args.get(2));
         List<String> operands = new ArrayList<>();
@@ -220,7 +244,7 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
     }
 
     private static List<ExprCompiler.Line> swapOp(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        String[] flat = flat("swap", args.get(0), ctx);
+        String[] flat = flat("array_swap", args.get(0), ctx);
         String i = ctx.compile(args.get(1));
         String j = ctx.compile(args.get(2));
         List<String> operands = new ArrayList<>();

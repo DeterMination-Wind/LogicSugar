@@ -8,7 +8,8 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * 位集的表达式扩展（{@code bset}/{@code bclr}/{@code btest}/{@code bcount}）。
+ * 位集的表达式扩展（{@code bitset_set}/{@code bitset_reset}/{@code bitset_test}/{@code bitset_count}）。
+ * 旧拼写（{@code bset}/{@code bclr}/{@code btest}/{@code bcount}）仍作为 legacy 别名可解析。
  *
  * <p>第一个实参必须是<b>已声明位集名</b>（{@link BitsetModule} 的编译期注册表，编辑器
  * 路径回退到画布声明）。位下标 {@code i} 可以是任意表达式：word = {@code i // 64}
@@ -17,12 +18,12 @@ import java.util.List;
  * 表达式链里；内存写回经共享注入函数 {@code __ls_builtin_bwrite} 完成（条件/返回表达式的
  * lowering 不支持链中的 {@code write} 行，见 {@link #write} 的注释）。</p>
  *
- * <p><b>越界语义</b>：{@code i < 0} 或 {@code i >= words*64} 时 set/clr 忽略（不改内存）、
+ * <p><b>越界语义</b>：{@code i < 0} 或 {@code i >= words*64} 时 set/reset 忽略（不改内存）、
  * test 返回 0。实现是无分支的：{@code valid = (i >= 0) && (i < words*64)}，{@code mask *= valid}、
  * {@code word *= valid}；无效时地址回落到 base（仍在区间内），读到的值原样写回，等价于空操作。
- * bset/bclr 返回 1（含无效下标），btest 返回 1/0。</p>
+ * bitset_set/bitset_reset 返回 1（含无效下标），bitset_test 返回 1/0。</p>
  *
- * <p>{@code bcount(b)} 展开为对注入函数 {@code __ls_builtin_bitcount} 的 {@code funccall}：
+ * <p>{@code bitset_count(b)} 展开为对注入函数 {@code __ls_builtin_bitcount} 的 {@code funccall}：
  * 逐 word 用 {@code and 1} + {@code ushr} 移位循环统计置位数（normal 模式共享一份子程序，
  * 未使用时经可达性分析不进入产物）。注意 mlog 内存单元是 double（53 位尾数），位 53..63
  * 的任意组合无法精确存储，高位置位时低位可能被舍入——这是原版内存的固有限制，模块报告
@@ -35,7 +36,21 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
     public static final String BUILTIN_COUNT = "__ls_builtin_bitcount";
     public static final String BUILTIN_WRITE = "__ls_builtin_bwrite";
 
-    private static final String[] CALL_NAMES = {"bset", "bclr", "btest", "bcount"};
+    private static final String[] CALL_NAMES = {
+        "bitset_set", "bitset_reset", "bitset_test", "bitset_count",
+        "bset", "bclr", "btest", "bcount"
+    };
+
+    /** 旧拼写 → 规范名。保存产物（carrier）可能携带旧名，解析时统一归一到新名再分派。 */
+    static String canonical(String name){
+        switch(name == null ? "" : name){
+            case "bset": return "bitset_set";
+            case "bclr": return "bitset_reset";
+            case "btest": return "bitset_test";
+            case "bcount": return "bitset_count";
+            default: return name;
+        }
+    }
 
     private BitsetIntrinsics(){}
 
@@ -45,23 +60,27 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
     }
 
     /**
-     * v5 API：{@code bset}/{@code bclr} 的写回子程序恒返回 1（越界也返回 1），没有任何信息量，
-     * 因此它们是无结果卡（卡片可以写 {@code ~}）。表达式形式仍保留旧的结果操作数以便兼容。
+     * v5 API：{@code bitset_set}/{@code bitset_reset} 的写回子程序恒返回 1（越界也返回 1），没有
+     * 任何信息量，因此它们是无结果卡（卡片可以写 {@code ~}）。表达式形式仍保留旧的结果操作数
+     * 以便兼容。
      */
     @Override
     public boolean returnsValue(String name){
-        return !"bset".equals(name) && !"bclr".equals(name);
+        String canon = canonical(name);
+        return !"bitset_set".equals(canon) && !"bitset_reset".equals(canon);
     }
 
     @Override
     public int arity(String name){
-        return "bcount".equals(name) ? 1 : 2;
+        return "bitset_count".equals(canonical(name)) ? 1 : 2;
     }
 
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        if("bcount".equals(name)) return countOp(args, ctx);
-        if("bset".equals(name) || "bclr".equals(name) || "btest".equals(name)) return bitOp(name, args, ctx);
+        String canon = canonical(name);
+        if("bitset_count".equals(canon)) return countOp(args, ctx);
+        if("bitset_set".equals(canon) || "bitset_reset".equals(canon) || "bitset_test".equals(canon))
+            return bitOp(canon, args, ctx);
         return null;
     }
 
@@ -82,8 +101,9 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public List<String> callees(String name, int argc){
-        if("bcount".equals(name)) return Collections.singletonList(BUILTIN_COUNT);
-        if("bset".equals(name) || "bclr".equals(name)) return Collections.singletonList(BUILTIN_WRITE);
+        String canon = canonical(name);
+        if("bitset_count".equals(canon)) return Collections.singletonList(BUILTIN_COUNT);
+        if("bitset_set".equals(canon) || "bitset_reset".equals(canon)) return Collections.singletonList(BUILTIN_WRITE);
         return Collections.emptyList();
     }
 
@@ -98,20 +118,20 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
     @Override
     public String methodIntrinsic(String kind, String method, int argc){
         String m = method.toLowerCase(java.util.Locale.ROOT);
-        if(argc == 0) return m.equals("count") ? "bcount" : null;
-        if(argc == 1) return m.equals("test") || m.equals("get") ? "btest" : null;
+        if(argc == 0) return m.equals("count") ? "bitset_count" : null;
+        if(argc == 1) return m.equals("test") || m.equals("get") ? "bitset_test" : null;
         return null;
     }
 
     @Override
     public String indexIntrinsic(String kind){
-        return BitsetModule.ID.equals(kind) ? "btest" : null;
+        return BitsetModule.ID.equals(kind) ? "bitset_test" : null;
     }
     // ===== 展开 =====
 
     /**
-     * bset/bclr/btest 的公共展开：编译下标 → word/bit/mask/valid → 地址 → 读 → 改 → 写回。
-     * 返回链的最后一行有结果操作数（bset/bclr 是 bwrite 调用的返回值 1，btest 是
+     * bitset_set/bitset_reset/bitset_test 的公共展开：编译下标 → word/bit/mask/valid → 地址 → 读 → 改 → 写回。
+     * 返回链的最后一行有结果操作数（bitset_set/bitset_reset 是 bwrite 调用的返回值 1，bitset_test 是
      * {@code op notEqual} 的 1/0），调用方据此把结果接到外层表达式链上。
      */
     private static List<ExprCompiler.Line> bitOp(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
@@ -142,10 +162,10 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
         String current = ctx.temp();
         lines.add(new ExprCompiler.ReadLine(current, info.memory, address));
 
-        if("bset".equals(name)){
+        if("bitset_set".equals(name)){
             lines.add(new ExprCompiler.OpLine("or", current, current, mask));
             lines.add(write(current, info.memory, address, ctx));
-        }else if("bclr".equals(name)){
+        }else if("bitset_reset".equals(name)){
             String inverse = ctx.temp();
             lines.add(new ExprCompiler.OpLine("not", inverse, mask, "0"));
             lines.add(new ExprCompiler.OpLine("and", current, current, inverse));
@@ -162,15 +182,16 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
      * 内存写回：经共享注入函数 {@code __ls_builtin_bwrite} 完成。原版 {@code write} 不是
      * 表达式链支持的行类型——条件/返回表达式的 lowering 只认 op/sensor/read/funccall，
      * 链中直接放 WriteLine 会在 {@code emitConditionExpression}/{@code emitReturn} 处抛
-     * ClassCastException。函数体是一条 {@code write}，返回 1，因此 bset/bclr 的链尾即结果。
+     * ClassCastException。函数体是一条 {@code write}，返回 1，因此 bitset_set/bitset_reset
+     * 的链尾即结果。
      */
     private static ExprCompiler.Line write(String value, String memory, String address, ExprIntrinsics.Ctx ctx){
         return new ExprCompiler.CallLine(BUILTIN_WRITE, memory + ", " + address + ", " + value, ctx.temp());
     }
 
-    /** bcount(b)：调用共享注入函数 {@code __ls_builtin_bitcount(mem, base, words)}。 */
+    /** bitset_count(b)：调用共享注入函数 {@code __ls_builtin_bitcount(mem, base, words)}。 */
     private static List<ExprCompiler.Line> countOp(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        BitsetInfo info = resolve("bcount", args, ctx);
+        BitsetInfo info = resolve("bitset_count", args, ctx);
         List<ExprCompiler.Line> lines = new ArrayList<>(1);
         lines.add(new ExprCompiler.CallLine(BUILTIN_COUNT,
             info.memory + ", " + info.base + ", " + info.words, ctx.temp()));
@@ -193,7 +214,7 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
 
     // ===== 注入函数源文本 =====
 
-    /** {@code bset}/{@code bclr} 的写回子程序：{@code write value mem addr}，返回 1。 */
+    /** {@code bitset_set}/{@code bitset_reset} 的写回子程序：{@code write value mem addr}，返回 1。 */
     public static String writeBuiltinSugar(){
         return "funcdef " + BUILTIN_WRITE + " mem,addr,value 3\n"
             + "write value mem addr\n"
@@ -202,7 +223,7 @@ public final class BitsetIntrinsics implements ExprIntrinsics.Provider{
     }
 
     /**
-     * {@code bcount} 的注入函数：逐 word 用 {@code and 1} + {@code ushr} 移位循环统计置位数。
+     * {@code bitset_count} 的注入函数：逐 word 用 {@code and 1} + {@code ushr} 移位循环统计置位数。
      * 参数 {@code mem,base,words}；局部变量统一 {@code __ls_bit_} 前缀（与其它模块/用户变量
      * 不冲突）。索引为注入文本的语句下标（whilebegin 的 destIndex 指向自己的 blockend）。
      */

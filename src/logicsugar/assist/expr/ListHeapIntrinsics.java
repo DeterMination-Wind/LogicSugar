@@ -73,9 +73,28 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
     public static final String BUILTIN_POP = "__ls_builtin_heppop";
 
     private static final String[] CALL_NAMES = {
+        "vector_push_back", "vector_at", "vector_set", "vector_insert", "vector_erase", "vector_find", "vector_size",
+        "heap_push", "heap_pop", "heap_size",
         "lappend", "lget", "lset", "linsert", "lremove", "lfind", "lsize",
         "hpush", "hpop", "hsize"
     };
+
+    /** 旧拼写 → 规范名。保存产物（carrier）可能携带旧名，解析时统一归一到新名再分派。 */
+    static String canonical(String name){
+        switch(name == null ? "" : name){
+            case "lappend": return "vector_push_back";
+            case "lget": return "vector_at";
+            case "lset": return "vector_set";
+            case "linsert": return "vector_insert";
+            case "lremove": return "vector_erase";
+            case "lfind": return "vector_find";
+            case "lsize": return "vector_size";
+            case "hpush": return "heap_push";
+            case "hpop": return "heap_pop";
+            case "hsize": return "heap_size";
+            default: return name;
+        }
+    }
 
     private ListHeapIntrinsics(){}
 
@@ -86,19 +105,19 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public int arity(String name){
-        switch(name){
-            case "lappend":
-            case "lget":
-            case "lremove":
-            case "lfind":
-            case "hpush":
+        switch(canonical(name)){
+            case "vector_push_back":
+            case "vector_at":
+            case "vector_erase":
+            case "vector_find":
+            case "heap_push":
                 return 2;
-            case "lset":
-            case "linsert":
+            case "vector_set":
+            case "vector_insert":
                 return 3;
-            case "lsize":
-            case "hpop":
-            case "hsize":
+            case "vector_size":
+            case "heap_pop":
+            case "heap_size":
                 return 1;
             default:
                 return -1;
@@ -107,17 +126,17 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        switch(name){
-            case "lsize": return sizeOp("lsize", args, ListHeapModule.KIND_LIST, ctx);
-            case "hsize": return sizeOp("hsize", args, ListHeapModule.KIND_HEAP, ctx);
-            case "lget": return listGet(args, ctx);
-            case "lappend": return listAppend(args, ctx);
-            case "lset": return listSet(args, ctx);
-            case "linsert": return listInsert(args, ctx);
-            case "lremove": return listRemove(args, ctx);
-            case "lfind": return listFind(args, ctx);
-            case "hpush": return heapPush(args, ctx);
-            case "hpop": return heapPop(args, ctx);
+        switch(canonical(name)){
+            case "vector_size": return sizeOp("vector_size", args, ListHeapModule.KIND_LIST, ctx);
+            case "heap_size": return sizeOp("heap_size", args, ListHeapModule.KIND_HEAP, ctx);
+            case "vector_at": return listGet(args, ctx);
+            case "vector_push_back": return listAppend(args, ctx);
+            case "vector_set": return listSet(args, ctx);
+            case "vector_insert": return listInsert(args, ctx);
+            case "vector_erase": return listRemove(args, ctx);
+            case "vector_find": return listFind(args, ctx);
+            case "heap_push": return heapPush(args, ctx);
+            case "heap_pop": return heapPop(args, ctx);
             default: return null;
         }
     }
@@ -139,14 +158,14 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public List<String> callees(String name, int argc){
-        switch(name){
-            case "lappend": return Collections.singletonList(BUILTIN_APPEND);
-            case "lset": return Collections.singletonList(BUILTIN_SET);
-            case "linsert": return Collections.singletonList(BUILTIN_INSERT);
-            case "lremove": return Collections.singletonList(BUILTIN_REMOVE);
-            case "lfind": return Collections.singletonList(BUILTIN_FIND);
-            case "hpush": return Collections.singletonList(BUILTIN_PUSH);
-            case "hpop": return Collections.singletonList(BUILTIN_POP);
+        switch(canonical(name)){
+            case "vector_push_back": return Collections.singletonList(BUILTIN_APPEND);
+            case "vector_set": return Collections.singletonList(BUILTIN_SET);
+            case "vector_insert": return Collections.singletonList(BUILTIN_INSERT);
+            case "vector_erase": return Collections.singletonList(BUILTIN_REMOVE);
+            case "vector_find": return Collections.singletonList(BUILTIN_FIND);
+            case "heap_push": return Collections.singletonList(BUILTIN_PUSH);
+            case "heap_pop": return Collections.singletonList(BUILTIN_POP);
             default: return Collections.emptyList();
         }
     }
@@ -166,18 +185,18 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
     public String methodIntrinsic(String kind, String method, int argc){
         String m = method.toLowerCase(java.util.Locale.ROOT);
         if(ListHeapModule.KIND_LIST.equals(kind)){
-            if(argc == 1 && m.equals("get")) return "lget";
-            if(argc == 1 && (m.equals("find") || m.equals("indexof"))) return "lfind";
-            if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "lsize";
+            if(argc == 1 && (m.equals("get") || m.equals("at"))) return "vector_at";
+            if(argc == 1 && (m.equals("find") || m.equals("indexof"))) return "vector_find";
+            if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "vector_size";
         }else if(ListHeapModule.KIND_HEAP.equals(kind)){
-            if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "hsize";
+            if(argc == 0 && (m.equals("size") || m.equals("length") || m.equals("count"))) return "heap_size";
         }
         return null;
     }
 
     @Override
     public String indexIntrinsic(String kind){
-        return ListHeapModule.KIND_LIST.equals(kind) ? "lget" : null;
+        return ListHeapModule.KIND_LIST.equals(kind) ? "vector_at" : null;
     }
 
     /** 注入函数的 sugar 源文本（每项一个完整 funcdef 块）。 */
@@ -208,7 +227,7 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
      * 地址 {@code = base + i - invalid * (base + i + 1)}，invalid 时落到 -1。
      */
     private static List<ExprCompiler.Line> listGet(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ListHeapModule.Info info = resolve("lget", args.get(0), ListHeapModule.KIND_LIST, ctx);
+        ListHeapModule.Info info = resolve("vector_at", args.get(0), ListHeapModule.KIND_LIST, ctx);
         String index = ctx.compile(args.get(1));
         String count = info.countVar();
         List<ExprCompiler.Line> out = new ArrayList<>();
@@ -230,7 +249,7 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code lappend(l, v)}：注入函数返回新 count，CallLine dest 直接写回计数变量。 */
     private static List<ExprCompiler.Line> listAppend(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ListHeapModule.Info info = resolve("lappend", args.get(0), ListHeapModule.KIND_LIST, ctx);
+        ListHeapModule.Info info = resolve("vector_push_back", args.get(0), ListHeapModule.KIND_LIST, ctx);
         String value = ctx.compile(args.get(1));
         List<ExprCompiler.Line> out = new ArrayList<>(SugarCompiler.legacyApi() ? 1 : 5);
         String old = SugarCompiler.legacyApi() ? null : ctx.temp();
@@ -249,7 +268,7 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code lset(l, i, v)}：注入函数返回 1/0。 */
     private static List<ExprCompiler.Line> listSet(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ListHeapModule.Info info = resolve("lset", args.get(0), ListHeapModule.KIND_LIST, ctx);
+        ListHeapModule.Info info = resolve("vector_set", args.get(0), ListHeapModule.KIND_LIST, ctx);
         String index = ctx.compile(args.get(1));
         String value = ctx.compile(args.get(2));
         List<ExprCompiler.Line> out = new ArrayList<>(1);
@@ -261,7 +280,7 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code linsert(l, i, v)}：函数返回新 count（失败为旧 count），调用点换算 1/0 并回写计数。 */
     private static List<ExprCompiler.Line> listInsert(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ListHeapModule.Info info = resolve("linsert", args.get(0), ListHeapModule.KIND_LIST, ctx);
+        ListHeapModule.Info info = resolve("vector_insert", args.get(0), ListHeapModule.KIND_LIST, ctx);
         String index = ctx.compile(args.get(1));
         String value = ctx.compile(args.get(2));
         String count = info.countVar();
@@ -287,7 +306,7 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
      * 所以返回被删除值的 CallLine 必须是链尾），函数返回被删除值或 NaN。
      */
     private static List<ExprCompiler.Line> listRemove(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ListHeapModule.Info info = resolve("lremove", args.get(0), ListHeapModule.KIND_LIST, ctx);
+        ListHeapModule.Info info = resolve("vector_erase", args.get(0), ListHeapModule.KIND_LIST, ctx);
         String index = ctx.compile(args.get(1));
         String count = info.countVar();
         List<ExprCompiler.Line> out = new ArrayList<>(6);
@@ -309,7 +328,7 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code lfind(l, v)}：注入函数返回首个匹配下标或 -1。 */
     private static List<ExprCompiler.Line> listFind(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ListHeapModule.Info info = resolve("lfind", args.get(0), ListHeapModule.KIND_LIST, ctx);
+        ListHeapModule.Info info = resolve("vector_find", args.get(0), ListHeapModule.KIND_LIST, ctx);
         String value = ctx.compile(args.get(1));
         List<ExprCompiler.Line> out = new ArrayList<>(1);
         out.add(new ExprCompiler.CallLine(BUILTIN_FIND,
@@ -321,7 +340,7 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code hpush(h, v)}：函数返回新 count（失败为旧 count），调用点换算 1/0 并回写计数。 */
     private static List<ExprCompiler.Line> heapPush(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ListHeapModule.Info info = resolve("hpush", args.get(0), ListHeapModule.KIND_HEAP, ctx);
+        ListHeapModule.Info info = resolve("heap_push", args.get(0), ListHeapModule.KIND_HEAP, ctx);
         String value = ctx.compile(args.get(1));
         String count = info.countVar();
         List<ExprCompiler.Line> out = new ArrayList<>(4);
@@ -342,7 +361,7 @@ public final class ListHeapIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code hpop(h)}：调用前递减计数，返回最小值的 CallLine 是链尾（空 → NaN 不被归零）。 */
     private static List<ExprCompiler.Line> heapPop(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ListHeapModule.Info info = resolve("hpop", args.get(0), ListHeapModule.KIND_HEAP, ctx);
+        ListHeapModule.Info info = resolve("heap_pop", args.get(0), ListHeapModule.KIND_HEAP, ctx);
         String count = info.countVar();
         List<ExprCompiler.Line> out = new ArrayList<>(4);
         String old = ctx.temp();

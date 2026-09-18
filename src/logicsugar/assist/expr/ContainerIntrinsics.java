@@ -62,10 +62,39 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
     public static final String BUILTIN_DEQUE_PUSH_FRONT = "__ls_builtin_deqpushf";
 
     private static final String[] CALL_NAMES = {
+        "stack_push", "stack_pop", "stack_top", "stack_size", "stack_clear",
+        "queue_push", "queue_pop", "queue_front", "queue_size", "queue_clear",
+        "deque_push_front", "deque_push_back", "deque_pop_front", "deque_pop_back",
+        "deque_front", "deque_back", "deque_size", "deque_clear",
         "spush", "spop", "speek", "ssize", "sclear",
         "qpush", "qpop", "qpeek", "qsize", "qclear",
         "dpushf", "dpushb", "dpopf", "dpopb", "dpeekf", "dpeekb", "dsize", "dclear"
     };
+
+    /** 旧拼写 → 规范名。保存产物（carrier）可能携带旧名，解析时统一归一到新名再分派。 */
+    static String canonical(String name){
+        switch(name == null ? "" : name){
+            case "spush": return "stack_push";
+            case "spop": return "stack_pop";
+            case "speek": return "stack_top";
+            case "ssize": return "stack_size";
+            case "sclear": return "stack_clear";
+            case "qpush": return "queue_push";
+            case "qpop": return "queue_pop";
+            case "qpeek": return "queue_front";
+            case "qsize": return "queue_size";
+            case "qclear": return "queue_clear";
+            case "dpushf": return "deque_push_front";
+            case "dpushb": return "deque_push_back";
+            case "dpopf": return "deque_pop_front";
+            case "dpopb": return "deque_pop_back";
+            case "dpeekf": return "deque_front";
+            case "dpeekb": return "deque_back";
+            case "dsize": return "deque_size";
+            case "dclear": return "deque_clear";
+            default: return name;
+        }
+    }
 
     private ContainerIntrinsics(){}
 
@@ -76,26 +105,26 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public int arity(String name){
-        switch(name){
-            case "spush":
-            case "qpush":
-            case "dpushf":
-            case "dpushb":
+        switch(canonical(name)){
+            case "stack_push":
+            case "queue_push":
+            case "deque_push_front":
+            case "deque_push_back":
                 return 2;
-            case "spop":
-            case "speek":
-            case "ssize":
-            case "sclear":
-            case "qpop":
-            case "qpeek":
-            case "qsize":
-            case "qclear":
-            case "dpopf":
-            case "dpopb":
-            case "dpeekf":
-            case "dpeekb":
-            case "dsize":
-            case "dclear":
+            case "stack_pop":
+            case "stack_top":
+            case "stack_size":
+            case "stack_clear":
+            case "queue_pop":
+            case "queue_front":
+            case "queue_size":
+            case "queue_clear":
+            case "deque_pop_front":
+            case "deque_pop_back":
+            case "deque_front":
+            case "deque_back":
+            case "deque_size":
+            case "deque_clear":
                 return 1;
             default:
                 return -1;
@@ -105,30 +134,31 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
     /** clear operations mutate only hidden container state and have no source-level result. */
     @Override
     public boolean returnsValue(String name){
-        return !"sclear".equals(name) && !"qclear".equals(name) && !"dclear".equals(name);
+        String canon = canonical(name);
+        return !"stack_clear".equals(canon) && !"queue_clear".equals(canon) && !"deque_clear".equals(canon);
     }
 
     @Override
     public List<ExprCompiler.Line> expandCall(String name, List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        switch(name){
-            case "spush": return stackPush(args, ctx);
-            case "spop": return stackPop(args, ctx);
-            case "speek": return stackPeek(args, ctx);
-            case "ssize": return stackSize(args, ctx);
-            case "sclear": return stackClear(args, ctx);
-            case "qpush": return queuePush(args, ctx);
-            case "qpop": return queuePop(args, ctx);
-            case "qpeek": return queuePeek(args, ctx);
-            case "qsize": return queueSize(args, ctx);
-            case "qclear": return queueClear(args, ctx);
-            case "dpushf": return dequePushFront(args, ctx);
-            case "dpushb": return dequePushBack(args, ctx);
-            case "dpopf": return dequePopFront(args, ctx);
-            case "dpopb": return dequePopBack(args, ctx);
-            case "dpeekf": return dequePeekFront(args, ctx);
-            case "dpeekb": return dequePeekBack(args, ctx);
-            case "dsize": return dequeSize(args, ctx);
-            case "dclear": return dequeClear(args, ctx);
+        switch(canonical(name)){
+            case "stack_push": return stackPush(args, ctx);
+            case "stack_pop": return stackPop(args, ctx);
+            case "stack_top": return stackPeek(args, ctx);
+            case "stack_size": return stackSize(args, ctx);
+            case "stack_clear": return stackClear(args, ctx);
+            case "queue_push": return queuePush(args, ctx);
+            case "queue_pop": return queuePop(args, ctx);
+            case "queue_front": return queuePeek(args, ctx);
+            case "queue_size": return queueSize(args, ctx);
+            case "queue_clear": return queueClear(args, ctx);
+            case "deque_push_front": return dequePushFront(args, ctx);
+            case "deque_push_back": return dequePushBack(args, ctx);
+            case "deque_pop_front": return dequePopFront(args, ctx);
+            case "deque_pop_back": return dequePopBack(args, ctx);
+            case "deque_front": return dequePeekFront(args, ctx);
+            case "deque_back": return dequePeekBack(args, ctx);
+            case "deque_size": return dequeSize(args, ctx);
+            case "deque_clear": return dequeClear(args, ctx);
             default: return null;
         }
     }
@@ -150,9 +180,10 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     @Override
     public List<String> callees(String name, int argc){
-        if("spush".equals(name)) return Collections.singletonList(BUILTIN_STACK_PUSH);
-        if("qpush".equals(name) || "dpushb".equals(name)) return Collections.singletonList(BUILTIN_QUEUE_PUSH);
-        if("dpushf".equals(name)) return Collections.singletonList(BUILTIN_DEQUE_PUSH_FRONT);
+        String canon = canonical(name);
+        if("stack_push".equals(canon)) return Collections.singletonList(BUILTIN_STACK_PUSH);
+        if("queue_push".equals(canon) || "deque_push_back".equals(canon)) return Collections.singletonList(BUILTIN_QUEUE_PUSH);
+        if("deque_push_front".equals(canon)) return Collections.singletonList(BUILTIN_DEQUE_PUSH_FRONT);
         return Collections.emptyList();
     }
 
@@ -172,15 +203,15 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
         if(argc != 0) return null;
         String m = method.toLowerCase(java.util.Locale.ROOT);
         if(ContainerModule.KIND_STACK.equals(kind)){
-            if(m.equals("top") || m.equals("peek")) return "speek";
-            if(m.equals("size") || m.equals("count")) return "ssize";
+            if(m.equals("top") || m.equals("peek")) return "stack_top";
+            if(m.equals("size") || m.equals("count")) return "stack_size";
         }else if(ContainerModule.KIND_QUEUE.equals(kind)){
-            if(m.equals("front") || m.equals("peek")) return "qpeek";
-            if(m.equals("size") || m.equals("count")) return "qsize";
+            if(m.equals("front") || m.equals("peek")) return "queue_front";
+            if(m.equals("size") || m.equals("count")) return "queue_size";
         }else if(ContainerModule.KIND_DEQUE.equals(kind)){
-            if(m.equals("front") || m.equals("peekfront")) return "dpeekf";
-            if(m.equals("back") || m.equals("peekback")) return "dpeekb";
-            if(m.equals("size") || m.equals("count")) return "dsize";
+            if(m.equals("front") || m.equals("peekfront")) return "deque_front";
+            if(m.equals("back") || m.equals("peekback")) return "deque_back";
+            if(m.equals("size") || m.equals("count")) return "deque_size";
         }
         return null;
     }
@@ -198,7 +229,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code ssize(s)}：{@code op add <r> top 0}。 */
     private static List<ExprCompiler.Line> stackSize(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("ssize", args.get(0), ContainerModule.KIND_STACK, ctx);
+        ContainerModule.Info info = resolve("stack_size", args.get(0), ContainerModule.KIND_STACK, ctx);
         List<ExprCompiler.Line> out = new ArrayList<>(1);
         out.add(new ExprCompiler.OpLine("add", ctx.temp(), info.stateVar(ContainerModule.FIELD_TOP), "0"));
         return out;
@@ -206,7 +237,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code sclear(s)}：top = 0，返回 0。 */
     private static List<ExprCompiler.Line> stackClear(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("sclear", args.get(0), ContainerModule.KIND_STACK, ctx);
+        ContainerModule.Info info = resolve("stack_clear", args.get(0), ContainerModule.KIND_STACK, ctx);
         List<ExprCompiler.Line> out = new ArrayList<>(2);
         out.add(new ExprCompiler.OpLine("add", info.stateVar(ContainerModule.FIELD_TOP), "0", "0"));
         out.add(new ExprCompiler.OpLine("add", ctx.temp(), "0", "0"));
@@ -215,7 +246,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code speek(s)}：空 → 越界读 → NaN；否则读 base+top-1。 */
     private static List<ExprCompiler.Line> stackPeek(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("speek", args.get(0), ContainerModule.KIND_STACK, ctx);
+        ContainerModule.Info info = resolve("stack_top", args.get(0), ContainerModule.KIND_STACK, ctx);
         String top = info.stateVar(ContainerModule.FIELD_TOP);
         String base = Integer.toString(info.base);
         List<ExprCompiler.Line> out = new ArrayList<>(6);
@@ -233,7 +264,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code spop(s)}：先算读地址（空 → -1），再 top = max(top-1, 0)，最后读出结果。 */
     private static List<ExprCompiler.Line> stackPop(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("spop", args.get(0), ContainerModule.KIND_STACK, ctx);
+        ContainerModule.Info info = resolve("stack_pop", args.get(0), ContainerModule.KIND_STACK, ctx);
         String top = info.stateVar(ContainerModule.FIELD_TOP);
         String base = Integer.toString(info.base);
         List<ExprCompiler.Line> out = new ArrayList<>(8);
@@ -253,7 +284,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code spush(s,v)}：注入函数写内存并返回新个数，函数结果直接写回状态变量。 */
     private static List<ExprCompiler.Line> stackPush(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("spush", args.get(0), ContainerModule.KIND_STACK, ctx);
+        ContainerModule.Info info = resolve("stack_push", args.get(0), ContainerModule.KIND_STACK, ctx);
         String top = info.stateVar(ContainerModule.FIELD_TOP);
         // 先编译待写入的值：其指令链追加到外层 ops，位于本展开之前（求值顺序正确）
         String value = ctx.compile(args.get(1));
@@ -275,7 +306,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code qsize(q)}：{@code op add <r> count 0}。 */
     private static List<ExprCompiler.Line> queueSize(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("qsize", args.get(0), ContainerModule.KIND_QUEUE, ctx);
+        ContainerModule.Info info = resolve("queue_size", args.get(0), ContainerModule.KIND_QUEUE, ctx);
         List<ExprCompiler.Line> out = new ArrayList<>(1);
         out.add(new ExprCompiler.OpLine("add", ctx.temp(), info.stateVar(ContainerModule.FIELD_COUNT), "0"));
         return out;
@@ -283,7 +314,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code qclear(q)}：head/tail/count = 0，返回 0。 */
     private static List<ExprCompiler.Line> queueClear(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("qclear", args.get(0), ContainerModule.KIND_QUEUE, ctx);
+        ContainerModule.Info info = resolve("queue_clear", args.get(0), ContainerModule.KIND_QUEUE, ctx);
         List<ExprCompiler.Line> out = new ArrayList<>(4);
         out.add(new ExprCompiler.OpLine("add", info.stateVar(ContainerModule.FIELD_HEAD), "0", "0"));
         out.add(new ExprCompiler.OpLine("add", info.stateVar(ContainerModule.FIELD_TAIL), "0", "0"));
@@ -294,7 +325,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code qpeek(q)}：空 → 越界读 → NaN；否则读 base+head。 */
     private static List<ExprCompiler.Line> queuePeek(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("qpeek", args.get(0), ContainerModule.KIND_QUEUE, ctx);
+        ContainerModule.Info info = resolve("queue_front", args.get(0), ContainerModule.KIND_QUEUE, ctx);
         String head = info.stateVar(ContainerModule.FIELD_HEAD);
         String count = info.stateVar(ContainerModule.FIELD_COUNT);
         String base = Integer.toString(info.base);
@@ -313,7 +344,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code qpop(q)}：空 → NaN 且 head/count 不变；否则 head=(head+1)%size、count-1。 */
     private static List<ExprCompiler.Line> queuePop(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("qpop", args.get(0), ContainerModule.KIND_QUEUE, ctx);
+        ContainerModule.Info info = resolve("queue_pop", args.get(0), ContainerModule.KIND_QUEUE, ctx);
         String head = info.stateVar(ContainerModule.FIELD_HEAD);
         String count = info.stateVar(ContainerModule.FIELD_COUNT);
         String base = Integer.toString(info.base);
@@ -340,7 +371,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code qpush(q,v)}：注入函数写内存并返回新个数，随后 tail = (head+count)%size。 */
     private static List<ExprCompiler.Line> queuePush(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("qpush", args.get(0), ContainerModule.KIND_QUEUE, ctx);
+        ContainerModule.Info info = resolve("queue_push", args.get(0), ContainerModule.KIND_QUEUE, ctx);
         String head = info.stateVar(ContainerModule.FIELD_HEAD);
         String tail = info.stateVar(ContainerModule.FIELD_TAIL);
         String count = info.stateVar(ContainerModule.FIELD_COUNT);
@@ -368,7 +399,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code dsize(d)}：{@code op add <r> count 0}。 */
     private static List<ExprCompiler.Line> dequeSize(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("dsize", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        ContainerModule.Info info = resolve("deque_size", args.get(0), ContainerModule.KIND_DEQUE, ctx);
         List<ExprCompiler.Line> out = new ArrayList<>(1);
         out.add(new ExprCompiler.OpLine("add", ctx.temp(), info.stateVar(ContainerModule.FIELD_COUNT), "0"));
         return out;
@@ -376,7 +407,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code dclear(d)}：head/tail/count = 0，返回 0。 */
     private static List<ExprCompiler.Line> dequeClear(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("dclear", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        ContainerModule.Info info = resolve("deque_clear", args.get(0), ContainerModule.KIND_DEQUE, ctx);
         List<ExprCompiler.Line> out = new ArrayList<>(4);
         out.add(new ExprCompiler.OpLine("add", info.stateVar(ContainerModule.FIELD_HEAD), "0", "0"));
         out.add(new ExprCompiler.OpLine("add", info.stateVar(ContainerModule.FIELD_TAIL), "0", "0"));
@@ -387,22 +418,22 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code dpeekf(d)}：空 → 越界读 → NaN；否则读 base+head。 */
     private static List<ExprCompiler.Line> dequePeekFront(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        return ringPeek("dpeekf", args, ctx, true);
+        return ringPeek("deque_front", args, ctx, true);
     }
 
     /** {@code dpeekb(d)}：空 → 越界读 → NaN；否则读 (head+count-1)%size。 */
     private static List<ExprCompiler.Line> dequePeekBack(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        return ringPeek("dpeekb", args, ctx, false);
+        return ringPeek("deque_back", args, ctx, false);
     }
 
     /** {@code dpopf(d)}：与队列 pop 相同（从前端取出）。 */
     private static List<ExprCompiler.Line> dequePopFront(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        return ringPopFront("dpopf", args, ctx);
+        return ringPopFront("deque_pop_front", args, ctx);
     }
 
     /** {@code dpopb(d)}：空 → NaN；否则从后端取出并 count-1，随后同步 tail。 */
     private static List<ExprCompiler.Line> dequePopBack(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("dpopb", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        ContainerModule.Info info = resolve("deque_pop_back", args.get(0), ContainerModule.KIND_DEQUE, ctx);
         String head = info.stateVar(ContainerModule.FIELD_HEAD);
         String tail = info.stateVar(ContainerModule.FIELD_TAIL);
         String count = info.stateVar(ContainerModule.FIELD_COUNT);
@@ -433,7 +464,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
 
     /** {@code dpushb(d,v)}：与队列 push 相同（写入后端）。 */
     private static List<ExprCompiler.Line> dequePushBack(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("dpushb", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        ContainerModule.Info info = resolve("deque_push_back", args.get(0), ContainerModule.KIND_DEQUE, ctx);
         return ringPushBack(info, args, ctx);
     }
 
@@ -442,7 +473,7 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
      * {@code count = min(count+1, size)} 并同步 tail。表达式结果是新 count。
      */
     private static List<ExprCompiler.Line> dequePushFront(List<ExprCompiler.Node> args, ExprIntrinsics.Ctx ctx){
-        ContainerModule.Info info = resolve("dpushf", args.get(0), ContainerModule.KIND_DEQUE, ctx);
+        ContainerModule.Info info = resolve("deque_push_front", args.get(0), ContainerModule.KIND_DEQUE, ctx);
         String head = info.stateVar(ContainerModule.FIELD_HEAD);
         String tail = info.stateVar(ContainerModule.FIELD_TAIL);
         String count = info.stateVar(ContainerModule.FIELD_COUNT);

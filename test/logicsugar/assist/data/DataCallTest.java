@@ -53,12 +53,12 @@ public final class DataCallTest{
         check(!DataModules.paletteCall("sclear").returnsValue && !DataModules.paletteCall("mapclear").returnsValue
             && !DataModules.paletteCall("uclear").returnsValue, "clear cards must not expose a result field");
 
-        DataCallStatement fillCard = new DataCallStatement(DataModules.paletteCall("fill"));
+        DataCallStatement fillCard = new DataCallStatement(DataModules.paletteCall("array_fill"));
         StringBuilder fillCardSource = new StringBuilder();
         fillCard.write(fillCardSource);
-        check(fillCardSource.toString().equals("datacall fill ~ \"buf, value\""),
+        check(fillCardSource.toString().equals("datacall array_fill ~ \"buf, value\""),
             "new void cards must serialize an empty destination: " + fillCardSource);
-        check(new DataCallStatement(DataModules.paletteCall("spop")).typeName().equals("datacall.spop"),
+        check(new DataCallStatement(DataModules.paletteCall("array_fill")).typeName().equals("datacall.array_fill"),
             "operation-specific datacall tooltip type missing");
 
         check(LogicIO.allStatements.count(prov -> prov.get() instanceof SugarStatements.ArrayInitStatement) == 0,
