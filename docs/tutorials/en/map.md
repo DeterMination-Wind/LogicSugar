@@ -4,7 +4,7 @@
 
 ## When to use
 
-Numeric key to value mapping: counters, lookup tables, dictionaries, per-id state. Average O(1), but it must be initialized first.
+Numeric key to value mapping: counters, lookup tables, dictionaries, per-id state. A hit usually needs only a few probes; a miss and a new-key insert always scan the whole table (probing cannot stop at an empty slot because a tombstone may hide the key), and it must be initialized first.
 
 ## Declaration card
 
@@ -78,7 +78,10 @@ funccall __ls_builtin_mapset "cell1, 0, 4, 3, _0" x
 
 | Operation | Complexity | Notes |
 | --- | --- | --- |
-| mapget / mapset / maphas / mapdel | O(1) average, O(capacity) worst | more collisions or a full table degrade to a linear scan |
+| mapget / maphas / mapdel (hit) | O(1) average, O(capacity) worst | linear probing from the hash slot to the key |
+| mapget / maphas / mapdel (miss) | Theta(capacity) | the probe only ends after scanning the whole table (N >= capacity); an empty slot / tombstone cannot stop it early |
+| mapset (update existing key) | O(1) average, O(capacity) worst | probes to the key and updates its value slot |
+| mapset (insert new key) | Theta(capacity) | must scan the whole table to rule out a duplicate, then write the first free slot |
 | mapsize | O(capacity) | counts non-empty keys |
 | mapclear | O(capacity) | fills the key area |
 

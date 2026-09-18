@@ -56,7 +56,9 @@ uclear(s)        -> funccall __ls_builtin_usetclear "cell1, 0, 4" x
 
 | 操作 | 复杂度 | 说明 |
 | --- | --- | --- |
-| `uadd` / `uhas` / `udel` | 平均 O(1)，最坏 O(capacity) | 冲突多或表满时退化为线性扫描 |
+| `uhas` / `udel`（命中）与 `uadd`（已存在） | 平均接近 O(1)，最坏 O(capacity) | 从哈希位置起线性探测到该值 |
+| `uhas` / `udel`（未命中） | Θ(capacity) | 探测只在扫完整表（N ≥ capacity）时结束，空槽/墓碑都不能提前停 |
+| `uadd`（新值） | Θ(capacity) | 必须扫完整表确认没有同值，并记住首个空槽后写入 |
 | `usize` | O(capacity) | 统计非空槽 |
 | `uclear` | O(capacity) | 写满整段 key 区 |
 

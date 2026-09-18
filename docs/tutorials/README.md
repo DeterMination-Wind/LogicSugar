@@ -99,11 +99,13 @@ chain c        -> __ls_chn_c_head / _free
 
 | 复杂度 | 含义 | 例子 |
 | --- | --- | --- |
-| O(1) | 固定几条指令 | `lget`、`speek`、`qpush`、`btest`、`mapget`（平均） |
+| O(1) | 固定几条指令 | `lget`、`speek`、`qpush`、`btest` |
 | O(log n) | 每次减半/树高 | `hpush`、`hpop` |
 | O(n) | 遍历全部元素 | `lfind`、`linsert`、`lremove`、`clen` |
 | O(n^1.5) ~ O(n²) | 希尔排序 | `sortasc` / `sortdesc` |
 | O(capacity) | 扫描整张表 / 整段内存 | `mapsize`、`mapclear`、`usize`、`uclear`、`cinit` |
+
+> `mapget` / `maphas` / `uadd` / `uhas` 的**命中**平均接近 O(1)；**未命中与新键插入恒为 Θ(capacity)**——探测不能在空槽处提前停止，必须扫整张表。
 
 > 循环型算法（哈希探测、排序、堆调整、链表遍历等）在 normal 模式下编译成全程序共享的一份 `__ls_builtin_*` 子程序；inline 模式会在每个调用点复制函数体，长程序要留意 1000 条限制。
 

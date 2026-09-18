@@ -324,6 +324,12 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
         return f.build();
     }
 
+    /**
+     * 返回第一个等于 {@code v} 的下标，未命中返回 -1。命中即跳出循环：read 只做到命中
+     * 的那个元素，未命中才会读完 {@code size}。旧实现靠 "res 已经是 -1 就 continue"
+     * 防止覆盖首个命中，但 read 在跳转之前，命中后仍会把整段数组读完；这里在命中后直接
+     * 跳到循环之后。
+     */
     private static String indexof(){
         Fn f = new Fn(BUILTIN_INDEXOF, "mem,base,size,v");
         f.set("__ls_bs_res", "-1");
@@ -331,9 +337,10 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
         f.op("add", "__ls_bs_addr", "base", "__ls_bs_i");
         f.read("__ls_bs_v", "mem", "__ls_bs_addr");
         f.jump("L_CONT", "notEqual", "__ls_bs_v", "v");
-        f.jump("L_CONT", "notEqual", "__ls_bs_res", "-1");
         f.set("__ls_bs_res", "__ls_bs_i");
+        f.jump("L_DONE", "always", "x", "false");
         f.blockEnd("L_CONT");
+        f.label("L_DONE");
         f.line("return \"__ls_bs_res\"");
         return f.build();
     }
@@ -348,13 +355,19 @@ public final class ArrayBulkIntrinsics implements ExprIntrinsics.Provider{
         return f.build();
     }
 
+    /**
+     * {@code copy(dmem, dbase, smem, sbase, size)}：逐元素复制。读操作必须用源基址
+     * ({@code sbase}) 配 {@code smem}，写操作必须用目标基址 ({@code dbase}) 配
+     * {@code dmem}；早期实现把两边的基址交叉了（读 dbase、写 sbase），导致同块 copy
+     * 反向、跨块写错区域。
+     */
     private static String copy(){
         Fn f = new Fn(BUILTIN_COPY, "dmem,dbase,smem,sbase,size");
         f.forBegin("__ls_bs_i", "0", "1", "lessThan", "size", "L_END");
-        f.op("add", "__ls_bs_a", "dbase", "__ls_bs_i");
-        f.read("__ls_bs_x", "smem", "__ls_bs_a");
-        f.op("add", "__ls_bs_b", "sbase", "__ls_bs_i");
-        f.write("__ls_bs_x", "dmem", "__ls_bs_b");
+        f.op("add", "__ls_bs_srcaddr", "sbase", "__ls_bs_i");
+        f.read("__ls_bs_x", "smem", "__ls_bs_srcaddr");
+        f.op("add", "__ls_bs_dstaddr", "dbase", "__ls_bs_i");
+        f.write("__ls_bs_x", "dmem", "__ls_bs_dstaddr");
         f.blockEnd("L_END");
         f.line("return \"size\"");
         return f.build();

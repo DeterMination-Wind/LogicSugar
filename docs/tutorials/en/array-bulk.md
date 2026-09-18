@@ -77,7 +77,8 @@ funccall __ls_builtin_arrsum "cell1, 0, 6" x
 | Operation | Complexity | Note |
 | --- | --- | --- |
 | sum / avg / min / max | O(n) | one pass |
-| count / indexof / replace | O(n) | one pass |
+| count / replace | O(n) | one pass |
+| indexof | O(n) worst; stops at the hit | stops reading after the first match |
 | fill / copy / reverse | O(n) | one operation per element |
 | sortasc / sortdesc | O(n^1.5) ~ O(n^2) | Shell sort (gaps `size/2, size/4, ..., 1`); watch the instruction budget for large arrays |
 | swap | O(1) | four fixed reads/writes |
@@ -89,6 +90,7 @@ funccall __ls_builtin_arrsum "cell1, 0, 6" x
 - copy requires equal lengths (matrices compare by rows x cols).
 - sortasc / sortdesc are an in-place Shell sort: each pass insertion-sorts the subsequences at gap `size/2, size/4, ..., 1`, so the last pass is a plain insertion sort. It is in-place, needs no scratch memory, and the shared subroutine is about 33 instructions. It is far faster than the previous insertion sort on random/reversed data, but hundreds of elements are still slow (a processor executes a fixed number of instructions per tick).
 - Compatibility break (v5.0.0 to the next version): the sort builtin's instruction sequence changed. Processors saved by an older version that used `sortasc` / `sortdesc` will fail carrier verification on reopen and fall back to the vanilla view — the `array` declaration card and the sort card show up as raw mlog instructions. Drop the sort card again to recover. This is an unavoidable consequence of the decompiler gate comparing instruction streams one by one, not a bug.
+- Compatibility break (v5.1.1 to the next version): the `indexof` builtin gained a `jump` so it stops at the first hit, and `copy` had its read/write bases corrected (same-block copy no longer reverses, cross-block copy no longer writes the wrong region). Processors saved by v5.1.1 or earlier that used either builtin will also fail carrier verification on reopen and fall back to the vanilla view; drop the corresponding array-operation card again to recover. This is the necessary cost of the correctness fix.
 - bsearch is only correct on ascending arrays. Sort descending arrays with sortasc first.
 - fill / copy / sortasc / sortdesc / reverse / swap have no meaningful expression result.
 - bsearch / swap do not add runtime bounds checks; swap indices must be valid.

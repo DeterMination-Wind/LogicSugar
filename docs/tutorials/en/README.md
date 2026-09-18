@@ -99,11 +99,13 @@ The processor hard limit is 1000 instructions. Complexity decides whether a desi
 
 | Complexity | Meaning | Examples |
 | --- | --- | --- |
-| O(1) | a few fixed instructions | `lget`, `speek`, `qpush`, `btest`, `mapget` (average) |
+| O(1) | a few fixed instructions | `lget`, `speek`, `qpush`, `btest` |
 | O(log n) | halving or tree height | `hpush`, `hpop` |
 | O(n) | scan all elements | `lfind`, `linsert`, `lremove`, `clen` |
 | O(n^1.5) ~ O(n^2) | Shell sort | `sortasc` / `sortdesc` |
 | O(capacity) | scan the whole table or range | `mapsize`, `mapclear`, `usize`, `uclear`, `cinit` |
+
+> A **hit** on `mapget` / `maphas` / `uadd` / `uhas` averages close to O(1); a **miss or a new-key insert is always Theta(capacity)** because probing cannot stop at an empty slot.
 
 > Looping algorithms (hash probing, sorting, heap sift, chain traversal) become one shared __ls_builtin_* subroutine in normal mode. Inline mode copies the body at every call site, so watch the 1000-instruction limit in large programs.
 

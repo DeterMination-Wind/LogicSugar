@@ -4,7 +4,7 @@
 
 ## 什么时候用
 
-数字键到值的映射：计数器、查找表、字典、按 id 存状态。平均 O(1)，但需要先初始化。
+数字键到值的映射：计数器、查找表、字典、按 id 存状态。命中通常只需少量探测；未命中与新键插入必须扫完整表（探测不能在空槽处停下：墓碑之后可能还有同 key 的项），需要先初始化。
 
 ## 声明卡
 
@@ -84,7 +84,10 @@ normal 模式下每个注入函数全程序共享一份；未使用的不会进�
 
 | 操作 | 复杂度 | 说明 |
 | --- | --- | --- |
-| `mapget` / `mapset` / `maphas` / `mapdel` | 平均 O(1)，最坏 O(capacity) | 哈希冲突多或表满时退化为线性扫描 |
+| `mapget` / `maphas` / `mapdel`（命中） | 平均接近 O(1)，最坏 O(capacity) | 从哈希位置起线性探测到该 key |
+| `mapget` / `maphas` / `mapdel`（未命中） | Θ(capacity) | 探测只在扫完整表（N ≥ capacity）时结束，空槽/墓碑都不能提前停 |
+| `mapset`（更新已有 key） | 平均接近 O(1)，最坏 O(capacity) | 探测到同 key 即更新 |
+| `mapset`（插入新 key） | Θ(capacity) | 必须扫完整表确认没有同 key，并记住首个空槽后写入 |
 | `mapsize` | O(capacity) | 统计非空 key 个数 |
 | `mapclear` | O(capacity) | 写满整段 key 区 |
 

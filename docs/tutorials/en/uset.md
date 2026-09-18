@@ -54,7 +54,9 @@ uclear(s)      -> funccall __ls_builtin_usetclear "cell1, 0, 4" x
 
 | Operation | Complexity | Notes |
 | --- | --- | --- |
-| uadd / uhas / udel | O(1) average, O(capacity) worst | more collisions or a full table degrade to a linear scan |
+| uhas / udel (hit), uadd (already present) | O(1) average, O(capacity) worst | linear probing from the hash slot to the value |
+| uhas / udel (miss) | Theta(capacity) | the probe only ends after scanning the whole table (N >= capacity); an empty slot / tombstone cannot stop it early |
+| uadd (new value) | Theta(capacity) | must scan the whole table to rule out a duplicate, then write the first free slot |
 | usize | O(capacity) | counts non-empty slots |
 | uclear | O(capacity) | fills the key area |
 

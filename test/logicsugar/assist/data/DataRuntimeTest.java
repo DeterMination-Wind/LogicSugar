@@ -50,6 +50,7 @@ public final class DataRuntimeTest{
         listRuntime();
         heapRuntime();
         sortRuntime();
+        arrayBulkRuntime();
         chainRuntime();
 
         System.out.println("LogicSugar data runtime self-test passed.");
@@ -439,6 +440,91 @@ public final class DataRuntimeTest{
         checkMem(offset, "cell1", 26, 222, "sort must not write past the end");
     }
 
+    // ===== array bulk runtime: copy / indexof builtins =====
+
+    private static void arrayBulkRuntime(){
+        arrayCopyRuntime();
+        arrayIndexofRuntime();
+    }
+
+    /**
+     * {@code copy(dst, src)} must read the source range and write the destination range. The
+     * injected body used to cross the two bases: it read {@code smem[dbase + i]} and wrote
+     * {@code dmem[sbase + i]}, so two arrays in the same block copied dst := src (inverted)
+     * while arrays in different blocks scribbled at the wrong offsets. Both sides are seeded
+     * with distinct values so any base crossing changes an observable slot.
+     */
+    private static void arrayCopyRuntime(){
+        // same memory block, different bases: dst a@0, src b@4
+        Run inBlock = run("array a cell1 0 4\narray b cell1 4 4\n"
+            + "ifbegin expr \"copy(a, b) >= 0\" 4\n"
+            + "set ok 1\n"
+            + "blockend\n", new Seed("cell1", 0, new double[]{1, 2, 3, 4, 9, 8, 7, 6}));
+        checkNum(inBlock, "ok", 1, "copy must run and return a value");
+        for(int i = 0; i < 4; i++){
+            checkMem(inBlock, "cell1", i, 9 - i, "same-block copy must write src into dst (a[" + i + "])");
+            checkMem(inBlock, "cell1", 4 + i, 9 - i, "same-block copy must leave src untouched (b[" + i + "])");
+        }
+
+        // cross-block copy with a non-zero base on each side
+        Run cross = run("array a cell1 2 4\narray b cell2 8 4\n"
+            + "ifbegin expr \"copy(a, b) >= 0\" 4\n"
+            + "set ok 1\n"
+            + "blockend\n",
+            new Seed("cell1", 2, new double[]{111, 222, 333, 444}),
+            new Seed("cell2", 8, new double[]{9, 8, 7, 6}));
+        checkNum(cross, "ok", 1, "cross-block copy must run and return a value");
+        for(int i = 0; i < 4; i++){
+            checkMem(cross, "cell1", 2 + i, 9 - i, "cross-block copy must honour both bases");
+        }
+        checkMem(cross, "cell1", 1, 0, "cross-block copy must not write before the dst base");
+        checkMem(cross, "cell2", 7, 0, "cross-block copy must not write before the src base");
+    }
+
+    /**
+     * {@code indexof} must return the first match and stop reading there. The old body kept
+     * cycling to {@code size} after a hit (the "already found" jump only skipped the result
+     * assignment, not the read); the per-cell read counter pins the early exit and the
+     * first-match (not last/any) semantics.
+     */
+    private static void arrayIndexofRuntime(){
+        // hit at index 3: reads must stop right after it, not scan all 8 slots
+        Run hit = run("array buf cell1 0 8\nset z 0\n"
+            + "ifbegin expr \"indexof(buf, 9) >= 0\" 4\n"
+            + "set z 1\n"
+            + "blockend\n", new Seed("cell1", 0, new double[]{7, 7, 7, 9, 7, 7, 7, 7}));
+        checkNum(hit, "z", 1, "indexof must report a hit");
+        check(hit.cells.get("cell1").reads == 4, "indexof must stop at the first hit, read "
+            + hit.cells.get("cell1").reads + " of 8 slots");
+
+        // duplicates: the first match wins and the scan stops there
+        Run first = run("array buf cell1 0 8\nset z 0\n"
+            + "ifbegin expr \"indexof(buf, 5) == 1\" 4\n"
+            + "set z 1\n"
+            + "blockend\n", new Seed("cell1", 0, new double[]{7, 5, 7, 5, 7, 7, 7, 7}));
+        checkNum(first, "z", 1, "indexof must return the first of several matches");
+        check(first.cells.get("cell1").reads == 2, "indexof must stop at the first match, read "
+            + first.cells.get("cell1").reads + " of 8 slots");
+
+        // miss: the whole array is read and the caller sees no match
+        Run miss = run("array buf cell1 0 8\nset z 0\n"
+            + "ifbegin expr \"indexof(buf, 99) >= 0\" 4\n"
+            + "set z 1\n"
+            + "blockend\n", new Seed("cell1", 0, new double[]{7, 7, 7, 7, 7, 7, 7, 7}));
+        checkNum(miss, "z", 0, "a miss must not enter the if body");
+        check(miss.cells.get("cell1").reads == 8, "a miss must still scan all 8 slots, read "
+            + miss.cells.get("cell1").reads + " of 8");
+
+        // inline mode expands the same body at the call site; the forward break must survive too
+        Run inline = run(SugarCompiler.FuncMode.inline, "array buf cell1 0 8\nset z 0\n"
+            + "ifbegin expr \"indexof(buf, 9) >= 0\" 4\n"
+            + "set z 1\n"
+            + "blockend\n", new Seed("cell1", 0, new double[]{7, 7, 7, 9, 7, 7, 7, 7}));
+        checkNum(inline, "z", 1, "inline indexof must report a hit");
+        check(inline.cells.get("cell1").reads == 4, "inline indexof must stop at the first hit, read "
+            + inline.cells.get("cell1").reads + " of 8 slots");
+    }
+
     // ===== value semantics: v5 copies must not numericize objects / the NaN marker =====
 
     /**
@@ -476,17 +562,24 @@ public final class DataRuntimeTest{
     // ===== harness =====
 
     private static Run run(String sugar){
-        return run(sugar, null, 0, null);
+        return run(sugar, new Seed[0]);
+    }
+
+    private static Run run(String sugar, String seedCell, int seedStart, double[] seed){
+        return run(sugar, new Seed(seedCell, seedStart, seed));
+    }
+
+    private static Run run(String sugar, Seed... seeds){
+        return run(SugarCompiler.FuncMode.normal, sugar, seeds);
     }
 
     /**
-     * Runs {@code sugar} on the real executor. When {@code seedCell} is non-null its
-     * {@code seed} values are pre-written starting at index {@code seedStart} before the
-     * program runs — required by the array-sort test, whose input must exist before the
-     * builtin sorts it.
+     * Runs {@code sugar} on the real executor. Each {@code seed} is pre-written into its cell
+     * starting at {@code seed.start} before the program runs — required by the array-sort /
+     * copy tests, whose input must exist before the builtin touches it.
      */
-    private static Run run(String sugar, String seedCell, int seedStart, double[] seed){
-        String code = SugarCompiler.stripMarkers(SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, null, null));
+    private static Run run(SugarCompiler.FuncMode mode, String sugar, Seed... seeds){
+        String code = SugarCompiler.stripMarkers(SugarCompiler.compile(sugar, mode, null, null));
         LExecutor executor = new LExecutor();
         executor.load(LAssembler.assemble(code, true));
 
@@ -499,11 +592,11 @@ public final class DataRuntimeTest{
         bind(executor, "message1", new FakePrintable());
         bind(executor, "message2", new FakePrintable());
 
-        if(seedCell != null){
-            FakeMemory memory = run.cells.get(seedCell);
-            check(memory != null, "no fake memory '" + seedCell + "' to seed");
-            for(int i = 0; i < seed.length; i++){
-                memory.numbers[seedStart + i] = seed[i];
+        for(Seed seed : seeds){
+            FakeMemory memory = run.cells.get(seed.cell);
+            check(memory != null, "no fake memory '" + seed.cell + "' to seed");
+            for(int i = 0; i < seed.values.length; i++){
+                memory.numbers[seed.start + i] = seed.values[i];
             }
         }
 
@@ -520,6 +613,19 @@ public final class DataRuntimeTest{
     private static void bind(LExecutor executor, String name, Object value){
         LVar var = executor.optionalVar(name);
         if(var != null) var.setobj(value);
+    }
+
+    /** One pre-run cell seed; the varargs run() accepts any number of them. */
+    static final class Seed{
+        final String cell;
+        final int start;
+        final double[] values;
+
+        Seed(String cell, int start, double[] values){
+            this.cell = cell;
+            this.start = start;
+            this.values = values;
+        }
     }
 
     static final class Run{
@@ -589,8 +695,11 @@ public final class DataRuntimeTest{
             return index >= 0 && index < numbers.length ? numbers[index] : Double.NaN;
         }
 
+        int reads;
+
         @Override
         public void read(LVar position, LVar output){
+            reads++;
             int address = position.numi();
             if(address < 0 || address >= objects.length){
                 output.setnum(Double.NaN);
