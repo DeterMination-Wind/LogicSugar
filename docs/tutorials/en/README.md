@@ -2,7 +2,7 @@
 
 For players who already use LogicSugar if / for / while and Expr expressions, but are not sure which structure fits a given job.
 
-Each chapter covers one structure: when to use it, the declaration card, a function table, the lowered mlog with line-by-line notes, complexity, and practical caveats. Examples assume you know how to place cards and switch between the Original and Sugar views.
+Each chapter covers one structure: when to use it, the declaration card, a function table, the lowered mlog with line-by-line notes, complexity, and practical caveats. Examples assume you know how to place cards and switch between the Original and Sugar views; the Sugar source lines shown in the examples can also be pasted as text (a `x = expr` line imports as an Expr card).
 
 > Chinese version: [../README.md](../README.md). Feature overview: [README.md](../../../README.md). Compiler and expression details: [architecture.md](../../architecture.md).
 

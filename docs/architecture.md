@@ -37,6 +37,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - `ExprCompiler`：表达式字符串 ↔ `op` 语句链的双向转换。临时变量统一 `_0, _1, …`、一次写一次读形成线性链，是逆向重建的前提。
 - `ExprStatement`：表达式语句卡片，折叠态显示 `dest = expr`，`write()` 输出 `op` 链文本（保证保存结果仍是标准 mlog），编译错误当场标红。
 - `ExprHook`：把 `ExprStatement` 注入语句列表，并在 `SugarCanvas.load()/save()` 中执行 `foldAll()/unfoldAll()`；折叠/展开全程固定在同一份画布数组注册表上（`ArrayRegistry.enter/restore`），`foldAll` 额外把注册表命中的原版 `read`/`write` 行作为链节点参与折叠（`rebuildAssignment` 折回 `buf[i] = x` 赋值卡）。
+- `ExprTextImport`：文本导入层的表达式语句识别。原版 `LParser` 只按 `tokens[0]` 查表（`LogicIO.read` + `LAssembler.customParsers`），`x = buf[3]` 这类行没有任何解析器认领，会被静默换成 `InvalidStatement`（`noop`）。`SugarCanvas.load()` 先把它一对一换成哨兵 `set __ls_import_N 0`（语句条数不变，标签/jump 下标不受影响），加载完成后把哨兵原位换成 `ExprStatement` 卡，之后完全走 `unfoldAll`/`foldAll` 既有路径——产物与手拖 Expr 卡一致，仍是纯原版 mlog，联机兼容性不变。首 token 已被原版/custom parser 认领的行、含顶层 `;`、字符串内文本、`==` 等比较一律不动。回归见 `exprTextImportTest`（`logicsugar.assist.expr.ExprTextImportSelfTest`）。
 - `ArrayRegistry`：`array` 声明卡的编译期注册表（程序级，静态上下文 enter/restore 传递）。数组是纯 sugar 抽象——卡片 lower 时剥离，下标 `buf[i]` 按声明区间（内存块 + [base, base+size)）换算物理地址发射原版 `read`/`write`；严格口径（编译路径）拒绝重名/同内存块重叠/非法字面量，宽松口径（编辑器路径）供折叠与标红使用。v0 仅支持整数字面量的 base/size；纯原版 mlog 无声明卡时不做数组推断，`read`/`write` 原样保留。
 - `ShortCircuitCompiler`：把 `&&` / `||` 谓词下降为条件 `jump`，按控制流顺序发射（不产生先行求值的布尔临时变量）；不依赖任何 Mindustry 类，便于在编译期与反编译恢复两侧复用。`whilebegin exprsc …` 等带 `c` 后缀的解析变体对应"折叠式表达式条件"（collapsed）。
 - `RecoveryPredicate`：无依赖的谓词树模型（`EAGER` / `SHORT_CIRCUIT` / `UNKNOWN` 求值方式、loss/score 度量），供恢复代码在触碰游戏 API 之前构建与打分候选。

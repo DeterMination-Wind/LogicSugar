@@ -39,7 +39,7 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
                                       # varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest,
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
                                       # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest,
-                                      # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest,
+                                      # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, exprTextImportTest,
                                        # funclibLimitTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
@@ -121,6 +121,17 @@ stripping carriers/markers, not the Base64 metadata):
 - Run `.\gradlew.bat reconstructionTest reconstructionMatrixTest decompileTest` before
   claiming the feature complete.
 
+**Text import is another way into the same pipeline.** `SugarCanvas.load` runs
+`ExprTextImport.plan` first: a line that vanilla `LParser` cannot dispatch (`x = buf[3]`,
+`buf[i] = 5`, `result = (a + b) * 2`) is swapped for a unique `set __ls_import_N 0` sentinel
+(one line for one line, so label/jump indices do not move) and the sentinel is replaced by an
+`ExprStatement` card after the parse. Everything after that is the normal
+`unfoldAll`/`foldAll` path, so products stay pure vanilla mlog and the carrier coverage above
+applies unchanged. Keep the conservative skip list in sync when adding sugar line forms (see
+`ExprTextImportSelfTest`): anything whose first token is already claimed by `LogicIO.read` or
+`LAssembler.customParsers`, comparisons (`==`/`!=`/`<=`/`>=`), strings, comments and one-line
+multi-statements must stay untouched.
+
 ## Data subsystem (arrays / matrix / record / containers / bitset / map / list / heap / chain)
 
 The data subsystem is a compile-time abstraction layer: declaration cards are metadata and never
@@ -188,7 +199,7 @@ the Neon main repo's docs:
   pipelines, expression subsystem, cross-loader constraint, decompiler gate, layout map.
 - `docs/development.md` — environment, Gradle commands, artifact chain, style rules.
 - `docs/release.md` — version scheme, `deploy`/D8 pipeline, Release asset safety rules.
-- `docs/testing.md` — the thirty JavaExec self-test tasks, new-test conventions, manual
+- `docs/testing.md` — the thirty-six JavaExec self-test tasks, new-test conventions, manual
   checklist.
 - `docs/glossary.md` — project terminology (carrier, FuncMode, SwitchStrategy, gate, …).
 

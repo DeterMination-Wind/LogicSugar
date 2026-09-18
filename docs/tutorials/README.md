@@ -2,7 +2,7 @@
 
 面向已经会用 LogicSugar 的 if / for / while 和 Expr 表达式，但还不确定「这种数据该用哪个结构」的玩家。
 
-每章只讲一种数据结构，包含：什么时候用、声明卡、函数速查表、转译后的 mlog 解释、复杂度、使用须知。所有示例都假设你已经知道怎么放积木、怎么切换 Original / Sugar 视图。
+每章只讲一种数据结构，包含：什么时候用、声明卡、函数速查表、转译后的 mlog 解释、复杂度、使用须知。所有示例都假设你已经知道怎么放积木、怎么切换 Original / Sugar 视图；示例里的 Sugar 源码行也可以直接当文本粘贴（`x = expr` 这类行会导入成 Expr 卡）。
 
 > English version: [en/README.md](en/README.md)。先读 [README_zh.md](../../README_zh.md) 的「功能」了解基础；表达式语义和编译器细节见 [架构总览](../architecture.md) 的「表达式子系统」「数据子系统」。
 

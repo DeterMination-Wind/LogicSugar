@@ -33,6 +33,8 @@ The index can be any expression. Literal indices are folded at compile time; var
 
 ## Lowered examples
 
+Every example below is written in the Sugar source form (what the declaration card and the Expr card contain). That same text can be pasted straight into the processor's code field: the declaration line imports as a card, and a line such as `x = buf[3]` imports as an Expr card instead of becoming an empty `noop` card.
+
 Literal index:
 
 ```text

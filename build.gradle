@@ -242,6 +242,14 @@ tasks.register("v160SensorAccessTest", JavaExec){
     mainClass = "logicsugar.assist.expr.V160SensorAccessSelfTest"
 }
 
+// Text-import form of one-line expression statements (x = expr / buf[i] = expr): must lower to
+// the documented mlog and must never degrade back into a silent noop.
+tasks.register("exprTextImportTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.expr.ExprTextImportSelfTest"
+}
+
 // Generic main()-based self-test runner: ./gradlew runTestClass -PmainClass=<fully.qualified.Class>
 // (F2 framework tests use this; integration stage may add dedicated tasks / check.dependsOn.)
 tasks.register("runTestClass", JavaExec){
@@ -276,7 +284,7 @@ tasks.register("conditionLabelTest", JavaExec){
 
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, conditionLabelTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, conditionLabelTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

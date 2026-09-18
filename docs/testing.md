@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十五个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十六个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了三十五个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了三十六个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -41,6 +41,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `bottomBarLayoutTest` | `logicsugar.assist.BottomBarLayoutTest` | 底栏行打包纯函数：单行/恰好放下/按容量换行、预算标签按 196px 计算、超宽单元独占一行不被吞、行宽不超限（除独占行）、不丢单元，`fitsOneRow` 与打包一致 |
 | `escapePreviewTest` | `logicsugar.assist.EscapePreviewSelfTest` | quoted mlog 字符串转义预览：换行、引号、反斜杠、Unicode、未知/畸形转义及现代能力探测 |
 | `v160SensorAccessTest` | `logicsugar.assist.expr.V160SensorAccessSelfTest` | `LAccess.senseablePrivileged` 的跨版本反射访问与旧版 fallback |
+| `exprTextImportTest` | `logicsugar.assist.expr.ExprTextImportSelfTest` | 文本导入的一行表达式语句（`x = buf[3]` / `x = (a + b) * 2` / `buf[i] = 5`）：形状识别与保守边界（已注册 token、`==`/`!=`/`<=`/`>=`、注释、字符串、一行多语句、保留哨兵前缀）、哨兵替换保持语句条数与 jump 标签下标、降级成文档承诺的 `read x cell1 3` 且产物不再含 `noop`、载体往返与 `verifyRestore`、重开时 read 行仍能被 foldAll 折回、非法表达式仍是卡片并明确报错 |
 | `funclibLimitTest` | `logicsugar.FunctionLibraryLimitTest` | 函数库行数上限：`readLibrary` 解析超过 1000 条语句不截断且用完还原 `LExecutor.maxInstructions`；`libraryOverLimit` 在 10000 条边界正确、`withLibraryLimit` 异常路径也还原；`sanitizedLibrary`/`buildLibrary`/`extractLibrarySource` 都能看到第 1000 条之后的库函数；处理器调用尾部库函数时只嵌入用到的子集并可重编译一致；函数库编辑会话整体 round-trip 不丢内容；单函数体超过 1000 条语句也能解析与校验 |
 | `dataRuntimeTest` | `logicsugar.assist.data.DataRuntimeTest` | 数据结构整程序运行：真实 `LExecutor` + 假内存/消息块执行编译产物，覆盖栈/队列/双端队列/位集/列表/小顶堆/链表的 push/pop/peek、满/空边界、非零 base 环回、空容器 NaN 标记，并钉住 `whilebegin` 条件语义（`s.size()` 能抽干容器、`!s.size()` 一次都不进循环）与 v5 值语义（返回 / 堆往返保留对象与 NaN 标记）；另含数组排序内置函数 `__ls_builtin_arrsort`（希尔排序）的运行结果：`sortasc`/`sortdesc`、逆序/已排序/重复元素、size=1、非零 base 不越界 |
 | `conditionLabelTest` | `logicsugar.ConditionLabelTest` | 循环条件字段的本地化标签：三份 bundle 键集一致、`while.condition`/`for.condition` 不得写成「结束条件 / 终止条件 / until」、提示语保持「为真时重复」，并断言 `WhileBeginStatement` 使用专用键而非通用 `condition` |
@@ -50,7 +51,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前三十五个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前三十六个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 
@@ -80,3 +81,4 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 13. **数组**：放一张 `array` 卡（如 `buf` / `cell1` / base 0 / size 8），写 `x = buf[i] * 2` 与 `buf[i] = 5`，保存后重开表达式卡折回、产物只有原版 `read`/`write` 行；重名或同内存块重叠的声明卡标红且保存被拦截；无模组客户端能运行同一程序。
 14. **数据子系统**：依次放置 `matrix` / `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 声明卡，再从各自分类放置 `fill(buf, value)`、`spush(s, 1)`、`qpush(q, 1)`、`dpushf(d, 1)`、`btest(bits, 0)`、`mapclear(map)` / `mapset(map, 1, 2)`、`uclear(s)` / `uadd(s, 1)`、`lappend(l, 1)`、`hpush(h, 1)`、`cinit(c)` / `cnew(c)` 等操作积木。保存后重开：声明卡和 `datacall` 操作卡完整，产物只有原版指令且无模组客户端可运行；新增面板不再显示八槽 `arrayinit`，但载入旧 carrier 时仍能显示并正确编译旧卡。检查 `__ls_*` 隐藏变量过滤、记录字段变量可见，以及每类操作出现在对应分类而不是全部挤在 Data Structures。
 15. **单位 flag**：设置里打开「显示单位 flag」，给单位设非 0 的 `flag`，确认头顶正上方出现红色数字；再打开「为单位 flag 着色」，给多个单位设置不同 flag，确认同一 flag 颜色一致、不同 flag 优先使用不同鲜明颜色，超过 10 个后仍会分配鲜明随机色；flag 为 0 的单位不显示；关掉显示设置后数字消失。视野外与迷雾中的单位不绘制。
+16. **表达式语句文本导入**：清空处理器后把 `array buf cell1 0 8` + `x = buf[3]` 复制进剪贴板，用「加载剪贴板」导入——应得到一张数组声明卡和一张 `x = buf[3]` 的 Expr 卡（不是空的 `noop` 卡）；保存后产物只有 `read x cell1 3` + carrier，重开仍折回两张卡。同法验证 `x = (a + b) * 2`、`buf[i] = 5`，以及写错时（`x = (a +`）卡片标红且保存被拦截；确认普通 mlog（`set` / `op` / `read`）与 `x == 5` 这类比较行导入行为不变。

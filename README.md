@@ -31,7 +31,7 @@ Write common control flow as blocks in the editor. On save, everything compiles 
 | Feature | Details |
 | --- | --- |
 | **Expressions as conditions** | Conditions of `if`, `elif`, `while`, and `for` (Expr mode) accept full expressions such as `hp < 25 && !shielded`. |
-| **One-line expression statements** | Write `result = (a + b) * 2`; it expands to equivalent instructions on save, folds back on reopen, and invalid expressions are marked red on the spot. |
+| **One-line expression statements** | Write `result = (a + b) * 2`: place an Expr card, or paste the line straight into the code text. It imports as a card, expands to equivalent instructions on save, folds back on reopen, and invalid expressions are marked red on the spot. |
 | **Expressions anywhere a value goes** | Assignments, function arguments, `return` values, and member access such as `@unit.@health`. |
 | **Functions** | Define functions with parameters, call them, and return values. Switch between normal (subroutine) and inline modes in settings. |
 | **Global function library** | Shared by every processor and edited inside the processor editor. It holds up to 10,000 statements (it is not part of any processor's 1000-instruction budget), is validated and saved automatically on close, and self-repairs if the file gets corrupted. |
@@ -55,7 +55,7 @@ Declarations name structured memory regions. They are metadata only: every opera
 | `heap` | Heap |
 | `chain` | Linked list |
 
-Array expressions can use subscripts such as `buf[i]` and `buf[i] = 5`; they compile to plain vanilla `read` and `write` instructions and fold back into the expression card on reopen.
+Array expressions can use subscripts such as `buf[i]` and `buf[i] = 5`; they compile to plain vanilla `read` and `write` instructions and fold back into the expression card on reopen. The source lines are pasteable as text as well: `array buf cell1 0 8` + `x = buf[3]` imports one declaration card and one Expr card.
 
 Every array and container intrinsic has its own persistent operation card, grouped into matching categories (Stack Operations, Queue Operations, Array Algorithms, and so on): `fill`, `sum`, `reverse`, `spush`, `qpop`, `dpushf`, `btest`, `mapset`, `uadd`, `lappend`, `hpush`, `cinit`, `cnew` and the rest. The old eight-slot `arrayinit` token remains load-compatible only. All operations still lower to plain vanilla instructions and reopen through the Sugar carrier. `sortasc` / `sortdesc` now use an in-place Shell sort, which is markedly faster than the previous insertion sort on random or reversed data.
 

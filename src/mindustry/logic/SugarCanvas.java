@@ -41,6 +41,7 @@ import logicsugar.assist.EscapePreview;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprHook;
 import logicsugar.assist.expr.ExprStatement;
+import logicsugar.assist.expr.ExprTextImport;
 
 import java.util.IdentityHashMap;
 import java.lang.reflect.Field;
@@ -97,13 +98,19 @@ public class SugarCanvas extends LCanvas{
         suppressHistory = true;
         try{
             BoxSelect.canvasWillChange(this);
+            // 文本导入的表达式语句（README 承诺的 `result = (a + b) * 2` / `x = buf[3]` /
+            // `buf[i] = 5`）在这里补上文本形态：原版 LParser 只按首 token 查表，认不出赋值行，
+            // 会静默变成 InvalidStatement(noop)。plan() 把这行一对一换成哨兵 set 语句
+            // （语句条数不变，因此 jump 下标与标签解析完全不受影响），加载完成后换回卡片。
+            ExprTextImport.Plan importPlan = ExprTextImport.plan(asm);
             if(librarySession){
                 // The function library may hold far more statements than a processor program;
                 // vanilla LCanvas.load parses through LParser, which stops at the processor cap.
-                SugarFunctions.withLibraryLimit(() -> loadSuper(asm));
+                SugarFunctions.withLibraryLimit(() -> loadSuper(importPlan.text()));
             }else{
-                super.load(asm);
+                super.load(importPlan.text());
             }
+            ExprTextImport.applyToCanvas(this, importPlan);
             BoxSelect.canvasDidChange(this);
             // super.load() 先清空了 jumpLayer（statements.jumps.clear()），结构引导线层
             // 随之被移除；installGuideLayer 只在 rebuild() 里调用（重开才触发），所以
