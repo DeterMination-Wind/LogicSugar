@@ -38,7 +38,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `dataSubsystemTest` | `logicsugar.DataSubsystemIntegrationTest` | INT 生产注册路径：`LogicSugarMod.init()` 幂等（重复 init 不重复 `LogicIO.allStatements` 条目、卡片各一份、parser 与 intrinsic 全部可见）、混合结构端到端编译且 `stripMarkers` 产物纯原版、模块 `collect` 抛异常时 `DataModules.restore()` 仍配对执行且后续编译正常、调色板分类（Advanced Flow Control / Data Structures / Array Algorithms） |
 | `dataCallTest` | `logicsugar.assist.data.DataCallTest` | 所有数据 intrinsic 的独立 palette metadata、结构族分类，以及 `datacall` 卡的编辑后持久化、carrier restore/verify 与纯原版 lower；v5 失败值/无结果卡改动后 pre-v5 存档走 legacy lowering 重新验证（篡改仍被拒绝） |
 | `editHistoryTest` | `logicsugar.assist.EditHistorySelfTest` | 编辑器撤销/重做快照栈：record/undo/redo、未提交改动并入一次撤销、新编辑清空重做、undo 后改写放弃重做、`applied` 对齐 fold 后文本、深度上限 80 |
-| `bottomBarLayoutTest` | `logicsugar.assist.BottomBarLayoutTest` | 底栏行打包纯函数：单行/恰好放下/按容量换行、预算标签按 196px 计算、超宽单元独占一行不被吞、行宽不超限（除独占行）、不丢单元，`fitsOneRow` 与打包一致 |
+| `bottomBarLayoutTest` | `logicsugar.assist.BottomBarLayoutTest` | 底栏行打包纯函数：单行/恰好放下/按容量换行、预算标签按 196px 计算、超宽单元独占一行不被吞、行宽不超限（除独占行）、不丢单元，`fitsOneRow` 与打包一致；手机/窄窗回归：5 个 160px 操作单元在 640px 栏里必须换行而非挤成一行、360/400/480/560/640/720/800/900px 各宽度下每一行都放得下且不丢单元、360px 竖屏操作组按 2/2/1 三行、640px 栏里预算标签会让位（8 个按钮 2 行 → 加标签 3 行）、1920px 宽栏仍是单行；另含真实 arc 布局几何：上游 `size(160,64)` 默认值把容器压成一格、清掉继承上限后容器铺满整行、宽栏两组不重叠、窄栏确实会重叠（换行存在的理由） |
 | `escapePreviewTest` | `logicsugar.assist.EscapePreviewSelfTest` | quoted mlog 字符串转义预览：换行、引号、反斜杠、Unicode、未知/畸形转义及现代能力探测 |
 | `v160SensorAccessTest` | `logicsugar.assist.expr.V160SensorAccessSelfTest` | `LAccess.senseablePrivileged` 的跨版本反射访问与旧版 fallback |
 | `exprTextImportTest` | `logicsugar.assist.expr.ExprTextImportSelfTest` | 文本导入的一行表达式语句（`x = buf[3]` / `x = (a + b) * 2` / `buf[i] = 5`）：形状识别与保守边界（已注册 token、`==`/`!=`/`<=`/`>=`、注释、字符串、一行多语句、保留哨兵前缀）、哨兵替换保持语句条数与 jump 标签下标、降级成文档承诺的 `read x cell1 3` 且产物不再含 `noop`、载体往返与 `verifyRestore`、重开时 read 行仍能被 foldAll 折回、非法表达式仍是卡片并明确报错 |
@@ -74,7 +74,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 6. **嵌套布局**：横屏/竖屏及 UI scale 100%/150%/200% 下，展开 1/2/3/4/6 层嵌套 `For`；确认 `variable`、`initial`、`step`、`until`、条件控件、`OP/Expr` 和折叠按钮均在卡片内可见且可点击。切换 MindustryX LogicSupport 侧栏显示/隐藏并重复检查；同时覆盖简体中文、繁体中文和 English。
 7. **双形态设置**：独立安装时出现 `Logic Sugar` 设置分类；并入 Neon 后设置项只出现在 Neon 总设置页，无重复分类。
 8. **安卓包**：安装 `build/libs/LogicSugar-v<version>.jar`（含 `classes.dex`）于安卓设备，确认能加载并打开逻辑编辑器。
-9. **对话框按钮**：打开处理器编辑器两次以上——函数库入口、复制变量、复制打印缓冲按钮每次都在（vanilla `setup()` 每次 show 重建按钮行）；点复制变量得到按名排序的 TSV；函数库会话中两个复制按钮不出现。移动端每次打开都能看到撤销/重做按钮。窗口宽度不足时（例如 800×600 或更窄）按钮换到多行、彼此不重叠；把窗口拉宽后回到「操作居中 / 检查控件贴右」的单行形态。
+9. **对话框按钮**：打开处理器编辑器两次以上——函数库入口、复制变量、复制打印缓冲按钮每次都在（vanilla `setup()` 每次 show 重建按钮行）；点复制变量得到按名排序的 TSV；函数库会话中两个复制按钮不出现。移动端每次打开都能看到撤销/重做按钮。窗口宽度不足时（例如 800×600 或更窄）按钮换到多行、彼此不重叠；把窗口拉宽后回到「操作居中 / 检查控件贴右」的单行形态。**手机/竖屏同一条宽度路径**：横屏与竖屏各打开一次，返回键与打开函数库按钮都必须完整可见可点（早期版本在这两种形态下退回固定宽度行，首尾按钮被推出屏幕）；竖屏窄于 212px 时指令预算标签不出现属预期，此时超限提示由 toast 承担。
 10. **处理器状态指示**：造一个 `stop` 结尾的程序和一个长 `wait` 程序，确认停止处理器上方显示「已停在第 N 条」、长 wait 画进度圆环；把等待阈值滑到 0 后圆环消失；处理器极多的地图无可见卡顿。
 11. **断言（调试构建）**：关闭「调试断言构建」时保存含断言的程序，产物 mlog 无 `assert*` 行且无模组客户端可正常打开；开启后保存，断言失败在地图上显示消息（含「(expected X, got Y)」）且程序原地自旋，`breakpoint` 命中时游戏暂停、视角居中到该处理器；开启「断言失败即断点」后失败改为在失败指令处暂停，开启「禁用断点」后 breakpoint 直接跳过；重开编辑器断言卡片完整。与 MlogAssertions 并存装时无重复注册报错。
 12. **联机门禁（兼容底线）**：把断言构建设为 emit，然后加入或自建一个多人游戏——此时保存任何程序，产物必须 ≤1000 条且不含 `assert*` 行（与原版客户端互开无异常）；回到单机重新载入地图后，emit 设置恢复生效。指令上限覆盖功能已移除，保存产物恒 ≤1000 条。

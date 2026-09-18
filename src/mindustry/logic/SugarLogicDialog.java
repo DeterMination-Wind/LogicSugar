@@ -38,6 +38,7 @@ import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprStatement;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -102,10 +103,12 @@ public class SugarLogicDialog extends LogicDialog{
     /** Fixed size of one bottom-bar button cell; vanilla setup() uses the same 160x64. */
     private static final float barButtonWidth = 160f;
     private static final float barButtonHeight = 64f;
-    /** Instruction-budget label cell: 180px content plus its 8px side pads. */
-    private static final float barBudgetWidth = 180f + 16f;
+    /** Side padding of every bottom-bar cell, and of every packed row's own edges. */
+    private static final float barCellPad = 8f;
+    /** Instruction-budget label cell: 180px content plus its side pads. */
+    private static final float barBudgetWidth = 180f + 2f * barCellPad;
     /** Horizontal padding reserved by every bottom-bar row. */
-    private static final float barRowPad = 16f;
+    private static final float barRowPad = 2f * barCellPad;
 
     public SugarLogicDialog(){
         super();
@@ -147,13 +150,16 @@ public class SugarLogicDialog extends LogicDialog{
         });
         update(() -> {
             installEditHook();
-            if(!Vars.mobile && !Core.graphics.isPortrait()){
-                float width = buttons.getWidth();
-                if(width > 0f && Math.abs(width - bottomButtonsWidth) > 1f){
-                    // The shown callback can run before the parent table has measured this
-                    // row. Re-run once its actual width is available (and after a resize).
-                    layoutBottomButtons();
-                }
+            // Device-independent on purpose: mobile and narrow desktop windows take the same
+            // width-driven path. Gating this on Vars.mobile/isPortrait() is what left the phone
+            // bar on vanilla's fixed-width row, which cannot be compressed to the stage width and
+            // so leaves its first and last controls off screen. The width check is what keeps
+            // this from re-parenting half the bar every single frame.
+            float width = buttons.getWidth();
+            if(width > 0f && Math.abs(width - bottomButtonsWidth) > 1f){
+                // The shown callback can run before the parent table has measured this
+                // row. Re-run once its actual width is available (and after a resize).
+                layoutBottomButtons();
             }
             menuScanTimer += Time.delta;
             if(menuScanTimer >= 6f){
@@ -195,7 +201,7 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     /**
-     * Rebuilds the desktop bottom bar so that no control is ever squeezed or painted over.
+     * Rebuilds the bottom bar so that no control is ever squeezed or painted over.
      *
      * <p>Vanilla {@code setup()} leaves {@code buttons.defaults().size(160f, 64f)} on this
      * row. That default sets a positive <em>maximum</em> width as well as a minimum, so every
@@ -203,19 +209,22 @@ public class SugarLogicDialog extends LogicDialog{
      * children of that container then overflowed it and the inspection controls painted
      * straight over the action controls (buttons-overlapping report, 2026-09). The inherited
      * maximum is cleared before any container is added — a non-positive maximum means
-     * "unbounded" in Table's layout math. The same fixed cell widths also make it cheap to
-     * check whether a row really fits ({@link BottomBarLayout}), so a narrow dialog wraps the
-     * controls onto more rows instead of squeezing them into each other.</p>
+     * "unbounded" in Table's layout math.</p>
+     *
+     * <p>The width logic runs on <b>every</b> device, mobile included. It used to return early
+     * for {@code Vars.mobile || isPortrait()} and keep vanilla's single fixed-width row there,
+     * which is the report this method now answers: {@code TextButton} pins its label's minimum
+     * width to the text width, so on a phone that row cannot be compressed down to the screen.
+     * A row wider than the stage gets pushed out of the visible area once
+     * {@code Element.keepInStage()} pulls its overflowing edge back onto the stage, which is how
+     * the first and last controls — the back button and the function-library button — end up cut
+     * off with no way to press them. Wrapping onto rows that really fit is the only layout that
+     * keeps every control on screen at a usable size.</p>
      */
     private void layoutBottomButtons(){
-        // Keep vanilla's portrait/mobile row breaks.  The centered stack is only needed for
-        // the wide desktop bar; on mobile the upstream setup intentionally splits actions
-        // across rows and Sugar adds undo/redo to that flow.
-        if(Vars.mobile || Core.graphics.isPortrait()) return;
-
         // v160 names back/edit/variables but leaves the upstream Add button anonymous.
         // Claim that exact fourth vanilla child before clearing/reparenting it; otherwise it
-        // would be lost from the desktop action group every time the dialog is shown.
+        // would be lost from the action group every time the dialog is shown.
         Element add = buttons.find("add");
         if(add == null && buttons.getChildren().size > 3){
             Element candidate = buttons.getChildren().get(3);
@@ -249,24 +258,18 @@ public class SugarLogicDialog extends LogicDialog{
         Table centeredTable = new Table();
         centeredTable.defaults().size(barButtonWidth, barButtonHeight);
         centeredTable.center();
-        int centeredCount = 0;
         for(Element element : centered){
             // Hidden optional actions (for example the library-only discard button) must not
             // reserve an invisible slot, otherwise the visible action group is off-center.
-            if(element != null && element.visible){
-                centeredTable.add(element);
-                centeredCount++;
-            }
+            if(element != null && element.visible) centeredTable.add(element);
         }
 
         Table debugTable = new Table();
         debugTable.defaults().size(barButtonWidth, barButtonHeight);
         debugTable.right().marginRight(12f);
-        int debugCount = 0;
         for(Element element : debug){
             if(element == null || !element.visible) continue;
             addBarCell(debugTable, element);
-            debugCount++;
         }
 
         float available = buttons.getWidth();
@@ -278,67 +281,68 @@ public class SugarLogicDialog extends LogicDialog{
 
         // 1) Everything on one row: actions centered, inspection controls anchored to the
         //    right edge.  Both groups are full-width layers of a stack, so they may only share
-        //    the row while their footprints cannot touch.
+        //    the row while their footprints cannot touch.  This is the shape every wide window
+        //    uses; the packing below is the fallback for everything narrower.
         float sideWidth = debugTable.getPrefWidth() + 12f;
         float wideEnough = centeredTable.getPrefWidth() + 2f * sideWidth + barRowPad;
         if(available >= wideEnough){
             Table debugRegion = new Table();
             debugRegion.right();
             debugRegion.add(debugTable).right();
-            buttons.stack(centeredTable, debugRegion).growX().height(barButtonHeight).padLeft(8f).padRight(8f);
+            buttons.stack(centeredTable, debugRegion).growX().height(barButtonHeight).padLeft(barCellPad).padRight(barCellPad);
             buttons.invalidateHierarchy();
             return;
         }
 
-        // 2) Two rows: actions first, inspection controls right-aligned below them (upstream's
-        //    own narrow arrangement).  Only usable while each group still fits on one row.
+        // 2) Narrow (every phone, and any window too small for the centered stack): pack the
+        //    individual cells into rows that really fit, so nothing is squeezed into its
+        //    neighbour.  A cell never shares a row unless that row can hold it; at worst a
+        //    single cell keeps a row to itself rather than being dropped or overlapped.
         float rowSpace = available - barRowPad;
-        if(centeredTable.getPrefWidth() <= rowSpace && debugTable.getPrefWidth() <= rowSpace){
-            buttons.add(centeredTable).growX().height(barButtonHeight).padLeft(8f).padRight(8f).row();
-            Table debugRegion = new Table();
-            debugRegion.right();
-            debugRegion.add(debugTable).right();
-            buttons.add(debugRegion).growX().height(barButtonHeight).padLeft(8f).padRight(8f);
-            buttons.invalidateHierarchy();
-            return;
-        }
-
-        // 3) Narrow window: pack the individual cells into rows that really fit.  A cell never
-        //    shares a row unless the row can hold it, so nothing is squeezed into its neighbour
-        //    (worst case a single oversized cell keeps a row to itself and is clipped instead).
-        Element[] items = new Element[centeredCount + debugCount];
-        float[] widths = new float[items.length];
-        int index = 0;
+        // The instruction-budget label is not just the widest cell (196px), it is also the only
+        // cell that may be given up: on a bar barely wider than the screen it costs a whole extra
+        // row of height for a readout the over-budget toast already reports.  A control the user
+        // cannot press is a real loss, a readout is not, so every pressable cell stays on the bar
+        // whatever the width.  A row too narrow for the label itself never shows it.
+        boolean budgetLabelFits = rowSpace >= barBudgetWidth;
+        ArrayList<Element> packed = new ArrayList<>();
         for(Element element : centered){
-            if(element == null || !element.visible) continue;
-            items[index] = element;
-            widths[index++] = barButtonWidth;
+            if(element != null && element.visible) packed.add(element);
         }
         for(Element element : debug){
             if(element == null || !element.visible) continue;
-            items[index] = element;
-            widths[index++] = element == budgetLabel ? barBudgetWidth : barButtonWidth;
+            if(element == budgetLabel && !budgetLabelFits) continue;
+            packed.add(element);
+        }
+        float[] widths = new float[packed.size()];
+        for(int i = 0; i < widths.length; i++){
+            widths[i] = packed.get(i) == budgetLabel ? barBudgetWidth : barButtonWidth;
         }
 
         int[] rows = BottomBarLayout.packRows(rowSpace, widths);
-        index = 0;
+        int index = 0;
         for(int row = 0; row < rows.length; row++){
             Table rowTable = new Table();
             rowTable.defaults().size(barButtonWidth, barButtonHeight);
             rowTable.center();
             for(int cell = 0; cell < rows[row]; cell++){
-                addBarCell(rowTable, items[index++]);
+                addBarCell(rowTable, packed.get(index++));
             }
-            buttons.add(rowTable).growX().height(barButtonHeight).padLeft(8f).padRight(8f);
+            buttons.add(rowTable).growX().height(barButtonHeight).padLeft(barCellPad).padRight(barCellPad);
             if(row < rows.length - 1) buttons.row();
         }
         buttons.invalidateHierarchy();
     }
 
-    /** Adds one bottom-bar cell; the instruction-budget label keeps its wider 196px cell. */
+    /**
+     * Adds one bottom-bar cell. The instruction-budget label keeps its wider cell — that cell is
+     * where {@link #barBudgetWidth} comes from, so the two must stay in step or the row packing
+     * measures a cell the layout does not actually produce.
+     */
     private void addBarCell(Table row, Element element){
         if(element == budgetLabel){
-            row.add(element).width(180f).height(barButtonHeight).padLeft(8f).padRight(8f);
+            row.add(element).width(barBudgetWidth - 2f * barCellPad).height(barButtonHeight)
+                .padLeft(barCellPad).padRight(barCellPad);
         }else{
             row.add(element);
         }

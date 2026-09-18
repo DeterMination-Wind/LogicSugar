@@ -26,6 +26,8 @@ import java.util.Arrays;
 public class BottomBarLayoutTest{
     private static final float button = 160f;
     private static final float budgetLabel = 196f;
+    /** Mirrors {@code SugarLogicDialog.barRowPad}: padding every bottom-bar row reserves. */
+    private static final float rowPad = 16f;
 
     public static void main(String[] args){
         singleRowWhenEverythingFits();
@@ -37,6 +39,11 @@ public class BottomBarLayoutTest{
         keepsEveryCellInOrder();
         emptyInput();
         fitsOneRowMirrorsPacking();
+        phoneBarWrapsInsteadOfOverflowing();
+        phoneBarRowsReallyFit();
+        portraitPhoneActionGroupTakesThreeRows();
+        narrowBarBudgetLabelCostsAWholeRow();
+        wideBarKeepsItsSingleRow();
 
         installHeadlessApp();
         vanillaDefaultClampsTheGroupContainer();
@@ -115,6 +122,93 @@ public class BottomBarLayoutTest{
         float[] twoRows = new float[]{button, button, button};
         check(BottomBarLayout.fitsOneRow(320f, oneRow), "two buttons fit into 320px");
         check(!BottomBarLayout.fitsOneRow(320f, twoRows), "three buttons do not fit into 320px");
+    }
+
+    // ---------- the phone / narrow-window bar ----------
+
+    /**
+     * The reported regression: {@code layoutBottomButtons()} used to return early for
+     * {@code Vars.mobile || isPortrait()} and leave vanilla's single fixed-width row in place.
+     * {@code TextButton} pins its label's minimum width to the text width, so that row cannot be
+     * compressed below the sum of its cells; a row wider than the stage is pushed out of the
+     * visible area by {@code Element.keepInStage()}, which takes the back button (leftmost) and
+     * the function-library button (rightmost) with it.
+     *
+     * <p>The five vanilla v160 actions are {@code @back / @edit / @variables / @add} plus the
+     * Sugar function-library button. 800px of cells cannot be laid out as one row in a 640px
+     * bar, so the width logic has to wrap them rather than squeeze them together.</p>
+     */
+    private static void phoneBarWrapsInsteadOfOverflowing(){
+        float[] actions = new float[]{button, button, button, button, button};
+        check(!BottomBarLayout.fitsOneRow(640f, actions),
+            "five 160px actions cannot honestly fit a 640px phone bar");
+
+        float rowSpace = 640f - rowPad;
+        int[] rows = BottomBarLayout.packRows(rowSpace, actions);
+        check(rows.length > 1, "a phone bar must wrap, got " + Arrays.toString(rows));
+        check(rowWidth(actions, 0, rows[0]) <= rowSpace,
+            "the first wrapped row must fit the bar or the bar overflows again");
+    }
+
+    /** Whatever the phone width, every wrapped row has to fit the bar (or hold one cell). */
+    private static void phoneBarRowsReallyFit(){
+        float[] all = new float[]{button, button, button, button, button, button, button, budgetLabel, button, button};
+        for(float available : new float[]{360f, 400f, 480f, 560f, 640f, 720f, 800f, 900f}){
+            float rowSpace = available - rowPad;
+            int[] rows = BottomBarLayout.packRows(rowSpace, all);
+            int index = 0;
+            for(int count : rows){
+                float width = rowWidth(all, index, count);
+                check(width <= rowSpace || count == 1,
+                    "row of " + count + " cells is " + width + "px wide in a " + available + "px bar");
+                index += count;
+            }
+            check(index == all.length, "every cell must be placed in a " + available + "px bar");
+        }
+    }
+
+    /**
+     * Portrait phone: the action group alone (5 cells = 800px) already needs three rows once
+     * the bar is 360px wide (344px of usable row space holds two 160px cells). This is the
+     * height cost the budget-label tradeoff below exists to avoid inflating further.
+     */
+    private static void portraitPhoneActionGroupTakesThreeRows(){
+        float[] actions = new float[]{button, button, button, button, button};
+        int[] rows = BottomBarLayout.packRows(360f - rowPad, actions);
+        check(rows.length == 3, "five actions need three rows at 360px, got " + Arrays.toString(rows));
+        check(rows[0] == 2 && rows[2] == 1, "the 360px portrait bar packs as 2/2/1, got " + Arrays.toString(rows));
+    }
+
+    /**
+     * The instruction-budget label is 196px — wider than a button. On a bar too narrow to hold
+     * a single row's worth of cells, leaving it in costs a whole extra row of bar height for a
+     * readout the over-budget toast already reports, so the dialog drops it and keeps the
+     * pressable controls.
+     *
+     * <p>640px of usable row space holds four 160px cells exactly, so eight actions fill two
+     * rows with nothing left over and the 196px label can only land on a row of its own.</p>
+     */
+    private static void narrowBarBudgetLabelCostsAWholeRow(){
+        float[] actions = new float[]{button, button, button, button, button, button, button, button};
+        float[] withLabel = new float[]{button, button, button, button, button, button, button, button, budgetLabel};
+        float rowSpace = 640f;
+
+        int withoutRows = BottomBarLayout.packRows(rowSpace, actions).length;
+        int withRows = BottomBarLayout.packRows(rowSpace, withLabel).length;
+        check(withoutRows == 2, "eight actions pack as 2 rows in 640px, got " + withoutRows);
+        check(withRows == withoutRows + 1,
+            "the budget label must be the cell that costs the extra row, got " + withRows + " vs " + withoutRows);
+    }
+
+    /** The wide desktop bar keeps its single row: wrapping must not become the default. */
+    private static void wideBarKeepsItsSingleRow(){
+        float[] all = new float[]{button, button, button, button, button, button, button, budgetLabel, button, button};
+        check(BottomBarLayout.fitsOneRow(1920f - rowPad, all),
+            "the full bar still fits one row on a wide window");
+    }
+
+    private static float rowWidth(float[] widths, int from, int count){
+        return BottomBarLayout.rowWidth(widths, from, count);
     }
 
     // ---------- real arc layout geometry ----------

@@ -184,13 +184,16 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ### 底部按钮行布局
 
-逻辑编辑器底栏的单元宽度是固定的：普通按钮 `160x64`（与上游 `setup()` 的 `buttons.defaults().size(160f, 64f)` 一致），指令预算标签为 `180px` 内容加左右各 `8px` 内边距（合计 196px）。`SugarLogicDialog.layoutBottomButtons()`（`BottomBarLayout` 提供纯函数行打包，`bottomBarLayoutTest` 钉住）按可用宽度三选一：
+逻辑编辑器底栏的单元宽度是固定的：普通按钮 `160x64`（与上游 `setup()` 的 `buttons.defaults().size(160f, 64f)` 一致），指令预算标签为 `180px` 内容加左右各 `8px` 内边距（合计 196px）。`SugarLogicDialog.layoutBottomButtons()`（`BottomBarLayout` 提供纯函数行打包，`bottomBarLayoutTest` 钉住）按可用宽度二选一：
 
 1. **单行居中**（`available >= centered + 2*(debug + 12) + 16`）：操作组居中、检查控件贴右，两组是同一个 `Stack` 的两层，互不重叠。
-2. **两行**：操作组一行，检查控件（复制变量 / 复制打印缓冲 / 指令预算）右对齐另起一行——上游自己的窄屏形态。
-3. **按行打包**：任一组自己都放不下时，逐单元贪心装行，宁可多行也不把相邻单元挤在一起。
+2. **按行打包**：放不下时逐单元贪心装行，宁可多行也不把相邻单元挤在一起；行本身仍居中，因此窄屏下不会出现单行居中、多行左对齐的混搭观感。行数由真实可用宽度决定，不再有「上游两行形态」这一档——它只在应用组和检查组各自都放得下的宽度上生效，而那个宽度下打包本来也只得到两行。
+
+**宽度判定不分设备。** `layoutBottomButtons()` 早期版本在 `Vars.mobile || isPortrait()` 时直接 return，保留上游那条固定宽度行；这正是手机端截断报告（2026-09）的成因：arc 的 `TextButton` 把 label 的 `minWidth` 钉成文字宽度（`add(label).expand().fill().wrap().minWidth(getMinWidth())`），整行因此压不到屏幕宽度以下，比屏幕还宽的那一行被 `Element.keepInStage()` 推到可见区之外（`centerWindow()` 之后它会把越界的右边缘拉回舞台内），返回键 / 打开函数库这类首尾控件就被裁掉。现在手机、竖屏、窄桌面窗口走同一条宽度驱动的路径，`update()` 里也按宽度变化（而非 `Vars.mobile`）触发重排。
 
 两个必须保留的约束：① 上游 `setup()` 留在按钮行上的 `defaults().size(160f, 64f)` 同时设了**正的最大宽度**，落在该行的容器（`Stack`/换行 `Table`）会被压到单个按钮宽，固定宽度的子控件随即溢出并互相覆盖（2026-09 按钮重叠报告）；容器必须先把继承的最大宽度清掉（`Table` 的布局把 `maxWidth <= 0` 当作无上限）。② 改单元宽度或内边距时必须同步 `barButtonWidth` / `barBudgetWidth` / `barRowPad`，否则单行判定与行打包都会算错。
+
+窄屏不放指令预算标签：它是最宽的一格（196px），且在 640px 这类宽度上会独占一行——多出来的整行高度只为显示一个「超限有 toast 兜底」的读数。**只有这一格会让位**：其余可按的按钮在任何宽度下都保留（最坏一格独占一行），因为按不到的按钮是真实损失，读数是可替代信息。
 
 ### 调色板分类
 
