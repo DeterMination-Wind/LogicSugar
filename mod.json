@@ -5,6 +5,7 @@
   "main": "logicsugar.LogicSugarMod",
   "description": "Adds structured for, while, switch, and function blocks to the logic editor while storing vanilla-compatible mlog.",
   "version": "5.1.0",
+  "hidden": true,
   "minGameVersion": "160.1",
   "java": true
 }
