@@ -333,6 +333,22 @@ public class ExprHook{
                 continue;
             }
 
+            // 单行表达式（x = 0 / x = a / x = a + b）在保存文本里本来就只占一条语句，
+            // 展开没有任何结构收益；而 foldAll 的单行门槛只对数组 read/write 放行，展开后
+            // 无法折回。若不跳过，用户刚拖出的表达式卡会在第一次 save()
+            // （addAt → recordCanvasHistory）后变成普通 set/op 积木——展开与保留卡片产出的
+            // 文本逐字相同（write() 输出同一份 Line 链），因此产物与语句下标都不变。
+            if(keepsCard(ops)) continue;
+
+            // 链里出现无法映射成原版语句的行（未知 RawLine）时保留卡片：宁可留着表达式卡，
+            // 也不能删掉用户的积木。历史教训：CopyLine（现 set 拷贝）曾落到 RawLine 分支被
+            // 静默丢弃，而调用方已经移除了卡片，"添加 Expr" 表现为毫无反应。
+            if(hasUnmappableLine(ops)){
+                Log.warn("[LogicAssist] expression '@ = @' has instructions without a canvas statement; keeping the Expr card",
+                    exprStmt.dest, exprStmt.expr);
+                continue;
+            }
+
             // 插入点之前的连续自动断言卡（画布顺序）：重复展开时等价的断言行不再插入
             List<LStatement> preceding = new ArrayList<>();
             for(int k = i - 1; k >= 0; k--){
@@ -360,6 +376,36 @@ public class ExprHook{
     }
 
     // ===== 展开产物：Line 链 → 画布语句（含自动越界断言） =====
+
+    /**
+     * 该链是否应保留表达式卡而不展开：只有一行、且这一行有对应的原版卡片
+     * （值拷贝 set / op / sensor / read / write / funccall）。单行链在保存文本里占一条
+     * 语句，与卡本身等价，展开只是把可编辑的表达式卡降级成 set/op 积木。
+     */
+    public static boolean keepsCard(List<ExprCompiler.Line> ops){
+        return ops.size() == 1 && statementFor(ops.get(0)) != null;
+    }
+
+    /**
+     * 单行 read/write 链：{@code foldAll} 的数组门槛（memory 命中数组注册表）本来就能把它折回
+     * 卡片，不需要 {@link ExprStatement#cardMarkerPrefix} 自描述标记。
+     */
+    public static boolean foldsBackAlone(List<ExprCompiler.Line> ops){
+        return ops.size() == 1
+            && (ops.get(0) instanceof ExprCompiler.ReadLine || ops.get(0) instanceof ExprCompiler.WriteLine);
+    }
+
+    /**
+     * 链里是否存在没有画布语句对应的行。{@link ExprCompiler.AssertBoundsLine} 按模式转换或
+     * 丢弃，不算丢失；其它无法映射的行展开后会静默丢掉指令，调用方必须保留原卡片。
+     */
+    public static boolean hasUnmappableLine(List<ExprCompiler.Line> ops){
+        for(ExprCompiler.Line line : ops){
+            if(line instanceof ExprCompiler.AssertBoundsLine) continue;
+            if(statementFor(line) == null) return true;
+        }
+        return false;
+    }
 
     /** 自动插入的越界断言卡消息前缀。用于两处识别：展开时避免重复插入、折叠时清理
      *  由表达式生成的断言卡（用户手写的断言卡没有该前缀，永远不动）。 */
@@ -400,8 +446,17 @@ public class ExprHook{
         return result;
     }
 
-    /** 一条指令行 → 原版画布语句；未知 RawLine 返回 null（编辑期防御，不崩溃）。 */
+    /** 一条指令行 → 原版画布语句；未知 RawLine 返回 null（编辑期防御，不崩溃）。
+     *  未知行必须让调用方放弃展开（{@link #hasUnmappableLine}），否则卡片会被删掉却没有替代积木。 */
     private static LStatement statementFor(ExprCompiler.Line line){
+        if(line instanceof ExprCompiler.CopyLine copy){
+            // 值拷贝（v5 起 x = 0 / x = a 的唯一产物）：必须映射成原版 set 卡。
+            // CopyLine extends RawLine，放在 RawLine 分支之前才不会被当成未知行丢弃。
+            SetStatement st = new SetStatement();
+            st.to = copy.dest;
+            st.from = copy.src;
+            return st;
+        }
         if(line instanceof ExprCompiler.SensorLine sensor){
             SensorStatement st = new SensorStatement();
             st.to = sensor.dest;
@@ -436,7 +491,8 @@ public class ExprHook{
             return st;
         }
         if(line instanceof ExprCompiler.RawLine){
-            return null; // 非断言 RawLine（当前不存在）：编辑器路径跳过，不崩溃
+            // 未知原始行（不是断言）：调用方按 hasUnmappableLine() 保留卡片，绝不静默丢弃
+            return null;
         }
         ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
         OperationStatement st = new OperationStatement();

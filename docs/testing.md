@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十六个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十七个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了三十六个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了三十七个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -42,6 +42,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `escapePreviewTest` | `logicsugar.assist.EscapePreviewSelfTest` | quoted mlog 字符串转义预览：换行、引号、反斜杠、Unicode、未知/畸形转义及现代能力探测 |
 | `v160SensorAccessTest` | `logicsugar.assist.expr.V160SensorAccessSelfTest` | `LAccess.senseablePrivileged` 的跨版本反射访问与旧版 fallback |
 | `exprTextImportTest` | `logicsugar.assist.expr.ExprTextImportSelfTest` | 文本导入的一行表达式语句（`x = buf[3]` / `x = (a + b) * 2` / `buf[i] = 5`）：形状识别与保守边界（已注册 token、`==`/`!=`/`<=`/`>=`、注释、字符串、一行多语句、保留哨兵前缀）、哨兵替换保持语句条数与 jump 标签下标、降级成文档承诺的 `read x cell1 3` 且产物不再含 `noop`、载体往返与 `verifyRestore`、重开时 read 行仍能被 foldAll 折回、非法表达式仍是卡片并明确报错 |
+| `exprCardTest` | `logicsugar.assist.expr.ExprCardSelfTest` | 表达式卡的画布侧（"添加积木 → Expr" 无反应回归）：调色板默认卡（`result = 0`，一条值拷贝 `set`）必须被识别为「保留卡片」而不是展开成 `set`/`op` 积木；任何一行链都必须有画布语句（未知 `RawLine` 由 `hasUnmappableLine` 上报，调用方保留卡片而不是删掉积木）；展开与不展开写出的文本逐字一致（单行卡跳过展开不改变产物与下标）；单行卡自带 `# @ls-expr-card` 自描述标记（多行卡与单行数组 read/write 不带标记）、标记经 `ExprTextImport` 一对一还原成同一张卡（含引号转义与空 dest）；载体往返：标记不泄漏进可执行产物、`verifyRestore` 仍通过、重开后卡片原样回来 |
 | `funclibLimitTest` | `logicsugar.FunctionLibraryLimitTest` | 函数库行数上限：`readLibrary` 解析超过 1000 条语句不截断且用完还原 `LExecutor.maxInstructions`；`libraryOverLimit` 在 10000 条边界正确、`withLibraryLimit` 异常路径也还原；`sanitizedLibrary`/`buildLibrary`/`extractLibrarySource` 都能看到第 1000 条之后的库函数；处理器调用尾部库函数时只嵌入用到的子集并可重编译一致；函数库编辑会话整体 round-trip 不丢内容；单函数体超过 1000 条语句也能解析与校验 |
 | `dataRuntimeTest` | `logicsugar.assist.data.DataRuntimeTest` | 数据结构整程序运行：真实 `LExecutor` + 假内存/消息块执行编译产物，覆盖栈/队列/双端队列/位集/列表/小顶堆/链表的 push/pop/peek、满/空边界、非零 base 环回、空容器 NaN 标记，并钉住 `whilebegin` 条件语义（`s.size()` 能抽干容器、`!s.size()` 一次都不进循环）与 v5 值语义（返回 / 堆往返保留对象与 NaN 标记）；另含数组排序内置函数 `__ls_builtin_arrsort`（希尔排序）的运行结果：`sortasc`/`sortdesc`、逆序/已排序/重复元素、size=1、非零 base 不越界 |
 | `conditionLabelTest` | `logicsugar.ConditionLabelTest` | 循环条件字段的本地化标签：三份 bundle 键集一致、`while.condition`/`for.condition` 不得写成「结束条件 / 终止条件 / until」、提示语保持「为真时重复」，并断言 `WhileBeginStatement` 使用专用键而非通用 `condition` |
@@ -51,7 +52,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前三十六个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前三十七个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 

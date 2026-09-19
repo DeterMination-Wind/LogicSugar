@@ -182,6 +182,21 @@ public final class DataModules{
         return canonical == null ? null : paletteCalls().get(canonical);
     }
 
+    /**
+     * 旧操作名（v5.1 及更早的 carrier/卡片文本）→ 规范新名；新名与未知名字原样返回。
+     *
+     * <p>卡片解析时用它归一化 {@code operation} 字段：c7511b9 的承诺是"菜单只显示新名"，
+     * 但只做别名解析会让旧载体重开的卡片继续显示旧名（卡片正文 {@code spush(...)}、
+     * 悬停提示键 {@code logicsugar.lst.datacall.spush}）并把它写回下一次保存的载体。
+     * 归一化后旧存档打开即显示新名，重新保存也只写新名；两者的可执行流逐字相同
+     *（{@code DataSubsystemIntegrationTest.renamedOpsLowerIdentically} 钉住这一点）。</p>
+     */
+    public static String canonicalOperation(String name){
+        if(name == null) return null;
+        String canonical = LEGACY_ALIASES.get(name.toLowerCase(java.util.Locale.ROOT));
+        return canonical == null ? name : canonical;
+    }
+
     /** 轻量扫描全部声明卡，得到 名字 → 结构种类（供 analyze 阶段解析方法糖）。
      *  同名冲突按模块注册顺序先到先得；不做严格校验，非法卡片由后续 collect 拦截。 */
     public static Map<String, String> declaredKinds(List<LStatement> statements){

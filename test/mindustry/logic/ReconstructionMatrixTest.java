@@ -2,6 +2,7 @@ package mindustry.logic;
 
 import logicsugar.LogicSugarMod;
 import logicsugar.assist.data.DataModules;
+import logicsugar.assist.expr.ExprStatement;
 import mindustry.Vars;
 
 import java.util.ArrayList;
@@ -157,6 +158,11 @@ public final class ReconstructionMatrixTest{
         addCarrier("decl.list", "list l cell1 0 8\nset x 1\n", "list l cell1 0 8");
         addCarrier("decl.heap", "heap h cell1 0 8\nset x 1\n", "heap h cell1 0 8");
         addCarrier("decl.chain", "chain c cell1 0 8\nset x 1\n", "chain c cell1 0 8");
+        // 单行表达式卡的自描述标记（ExprStatement.cardMarkerPrefix）：注释不改变产物，
+        // 但随载体保存下来，重开时由 ExprTextImport 把上一行还原成表达式卡。
+        // 没有标记时单行卡与普通 set/op 积木在文本里无法区分，保存一次就会退化成积木。
+        addCarrier("decl.exprcard", "stack s cell1 0 4\nset result 0\n"
+            + ExprStatement.cardMarkerPrefix + "result \"0\"\n", ExprStatement.cardMarkerPrefix);
     }
 
     private static void addOperationFixtures(){

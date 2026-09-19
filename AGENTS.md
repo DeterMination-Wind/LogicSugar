@@ -40,6 +40,7 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
                                       # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest,
                                       # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, exprTextImportTest,
+                                      # exprCardTest,
                                        # funclibLimitTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
@@ -132,6 +133,27 @@ applies unchanged. Keep the conservative skip list in sync when adding sugar lin
 `LAssembler.customParsers`, comparisons (`==`/`!=`/`<=`/`>=`), strings, comments and one-line
 multi-statements must stay untouched.
 
+**An `ExprStatement` card must survive `save()` — treated as a block, not a formatting detail.**
+Every palette insert triggers `SugarCanvas.addAt → afterMutate → SugarLogicDialog.recordCanvasHistory
+→ canvas.save()`, and `save()` runs `ExprHook.unfoldAll()` + `foldAll()`. Two invariants keep the
+card alive (both were violated by the 2026-09 regression where "Expr" in the add-block dialog
+appeared to do nothing):
+
+- `unfoldAll` only replaces a card when **every** line of its chain has a vanilla statement
+  (`hasUnmappableLine`); otherwise it keeps the card. `CopyLine extends RawLine`, so the v5
+  value-copy form (`x = 0`, `x = a` → `set x 0`) hit the "unknown RawLine → skip" branch while
+  the card had already been removed: the block vanished instead of being added. Any new
+  `ExprCompiler.Line` subclass needs a `statementFor` branch.
+- Single-line cards are never unfolded (`keepsCard`): in the saved text they already occupy
+  exactly one statement, and `foldAll` cannot fold a lone `op`/`set` line back (its single-line
+  rule covers array `read`/`write` only), so unfolding would downgrade the card to a plain block.
+  `ExprStatement.write()` writes the same text either way — `exprCardTest` pins that equality.
+  Persistence instead uses the self-describing marker `# @ls-expr-card <dest> "<expr>"`
+  (`ExprStatement.cardMarkerPrefix`, a comment: executable stream, statement count and every
+  `destIndex` stay untouched), which `ExprTextImport` turns back into the card on load. Multi-line
+  cards keep relying on the `>= 2` fold threshold and deliberately carry no marker (collapsing
+  N lines would shift indices). Add a fixture to `reconstructionMatrixTest` when the format changes.
+
 ## Data subsystem (arrays / matrix / record / containers / bitset / map / list / heap / chain)
 
 The data subsystem is a compile-time abstraction layer: declaration cards are metadata and never
@@ -177,6 +199,12 @@ so saved programs stay vanilla-parseable and multiplayer-safe.
   lowering must reuse `ExprIntrinsics` so carrier restore preserves the operation card while
   the executable product remains vanilla mlog. The legacy eight-slot `arrayinit` token stays
   parseable but is not offered for new programs; use the Array Algorithms `fill(buf, value)` card.
+  **Operation names are canonicalized, not just aliased** (v5.2 rename): old carriers parse, but
+  `DataCallStatement.canonicalOperation()` / `DataModules.canonicalOperation()` must be the single
+  source for the card body, tooltip keys, title and the name written back to the carrier — a
+  display or `write()` path that reads the raw `operation` field lets old names reappear in the
+  editor and in the next save. Unknown names stay untouched so compile errors stay accurate
+  (`dataCallTest` pins both).
 - `SugarCompiler.compile` must keep the `DataModules.collectAll(...)` / `DataModules.restore()`
   pairing in its `try/finally`, with the pairing flag set *before* `collectAll` — a module `collect`
   exception must not leak compile-time registries into the next compile or editor render.
@@ -199,7 +227,7 @@ the Neon main repo's docs:
   pipelines, expression subsystem, cross-loader constraint, decompiler gate, layout map.
 - `docs/development.md` — environment, Gradle commands, artifact chain, style rules.
 - `docs/release.md` — version scheme, `deploy`/D8 pipeline, Release asset safety rules.
-- `docs/testing.md` — the thirty-six JavaExec self-test tasks, new-test conventions, manual
+- `docs/testing.md` — the thirty-seven JavaExec self-test tasks, new-test conventions, manual
   checklist.
 - `docs/glossary.md` — project terminology (carrier, FuncMode, SwitchStrategy, gate, …).
 

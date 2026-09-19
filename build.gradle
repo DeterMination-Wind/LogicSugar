@@ -250,6 +250,14 @@ tasks.register("exprTextImportTest", JavaExec){
     mainClass = "logicsugar.assist.expr.ExprTextImportSelfTest"
 }
 
+// Canvas side of an Expr card: the palette entry must produce a card that survives the save()
+// every palette insert triggers (unfold must never delete a block it cannot replace).
+tasks.register("exprCardTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.expr.ExprCardSelfTest"
+}
+
 // Generic main()-based self-test runner: ./gradlew runTestClass -PmainClass=<fully.qualified.Class>
 // (F2 framework tests use this; integration stage may add dedicated tasks / check.dependsOn.)
 tasks.register("runTestClass", JavaExec){
@@ -284,7 +292,7 @@ tasks.register("conditionLabelTest", JavaExec){
 
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, conditionLabelTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

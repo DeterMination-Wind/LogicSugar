@@ -9,6 +9,7 @@ import mindustry.logic.LCanvas.StatementElem;
 import mindustry.logic.LStatement;
 import mindustry.logic.LStatements.SetStatement;
 import mindustry.logic.SugarCanvas;
+import mindustry.logic.SugarStatements;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -102,26 +103,77 @@ public final class ExprTextImport{
     /**
      * 扫描文本，把所有「原版 mlog 解析不了、但形状是表达式赋值」的行换成哨兵 set 语句。
      * 纯文本运算，不接触 UI / 注册表，可无头测试。
+     *
+     * <p>同时识别 {@link ExprStatement#cardMarkerPrefix} 自描述标记：标记跟在单行表达式卡的
+     * 展开行之后，说明上一行是卡片而不是普通 {@code set}/{@code op} 积木（保存文本里两者
+     * 逐字相同），因此那一行按标记里记录的 dest/expr 还原成卡片。标记行本身留作文本里的
+     * 注释，一对一替换，语句条数依旧不变。</p>
      */
     public static Plan plan(String asm){
-        if(asm == null || asm.isEmpty() || asm.indexOf('=') < 0 || asm.contains(sentinelPrefix)){
+        boolean marked = asm != null && asm.contains(ExprStatement.cardMarkerPrefix);
+        if(asm == null || asm.isEmpty() || (!marked && asm.indexOf('=') < 0) || asm.contains(sentinelPrefix)){
             return new Plan(asm == null ? "" : asm, Map.of());
         }
 
         String text = asm.replace("\r\n", "\n");
         String[] lines = text.split("\n", -1);
         Map<String, Assignment> found = new LinkedHashMap<>();
+        // 最近一条「代码行」的下标：标记写在卡片展开行的下一行，据此认领属于它的那一行
+        int lastCodeLine = -1;
         for(int i = 0; i < lines.length; i++){
+            Assignment marker = parseCardMarker(lines[i]);
+            if(marker != null){
+                // 认领紧邻上面的那一行；标签行（`foo:`）绝不认领——标记只跟在卡片展开行之后，
+                // 文本被手工改动过时宁可丢掉标记，也不能把一条标签换成卡片。
+                if(lastCodeLine >= 0 && !lines[lastCodeLine].trim().endsWith(":")){
+                    String sentinel = sentinelPrefix + (found.size() + 1);
+                    lines[lastCodeLine] = "set " + sentinel + " " + sentinelValue;
+                    found.put(sentinel, marker);
+                }
+                lastCodeLine = -1;
+                continue;
+            }
+            String trimmed = lines[i].trim();
+            if(trimmed.isEmpty() || trimmed.startsWith("#")) continue;
+
             Assignment assignment = parseAssignment(lines[i]);
-            if(assignment == null) continue;
+            if(assignment == null){
+                lastCodeLine = i;
+                continue;
+            }
             String sentinel = sentinelPrefix + (found.size() + 1);
             lines[i] = "set " + sentinel + " " + sentinelValue;
             found.put(sentinel, assignment);
+            lastCodeLine = -1;
         }
 
         // 没有匹配时返回原文本（不做 \r\n 归一化），保证既有路径零差异。
         if(found.isEmpty()) return new Plan(asm, Map.of());
         return new Plan(String.join("\n", lines), found);
+    }
+
+    /**
+     * {@link ExprStatement#cardMarkerPrefix} 标记行 → (dest, expr)；不是标记时返回 null。
+     * 格式：{@code # @ls-expr-card <dest> "<转义后的表达式>"}（dest 为空时直接以引号开头）。
+     */
+    private static Assignment parseCardMarker(String line){
+        String code = line.trim();
+        if(!code.startsWith(ExprStatement.cardMarkerPrefix)) return null;
+        String rest = code.substring(ExprStatement.cardMarkerPrefix.length()).trim();
+        if(rest.isEmpty()) return null;
+
+        String dest = "";
+        String quoted = rest;
+        if(!rest.startsWith("\"")){
+            int space = rest.indexOf(' ');
+            if(space < 0) return null; // 只有 dest 没有表达式：标记损坏，忽略
+            dest = rest.substring(0, space).trim();
+            quoted = rest.substring(space + 1).trim();
+        }
+        if(quoted.length() >= 2 && quoted.charAt(0) == '"' && quoted.charAt(quoted.length() - 1) == '"'){
+            quoted = quoted.substring(1, quoted.length() - 1);
+        }
+        return new Assignment(dest, SugarStatements.unescapeQuoted(quoted));
     }
 
     /** 画布版本：把哨兵 set 语句原位换成 {@link ExprStatement} 卡（与 ExprHook 折叠同一套增删方式）。 */

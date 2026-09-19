@@ -1116,7 +1116,9 @@ public final class SugarCompiler{
             int end = out.indexOf("\n", index);
             if(end < 0) end = out.length();
             String line = out.substring(index, end);
-            if(!line.isEmpty() && !line.endsWith(":")) count++;
+            // 注释不是指令：LParser 直接跳过（LogicSugar 的自描述标记、用户注释都是），
+            // 计入会让预算横幅与上限判断虚高。
+            if(!line.isEmpty() && !line.endsWith(":") && !line.trim().startsWith("#")) count++;
             index = end + 1;
         }
         return count;

@@ -45,6 +45,19 @@ public class ExprStatement extends LStatement{
     /** 上次编译的错误消息（null = 无错误）。作为字段保持，避免 build() 重建时丢失错误状态 */
     public transient String lastError = null;
 
+    /**
+     * 单行表达式卡的自描述标记：{@code # @ls-expr-card <dest> "<expr>"}，写在卡片展开行的
+     * <b>后一行</b>（标记认领紧邻它上面的那一行）。
+     *
+     * <p>保存文本里的单行卡与普通 {@code set}/{@code op} 积木逐字相同，而
+     * {@code ExprHook.foldAll} 的单行门槛只对数组 read/write 放行——重开处理器、撤销重做都
+     * 只能靠猜测，单行表达式卡（{@code x = 0}、{@code x = a + b}、{@code x = cos(a)}）
+     * 会退化成普通积木。标记给了确定证据：它是注释（原版 LParser 直接忽略，可执行流、
+     * 语句条数与 jump 下标都不受影响），随载体一起保存，加载时由
+     * {@link ExprTextImport} 把上一行还原成卡片。</p>
+     */
+    public static final String cardMarkerPrefix = "# @ls-expr-card ";
+
     @Override
     public void write(StringBuilder builder){
         List<ExprCompiler.Line> lines;
@@ -63,6 +76,13 @@ public class ExprStatement extends LStatement{
         for(int i = 0; i < lines.size(); i++){
             if(i > 0) builder.append("\n");
             builder.append(lines.get(i).toText());
+        }
+        // 单行卡片额外写一行自描述标记（注释）：让重开/撤销能把这一行还原成卡片而不是
+        // 普通积木。多行卡片由 foldAll 的 >= 2 门槛折回，不需要标记（那会改变语句条数）；
+        // 单行 read/write 由 foldAll 的数组门槛折回，也不加标记。
+        if(ExprHook.keepsCard(lines) && !ExprHook.foldsBackAlone(lines) && dest != null){
+            builder.append('\n').append(cardMarkerPrefix).append(dest).append(' ')
+                .append('"').append(SugarStatements.escapeQuoted(expr == null ? "" : expr)).append('"');
         }
     }
 

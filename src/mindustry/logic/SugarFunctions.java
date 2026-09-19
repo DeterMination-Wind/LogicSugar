@@ -1054,8 +1054,10 @@ public final class SugarFunctions{
      */
     private static void registerDataCallExprCalls(DataCallStatement call, Function owner,
                                                    FunctionSet set, int index){
-        String expression = call.operation + "(" + (call.arguments == null ? "" : call.arguments) + ")";
-        List<ExprCompiler.CallSite> sites = ExprCompiler.collectCalls(expression, call.operation);
+        // 旧名卡片（v5.1 载体）按规范新名分析：与菜单卡片完全同一条解析路径
+        String operation = call.canonicalOperation();
+        String expression = operation + "(" + (call.arguments == null ? "" : call.arguments) + ")";
+        List<ExprCompiler.CallSite> sites = ExprCompiler.collectCalls(expression, operation);
         boolean root = true;
         for(ExprCompiler.CallSite site : sites){
             int argc = splitArgs(site.args).size();
@@ -1069,7 +1071,7 @@ public final class SugarFunctions{
                 }
                 continue;
             }
-            if(root && site.name.equalsIgnoreCase(call.operation)){
+            if(root && site.name.equalsIgnoreCase(operation)){
                 for(String callee : ExprIntrinsics.calleesOfRoot(site.name, argc)){
                     if(set.resolve(callee) != null){
                         (owner == null ? set.mainCalls : owner.callees).add(callee);
@@ -1682,7 +1684,9 @@ public final class SugarFunctions{
                                      StringBuilder out, CallIds ids, SugarCompiler.SwitchStrategy strategy,
                                      SugarCompiler.AssertEmit assertEmit){
         DataModule.PaletteCall spec = DataModules.paletteCall(call.operation);
-        if(spec == null) throw new IllegalArgumentException("unknown data intrinsic '" + call.operation + "'");
+        // 卡片文本/提示/载体都只写规范新名（旧载体重开即归一化，见 DataCallStatement）
+        String operation = call.canonicalOperation();
+        if(spec == null) throw new IllegalArgumentException("unknown data intrinsic '" + operation + "'");
         // The expression compiler always needs a concrete result operand so the last
         // intrinsic line can be optimized safely.  Void cards discard that legacy
         // sentinel into a private, per-function reserved variable; it never becomes a
@@ -1695,15 +1699,15 @@ public final class SugarFunctions{
         String destination = hasDestination ? call.destination
             : "__ls_" + (prefix == null ? "" : prefix.replace('-', '_')) + "datacall_discard";
         if(spec.returnsValue && !hasDestination){
-            throw new IllegalArgumentException("data call '" + call.operation + "' requires a destination variable");
+            throw new IllegalArgumentException("data call '" + operation + "' requires a destination variable");
         }
         String args = call.arguments == null ? "" : call.arguments;
         List<ExprCompiler.Line> lines;
         try{
-            lines = ExprCompiler.compileForcedIntrinsic(destination, call.operation, args,
+            lines = ExprCompiler.compileForcedIntrinsic(destination, operation, args,
                 assertEmit == SugarCompiler.AssertEmit.emit);
         }catch(Exception e){
-            throw new IllegalArgumentException("Invalid data call '" + call.operation + "': " + e.getMessage());
+            throw new IllegalArgumentException("Invalid data call '" + operation + "': " + e.getMessage());
         }
         for(ExprCompiler.Line line : lines){
             if(line instanceof ExprCompiler.CallLine nested){

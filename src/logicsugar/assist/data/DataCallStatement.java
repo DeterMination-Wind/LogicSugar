@@ -43,6 +43,14 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
         return current == null ? palette : current;
     }
 
+    /**
+     * 卡片对外使用的操作名：旧名（v5.1 及更早的 carrier）统一显示成规范新名，卡片正文、
+     * 悬停提示键、卡片标题与 {@link #write} 写回载体的名字都走这里，避免旧名残留。
+     */
+    public String canonicalOperation(){
+        return DataModules.canonicalOperation(operation);
+    }
+
     @Override
     public void build(Table table){
         // Each palette entry is a distinct operation block. Keeping the operation fixed avoids
@@ -53,7 +61,7 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
             field(table, destination, value -> destination = value).width(78f);
             table.add(" = ");
         }
-        table.add(operation + "(").self(c -> hint(c, operationHintKey("operation")));
+        table.add(canonicalOperation() + "(").self(c -> hint(c, operationHintKey("operation")));
         table.add(new ExpressionEditor(arguments, "data, value", value -> arguments = value))
             .growX().minWidth(90f);
         table.add(")").self(c -> hint(c, operationHintKey("arguments")));
@@ -68,13 +76,18 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
         }
     }
 
-    @Override public String name(){ return cardText(operation, operation); }
+    @Override public String name(){
+        // 关闭卡片本地化时 name() 直接显示 fallback，因此 fallback 也必须是规范新名
+        String op = canonicalOperation();
+        return cardText(op, op);
+    }
     @Override public String typeName(){
-        if(operation == null || operation.isEmpty()) return TOKEN;
+        String op = canonicalOperation();
+        if(op == null || op.isEmpty()) return TOKEN;
         // SugarLogicDialog derives its add-palette tooltip from typeName().  Keep the
-        // generic token for malformed/legacy cards, and select the per-operation key for
+        // generic token for malformed cards, and select the per-operation key for
         // registered cards (e.g. logicsugar.lst.datacall.stack_pop).
-        return TOKEN + "." + operation.toLowerCase(Locale.ROOT);
+        return TOKEN + "." + op.toLowerCase(Locale.ROOT);
     }
     @Override public LCategory category(){
         DataModule.PaletteCall call = palette();
@@ -83,7 +96,7 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
 
     @Override
     public void write(StringBuilder out){
-        out.append(TOKEN).append(' ').append(optional(operation)).append(' ')
+        out.append(TOKEN).append(' ').append(optional(canonicalOperation())).append(' ')
             .append(optional(destination)).append(' ').append('"')
             .append(SugarStatements.escapeQuoted(arguments == null ? "" : arguments))
             .append('"');
@@ -94,7 +107,8 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
     }
 
     private String operationHintKey(String field){
-        String op = operation == null ? "" : operation.toLowerCase(Locale.ROOT);
+        String op = canonicalOperation();
+        op = op == null ? "" : op.toLowerCase(Locale.ROOT);
         return DataModules.paletteCall(op) == null ? "datacall." + field : "datacall." + op;
     }
 
@@ -110,7 +124,9 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
 
     public static LStatement parse(String[] tokens){
         DataCallStatement result = new DataCallStatement();
-        result.operation = optionalValue(tokens, 1);
+        // 旧名（v5.1 及更早的载体）在解析时归一化成规范新名：卡片正文、悬停提示键与下一次
+        // 保存写出的载体都只出现新名，可执行流不变（见 DataModules.canonicalOperation）。
+        result.operation = DataModules.canonicalOperation(optionalValue(tokens, 1));
         result.destination = optionalValue(tokens, 2);
         result.arguments = unquote(tokens, 3);
         DataModule.PaletteCall palette = DataModules.paletteCall(result.operation);

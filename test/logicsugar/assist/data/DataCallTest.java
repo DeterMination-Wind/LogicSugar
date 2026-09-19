@@ -67,6 +67,8 @@ public final class DataCallTest{
         check(legacy instanceof SugarStatements.ArrayInitStatement,
             "legacy arrayinit carrier must remain parseable");
 
+        legacyCarrierCardsUseCanonicalNames();
+
         String sugar = "stack s cell1 0 4\n"
             + "datacall spush result \"s, 7\"\n"
             + "datacall ssize result \"s\"\n"
@@ -155,6 +157,48 @@ public final class DataCallTest{
         }
         apiVersionVerification();
         System.out.println("DataCallTest passed");
+    }
+
+    /**
+     * v5.2 改名：加号菜单只提供新名（{@link DataModules#paletteCalls()}），旧载体重开的卡片
+     * 也必须在解析时归一化成新名——否则旧存档里的积木仍然显示 {@code spush(...)}、悬停提示
+     * 走 {@code logicsugar.lst.datacall.spush}，并且把旧名写回下一次保存的载体。
+     */
+    private static void legacyCarrierCardsUseCanonicalNames(){
+        LStatement parsed = LAssembler.read("datacall spush pushed \"s, 7\"", true).first();
+        check(parsed instanceof DataCallStatement, "legacy datacall line did not parse into a card");
+        DataCallStatement card = (DataCallStatement)parsed;
+        check(card.operation.equals("stack_push"),
+            "legacy operation name was not canonicalized: " + card.operation);
+        check(card.typeName().equals("datacall.stack_push"),
+            "legacy card tooltip key still uses the old name: " + card.typeName());
+        check(!card.name().equals("spush"), "legacy card title still resolves through the old key: " + card.name());
+
+        StringBuilder written = new StringBuilder();
+        card.write(written);
+        check(written.toString().equals("datacall stack_push pushed \"s, 7\""),
+            "a reopened legacy card must be written back with the canonical name: " + written);
+
+        // 未知名不得被归一化改写：编译期仍要报准确的 unknown data intrinsic
+        LStatement unknown = LAssembler.read("datacall nosuchop r \"a\"", true).first();
+        check(unknown instanceof DataCallStatement, "unknown datacall line did not parse into a card");
+        check(((DataCallStatement)unknown).operation.equals("nosuchop"),
+            "an unknown operation name must survive parsing unchanged");
+
+        // 旧名载体：解析成规范卡后，可执行流与旧名完全一致，载体校验仍然通过
+        String legacySugar = "stack s cell1 0 4\n"
+            + "datacall spush pushed \"s, 7\"\n";
+        for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+            String compiled = SugarCompiler.compile(legacySugar, mode, null, null);
+            String restored = SugarCompiler.restore(compiled);
+            check(restored.equals(legacySugar),
+                "the carrier must keep the source text verbatim in " + mode + ":\n" + restored);
+            check(SugarCompiler.verifyRestore(compiled, restored),
+                "a legacy-named card must still pass the restore gate in " + mode);
+            LStatement reread = LAssembler.read(restored, true).get(1);
+            check(reread instanceof DataCallStatement reopened && reopened.operation.equals("stack_push"),
+                "reopening a legacy carrier must yield the canonical operation in " + mode);
+        }
     }
 
     /**
