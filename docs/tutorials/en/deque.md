@@ -26,8 +26,8 @@ Invariant: tail == (head + count) % size.
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `deque_push_front(d, v)` | deque, value | new size | front push; full returns current size and does not write |
-| `deque_push_back(d, v)` | deque, value | new size | back push; full returns current size and does not write |
+| `deque_push_front(d, v)` | deque, value | new size or -1 | front push; full returns -1 and does not write |
+| `deque_push_back(d, v)` | deque, value | new size or -1 | back push; full returns -1 and does not write |
 | `deque_pop_front(d)` | deque | front value | empty: NaN |
 | `deque_pop_back(d)` | deque | back value | empty: NaN |
 | `deque_front(d)` | deque | front value | empty: NaN |
@@ -91,7 +91,7 @@ op add x __ls_deq_d_count 0
 ## Caveats
 
 - Empty deque: pop/peek return NaN and leave the state unchanged.
-- Full deque: push returns the current size and does not write.
+- Full deque: push returns -1 and does not write.
 - f means front (head), b means back (tail). Back index is (head + count + size - 1) % size.
 - State is not persisted: the three hidden variables reset on reload. Call deque_clear(d) if old data should be discarded.
 - Capacity: range [base, base+size); base + size beyond capacity is a compile error.

@@ -28,7 +28,7 @@ __ls_que_q_count    当前元素个数
 
 | 函数 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `queue_push(q, v)` | 队列, 值 | 新元素个数 | 满时返回当前个数且不写入 |
+| `queue_push(q, v)` | 队列, 值 | 新元素个数或 -1 | 满时返回 -1 且不写入 |
 | `queue_pop(q)` | 队列 | 队首元素 | 空队列返回 NaN，并出队 |
 | `queue_front(q)` | 队列 | 队首元素 | 空队列返回 NaN，不出队 |
 | `queue_size(q)` | 队列 | 元素个数 | O(1) |
@@ -122,7 +122,7 @@ op add x __ls_que_q_count 0
 ## 使用须知
 
 - **空队列**：`queue_pop` / `queue_front` 返回 NaN，且 `head` / `count` 保持不变。
-- **满队列**：`queue_push` 返回当前 `size` 且不写入；不会覆盖已有元素。
+- **满队列**：`queue_push` 返回 -1 且不写入；不会覆盖已有元素。
 - **环形回绕**：`head` 和 `tail` 用 `% size` 回绕；`tail` 只是缓存，真值始终是 `(head + count) % size`。
 - **状态不持久化**：`head` / `tail` / `count` 是普通变量，处理器重载后回到 0。默认从空队列开始安全；残留旧数据时先 `queue_clear(q)`。
 - **容量**：`base + size` 超容量编译期报错；队列区间 `[base, base+size)`。

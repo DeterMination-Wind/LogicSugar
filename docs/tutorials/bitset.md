@@ -29,8 +29,8 @@ mask = 1 << bit
 
 | 函数 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `bitset_set(b, i)` | 位集, 位下标 | 1 成功 / 0 越界 | 置 1；越界不写入 |
-| `bitset_reset(b, i)` | 位集, 位下标 | 1 成功 / 0 越界 | 清 0；越界不写入 |
+| `bitset_set(b, i)` | 位集, 位下标 | 1（越界也是 1） | 置 1；越界不写入 |
+| `bitset_reset(b, i)` | 位集, 位下标 | 1（越界也是 1） | 清 0；越界不写入 |
 | `bitset_test(b, i)` | 位集, 位下标 | 1 / 0 | 读该位；越界返回 0 |
 | `bitset_count(b)` | 位集 | 置 1 的位数 | 扫描全部 words；O(words) |
 
@@ -67,7 +67,7 @@ funccall __ls_builtin_bwrite "cell1, _6, _7" x
 说明：
 
 - `_0` 是 word、`_1` 是 bit、`_2` 是 mask；
-- `_3/_4/_5` 是无分支越界守卫；越界时 mask 和 word 被乘 0，读改写回等价于空操作，返回 0；
+- `_3/_4/_5` 是无分支越界守卫；越界时 mask 和 word 被乘 0，读改写回等价于空操作，写回子程序仍返回 1；
 - 写回通过共享注入函数 `__ls_builtin_bwrite`（函数体是一条 `write`，返回 1）。
 
 ### 清位
@@ -113,7 +113,7 @@ funccall __ls_builtin_bitcount "cell1, 0, 2" x
 ## 使用须知
 
 - **容量**：`base + words` 不能超过内存块容量（`cellN` = 64，`bankN` / `worldN` = 512）。
-- **越界语义**：`bitset_set` / `bitset_reset` 越界返回 0 且不写入；`bitset_test` 越界返回 0。位下标是负数或 `>= words*64` 都属于越界。
+- **越界语义**：`bitset_set` / `bitset_reset` 越界不写入、但仍返回 1（结果没有信息量，v5 起它们是无结果卡）；`bitset_test` 越界返回 0。位下标是负数或 `>= words*64` 都属于越界。
 - **位序**：word 内 `bit = i % 64`，第 0 位对应 `1 << 0`；跨 word 的大端/小端由你自己的读写顺序决定，LogicSugar 只保证公式一致。
 - **`bitset_count` 频率**：它是 O(words) 的循环，放在每 tick 都执行的条件里会明显增加处理器负载；尽量只在需要时统计，或自己维护计数。
 - **内存区间**：与其它结构重叠不会自动拦截；位集区间是 `[base, base+words)`。

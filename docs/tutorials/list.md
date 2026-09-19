@@ -20,10 +20,10 @@ list <name> <memory> <base> <size>
 
 | 函数 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `vector_push_back(l, v)` | 列表, 值 | 新元素个数 | 满时返回当前个数且不写入 |
+| `vector_push_back(l, v)` | 列表, 值 | 新元素个数或 -1 | 满时返回 -1 且不写入 |
 | `vector_at(l, i)` | 列表, 下标 | 元素或 NaN | 越界返回 NaN |
-| `vector_set(l, i, v)` | 列表, 下标, 值 | 1 / 0 | 越界不写入 |
-| `vector_insert(l, i, v)` | 列表, 下标, 值 | 1 / 0 | 在 i 处插入，元素右移；满/越界返回 0 |
+| `vector_set(l, i, v)` | 列表, 下标, 值 | 1 / -1 | 越界不写入，返回 -1 |
+| `vector_insert(l, i, v)` | 列表, 下标, 值 | 1 / -1 | 在 i 处插入，元素右移；满/越界返回 -1 |
 | `vector_erase(l, i)` | 列表, 下标 | 被删元素或 NaN | 删除后元素左移；越界返回 NaN |
 | `vector_find(l, v)` | 列表, 值 | 下标或 -1 | 首个匹配；未找到 -1 |
 | `vector_size(l)` | 列表 | 元素个数 | O(1) |
@@ -81,7 +81,7 @@ funccall __ls_builtin_lstappend "cell1, 2, 4, __ls_lst_l_count, 7" __ls_lst_l_co
 op add x __ls_lst_l_count 0
 ```
 
-`__ls_builtin_lstappend` 返回新的 `count`（满时返回旧 `count`），调用点直接把返回值写回计数变量。
+`__ls_builtin_lstappend` 返回新的 `count`（满时返回旧 `count`），调用点据此判断成败：成功把新计数写入 `result`，失败写入 `-1`。
 
 ### 写入
 
@@ -138,8 +138,8 @@ funccall __ls_builtin_lstremove "cell1, 2, _0, i" x
 
 ## 使用须知
 
-- **越界语义**：`vector_at` / `vector_erase` 越界返回 NaN；`vector_set` / `vector_insert` 越界返回 0 且不写入。
-- **满列表**：`vector_push_back` 返回当前 `size` 且不写入；`vector_insert` 在 `count >= size` 时返回 0。
+- **越界语义**：`vector_at` / `vector_erase` 越界返回 NaN；`vector_set` / `vector_insert` 越界返回 -1 且不写入。
+- **满列表**：`vector_push_back` 返回 -1 且不写入；`vector_insert` 在 `count >= size` 或下标越界时返回 -1。
 - **紧凑存储**：元素永远在 `[base, base+count)`；`vector_erase` 会把后面的元素左移，`vector_insert` 会把元素右移。不要自己在 `base+count` 之后写数据。
 - **状态不持久化**：`__ls_lst_l_count` 是普通变量，处理器重载后回到 0；内存内容仍在。需要清空时把 `count` 归零（可以先 `vector_erase` 全部，或直接用 `stack_clear` 风格的赋值），空列表默认安全。
 - **容量**：区间 `[base, base+size)`，`base + size` 超容量编译期报错。

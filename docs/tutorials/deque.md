@@ -28,8 +28,8 @@ __ls_deq_d_count    当前元素个数
 
 | 函数 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `deque_push_front(d, v)` | 双端队列, 值 | 新元素个数 | 队首插入；满时返回当前个数且不写入 |
-| `deque_push_back(d, v)` | 双端队列, 值 | 新元素个数 | 队尾插入；满时返回当前个数且不写入 |
+| `deque_push_front(d, v)` | 双端队列, 值 | 新元素个数或 -1 | 队首插入；满时返回 -1 且不写入 |
+| `deque_push_back(d, v)` | 双端队列, 值 | 新元素个数或 -1 | 队尾插入；满时返回 -1 且不写入 |
 | `deque_pop_front(d)` | 双端队列 | 队首元素 | 空时返回 NaN |
 | `deque_pop_back(d)` | 双端队列 | 队尾元素 | 空时返回 NaN |
 | `deque_front(d)` | 双端队列 | 队首元素 | 空时返回 NaN，不出队 |
@@ -124,7 +124,7 @@ op add x __ls_deq_d_count 0
 ## 使用须知
 
 - **空 deque**：`deque_pop_front` / `deque_pop_back` / `deque_front` / `deque_back` 返回 NaN，状态不变。
-- **满 deque**：`deque_push_front` / `deque_push_back` 返回当前 `size` 且不写入。
+- **满 deque**：`deque_push_front` / `deque_push_back` 返回 -1 且不写入。
 - **两端语义**：`f` = 前端（队首），`b` = 后端（队尾）；`deque_front` 读 `head`，`deque_back` 读 `(head + count + size - 1) % size`。
 - **状态不持久化**：三个隐藏变量在处理器重载后回到 0；残留旧数据时先 `deque_clear(d)`。
 - **容量**：区间 `[base, base+size)`，`base + size` 超容量编译期报错。

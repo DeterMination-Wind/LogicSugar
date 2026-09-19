@@ -35,11 +35,11 @@ __ls_chn_c_free     空闲链头，-1 = 无空闲节点
 | --- | --- | --- | --- |
 | `chain_init(c)` / `chain_clear(c)` | 链 | size（哨兵） | head = -1，空闲链重建为 0→1→…→size-1→-1 |
 | `chain_alloc(c)` | 链 | 节点下标或 -1 | 从空闲链摘一个节点；空闲链空返回 -1 |
-| `chain_free(c, i)` | 链, 下标 | 1 / 0 | 从链表摘掉节点 i 并挂回空闲链；非法下标返回 0 |
+| `chain_free(c, i)` | 链, 下标 | 1 / -1 | 从链表摘掉节点 i 并挂回空闲链；非法下标返回 -1 |
 | `chain_get(c, i)` | 链, 下标 | 节点值或 NaN | 越界返回 NaN |
-| `chain_set(c, i, v)` | 链, 下标, 值 | 1 / 0 | 越界不写入 |
+| `chain_set(c, i, v)` | 链, 下标, 值 | 1 / -1 | 越界不写入，返回 -1 |
 | `chain_next(c, i)` | 链, 下标 | next 或 -1 | 越界返回 -1 |
-| `chain_link(c, i, next)` | 链, 下标, 下一个 | 1 / 0 | 把 i 的 next 设为 next；next 可以是 -1（链尾） |
+| `chain_link(c, i, next)` | 链, 下标, 下一个 | 1 / -1 | 把 i 的 next 设为 next；next 可以是 -1（链尾）；index 无效返回 -1 |
 | `chain_set_head(c, i)` | 链, 下标 | 1 | 设置链表头；任何值都接受 |
 | `chain_head(c)` | 链 | 头下标或 -1 | 读隐藏 head |
 | `chain_len(c)` | 链 | 节点个数 | 从 head 遍历计数；空链 0 |

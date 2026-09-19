@@ -116,7 +116,7 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 `deque <name> <memory> <base> <size>` 声明的双端环形缓冲，状态变量 `__ls_deq_<name>_head/_tail/_count`。`deque_push_front`/`deque_pop_front`/`deque_front` 操作前端，`deque_push_back`/`deque_pop_back`/`deque_back` 操作后端；满 push 不写入，空 pop/peek 返回 NaN。
 
 ### 链表（chain）
-`chain <name> <memory> <base> <size>` 声明的单链 + 空闲链结构：节点 i 的值槽在 `base+2*i`、next 槽在 `base+2*i+1`，`next = -1` 表示链尾；声明区间 `[base, base+2*size)`。`chain_alloc` 从空闲链 LIFO 取节点并返回下标（空闲链空返回 -1），`chain_free` 摘链后挂回空闲链（非法下标返回 0 且不改状态），`chain_link` 只改 next 槽不校验目标（`-1` 合法），`chain_len` 沿 next 遍历计数。首次使用前必须 `chain_init(c)` / `chain_clear(c)`。
+`chain <name> <memory> <base> <size>` 声明的单链 + 空闲链结构：节点 i 的值槽在 `base+2*i`、next 槽在 `base+2*i+1`，`next = -1` 表示链尾；声明区间 `[base, base+2*size)`。`chain_alloc` 从空闲链 LIFO 取节点并返回下标（空闲链空返回 -1），`chain_free` 摘链后挂回空闲链（非法下标返回 -1 且不改状态），`chain_link` 只改 next 槽不校验目标（`-1` 合法），`chain_len` 沿 next 遍历计数。首次使用前必须 `chain_init(c)` / `chain_clear(c)`。
 
 ### 空闲链（free list）
 链表的空闲节点单链，由隐藏变量 `__ls_chn_<name>_free` 指向链头（`-1` = 无空闲节点），`chain_init` / `chain_clear` 把它重建为 `0→1→…→size-1→-1`，`chain_alloc` 从中摘取、`chain_free` 挂回。它让节点分配/释放不依赖额外的计数变量；`chain_free` 不检测重复释放，重复释放同一节点会让空闲链成环。

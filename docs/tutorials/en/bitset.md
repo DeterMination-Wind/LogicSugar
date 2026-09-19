@@ -29,8 +29,8 @@ Bit 0 is the least significant bit of word 0.
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `bitset_set(b, i)` | bitset, index | 1 / 0 | set bit; out of range does not write |
-| `bitset_reset(b, i)` | bitset, index | 1 / 0 | clear bit; out of range does not write |
+| `bitset_set(b, i)` | bitset, index | 1 (even out of range) | set bit; out of range does not write |
+| `bitset_reset(b, i)` | bitset, index | 1 (even out of range) | clear bit; out of range does not write |
 | `bitset_test(b, i)` | bitset, index | 1 / 0 | read bit; out of range returns 0 |
 | `bitset_count(b)` | bitset | number of set bits | scans all words; O(words) |
 
@@ -62,7 +62,7 @@ op or _7 _7 _2
 funccall __ls_builtin_bwrite "cell1, _6, _7" x
 ```
 
-The guard multiplies the mask and word by 0 when the index is out of range, so the read-modify-write becomes a no-op and returns 0. The write-back goes through the shared `__ls_builtin_bwrite` function.
+The guard multiplies the mask and word by 0 when the index is out of range, so the read-modify-write becomes a no-op and the write-back function still returns 1. The write-back goes through the shared `__ls_builtin_bwrite` function.
 
 Clear replaces `op or` with `op not` plus `op and`. Test ends with `op and _8 _7 _2` and `op notEqual x _8 0`.
 
@@ -86,7 +86,7 @@ funccall __ls_builtin_bitcount "cell1, 0, 2" x
 ## Caveats
 
 - Capacity: base + words must fit the block (cellN 64, bankN / worldN 512).
-- Out-of-range bitset_set/bitset_reset return 0 and do not write; bitset_test returns 0. Negative indices and indices >= words*64 are out of range.
+- Out-of-range bitset_set/bitset_reset do not write but still return 1 (they are result-less cards in v5); bitset_test returns 0. Negative indices and indices >= words*64 are out of range.
 - Bit order: bit = i % 64, bit 0 is 1 << 0. Cross-word ordering follows your own access order; LogicSugar only keeps the formula consistent.
 - bitset_count is an O(words) loop. Avoid calling it every tick in a hot condition.
 - Overlaps with other structures are not rejected automatically; the bitset range is [base, base+words).

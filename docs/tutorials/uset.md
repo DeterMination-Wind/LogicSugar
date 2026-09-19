@@ -25,7 +25,7 @@ uset <name> <memory> <base> <capacity>
 | --- | --- | --- | --- |
 | `set_add(s, v)` | 集合, 值 | 1 成功 / -1 失败 | 已存在也算成功；表满或键非法返回 -1 |
 | `set_contains(s, v)` | 集合, 值 | 1 / 0 | 是否存在 |
-| `set_remove(s, v)` | 集合, 值 | 1 / 0 | 删除；不存在返回 0 |
+| `set_remove(s, v)` | 集合, 值 | 1 / -1 | 删除；成员不存在返回 -1 |
 | `set_size(s)` | 集合 | 元素个数 | O(capacity) 扫描 |
 | `set_clear(s)` | 集合 | 0（实现哨兵） | 全部槽写成 NaN；O(capacity) |
 
@@ -68,7 +68,7 @@ set_clear(s)              -> funccall __ls_builtin_usetclear "cell1, 0, 4" x
 
 - **必须初始化**：首次使用前 `set_clear(s)`。
 - **只支持数字**：字符串不支持；比较沿用原版 `equal` 的约 1e-6 容差。
-- **非法值**：NaN、+Inf、-Inf 会被拒绝：`set_add` 返回 -1，`set_contains` / `set_remove` 返回 0。
+- **非法值**：NaN、+Inf、-Inf 会被拒绝：`set_add` 返回 -1，`set_contains` 返回 0，`set_remove` 返回 -1。
 - **重复添加**：`set_add` 对已存在的值返回 1（不重复插入、不增加 `set_size`）。
 - **表满**：`set_add` 返回 -1；删除产生的墓碑槽可以复用。
 - **容量**：占用 `capacity` 个槽；`base + capacity` 超内存块容量时编译期报错。

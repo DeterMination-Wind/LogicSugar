@@ -27,7 +27,7 @@ stack <name> <memory> <base> <size>
 
 | 函数 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `stack_push(s, v)` | 栈, 值 | 新元素个数 | 满时返回当前个数且不写入 |
+| `stack_push(s, v)` | 栈, 值 | 新元素个数或 -1 | 满时返回 -1 且不写入 |
 | `stack_pop(s)` | 栈 | 栈顶元素 | 空栈返回 NaN，并弹出 |
 | `stack_top(s)` | 栈 | 栈顶元素 | 空栈返回 NaN，不弹出 |
 | `stack_size(s)` | 栈 | 元素个数 | O(1) |
@@ -129,7 +129,7 @@ op add x __ls_stk_s_top 0
 ## 使用须知
 
 - **空栈**：`stack_pop` / `stack_top` 返回 NaN；`stack_pop` 不会把 `top` 减到负数（`max(top-1, 0)`）。
-- **满栈**：`stack_push` 返回当前 `size` 且不写入；不会覆盖已有元素。
+- **满栈**：`stack_push` 返回 -1 且不写入；不会覆盖已有元素。
 - **LIFO**：`stack_pop` 读的地址是 `base + top - 1`，然后 `top` 减 1。
 - **状态不持久化**：`__ls_stk_s_top` 是普通变量，处理器重载后回到 0。因为未赋值读作 0，栈默认从空开始是安全的；如果内存里还残留旧数据，先 `stack_clear(s)`。
 - **容量**：`base + size` 超过内存块容量时编译期报错（`cellN` = 64，`bankN` / `worldN` = 512）。

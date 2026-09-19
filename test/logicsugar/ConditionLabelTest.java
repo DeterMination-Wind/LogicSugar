@@ -10,7 +10,8 @@ import java.util.Properties;
 import java.util.TreeSet;
 
 /**
- * Pins the localised label of the loop-condition field.
+ * Pins the localised label of the loop-condition field, plus the failure-value wording of the
+ * data-operation tooltips.
  *
  * <p>{@code whilebegin} / {@code forbegin} take the <b>loop</b> condition: the lowering enters the
  * body when it is true ({@code jump <bodyLabel> notEqual <cond> 0}) and the bundle hint says the
@@ -18,6 +19,10 @@ import java.util.TreeSet;
  * ("termination condition"), which reads as an exit condition — a player following the label wrote
  * the inverted expression (the reported program drained a stack with {@code !s.size()}) and the
  * loop body never ran.  These assertions keep label, hint and lowering saying the same thing.</p>
+ *
+ * <p>The same file also pins the failure signal the v5 API emits: {@code failValue()} returns
+ * {@code -1} for every fallible data operation, but the tooltips shipped with the STL rename
+ * still described the pre-v5 values ("full stack keeps its length", "out of range writes 0").</p>
  *
  * <p>Reads the bundle files and {@code SugarStatements.java} relative to the project directory,
  * like {@code CrossLoaderAccessTest} does (no game runtime needed).</p>
@@ -75,6 +80,8 @@ public final class ConditionLabelTest{
         checkHint(cn, "logicsugar.hint.for.condition", "继续循环");
         checkHint(tw, "logicsugar.hint.for.condition", "繼續迴圈");
 
+        failureSignalWording(en, cn, tw);
+
         // The card must actually use the dedicated key, not the generic fallback.
         String statements = Files.readString(root.toPath().resolve("src/mindustry/logic/SugarStatements.java"),
             StandardCharsets.UTF_8);
@@ -84,6 +91,42 @@ public final class ConditionLabelTest{
             "the generic 'condition' key must not be used as the while card label");
 
         System.out.println("LogicSugar condition label self-test passed.");
+    }
+
+    /**
+     * Card tooltips must document the failure signal the v5 API actually emits.
+     *
+     * <p>{@code SugarCompiler.failValue()} reports {@code -1} for every fallible data operation
+     * (push / append / insert / set / erase / free), while the query operations stay 0/1. The
+     * hints shipped with the STL rename still described the pre-v5 values ("full stack keeps its
+     * length", "out of range writes 0"), i.e. the tooltip contradicted the compiled program, so
+     * the tuples are pinned here for the live (new-name) keys of all three locales.</p>
+     */
+    private static void failureSignalWording(Properties en, Properties cn, Properties tw){
+        String[] operations = {
+            "stack_push", "queue_push", "deque_push_front", "deque_push_back",
+            "vector_push_back", "vector_set", "vector_insert", "heap_push",
+            "map_erase", "set_remove", "chain_free", "chain_set", "chain_link"
+        };
+        for(Properties bundle : new Properties[]{en, cn, tw}){
+            for(String operation : operations){
+                for(String prefix : new String[]{"hint", "lst"}){
+                    String key = "logicsugar." + prefix + ".datacall." + operation;
+                    String value = bundle.getProperty(key);
+                    check(value != null, "bundle is missing the hint " + key);
+                    check(value.contains("-1"),
+                        key + " must document the v5 failure value -1, got '" + value + "'");
+                }
+            }
+            // Queries stay 0/1: mentioning -1 there would send players down the wrong branch.
+            for(String operation : new String[]{"map_contains", "set_contains", "bitset_test"}){
+                String key = "logicsugar.hint.datacall." + operation;
+                String value = bundle.getProperty(key);
+                check(value != null, "bundle is missing the hint " + key);
+                check(!value.contains("-1"),
+                    key + " is a query and must stay 0/1, got '" + value + "'");
+            }
+        }
     }
 
     private static void checkLabel(Properties bundle, String key, String expected){

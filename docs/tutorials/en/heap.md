@@ -20,7 +20,7 @@ The min-heap is array-backed. State is the hidden variable `__ls_hep_h_count`. T
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `heap_push(h, v)` | heap, value | 1 / 0 | full returns 0 and does not write |
+| `heap_push(h, v)` | heap, value | 1 / -1 | full returns -1 and does not write |
 | `heap_pop(h)` | heap | minimum or NaN | empty returns NaN; removes the minimum |
 | `heap_size(h)` | heap | element count | O(1) |
 
@@ -84,7 +84,7 @@ The count is decremented before the call (only when non-empty); the function ret
 
 - Min-heap: heap_pop returns the current minimum. To get the maximum, store negated values.
 - No peek: heap_pop is destructive; heap_size only reports the count.
-- Empty/full: heap_pop returns NaN when empty; heap_push returns 0 and does not write when full.
+- Empty/full: heap_pop returns NaN when empty; heap_push returns -1 and does not write when full.
 - State is not persisted: `__ls_hep_h_count` resets to 0 on reload, so old memory elements are not treated as live. Starting empty is safe; reset the count to clear.
 - Capacity: range [base, base+size); base + size beyond capacity is a compile error.
 - Duplicates are allowed; heap_pop returns one of the equal minima, order not guaranteed.

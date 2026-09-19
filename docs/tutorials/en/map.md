@@ -35,7 +35,7 @@ Call `map_clear(m)` before first use. Uninitialized memory reads as numeric 0 an
 | `map_set(m, k, v)` | map, key, value | 1 / -1 | insert or update; -1 when full or invalid key |
 | `map_get(m, k)` | map, key | value or NaN | NaN when missing |
 | `map_contains(m, k)` | map, key | 1 / 0 | membership |
-| `map_erase(m, k)` | map, key | 1 / 0 | delete; 0 when missing |
+| `map_erase(m, k)` | map, key | 1 / -1 | delete; -1 when the key is missing |
 | `map_size(m)` | map | non-empty key count | O(capacity) scan |
 | `map_clear(m)` | map | 0 sentinel | writes NaN to every key slot; O(capacity) |
 
@@ -91,7 +91,7 @@ funccall __ls_builtin_mapset "cell1, 0, 4, 3, _0" x
 
 - Call map_clear(m) before first use; otherwise numeric 0 slots look like a valid key 0.
 - Numeric keys only. Strings are not supported. Key comparison uses vanilla equal with about 1e-6 tolerance.
-- Invalid keys (NaN, +Inf, -Inf) are rejected: map_set returns -1, map_get returns NaN, map_contains / map_erase return 0.
+- Invalid keys (NaN, +Inf, -Inf) are rejected: map_set returns -1, map_get returns NaN, map_contains returns 0 and map_erase returns -1.
 - Full table: map_set returns -1 and does not overwrite; tombstone slots from deletes are reusable.
 - Values travel through the function return channel, so object values degrade to 1/0. Store ids or coordinates instead.
 - Capacity: the map occupies 2 * capacity slots; base + 2*capacity beyond the block is a compile error.

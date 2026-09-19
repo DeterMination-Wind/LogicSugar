@@ -32,7 +32,7 @@ import java.util.Map;
  * 哈希表首次使用前必须调用 {@code mapclear(m)} 把全部 key 槽写成 NaN 标记。</p>
  *
  * <p><b>已知限制</b>：字符串键不支持；NaN/±Inf 键会被拒绝（set 返回 -1、get 返回 NaN、
- * has/del 返回 0）；键比较沿用原版 {@code equal} 的 1e-6 容差；value 经 funcdef 返回值
+ * has 返回 0、del 返回 -1）；键比较沿用原版 {@code equal} 的 1e-6 容差；value 经 funcdef 返回值
  * 通道回传，对象值会退化为 1/0（与所有注入函数一致）。</p>
  */
 public final class MapIntrinsics implements ExprIntrinsics.Provider{

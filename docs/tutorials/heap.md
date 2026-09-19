@@ -20,7 +20,7 @@ heap <name> <memory> <base> <size>
 
 | 函数 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `heap_push(h, v)` | 堆, 值 | 1 成功 / 0 失败 | 满时返回 0 且不写入 |
+| `heap_push(h, v)` | 堆, 值 | 1 成功 / -1 失败 | 满时返回 -1 且不写入 |
 | `heap_pop(h)` | 堆 | 最小值或 NaN | 空堆返回 NaN；会弹出 |
 | `heap_size(h)` | 堆 | 元素个数 | O(1) |
 
@@ -60,7 +60,7 @@ op notEqual _1 __ls_hep_h_count _0
 op add x _1 0
 ```
 
-`heppush` 返回新的 `count`（满时返回旧 `count`），调用点用「count 是否变化」换算成 1/0。
+`heppush` 返回新的 `count`（满时返回旧 `count`），调用点用「count 是否变化」换算成 1/-1。
 
 ### 弹出最小值
 
@@ -90,7 +90,7 @@ funccall __ls_builtin_heppop "cell2, 4, 8, _0" x
 
 - **小顶堆**：`heap_pop` 返回当前最小值。想取最大值请存相反数。
 - **没有 peek**：`heap_pop` 是破坏性的；`heap_size` 只看数量。
-- **空堆/满堆**：`heap_pop` 空堆返回 NaN；`heap_push` 满堆返回 0 且不写入。
+- **空堆/满堆**：`heap_pop` 空堆返回 NaN；`heap_push` 满堆返回 -1 且不写入。
 - **状态不持久化**：`__ls_hep_h_count` 在处理器重载后回到 0；堆内元素还在内存里但不会被当作有效元素。需要清空时把计数归零，空堆默认安全。
 - **容量**：区间 `[base, base+size)`；`base + size` 超内存块容量编译期报错。
 - **重复值**：允许重复；`heap_pop` 每次弹出其中一个最小值，顺序不保证。

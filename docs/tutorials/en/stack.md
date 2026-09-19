@@ -18,7 +18,7 @@ Example: `stack s cell1 0 8` uses cell1 addresses 0..7. The card emits no mlog. 
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `stack_push(s, v)` | stack, value | new size | full: returns current size and does not write |
+| `stack_push(s, v)` | stack, value | new size or -1 | full: returns -1 and does not write |
 | `stack_pop(s)` | stack | top value | empty: NaN; removes the value |
 | `stack_top(s)` | stack | top value | empty: NaN; does not remove |
 | `stack_size(s)` | stack | element count | O(1) |
@@ -80,7 +80,7 @@ The memory write and full check live in the shared injected function `__ls_built
 ## Caveats
 
 - Empty stack: stack_pop / stack_top return NaN. stack_pop keeps top at max(top-1, 0).
-- Full stack: stack_push returns the current size and does not write; it never overwrites existing elements.
+- Full stack: stack_push returns -1 and does not write; it never overwrites existing elements.
 - State is not persisted: `__ls_stk_s_top` resets to 0 on reload. Starting empty is safe; call stack_clear(s) if old memory data should be discarded.
 - Capacity: base + size beyond the block capacity is a compile error; the range is [base, base+size).
 - Overlaps with other structures in the same memory block are not rejected automatically.

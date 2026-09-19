@@ -20,10 +20,10 @@ State is the hidden variable `__ls_lst_l_count`. The unset value is 0, so a list
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `vector_push_back(l, v)` | list, value | new count | full: returns current count and does not write |
+| `vector_push_back(l, v)` | list, value | new count or -1 | full: returns -1 and does not write |
 | `vector_at(l, i)` | list, index | value or NaN | NaN when out of range |
-| `vector_set(l, i, v)` | list, index, value | 1 / 0 | out of range does not write |
-| `vector_insert(l, i, v)` | list, index, value | 1 / 0 | shift right; full/out of range returns 0 |
+| `vector_set(l, i, v)` | list, index, value | 1 / -1 | out of range does not write and returns -1 |
+| `vector_insert(l, i, v)` | list, index, value | 1 / -1 | shift right; full/out of range returns -1 |
 | `vector_erase(l, i)` | list, index | removed value or NaN | shift left; out of range returns NaN |
 | `vector_find(l, v)` | list, value | index or -1 | first match |
 | `vector_size(l)` | list | element count | O(1) |
@@ -95,8 +95,8 @@ Insert and remove use injected functions that shift elements right/left.
 
 ## Caveats
 
-- Out of range: vector_at / vector_erase return NaN; vector_set / vector_insert return 0 and do not write.
-- Full list: vector_push_back returns the current size and does not write; vector_insert returns 0 when count >= size.
+- Out of range: vector_at / vector_erase return NaN; vector_set / vector_insert return -1 and do not write.
+- Full list: vector_push_back returns -1 and does not write; vector_insert returns -1 when count >= size.
 - Compact storage: elements stay in [base, base+count). vector_erase shifts elements left and vector_insert shifts them right. Do not write past base+count yourself.
 - State is not persisted: `__ls_lst_l_count` resets to 0 on reload; memory contents remain. An empty list starts safely. To clear, reset the count.
 - Capacity: range [base, base+size); base + size beyond capacity is a compile error.

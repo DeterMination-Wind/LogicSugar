@@ -35,11 +35,11 @@ Call chain_init(c) or chain_clear(c) before first use. Unset variables read as 0
 | --- | --- | --- | --- |
 | `chain_init(c)` / `chain_clear(c)` | chain | size sentinel | head = -1; free list becomes 0->1->...->size-1->-1 |
 | `chain_alloc(c)` | chain | node index or -1 | pops a free node |
-| `chain_free(c, i)` | chain, index | 1 / 0 | unlinks node i and pushes it back to the free list |
+| `chain_free(c, i)` | chain, index | 1 / -1 | unlinks node i and pushes it back to the free list; -1 for an invalid index |
 | `chain_get(c, i)` | chain, index | node value or NaN | NaN when out of range |
-| `chain_set(c, i, v)` | chain, index, value | 1 / 0 | out of range does not write |
+| `chain_set(c, i, v)` | chain, index, value | 1 / -1 | out of range does not write and returns -1 |
 | `chain_next(c, i)` | chain, index | next or -1 | -1 when out of range |
-| `chain_link(c, i, next)` | chain, index, next | 1 / 0 | sets i.next; next can be -1 |
+| `chain_link(c, i, next)` | chain, index, next | 1 / -1 | sets i.next; next can be -1; -1 when index is invalid |
 | `chain_set_head(c, i)` | chain, index | 1 | sets the head; any value is accepted |
 | `chain_head(c)` | chain | head index or -1 | reads the hidden head |
 | `chain_len(c)` | chain | node count | walks from the head; 0 for an empty chain |

@@ -35,7 +35,7 @@ value 区：[base + capacity, base + 2*capacity)
 | `map_set(m, k, v)` | 表, 键, 值 | 1 成功 / -1 失败 | 插入或更新；表满或键非法返回 -1 |
 | `map_get(m, k)` | 表, 键 | 值或 NaN | 未命中返回 NaN |
 | `map_contains(m, k)` | 表, 键 | 1 / 0 | 键是否存在 |
-| `map_erase(m, k)` | 表, 键 | 1 / 0 | 删除；不存在返回 0 |
+| `map_erase(m, k)` | 表, 键 | 1 / -1 | 删除；键不存在返回 -1 |
 | `map_size(m)` | 表 | 非空 key 数 | O(capacity) 扫描 |
 | `map_clear(m)` | 表 | 0（实现哨兵） | 把所有 key 槽写成 NaN；O(capacity) |
 
@@ -97,7 +97,7 @@ normal 模式下每个注入函数全程序共享一份；未使用的不会进�
 
 - **必须初始化**：首次使用前 `map_clear(m)`；否则数字 0 的槽会被当成 key = 0 的有效项。
 - **只支持数字键**：字符串键不支持；键比较沿用原版 `equal`（约 1e-6 容差），所以 1 和 1.0000001 可能被当作同一个键。
-- **非法键**：NaN、+Inf、-Inf 会被拒绝：`map_set` 返回 -1，`map_get` 返回 NaN，`map_contains` / `map_erase` 返回 0。
+- **非法键**：NaN、+Inf、-Inf 会被拒绝：`map_set` 返回 -1，`map_get` 返回 NaN，`map_contains` 返回 0，`map_erase` 返回 -1。
 - **表满**：`map_set` 返回 -1，不覆盖已有键；删除产生的墓碑槽可以复用。
 - **值经函数返回值回传**：对象值（单位、建筑等）在注入函数返回值通道会退化为 1/0；需要存对象请存 id/坐标等数字。
 - **容量**：占用 `2 * capacity` 个槽；`base + 2*capacity` 超内存块容量时编译期报错。

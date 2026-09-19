@@ -18,7 +18,7 @@ import java.util.Map;
  *
  * <p><b>初始化</b>：首次使用前必须调用 {@code uclear(s)} 把全部槽写成 NaN 标记。</p>
  *
- * <p><b>已知限制</b>：字符串键不支持；NaN/±Inf 键会被拒绝（add 返回 -1、has/del 返回 0）；
+ * <p><b>已知限制</b>：字符串键不支持；NaN/±Inf 键会被拒绝（add 返回 -1、has 返回 0、del 返回 -1）；
  * 键比较沿用原版 {@code equal} 的 1e-6 容差。</p>
  */
 public final class SetIntrinsics implements ExprIntrinsics.Provider{

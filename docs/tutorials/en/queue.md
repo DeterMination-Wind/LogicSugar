@@ -26,7 +26,7 @@ Invariant: tail == (head + count) % size.
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `queue_push(q, v)` | queue, value | new size | full: returns current size and does not write |
+| `queue_push(q, v)` | queue, value | new size or -1 | full: returns -1 and does not write |
 | `queue_pop(q)` | queue | head value | empty: NaN; removes it |
 | `queue_front(q)` | queue | head value | empty: NaN; does not remove |
 | `queue_size(q)` | queue | element count | O(1) |
@@ -83,7 +83,7 @@ op add x __ls_que_q_count 0
 ## Caveats
 
 - Empty queue: queue_pop / queue_front return NaN and leave head/count unchanged.
-- Full queue: queue_push returns the current size and does not write.
+- Full queue: queue_push returns -1 and does not write.
 - head and tail wrap with % size; the tail variable is a cache of (head + count) % size.
 - State is not persisted: head/tail/count reset to 0 on reload. Starting empty is safe; call queue_clear(q) if old data should be discarded.
 - Capacity: base + size beyond the block capacity is a compile error; the range is [base, base+size).
