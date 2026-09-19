@@ -26,16 +26,18 @@ Invariant: tail == (head + count) % size.
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `dpushf(d, v)` | deque, value | new size | front push; full returns current size and does not write |
-| `dpushb(d, v)` | deque, value | new size | back push; full returns current size and does not write |
-| `dpopf(d)` | deque | front value | empty: NaN |
-| `dpopb(d)` | deque | back value | empty: NaN |
-| `dpeekf(d)` | deque | front value | empty: NaN |
-| `dpeekb(d)` | deque | back value | empty: NaN |
-| `dsize(d)` | deque | element count | O(1) |
-| `dclear(d)` | deque | 0 | clears head/tail/count |
+| `deque_push_front(d, v)` | deque, value | new size | front push; full returns current size and does not write |
+| `deque_push_back(d, v)` | deque, value | new size | back push; full returns current size and does not write |
+| `deque_pop_front(d)` | deque | front value | empty: NaN |
+| `deque_pop_back(d)` | deque | back value | empty: NaN |
+| `deque_front(d)` | deque | front value | empty: NaN |
+| `deque_back(d)` | deque | back value | empty: NaN |
+| `deque_size(d)` | deque | element count | O(1) |
+| `deque_clear(d)` | deque | 0 | clears head/tail/count |
 
-Sugar: `d.front()` / `d.peekFront()` equal `dpeekf(d)`; `d.back()` / `d.peekBack()` equal `dpeekb(d)`; `d.size()` / `d.count()` equal `dsize(d)`.
+> Note: the editor menus and cards use the new names (e.g. `deque_push_front`); the old short names (e.g. `dpushf`) still parse in existing saves, and new cards are always written with the new names.
+
+Sugar: `d.front()` / `d.peekFront()` equal `deque_front(d)`; `d.back()` / `d.peekBack()` equal `deque_back(d)`; `d.size()` / `d.count()` equal `deque_size(d)`.
 
 ## Lowered examples
 
@@ -84,14 +86,14 @@ op add x __ls_deq_d_count 0
 
 | Operation | Complexity |
 | --- | --- |
-| dpushf / dpushb / dpopf / dpopb / dpeekf / dpeekb / dsize / dclear | O(1) |
+| deque_push_front / deque_push_back / deque_pop_front / deque_pop_back / deque_front / deque_back / deque_size / deque_clear | O(1) |
 
 ## Caveats
 
 - Empty deque: pop/peek return NaN and leave the state unchanged.
 - Full deque: push returns the current size and does not write.
 - f means front (head), b means back (tail). Back index is (head + count + size - 1) % size.
-- State is not persisted: the three hidden variables reset on reload. Call dclear(d) if old data should be discarded.
+- State is not persisted: the three hidden variables reset on reload. Call deque_clear(d) if old data should be discarded.
 - Capacity: range [base, base+size); base + size beyond capacity is a compile error.
 - Queues and deques can share a memory block when ranges do not overlap, but cross-module overlaps are not rejected automatically.
 

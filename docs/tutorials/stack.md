@@ -27,13 +27,15 @@ stack <name> <memory> <base> <size>
 
 | 函数 | 参数 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `spush(s, v)` | 栈, 值 | 新元素个数 | 满时返回当前个数且不写入 |
-| `spop(s)` | 栈 | 栈顶元素 | 空栈返回 NaN，并弹出 |
-| `speek(s)` | 栈 | 栈顶元素 | 空栈返回 NaN，不弹出 |
-| `ssize(s)` | 栈 | 元素个数 | O(1) |
-| `sclear(s)` | 栈 | 0 | 清空（top = 0） |
+| `stack_push(s, v)` | 栈, 值 | 新元素个数 | 满时返回当前个数且不写入 |
+| `stack_pop(s)` | 栈 | 栈顶元素 | 空栈返回 NaN，并弹出 |
+| `stack_top(s)` | 栈 | 栈顶元素 | 空栈返回 NaN，不弹出 |
+| `stack_size(s)` | 栈 | 元素个数 | O(1) |
+| `stack_clear(s)` | 栈 | 0 | 清空（top = 0） |
 
-方法糖：`s.top()` / `s.peek()` 等价于 `speek(s)`，`s.size()` / `s.count()` 等价于 `ssize(s)`。
+> 提示：编辑器菜单与积木显示的是新名字（如 `stack_push`）；旧短名（如 `spush`）仍能解析已有存档，但新写的卡片一律用新名。
+
+方法糖：`s.top()` / `s.peek()` 等价于 `stack_top(s)`，`s.size()` / `s.count()` 等价于 `stack_size(s)`。
 
 ## 转译示例
 
@@ -41,7 +43,7 @@ stack <name> <memory> <base> <size>
 
 ```text
 stack s cell1 0 8
-x = ssize(s)
+x = stack_size(s)
 ```
 
 产物：
@@ -53,7 +55,7 @@ op add x __ls_stk_s_top 0
 ### 看栈顶（带空栈守卫）
 
 ```text
-x = speek(s)
+x = stack_top(s)
 ```
 
 产物：
@@ -73,7 +75,7 @@ read x cell1 _1
 
 ```text
 stack s bank1 10 4
-x = speek(s)
+x = stack_top(s)
 ```
 
 产物：
@@ -90,7 +92,7 @@ read x bank1 _1
 ### 入栈
 
 ```text
-x = spush(s, 5)
+x = stack_push(s, 5)
 ```
 
 产物：
@@ -100,12 +102,12 @@ funccall __ls_builtin_stkpush "cell1, 0, 8, __ls_stk_s_top, 5" __ls_stk_s_top
 op add x __ls_stk_s_top 0
 ```
 
-`spush` 的写内存、满栈分支都在注入函数 `__ls_builtin_stkpush` 里；normal 模式全程序共享一份，未使用不进产物。
+`stack_push` 的写内存、满栈分支都在注入函数 `__ls_builtin_stkpush` 里；normal 模式全程序共享一份，未使用不进产物。
 
 ### 压入表达式
 
 ```text
-x = spush(s, i + 1)
+x = stack_push(s, i + 1)
 ```
 
 产物：
@@ -122,14 +124,14 @@ op add x __ls_stk_s_top 0
 
 | 操作 | 复杂度 |
 | --- | --- |
-| `spush` / `spop` / `speek` / `ssize` / `sclear` | O(1) |
+| `stack_push` / `stack_pop` / `stack_top` / `stack_size` / `stack_clear` | O(1) |
 
 ## 使用须知
 
-- **空栈**：`spop` / `speek` 返回 NaN；`spop` 不会把 `top` 减到负数（`max(top-1, 0)`）。
-- **满栈**：`spush` 返回当前 `size` 且不写入；不会覆盖已有元素。
-- **LIFO**：`spop` 读的地址是 `base + top - 1`，然后 `top` 减 1。
-- **状态不持久化**：`__ls_stk_s_top` 是普通变量，处理器重载后回到 0。因为未赋值读作 0，栈默认从空开始是安全的；如果内存里还残留旧数据，先 `sclear(s)`。
+- **空栈**：`stack_pop` / `stack_top` 返回 NaN；`stack_pop` 不会把 `top` 减到负数（`max(top-1, 0)`）。
+- **满栈**：`stack_push` 返回当前 `size` 且不写入；不会覆盖已有元素。
+- **LIFO**：`stack_pop` 读的地址是 `base + top - 1`，然后 `top` 减 1。
+- **状态不持久化**：`__ls_stk_s_top` 是普通变量，处理器重载后回到 0。因为未赋值读作 0，栈默认从空开始是安全的；如果内存里还残留旧数据，先 `stack_clear(s)`。
 - **容量**：`base + size` 超过内存块容量时编译期报错（`cellN` = 64，`bankN` / `worldN` = 512）。
 - **内存区间**：与其它结构在同一内存块重叠不会被自动拦截；栈的区间是 `[base, base+size)`。
 - **名字保留**：`s` 不能与其它数据结构或用户函数重名；`__ls_` 前缀不可用。

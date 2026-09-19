@@ -11,18 +11,20 @@
 | 结构 | 一句话 | 典型操作 | 章节 |
 | --- | --- | --- | --- |
 | 一维数组 | 一段连续内存的随机访问容器 | `buf[i]`、`len(buf)` | [array.md](array.md) |
-| 数组批量运算 | 对整段数组求值/变换 | `sum` `fill` `sortasc` `bsearch` | [array-bulk.md](array-bulk.md) |
+| 数组批量运算 | 对整段数组求值/变换 | `array_sum` `array_fill` `array_sort` `array_lower_bound` | [array-bulk.md](array-bulk.md) |
 | 矩阵 | 行主序的二维数组 | `m[i][j]` | [matrix.md](matrix.md) |
 | 记录 | 编译期的结构体（命名字段） | `p.hp`、`p.hp = x` | [record.md](record.md) |
-| 栈 | 后进先出 | `spush` `spop` `speek` | [stack.md](stack.md) |
-| 队列 | 先进先出 | `qpush` `qpop` `qpeek` | [queue.md](queue.md) |
-| 双端队列 | 两端都能进出的环形缓冲 | `dpushf` `dpopb` `dpeekf` | [deque.md](deque.md) |
-| 位集 | 大量布尔位的紧凑存储 | `bset` `bclr` `btest` `bcount` | [bitset.md](bitset.md) |
-| 哈希表 | 数字键到值的映射 | `mapset` `mapget` | [map.md](map.md) |
-| 无序集合 | 只关心在不在的数字集合 | `uadd` `uhas` `udel` | [uset.md](uset.md) |
-| 列表 | 紧凑的顺序表，可按下标插入/删除 | `lappend` `lget` `lremove` | [list.md](list.md) |
-| 小顶堆 | 反复取最小值的优先队列 | `hpush` `hpop` | [heap.md](heap.md) |
-| 链表 | 空闲链加节点链接 | `cinit` `cnew` `cget` `clink` | [chain.md](chain.md) |
+| 栈 | 后进先出 | `stack_push` `stack_pop` `stack_top` | [stack.md](stack.md) |
+| 队列 | 先进先出 | `queue_push` `queue_pop` `queue_front` | [queue.md](queue.md) |
+| 双端队列 | 两端都能进出的环形缓冲 | `deque_push_front` `deque_pop_back` `deque_front` | [deque.md](deque.md) |
+| 位集 | 大量布尔位的紧凑存储 | `bitset_set` `bitset_reset` `bitset_test` `bitset_count` | [bitset.md](bitset.md) |
+| 哈希表 | 数字键到值的映射 | `map_set` `map_get` | [map.md](map.md) |
+| 无序集合 | 只关心在不在的数字集合 | `set_add` `set_contains` `set_remove` | [uset.md](uset.md) |
+| 列表 | 紧凑的顺序表，可按下标插入/删除 | `vector_push_back` `vector_at` `vector_erase` | [list.md](list.md) |
+| 小顶堆 | 反复取最小值的优先队列 | `heap_push` `heap_pop` | [heap.md](heap.md) |
+| 链表 | 空闲链加节点链接 | `chain_init` `chain_alloc` `chain_get` `chain_link` | [chain.md](chain.md) |
+
+> 提示：编辑器菜单与积木显示的是新名字（如 `stack_push`）；旧短名（如 `spush`）仍能解析已有存档，但新写的卡片一律用新名。
 
 不熟悉这些结构本身？先看下面的「选择指南」，再进入对应章节。
 
@@ -64,11 +66,11 @@ array / matrix / record / stack / queue / deque / bitset / map / uset / list / h
 同一个操作通常有两种等价写法：
 
 ```text
-intrinsic 写法:  speek(s)          lget(list, i)      mapget(m, 1)
+intrinsic 写法:  stack_top(s)      vector_at(list, i)     map_get(m, 1)
 getter 糖写法:   s.top()           list[i] / list.get(i)
 ```
 
-方法/下标糖覆盖只读 getter，包括走注入函数的 `map.get` / `set.has` / `lfind` / `bcount` / `cnext` / `clen`（见下文表格）。写入、push/pop/clear 这类操作仍用函数写法。
+方法/下标糖覆盖只读 getter，包括走注入函数的 `map.get` / `set.has` / `vector_find` / `bitset_count` / `chain_next` / `chain_len`（见下文表格）。写入、push/pop/clear 这类操作仍用函数写法。
 
 ### 隐藏状态变量
 
@@ -89,8 +91,8 @@ chain c        -> __ls_chn_c_head / _free
 
 隐藏状态变量是普通处理器变量，重新载入处理器 / 存档往返 / 换一个处理器之后会回到未赋值等于 0，而内存块里的内容仍在。因此：
 
-- 栈 / 队列 / 双端队列 / 列表 / 堆：默认从长度 0 开始是安全的；如果内存里还有旧数据，记得先 sclear / qclear / dclear 或自己重设计数。
-- 哈希表 / 集合 / 链表：未赋值状态会被误读成有效数据（0 号槽 / 0 号节点），首次使用前必须显式 mapclear(m) / uclear(s) / cinit(c)。
+- 栈 / 队列 / 双端队列 / 列表 / 堆：默认从长度 0 开始是安全的；如果内存里还有旧数据，记得先 stack_clear / queue_clear / deque_clear 或自己重设计数。
+- 哈希表 / 集合 / 链表：未赋值状态会被误读成有效数据（0 号槽 / 0 号节点），首次使用前必须显式 map_clear(m) / set_clear(s) / chain_init(c)。
 - map / uset 没有隐藏计数，键值在内存里会随存档保留，但仍需要显式初始化。
 
 ### 复杂度和指令预算
@@ -99,13 +101,13 @@ chain c        -> __ls_chn_c_head / _free
 
 | 复杂度 | 含义 | 例子 |
 | --- | --- | --- |
-| O(1) | 固定几条指令 | `lget`、`speek`、`qpush`、`btest` |
-| O(log n) | 每次减半/树高 | `hpush`、`hpop` |
-| O(n) | 遍历全部元素 | `lfind`、`linsert`、`lremove`、`clen` |
-| O(n^1.5) ~ O(n²) | 希尔排序 | `sortasc` / `sortdesc` |
-| O(capacity) | 扫描整张表 / 整段内存 | `mapsize`、`mapclear`、`usize`、`uclear`、`cinit` |
+| O(1) | 固定几条指令 | `vector_at`、`stack_top`、`queue_push`、`bitset_test` |
+| O(log n) | 每次减半/树高 | `heap_push`、`heap_pop` |
+| O(n) | 遍历全部元素 | `vector_find`、`vector_insert`、`vector_erase`、`chain_len` |
+| O(n^1.5) ~ O(n²) | 希尔排序 | `array_sort` / `array_sort_desc` |
+| O(capacity) | 扫描整张表 / 整段内存 | `map_size`、`map_clear`、`set_size`、`set_clear`、`chain_init` |
 
-> `mapget` / `maphas` / `uadd` / `uhas` 的**命中**平均接近 O(1)；**未命中与新键插入恒为 Θ(capacity)**——探测不能在空槽处提前停止，必须扫整张表。
+> `map_get` / `map_contains` / `set_add` / `set_contains` 的**命中**平均接近 O(1)；**未命中与新键插入恒为 Θ(capacity)**——探测不能在空槽处提前停止，必须扫整张表。
 
 > 循环型算法（哈希探测、排序、堆调整、链表遍历等）在 normal 模式下编译成全程序共享的一份 `__ls_builtin_*` 子程序；inline 模式会在每个调用点复制函数体，长程序要留意 1000 条限制。
 
@@ -113,21 +115,21 @@ chain c        -> __ls_chn_c_head / _free
 
 | 结构 | 可用写法 | 等价于 |
 | --- | --- | --- |
-| list | `l[i]`、`l.get(i)` | `lget(l, i)` |
-| list | `l.find(v)` / `l.indexOf(v)` | `lfind(l, v)` |
-| list / heap | `l.size()` / `l.length()` / `l.count()`、`h.size()` | `lsize(l)` / `hsize(h)` |
-| stack | `s.top()`、`s.peek()`、`s.size()` / `s.count()` | `speek(s)` / `ssize(s)` |
-| queue | `q.front()`、`q.peek()`、`q.size()` / `q.count()` | `qpeek(q)` / `qsize(q)` |
-| deque | `d.front()`、`d.back()`、`d.size()` / `d.count()` | `dpeekf(d)` / `dpeekb(d)` / `dsize(d)` |
-| bitset | `b[i]`、`b.test(i)`、`b.get(i)`、`b.count()` | `btest(b, i)` / `bcount(b)` |
-| chain | `c[i]`、`c.get(i)`、`c.head()`、`c.next(i)`、`c.len()` | `cget(c, i)` / `chead(c)` / `cnext(c, i)` / `clen(c)` |
-| map | `m[k]`、`m.get(k)`、`m.has(k)`、`m.size()` | `mapget(m, k)` / `maphas(m, k)` / `mapsize(m)` |
-| uset | `s.has(v)`、`s.size()` | `uhas(s, v)` / `usize(s)` |
+| list | `l[i]`、`l.get(i)` | `vector_at(l, i)` |
+| list | `l.find(v)` / `l.indexOf(v)` | `vector_find(l, v)` |
+| list / heap | `l.size()` / `l.length()` / `l.count()`、`h.size()` | `vector_size(l)` / `heap_size(h)` |
+| stack | `s.top()`、`s.peek()`、`s.size()` / `s.count()` | `stack_top(s)` / `stack_size(s)` |
+| queue | `q.front()`、`q.peek()`、`q.size()` / `q.count()` | `queue_front(q)` / `queue_size(q)` |
+| deque | `d.front()`、`d.back()`、`d.size()` / `d.count()` | `deque_front(d)` / `deque_back(d)` / `deque_size(d)` |
+| bitset | `b[i]`、`b.test(i)`、`b.get(i)`、`b.count()` | `bitset_test(b, i)` / `bitset_count(b)` |
+| chain | `c[i]`、`c.get(i)`、`c.head()`、`c.next(i)`、`c.len()` | `chain_get(c, i)` / `chain_head(c)` / `chain_next(c, i)` / `chain_len(c)` |
+| map | `m[k]`、`m.get(k)`、`m.has(k)`、`m.size()` | `map_get(m, k)` / `map_contains(m, k)` / `map_size(m)` |
+| uset | `s.has(v)`、`s.size()` | `set_contains(s, v)` / `set_size(s)` |
 
 注意：
 
 - 已有同名的 array / matrix 时，`x[i]` 优先按数组解释。
-- 下标糖目前只读：`l[i] = v` 会直接报错，请写 `lset(l, i, v)` / `bset(b, i)` / `cset(c, i, v)`。
+- 下标糖目前只读：`l[i] = v` 会直接报错，请写 `vector_set(l, i, v)` / `bitset_set(b, i)` / `chain_set(c, i, v)`。
 - `map` / `uset` 的方法糖接收者名必须与声明卡一致；例如 `uset s ...` 时写 `s.has(v)`。
 
 ## 选择指南
@@ -156,7 +158,7 @@ chain c        -> __ls_chn_c_head / _free
 
 ## 后续计划
 
-- 方法糖已覆盖走注入函数的 `mapget` / `uhas` / `lfind` / `bcount` / `cnext` / `clen`（analyze 阶段先做声明预扫描，再补注入函数可达性）。暂不提供 mutator 方法糖（`s.push()` / `l.append()` / `m.set()` 等）。
+- 方法糖已覆盖走注入函数的 `map_get` / `set_contains` / `vector_find` / `bitset_count` / `chain_next` / `chain_len`（analyze 阶段先做声明预扫描，再补注入函数可达性）。暂不提供 mutator 方法糖（`s.push()` / `l.append()` / `m.set()` 等）。
 - 数组的 `buf[i] = x` 已经支持；list / bitset / chain 的下标赋值暂不支持。
 
 ## 相关文档

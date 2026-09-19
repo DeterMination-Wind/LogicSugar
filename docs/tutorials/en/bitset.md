@@ -29,12 +29,14 @@ Bit 0 is the least significant bit of word 0.
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `bset(b, i)` | bitset, index | 1 / 0 | set bit; out of range does not write |
-| `bclr(b, i)` | bitset, index | 1 / 0 | clear bit; out of range does not write |
-| `btest(b, i)` | bitset, index | 1 / 0 | read bit; out of range returns 0 |
-| `bcount(b)` | bitset | number of set bits | scans all words; O(words) |
+| `bitset_set(b, i)` | bitset, index | 1 / 0 | set bit; out of range does not write |
+| `bitset_reset(b, i)` | bitset, index | 1 / 0 | clear bit; out of range does not write |
+| `bitset_test(b, i)` | bitset, index | 1 / 0 | read bit; out of range returns 0 |
+| `bitset_count(b)` | bitset | number of set bits | scans all words; O(words) |
 
-Sugar: `b[i]`, `b.test(i)`, `b.get(i)` equal `btest(b, i)`; `b.count()` equals `bcount(b)`.
+> Note: the editor menus and cards use the new names (e.g. `bitset_set`); the old short names (e.g. `bset`) still parse in existing saves, and new cards are always written with the new names.
+
+Sugar: `b[i]`, `b.test(i)`, `b.get(i)` equal `bitset_test(b, i)`; `b.count()` equals `bitset_count(b)`.
 
 ## Lowered examples
 
@@ -42,7 +44,7 @@ Set:
 
 ```text
 bitset bs cell1 0 2
-x = bset(bs, i)
+x = bitset_set(bs, i)
 ```
 
 ```text
@@ -67,7 +69,7 @@ Clear replaces `op or` with `op not` plus `op and`. Test ends with `op and _8 _7
 Count:
 
 ```text
-x = bcount(bs)
+x = bitset_count(bs)
 ```
 
 ```text
@@ -78,14 +80,14 @@ funccall __ls_builtin_bitcount "cell1, 0, 2" x
 
 | Operation | Complexity | Notes |
 | --- | --- | --- |
-| bset / bclr / btest | O(1) | a few op/read/funccall lines |
-| bcount | O(words) | one loop per memory slot |
+| bitset_set / bitset_reset / bitset_test | O(1) | a few op/read/funccall lines |
+| bitset_count | O(words) | one loop per memory slot |
 
 ## Caveats
 
 - Capacity: base + words must fit the block (cellN 64, bankN / worldN 512).
-- Out-of-range bset/bclr return 0 and do not write; btest returns 0. Negative indices and indices >= words*64 are out of range.
+- Out-of-range bitset_set/bitset_reset return 0 and do not write; bitset_test returns 0. Negative indices and indices >= words*64 are out of range.
 - Bit order: bit = i % 64, bit 0 is 1 << 0. Cross-word ordering follows your own access order; LogicSugar only keeps the formula consistent.
-- bcount is an O(words) loop. Avoid calling it every tick in a hot condition.
+- bitset_count is an O(words) loop. Avoid calling it every tick in a hot condition.
 - Overlaps with other structures are not rejected automatically; the bitset range is [base, base+words).
 

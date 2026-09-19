@@ -50,9 +50,9 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ### 框架：ExprIntrinsics + DataModules + 注入函数
 
-- **`ExprIntrinsics`**（`logicsugar.assist.expr`）：表达式函数名 → 原版指令链的展开点。Provider 实现必须放在 `expr` 包（`Node` / `Line` 是 `ExprCompiler` 的包私有类型）。`ExprCompiler` 的 `compileNode(Call)` / `compileNode(Member)` / 成员赋值路径先查 provider，未命中退回普通 `funccall` / sensor 路径。用户 `funcdef` / 库函数同名时优先（`enterUserFunctions` 遮蔽 intrinsic），`min` / `max` 按实参个数分派（1 参 = 数组运算，2 参 = 原版内置），名字匹配大小写不敏感。
+- **`ExprIntrinsics`**（`logicsugar.assist.expr`）：表达式函数名 → 原版指令链的展开点。Provider 实现必须放在 `expr` 包（`Node` / `Line` 是 `ExprCompiler` 的包私有类型）。`ExprCompiler` 的 `compileNode(Call)` / `compileNode(Member)` / 成员赋值路径先查 provider，未命中退回普通 `funccall` / sensor 路径。用户 `funcdef` / 库函数同名时优先（`enterUserFunctions` 遮蔽 intrinsic），数组最值用 `array_min` / `array_max`，旧短名 `min` / `max` 仍按实参个数分派（1 参 = 数组运算，2 参 = 原版内置），名字匹配大小写不敏感。
 - **`DataModule` / `DataModules`**（`logicsugar.assist.data`）：每个数据结构一个模块（`id()` 去重）。`LogicSugarMod.registerStatements()` 注册全部模块（同时把 `intrinsics()` 注册进 `ExprIntrinsics`）并调用 `DataModules.registerParsers()` 安装声明卡解析器与调色板卡片；`SugarCompiler.compile` 在 `analyze` 之后、`lower` 之前 `DataModules.collectAll(...)` 建立程序级注册表，`finally` 里 `restore()` 清理——配对标记在 `collectAll` 之前置位，任一模块 `collect` 抛异常也会恢复，不把注册表泄漏给下一次编译或编辑器渲染。`markInvalid` 供编辑期标红，`builtinSugar()` 提供注入函数源文本。
-- 数据 intrinsic 还通过 `DataModule.PaletteCall` 提供 palette metadata。`DataModules` 统一注册 `datacall <operation> <destination> "<arguments>"`，每个 intrinsic 都是独立、可编辑、可持久化的卡；lower 阶段把卡的调用转回既有 `ExprIntrinsics` 链，最终只输出原版 mlog。`PaletteCall` 同时记录源代码形参默认值和 `returnsValue`：有返回值的卡默认显示 `result = op(args)`，结果写入左侧可编辑变量；无返回值的卡只显示 `op(args)`，lower 时把实现内部的兼容哨兵丢入每个调用专用的 `__ls_*datacall_discard` 变量。当前无返回值的操作是数组原地变换 `fill/copy/sortasc/sortdesc/reverse/swap`，以及各容器的 `sclear/qclear/dclear/mapclear/uclear`；其余操作的返回值/失败哨兵均保留并在卡片提示中说明。按模块/结构族分别进入 Stack/Queue/Deque/Array Algorithms/Bitset/Hash Map/Set/List/Heap/Linked List Operations 分类，避免把模块细节硬编码在编译器中。
+- 数据 intrinsic 还通过 `DataModule.PaletteCall` 提供 palette metadata。`DataModules` 统一注册 `datacall <operation> <destination> "<arguments>"`，每个 intrinsic 都是独立、可编辑、可持久化的卡；lower 阶段把卡的调用转回既有 `ExprIntrinsics` 链，最终只输出原版 mlog。`PaletteCall` 同时记录源代码形参默认值和 `returnsValue`：有返回值的卡默认显示 `result = op(args)`，结果写入左侧可编辑变量；无返回值的卡只显示 `op(args)`，lower 时把实现内部的兼容哨兵丢入每个调用专用的 `__ls_*datacall_discard` 变量。当前无返回值的操作是数组原地变换 `array_fill/array_copy/array_sort/array_sort_desc/array_reverse/array_swap`，以及各容器的 `stack_clear/queue_clear/deque_clear/map_clear/set_clear`；其余操作的返回值/失败哨兵均保留并在卡片提示中说明。按模块/结构族分别进入 Stack/Queue/Deque/Array Algorithms/Bitset/Hash Map/Set/List/Heap/Linked List Operations 分类，避免把模块细节硬编码在编译器中。
 - **注入函数**：模块把循环型 / 写内存型操作写成 `funcdef __ls_builtin_*`，由 `SugarCompiler` 经 `SugarFunctions.withBuiltins` 并入本次编译的 `LibraryIndex`。normal 模式全程序共享一份子程序，未使用不进产物；`extractLibrarySource` 只处理用户库文本，内置函数不会进入 `__ls_lib` 载体、也不会出现在用户函数库。inline 模式按调用点展开函数体。
 - **内置函数体版本与旧存档断代（重要）**：注入函数体是**编译期烘焙进产物**的普通 mlog，会随处理器一起保存。`SugarCompiler.verifyRestore` 用 `matchesStoredStream` 把载体里的 sugar 重新编译后与存档指令流**逐条比对**（`executableStream` 剥掉 carrier 后经 `read → write` 归一化，其中包含 hoist 的函数体），任何一行不同都会判失败。因此**改动任一 `__ls_builtin_*` 的函数体，都会让旧版本保存过、且用过该内置的处理器重开时落到 vanilla 视图**：`SugarLogicDialog` 回退到 `SugarDecompiler` 推断，而 `array` / `sortasc` 这类只活在载体里的卡片不会被凭空恢复（既不能进载体、也不能被推断 → 按规则显示原版）。已确认的断代：`sortasc` / `sortdesc` 由插入排序改为希尔排序（`ArrayBulkIntrinsics.sort()`，函数体 27 → 33 条指令）；`indexof` 为「命中即停」新增一条跳出循环的 `jump`；`copy` 修正读/写基址交叉（`ArrayBulkIntrinsics.copy()` / `indexof()`，见 `dataRuntimeTest` 的对应用例）。这类改动属于产品决策级的兼容性变更：要么接受断代并在教程与发布说明写明，要么给内置函数体做版本化、让 `verifyRestore` 额外尝试旧 body（框架级改动，成本高于改算法本身）。
 
@@ -61,25 +61,25 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 结构 | 声明卡（token 定长，空槽 `~`） | 表达式用法 | 降级目标 |
 | --- | --- | --- | --- |
 | 数组 | `array <name> <memory> <base> <size>` | `buf[i]`、`len(buf)` | `read` / `write`；`len` 折叠为 `size` |
-| 数组填充 | 复用 `array` | `fill(buf, value)`（独立积木） | 类似 C++ `fill`：把声明区间整体写成同一值，降级到 `__ls_builtin_arrfill` |
+| 数组填充 | 复用 `array` | `array_fill(buf, value)`（独立积木） | 类似 C++ `fill`：把声明区间整体写成同一值，降级到 `__ls_builtin_arrfill` |
 | 旧数组初始化（兼容） | `arrayinit <name> <v0>…<v7>` | 不再出现在新增面板 | 旧 carrier 仍可解析、显示和原样降级，token 数不变 |
 | 矩阵 | `matrix <name> <memory> <base> <rows> <cols>` | `m[i][j]` 读 / 写 | 地址 = `base + i*cols + j`；字面量编译期折叠，越界报错 |
-| 批量数组运算 | 复用 `array` / `matrix` | `sum` `avg` `min` `max` `count` `indexof` `fill` `copy` `sortasc` `sortdesc` `reverse` `replace` `swap` `bsearch` | 注入函数 `__ls_builtin_arr*` |
+| 批量数组运算 | 复用 `array` / `matrix` | `array_sum` `array_avg` `array_min` `array_max` `array_count` `array_find` `array_fill` `array_copy` `array_sort` `array_sort_desc` `array_reverse` `array_replace` `array_swap` `array_lower_bound` | 注入函数 `__ls_builtin_arr*` |
 | 记录 | `record <name> <f1>…<f8>` | `p.f1` 读 / `p.f1 = expr` 写 | 普通变量 `<name>_<field>` |
-| 栈 | `stack <name> <memory> <base> <size>` | `spush` `spop` `speek` `ssize` `sclear` | `read` / `write` + `__ls_stk_<name>_top` |
-| 队列 | `queue <name> <memory> <base> <size>` | `qpush` `qpop` `qpeek` `qsize` `qclear` | `read` / `write` + `__ls_que_<name>_head/_tail/_count` |
-| 双端队列 | `deque <name> <memory> <base> <size>` | `dpushf` `dpushb` `dpopf` `dpopb` `dpeekf` `dpeekb` `dsize` `dclear` | 与队列同一环形缓冲；前端 push 走 `__ls_builtin_deqpushf`，后端 push 复用队列 builtin；状态 `__ls_deq_<name>_head/_tail/_count` |
-| 位集 | `bitset <name> <memory> <base> <words>` | `bset` `bclr` `btest` `bcount` | 每 word 64 位，`and` / `or` / `shl` / `shr` + `read` / `write` |
-| 哈希表 | `map <name> <memory> <base> <capacity>` | `mapset` `mapget` `maphas` `mapdel` `mapsize` `mapclear` | 开放寻址；键区 `[base, base+capacity)`、值区 `[base+capacity, base+2*capacity)`；`hash = abs(key) % capacity`，线性探测 |
-| 集合 | `uset <name> <memory> <base> <capacity>` | `uadd` `uhas` `udel` `usize` `uclear` | 只占用键区 `[base, base+capacity)`，探测与哈希表相同；token 不能是 `set`（原版 opcode） |
-| 列表 | `list <name> <memory> <base> <size>` | `lappend` `lget` `lset` `linsert` `lremove` `lfind` `lsize` | `read` / `write` + `__ls_lst_<name>_count` |
-| 堆（小顶） | `heap <name> <memory> <base> <size>` | `hpush` `hpop` `hsize` | `read` / `write` + `__ls_hep_<name>_count` |
-| 链表 | `chain <name> <memory> <base> <size>` | `cinit` `cclear` `cnew` `cfree` `cget` `cset` `cnext` `clink` `cshead` `chead` `clen` | 节点 i 的值槽 `base+2*i`、next 槽 `base+2*i+1`（`next = -1` 为链尾）；`read` / `write` + `__ls_chn_<name>_head/_free` |
+| 栈 | `stack <name> <memory> <base> <size>` | `stack_push` `stack_pop` `stack_top` `stack_size` `stack_clear` | `read` / `write` + `__ls_stk_<name>_top` |
+| 队列 | `queue <name> <memory> <base> <size>` | `queue_push` `queue_pop` `queue_front` `queue_size` `queue_clear` | `read` / `write` + `__ls_que_<name>_head/_tail/_count` |
+| 双端队列 | `deque <name> <memory> <base> <size>` | `deque_push_front` `deque_push_back` `deque_pop_front` `deque_pop_back` `deque_front` `deque_back` `deque_size` `deque_clear` | 与队列同一环形缓冲；前端 push 走 `__ls_builtin_deqpushf`，后端 push 复用队列 builtin；状态 `__ls_deq_<name>_head/_tail/_count` |
+| 位集 | `bitset <name> <memory> <base> <words>` | `bitset_set` `bitset_reset` `bitset_test` `bitset_count` | 每 word 64 位，`and` / `or` / `shl` / `shr` + `read` / `write` |
+| 哈希表 | `map <name> <memory> <base> <capacity>` | `map_set` `map_get` `map_contains` `map_erase` `map_size` `map_clear` | 开放寻址；键区 `[base, base+capacity)`、值区 `[base+capacity, base+2*capacity)`；`hash = abs(key) % capacity`，线性探测 |
+| 集合 | `uset <name> <memory> <base> <capacity>` | `set_add` `set_contains` `set_remove` `set_size` `set_clear` | 只占用键区 `[base, base+capacity)`，探测与哈希表相同；token 不能是 `set`（原版 opcode） |
+| 列表 | `list <name> <memory> <base> <size>` | `vector_push_back` `vector_at` `vector_set` `vector_insert` `vector_erase` `vector_find` `vector_size` | `read` / `write` + `__ls_lst_<name>_count` |
+| 堆（小顶） | `heap <name> <memory> <base> <size>` | `heap_push` `heap_pop` `heap_size` | `read` / `write` + `__ls_hep_<name>_count` |
+| 链表 | `chain <name> <memory> <base> <size>` | `chain_init` `chain_clear` `chain_alloc` `chain_free` `chain_get` `chain_set` `chain_next` `chain_link` `chain_set_head` `chain_head` `chain_len` | 节点 i 的值槽 `base+2*i`、next 槽 `base+2*i+1`（`next = -1` 为链尾）；`read` / `write` + `__ls_chn_<name>_head/_free` |
 
-- **getter 语法糖（只读）**：已声明结构在 Expr 模式下可用下标/方法写法替代 getter intrinsic——`list` 的 `l[i]` / `l.get(i)`，`list`/`heap` 的 `.size()`/`.length()`/`.count()`，`stack` 的 `.top()`/`.peek()`，`queue` 的 `.front()`/`.peek()`，`deque` 的 `.front()`/`.back()`，`bitset` 的 `b[i]`/`.test(i)`/`.get(i)`，`chain` 的 `c[i]`/`.get(i)`/`.head()`。实现走 `ExprIntrinsics.Provider` 的 `kindOf` / `methodIntrinsic` / `indexIntrinsic` 扩展点，由 `compileNode(Method)` / `compileNode(Index)` 分派；语义与对应 intrinsic 完全一致，已声明数组优先于同名结构的 `[i]`。映射覆盖只读 getter，既包括无注入函数的 `lget` / `speek` / `btest` / `cget` / `chead` / `*size`，也包括走注入函数的 `mapget` / `uhas` / `lfind` / `bcount` / `cnext` / `clen`。`SugarCompiler.compile` 在 `analyze` 之前用 `DataModules.declaredKinds(statements)` 安装轻量声明表；`collectCallNodes` 据此把方法/下标解析成 intrinsic 并发出 root-intrinsic `CallSite`，`registerExprCalls` 再用 `calleesOfRoot` 登记 `__ls_builtin_*` 可达性（否则 normal 模式会漏 hoist）。下标糖只读：`l[i] = v` 显式报编译错误并提示使用 `lset` / `bset` / `cset`，避免静默降级为 `write <v> l <i>`。
+- **getter 语法糖（只读）**：已声明结构在 Expr 模式下可用下标/方法写法替代 getter intrinsic——`list` 的 `l[i]` / `l.get(i)`，`list`/`heap` 的 `.size()`/`.length()`/`.count()`，`stack` 的 `.top()`/`.peek()`，`queue` 的 `.front()`/`.peek()`，`deque` 的 `.front()`/`.back()`，`bitset` 的 `b[i]`/`.test(i)`/`.get(i)`，`chain` 的 `c[i]`/`.get(i)`/`.head()`。实现走 `ExprIntrinsics.Provider` 的 `kindOf` / `methodIntrinsic` / `indexIntrinsic` 扩展点，由 `compileNode(Method)` / `compileNode(Index)` 分派；语义与对应 intrinsic 完全一致，已声明数组优先于同名结构的 `[i]`。映射覆盖只读 getter，既包括无注入函数的 `vector_at` / `stack_top` / `bitset_test` / `chain_get` / `chain_head` / `*size`，也包括走注入函数的 `map_get` / `set_contains` / `vector_find` / `bitset_count` / `chain_next` / `chain_len`。`SugarCompiler.compile` 在 `analyze` 之前用 `DataModules.declaredKinds(statements)` 安装轻量声明表；`collectCallNodes` 据此把方法/下标解析成 intrinsic 并发出 root-intrinsic `CallSite`，`registerExprCalls` 再用 `calleesOfRoot` 登记 `__ls_builtin_*` 可达性（否则 normal 模式会漏 hoist）。下标糖只读：`l[i] = v` 显式报编译错误并提示使用 `vector_set` / `bitset_set` / `chain_set`，避免静默降级为 `write <v> l <i>`。
 - **容量检查**：`memory` 形如 `cellN` 容量 64、`bankN` / `worldN` 容量 512（大小写不敏感），`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`，集合为 `base+capacity`）超容量编译期报错；其它名字跳过。
 - **越界断言**：仅 `AssertEmit=emit` 的调试构建下、下标为非常量时，在 `read` / `write` 前发射 `assertBounds`（复用 `SugarAsserts` 线格式）；`strip` 模式不发射。数组/矩阵字面量越界始终是编译错误。
-- **空容器语义**：pop / peek 在空时返回 NaN（`op div <tmp> 0 0` 或越界 `read`）；push 在满时返回当前长度且不写入；`lget` 越界返回 NaN，`lset` / `linsert` / `hpush` 失败返回 0，`lremove` 越界返回 NaN、成功返回被删除值，`lfind` 未找到返回 -1，`mapget` 未命中返回 NaN，`mapset` / `uadd` 在 NaN/±Inf 键上返回 -1；链表 `cget` 越界返回 NaN，`cset` / `clink` / `cfree` 越界返回 0，`cnext` 越界返回 -1，`cnew` 在空闲链为空时返回 -1，`clen` 空链返回 0。`bsearch` 在升序数组上未命中返回 -1。
+- **空容器语义**：pop / peek 在空时返回 NaN（`op div <tmp> 0 0` 或越界 `read`）；push 在满时返回当前长度且不写入；`vector_at` 越界返回 NaN，`vector_set` / `vector_insert` / `heap_push` 失败返回 0，`vector_erase` 越界返回 NaN、成功返回被删除值，`vector_find` 未找到返回 -1，`map_get` 未命中返回 NaN，`map_set` / `set_add` 在 NaN/±Inf 键上返回 -1；链表 `chain_get` 越界返回 NaN，`chain_set` / `chain_link` / `chain_free` 越界返回 0，`chain_next` 越界返回 -1，`chain_alloc` 在空闲链为空时返回 -1，`chain_len` 空链返回 0。`array_lower_bound` 在升序数组上未命中返回 -1。
 - **保留命名空间**：隐藏状态变量与注入函数名都以 `__ls_` 开头（`VarDisplayFilter` 自动隐藏，用户声明名使用该前缀会被模块拒绝）。记录字段变量 `<name>_<field>` 是普通用户变量，不隐藏、可调试。
 
 ### 单机 / 联机与 1000 指令约束
@@ -91,9 +91,9 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 ### 已知限制
 
 - **跨模块校验未统一**：每个模块只严格校验「自己声明的结构 + `array`/`matrix`」。不同模块之间（如 `stack` 与 `list` 共用同一内存块且区间重叠，或跨结构重名）不做统一校验，需要用户自行避免；统一程序级名字/区间表需要改各模块的 `collect` 口径，属后续工作。
-- **哈希表 / 集合**：不支持字符串键；键比较沿用原版 `equal` 的 1e-6 容差；首次使用前必须调用 `mapclear(m)` / `uclear(s)`（未初始化槽读回数字 0，会被当作「已占用且 key = 0」）；删除是墓碑策略——只把 key 槽写成 NaN，探测是整表环形扫描因此墓碑不会截断探测链。集合只占用 `capacity` 个槽，没有 value 区。
-- **链表**：首次使用前必须调用一次 `cinit(c)` / `cclear(c)`——未赋值变量读作 0，不初始化直接 `cnew` 会把 0 号节点当成空闲节点；`cfree` 不检测重复释放，把已在空闲链上的节点再次释放会让空闲链成环；`clen` / `cfree` 的遍历在用户手工 `clink` 造出环时不会终止，链表不变量（next 槽只由本模块写入、指向合法下标或 -1）由使用者维护。
-- **状态变量不随存档持久化**：隐藏计数是普通 mlog 变量，处理器代码重新载入（存档往返 / 重编译 / 换处理器）后归零，而内存块内容保留；跨存档运行的结构需要在程序开头显式重建状态（`sclear` / `qclear` / `dclear` / 重新初始化内存或计数）。
+- **哈希表 / 集合**：不支持字符串键；键比较沿用原版 `equal` 的 1e-6 容差；首次使用前必须调用 `map_clear(m)` / `set_clear(s)`（未初始化槽读回数字 0，会被当作「已占用且 key = 0」）；删除是墓碑策略——只把 key 槽写成 NaN，探测是整表环形扫描因此墓碑不会截断探测链。集合只占用 `capacity` 个槽，没有 value 区。
+- **链表**：首次使用前必须调用一次 `chain_init(c)` / `chain_clear(c)`——未赋值变量读作 0，不初始化直接 `chain_alloc` 会把 0 号节点当成空闲节点；`chain_free` 不检测重复释放，把已在空闲链上的节点再次释放会让空闲链成环；`chain_len` / `chain_free` 的遍历在用户手工 `chain_link` 造出环时不会终止，链表不变量（next 槽只由本模块写入、指向合法下标或 -1）由使用者维护。
+- **状态变量不随存档持久化**：隐藏计数是普通 mlog 变量，处理器代码重新载入（存档往返 / 重编译 / 换处理器）后归零，而内存块内容保留；跨存档运行的结构需要在程序开头显式重建状态（`stack_clear` / `queue_clear` / `deque_clear` / 重新初始化内存或计数）。
 - 矩阵不支持 `len()`（用 `rows*cols`）；`len(a, b)` 仍是原版向量长度。
 
 ## 断言子系统（调试构建）
@@ -137,7 +137,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 数据子系统的声明卡（`array` / `matrix` / `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain`）**只存在于载体里的 Sugar 源码**，lowering 时整张剥离，原版 mlog 里看不到它们。因此：
 
-- 有载体且验证通过 → 声明卡和表达式一并回来（编辑器再 `foldAll` 折回 `buf[i]` / `spush` 等）。
+- 有载体且验证通过 → 声明卡和表达式一并回来（编辑器再 `foldAll` 折回 `buf[i]` / `stack_push` 等）。
 - 没有载体（别人用手写 mlog、或载体被删）→ **不猜测**声明卡，只显示 `read`/`write`/`op`/`jump`。注入函数 `__ls_builtin_*` 的蹦床也不得恢复成用户 `funcdef`。
 
 反编译预检必须走 `LogicSugarMod.registerStatements()`（模块 + 解析器），否则载体里的声明卡会被当成未知行。
@@ -203,7 +203,7 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 | --- | --- | --- |
 | `advcontrol` | Advanced Flow Control | For / While / Switch / If / Case / Elif / Else / Break / Continue / BlockEnd / FuncDef / FuncCall / Return |
 | `datastruct` | Data Structures | record / stack / queue / deque / bitset / map / uset / list / heap / chain |
-| `arrayalgo` | Array Algorithms | array / matrix，以及 `fill` / `sum` / `reverse` / `bsearch` 等独立数据调用积木；旧 `arrayinit` 仅兼容读取 |
+| `arrayalgo` | Array Algorithms | array / matrix，以及 `array_fill` / `array_sum` / `array_reverse` / `array_lower_bound` 等独立数据调用积木；旧 `arrayinit` 仅兼容读取 |
 | `asserts` | Assertions | 既有断言卡 |
 | 原版 `control` / `operation` | Flow Control / Operations | 原版 jump/end 与 `ExprStatement` |
 

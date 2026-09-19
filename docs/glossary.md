@@ -86,46 +86,46 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 ## 数据子系统
 
 ### intrinsic（表达式内建）
-`ExprIntrinsics` 注册的表达式函数展开点：表达式里的函数名（`sum`、`spush`、`mapset`…）在编译期展开为原版 `op`/`read`/`write`/`funccall` 指令链，而不是用户函数调用。Provider 实现必须放在 `logicsugar.assist.expr` 包（`Node`/`Line` 是 `ExprCompiler` 的包私有类型）；同名用户 `funcdef`/库函数优先（intrinsic 被遮蔽），`min`/`max` 按实参个数分派。
+`ExprIntrinsics` 注册的表达式函数展开点：表达式里的函数名（`array_sum`、`stack_push`、`map_set`…）在编译期展开为原版 `op`/`read`/`write`/`funccall` 指令链，而不是用户函数调用。Provider 实现必须放在 `logicsugar.assist.expr` 包（`Node`/`Line` 是 `ExprCompiler` 的包私有类型）；同名用户 `funcdef`/库函数优先（intrinsic 被遮蔽），数组最值用 `array_min`/`array_max`，旧短名 `min`/`max` 仍按实参个数分派（1 参 = 数组运算，2 参 = 原版内置）。
 
 ### 数据模块（DataModule / DataModules）
 一个数据结构 = 一个 `DataModule` 子类（声明卡解析器 + 编译期注册表 + intrinsic provider + 注入函数源文本）。`DataModules` 是统一驱动点：`register` 登记模块并注册 provider（按 `id()` 幂等），`registerParsers` 安装声明卡解析器，`collectAll`/`restore` 在每次编译前后配对建立/清理程序级注册表（`SugarCompiler` 的 `finally` 保证异常路径也恢复），`markInvalid` 供编辑期标红。
 
 ### 数据调用积木（DataCallStatement）
-`datacall <operation> <destination> "<arguments>"` 是数据 intrinsic 的通用可编辑卡。其 operation/category/default arguments/`returnsValue` 来自模块的 `PaletteCall` metadata；有返回值时默认显示 `result = op(args)`，结果写入左侧变量；无返回值时显示 `op(args)`，不要求结果变量。当前数组 `fill/copy/sortasc/sortdesc/reverse/swap` 与结构清空操作属于无返回值卡；保存时仍进入 Sugar carrier，编译时复用 `ExprIntrinsics` 展开，因此不会把 `datacall` 或内置 `funccall` 泄漏到原版 mlog。
+`datacall <operation> <destination> "<arguments>"` 是数据 intrinsic 的通用可编辑卡。其 operation/category/default arguments/`returnsValue` 来自模块的 `PaletteCall` metadata；有返回值时默认显示 `result = op(args)`，结果写入左侧变量；无返回值时显示 `op(args)`，不要求结果变量。当前数组 `array_fill/array_copy/array_sort/array_sort_desc/array_reverse/array_swap` 与结构清空操作属于无返回值卡；保存时仍进入 Sugar carrier，编译时复用 `ExprIntrinsics` 展开，因此不会把 `datacall` 或内置 `funccall` 泄漏到原版 mlog。
 
 ### 隐藏状态变量
-栈/队列/列表/堆/链表/双端队列等结构的运行时状态（如 `__ls_stk_<name>_top`、`__ls_que_<name>_head/_tail/_count`、`__ls_deq_<name>_head/_tail/_count`、`__ls_lst_<name>_count`、`__ls_chn_<name>_head/_free`）是普通 mlog 变量，用 `__ls_` 保留前缀声明，`VarDisplayFilter` 自动隐藏、用户不得使用同前缀命名。mlog 变量未赋值读取为 0，因此初始状态不需要初始化指令；代价是它们不随存档持久化——处理器代码重新载入后计数归零而内存块内容保留。链表是例外：`head`/`free` 读作 0 会被当成合法节点下标，首次使用前必须显式 `cinit(c)` / `cclear(c)` 重建空闲链。
+栈/队列/列表/堆/链表/双端队列等结构的运行时状态（如 `__ls_stk_<name>_top`、`__ls_que_<name>_head/_tail/_count`、`__ls_deq_<name>_head/_tail/_count`、`__ls_lst_<name>_count`、`__ls_chn_<name>_head/_free`）是普通 mlog 变量，用 `__ls_` 保留前缀声明，`VarDisplayFilter` 自动隐藏、用户不得使用同前缀命名。mlog 变量未赋值读取为 0，因此初始状态不需要初始化指令；代价是它们不随存档持久化——处理器代码重新载入后计数归零而内存块内容保留。链表是例外：`head`/`free` 读作 0 会被当成合法节点下标，首次使用前必须显式 `chain_init(c)` / `chain_clear(c)` 重建空闲链。
 
 ### 注入函数（`__ls_builtin_*`）
 模块提供的 `funcdef` 源文本，经 `SugarFunctions.withBuiltins` 并入本次编译的函数索引。循环型/写内存型操作（push、sort、find、哈希探测等）走注入函数，normal 模式全程序共享一份子程序、未使用不进产物，且不会进入 `__ls_lib` 载体或用户函数库。
 
 ### 墓碑删除（tombstone delete）
-哈希表 `mapdel` 的删除策略：只把 key 槽写成 NaN 标记、value 槽保留原值。探测是整表环形扫描，墓碑不会截断探测链，因此无需回填/重插。空槽判定用 `op strictEqual`（NaN 存回内存后是 null 对象，`equal` 会把数字 0 与 null 判等）。
+哈希表 `map_erase` 的删除策略：只把 key 槽写成 NaN 标记、value 槽保留原值。探测是整表环形扫描，墓碑不会截断探测链，因此无需回填/重插。空槽判定用 `op strictEqual`（NaN 存回内存后是 null 对象，`equal` 会把数字 0 与 null 判等）。
 
 ### 记录（record）
 `record <name> <f1>…<f8>` 声明卡定义的纯编译期结构：字段降级为普通变量 `<name>_<field>`（用户可见），成员读 `p.f1` 为 `op add <tmp> p_f1 0`、成员写 `p.f1 = expr` 为 `op add p_f1 <value> 0`。只有已声明为 record 的变量名才走成员展开，其余成员访问保持原版 sensor 语义。
 
 ### 哈希表（map）
-`map <name> <memory> <base> <capacity>` 声明的开放寻址哈希表：键区 `[base, base+capacity)`、值区 `[base+capacity, base+2*capacity)`，`hash = abs(key) % capacity` 线性探测。首次使用前必须 `mapclear(m)`（未初始化槽读回 0 会被当作已占用 key=0）；不支持字符串键。
+`map <name> <memory> <base> <capacity>` 声明的开放寻址哈希表：键区 `[base, base+capacity)`、值区 `[base+capacity, base+2*capacity)`，`hash = abs(key) % capacity` 线性探测。首次使用前必须 `map_clear(m)`（未初始化槽读回 0 会被当作已占用 key=0）；不支持字符串键。
 
 ### 无序集合（uset）
-`uset <name> <memory> <base> <capacity>` 声明的开放寻址键集合（token 不能是 `set`，那是原版 opcode）。只占用 `[base, base+capacity)`，探测与墓碑策略与哈希表相同；表达式 `uadd`/`uhas`/`udel`/`usize`/`uclear`。首次使用前必须 `uclear(s)`。
+`uset <name> <memory> <base> <capacity>` 声明的开放寻址键集合（token 不能是 `set`，那是原版 opcode）。只占用 `[base, base+capacity)`，探测与墓碑策略与哈希表相同；表达式 `set_add`/`set_contains`/`set_remove`/`set_size`/`set_clear`。首次使用前必须 `set_clear(s)`。
 
 ### 双端队列（deque）
-`deque <name> <memory> <base> <size>` 声明的双端环形缓冲，状态变量 `__ls_deq_<name>_head/_tail/_count`。`dpushf`/`dpopf`/`dpeekf` 操作前端，`dpushb`/`dpopb`/`dpeekb` 操作后端；满 push 不写入，空 pop/peek 返回 NaN。
+`deque <name> <memory> <base> <size>` 声明的双端环形缓冲，状态变量 `__ls_deq_<name>_head/_tail/_count`。`deque_push_front`/`deque_pop_front`/`deque_front` 操作前端，`deque_push_back`/`deque_pop_back`/`deque_back` 操作后端；满 push 不写入，空 pop/peek 返回 NaN。
 
 ### 链表（chain）
-`chain <name> <memory> <base> <size>` 声明的单链 + 空闲链结构：节点 i 的值槽在 `base+2*i`、next 槽在 `base+2*i+1`，`next = -1` 表示链尾；声明区间 `[base, base+2*size)`。`cnew` 从空闲链 LIFO 取节点并返回下标（空闲链空返回 -1），`cfree` 摘链后挂回空闲链（非法下标返回 0 且不改状态），`clink` 只改 next 槽不校验目标（`-1` 合法），`clen` 沿 next 遍历计数。首次使用前必须 `cinit(c)` / `cclear(c)`。
+`chain <name> <memory> <base> <size>` 声明的单链 + 空闲链结构：节点 i 的值槽在 `base+2*i`、next 槽在 `base+2*i+1`，`next = -1` 表示链尾；声明区间 `[base, base+2*size)`。`chain_alloc` 从空闲链 LIFO 取节点并返回下标（空闲链空返回 -1），`chain_free` 摘链后挂回空闲链（非法下标返回 0 且不改状态），`chain_link` 只改 next 槽不校验目标（`-1` 合法），`chain_len` 沿 next 遍历计数。首次使用前必须 `chain_init(c)` / `chain_clear(c)`。
 
 ### 空闲链（free list）
-链表的空闲节点单链，由隐藏变量 `__ls_chn_<name>_free` 指向链头（`-1` = 无空闲节点），`cinit` / `cclear` 把它重建为 `0→1→…→size-1→-1`，`cnew` 从中摘取、`cfree` 挂回。它让节点分配/释放不依赖额外的计数变量；`cfree` 不检测重复释放，重复释放同一节点会让空闲链成环。
+链表的空闲节点单链，由隐藏变量 `__ls_chn_<name>_free` 指向链头（`-1` = 无空闲节点），`chain_init` / `chain_clear` 把它重建为 `0→1→…→size-1→-1`，`chain_alloc` 从中摘取、`chain_free` 挂回。它让节点分配/释放不依赖额外的计数变量；`chain_free` 不检测重复释放，重复释放同一节点会让空闲链成环。
 
 ## 函数
 
 ### 方法糖 / 下标糖（method / index sugar）
 
-Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[i]` → `lget(list, i)`、`stack.top()` → `speek(stack)`、`bitset.test(i)` → `btest(bitset, i)`、`chain.head()` → `chead(chain)` 等。解析为 `ExprCompiler.Method` / `Index` 节点后，由 `ExprIntrinsics.Provider.kindOf` / `methodIntrinsic` / `indexIntrinsic` 按接收者的已声明结构类型解析；只映射无注入函数的 getter，因此可达性分析 `collectCalls` 直接跳过方法节点。已声明数组优先于同名结构的 `[i]`。下标糖只读，赋值必须用 `lset` / `bset` / `cset`。
+Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[i]` → `vector_at(list, i)`、`stack.top()` → `stack_top(stack)`、`bitset.test(i)` → `bitset_test(bitset, i)`、`chain.head()` → `chain_head(chain)` 等。解析为 `ExprCompiler.Method` / `Index` 节点后，由 `ExprIntrinsics.Provider.kindOf` / `methodIntrinsic` / `indexIntrinsic` 按接收者的已声明结构类型解析；只映射无注入函数的 getter，因此可达性分析 `collectCalls` 直接跳过方法节点。已声明数组优先于同名结构的 `[i]`。下标糖只读，赋值必须用 `vector_set` / `bitset_set` / `chain_set`。
 
 ### 函数库（function library）
 全局函数文件 `<game data>/mods/config/LogicSugar/functions.txt`，只含 `funcdef … blockend` 对，所有处理器共享。损坏时按函数逐个抢救为部分索引；在处理器编辑器内直接编辑，关闭自动校验保存。库文件不受处理器 1000 条上限约束，当前上限为 `SugarFunctions.libraryInstructionLimit`（10000 条语句）；库文本统一走 `SugarFunctions.readLibrary` 解析（临时抬高 `LExecutor.maxInstructions` 后还原），超限由 `libraryOverLimit` 在保存/打开编辑时明确拒绝；处理器仍然只保存 ≤1000 条，只嵌入被调用到的函数子集。
@@ -173,10 +173,10 @@ Mindustry 的 i18n 文案文件。本模组在 `assets/bundles/` 下维护 `bund
 v5 起「把一个值拷到另一个变量」统一用 `set <dst> <src>`（编译期的 `CopyLine`）。旧写法 `op add <dst> <src> 0` 会经 `LVar.num()` 读操作数，把对象折成 1、把空值（NaN 标记）折成 0，属于会丢值的实现细节，v5 已消除。
 
 ### 失败信号（-1）
-可失败的数据操作（push/append/insert/delete/set/free 等）失败时统一返回 `-1`；成功仍返回各自有意义的值（计数、下标或 1）。查询类 `maphas`/`uhas`/`btest` 保持 0/1；`btest` 越界仍为 0（它是「位是否置位」的查询，-1 在 mlog 里是真值）。
+可失败的数据操作（push/append/insert/delete/set/free 等）失败时统一返回 `-1`；成功仍返回各自有意义的值（计数、下标或 1）。查询类 `map_contains`/`set_contains`/`bitset_test` 保持 0/1；`bitset_test` 越界仍为 0（它是「位是否置位」的查询，-1 在 mlog 里是真值）。
 
 ### 无结果卡（`~`）
-结果恒定、无信息量的操作不暴露目标变量，卡片可以写 `~`：`bset`/`bclr`/`cshead`，加上本来就无结果的 `fill`/`copy`/`sortasc`/`sortdesc`/`reverse`/`swap`/`sclear`/`qclear`/`dclear`/`mapclear`/`uclear`。旧存档若已带目标变量，编译时仍写进该变量，指令流不变。
+结果恒定、无信息量的操作不暴露目标变量，卡片可以写 `~`：`bitset_set`/`bitset_reset`/`chain_set_head`，加上本来就无结果的 `array_fill`/`array_copy`/`array_sort`/`array_sort_desc`/`array_reverse`/`array_swap`/`stack_clear`/`queue_clear`/`deque_clear`/`map_clear`/`set_clear`。旧存档若已带目标变量，编译时仍写进该变量，指令流不变。
 
 ### 返回声明
 `funcdef f a ~ 3`（void，体内不得值返回）与 `funcdef f a value 3`（必须值返回一次）；不写声明（`funcdef f a 3`）沿用按函数体推断。声明写在参数之后、`destIndex` 之前，第三种槽是整数即为旧形态，因此老存档字节不变。

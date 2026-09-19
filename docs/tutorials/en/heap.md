@@ -20,11 +20,13 @@ The min-heap is array-backed. State is the hidden variable `__ls_hep_h_count`. T
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `hpush(h, v)` | heap, value | 1 / 0 | full returns 0 and does not write |
-| `hpop(h)` | heap | minimum or NaN | empty returns NaN; removes the minimum |
-| `hsize(h)` | heap | element count | O(1) |
+| `heap_push(h, v)` | heap, value | 1 / 0 | full returns 0 and does not write |
+| `heap_pop(h)` | heap | minimum or NaN | empty returns NaN; removes the minimum |
+| `heap_size(h)` | heap | element count | O(1) |
 
-Sugar: `h.size()` / `h.length()` / `h.count()` equal `hsize(h)`.
+> Note: the editor menus and cards use the new names (e.g. `heap_push`); the old short names (e.g. `hpush`) still parse in existing saves, and new cards are always written with the new names.
+
+Sugar: `h.size()` / `h.length()` / `h.count()` equal `heap_size(h)`.
 
 There is no non-destructive peek. To keep the minimum, push it back after popping (O(log n)).
 
@@ -34,7 +36,7 @@ Size:
 
 ```text
 heap h cell2 4 8
-x = hsize(h)
+x = heap_size(h)
 ```
 
 ```text
@@ -44,7 +46,7 @@ op add x __ls_hep_h_count 0
 Push:
 
 ```text
-x = hpush(h, 5)
+x = heap_push(h, 5)
 ```
 
 ```text
@@ -59,7 +61,7 @@ The injected function returns the new count; the call site converts did-count-ch
 Pop:
 
 ```text
-x = hpop(h)
+x = heap_pop(h)
 ```
 
 ```text
@@ -75,15 +77,15 @@ The count is decremented before the call (only when non-empty); the function ret
 
 | Operation | Complexity | Notes |
 | --- | --- | --- |
-| hpush / hpop | O(log n) | tree height is log n |
-| hsize | O(1) | reads the count variable |
+| heap_push / heap_pop | O(log n) | tree height is log n |
+| heap_size | O(1) | reads the count variable |
 
 ## Caveats
 
-- Min-heap: hpop returns the current minimum. To get the maximum, store negated values.
-- No peek: hpop is destructive; hsize only reports the count.
-- Empty/full: hpop returns NaN when empty; hpush returns 0 and does not write when full.
+- Min-heap: heap_pop returns the current minimum. To get the maximum, store negated values.
+- No peek: heap_pop is destructive; heap_size only reports the count.
+- Empty/full: heap_pop returns NaN when empty; heap_push returns 0 and does not write when full.
 - State is not persisted: `__ls_hep_h_count` resets to 0 on reload, so old memory elements are not treated as live. Starting empty is safe; reset the count to clear.
 - Capacity: range [base, base+size); base + size beyond capacity is a compile error.
-- Duplicates are allowed; hpop returns one of the equal minima, order not guaranteed.
+- Duplicates are allowed; heap_pop returns one of the equal minima, order not guaranteed.
 

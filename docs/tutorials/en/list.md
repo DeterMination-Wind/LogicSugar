@@ -20,15 +20,17 @@ State is the hidden variable `__ls_lst_l_count`. The unset value is 0, so a list
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `lappend(l, v)` | list, value | new count | full: returns current count and does not write |
-| `lget(l, i)` | list, index | value or NaN | NaN when out of range |
-| `lset(l, i, v)` | list, index, value | 1 / 0 | out of range does not write |
-| `linsert(l, i, v)` | list, index, value | 1 / 0 | shift right; full/out of range returns 0 |
-| `lremove(l, i)` | list, index | removed value or NaN | shift left; out of range returns NaN |
-| `lfind(l, v)` | list, value | index or -1 | first match |
-| `lsize(l)` | list | element count | O(1) |
+| `vector_push_back(l, v)` | list, value | new count | full: returns current count and does not write |
+| `vector_at(l, i)` | list, index | value or NaN | NaN when out of range |
+| `vector_set(l, i, v)` | list, index, value | 1 / 0 | out of range does not write |
+| `vector_insert(l, i, v)` | list, index, value | 1 / 0 | shift right; full/out of range returns 0 |
+| `vector_erase(l, i)` | list, index | removed value or NaN | shift left; out of range returns NaN |
+| `vector_find(l, v)` | list, value | index or -1 | first match |
+| `vector_size(l)` | list | element count | O(1) |
 
-Sugar: `l[i]` / `l.get(i)` equal `lget(l, i)`; `l.find(v)` / `l.indexOf(v)` equal `lfind(l, v)`; `l.size()` / `l.length()` / `l.count()` equal `lsize(l)`.
+> Note: the editor menus and cards use the new names (e.g. `vector_push_back`); the old short names (e.g. `lappend`) still parse in existing saves, and new cards are always written with the new names.
+
+Sugar: `l[i]` / `l.get(i)` equal `vector_at(l, i)`; `l.find(v)` / `l.indexOf(v)` equal `vector_find(l, v)`; `l.size()` / `l.length()` / `l.count()` equal `vector_size(l)`.
 
 ## Lowered examples
 
@@ -36,7 +38,7 @@ Size:
 
 ```text
 list l cell1 2 4
-x = lsize(l)
+x = vector_size(l)
 ```
 
 ```text
@@ -46,7 +48,7 @@ op add x __ls_lst_l_count 0
 Indexed read with a branchless range guard:
 
 ```text
-x = lget(l, i)
+x = vector_at(l, i)
 ```
 
 ```text
@@ -63,7 +65,7 @@ read x cell1 _3
 Append: the injected function returns the new count and the call site writes it back.
 
 ```text
-x = lappend(l, 7)
+x = vector_push_back(l, 7)
 ```
 
 ```text
@@ -74,7 +76,7 @@ op add x __ls_lst_l_count 0
 Set:
 
 ```text
-x = lset(l, i, 5)
+x = vector_set(l, i, 5)
 ```
 
 ```text
@@ -87,15 +89,15 @@ Insert and remove use injected functions that shift elements right/left.
 
 | Operation | Complexity | Notes |
 | --- | --- | --- |
-| lappend / lget / lset / lsize | O(1) | direct access or fixed guard |
-| linsert / lremove | O(n) | elements shift |
-| lfind | O(n) | linear scan |
+| vector_push_back / vector_at / vector_set / vector_size | O(1) | direct access or fixed guard |
+| vector_insert / vector_erase | O(n) | elements shift |
+| vector_find | O(n) | linear scan |
 
 ## Caveats
 
-- Out of range: lget / lremove return NaN; lset / linsert return 0 and do not write.
-- Full list: lappend returns the current size and does not write; linsert returns 0 when count >= size.
-- Compact storage: elements stay in [base, base+count). lremove shifts elements left and linsert shifts them right. Do not write past base+count yourself.
+- Out of range: vector_at / vector_erase return NaN; vector_set / vector_insert return 0 and do not write.
+- Full list: vector_push_back returns the current size and does not write; vector_insert returns 0 when count >= size.
+- Compact storage: elements stay in [base, base+count). vector_erase shifts elements left and vector_insert shifts them right. Do not write past base+count yourself.
 - State is not persisted: `__ls_lst_l_count` resets to 0 on reload; memory contents remain. An empty list starts safely. To clear, reset the count.
 - Capacity: range [base, base+size); base + size beyond capacity is a compile error.
 - Names must not collide with other structures; cross-module overlaps are not rejected automatically.

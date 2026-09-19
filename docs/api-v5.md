@@ -19,9 +19,9 @@ v5 起所有「值拷贝」都写成 `set`：
 | 表达式卡 / `return` 的纯变量结果 | `set <dest> <src>` |
 | 函数实参物化（`_0` 槽） | `set _0 <arg>` |
 | 记录字段读 / 写 | `set <tmp> p_f1` / `set p_f1 <value>` |
-| 堆顶取值（`hpop`） | `set __ls_lh_r __ls_lh_min` |
+| 堆顶取值（`heap_pop`） | `set __ls_lh_r __ls_lh_min` |
 
-注意区分「拷贝」与「取值」：**空容器的取值仍然是 NaN 标记**（`spop`/`speek`/`qpop`/`qpeek`/`dpopf`/`dpopb`/`dpeekf`/`dpeekb`/`lget`/`cget`、哈希/集合未命中、空的 `hpop`/`lremove`）。NaN 表示「没有值」，-1 表示「操作失败」，两者不混用。
+注意区分「拷贝」与「取值」：**空容器的取值仍然是 NaN 标记**（`stack_pop`/`stack_top`/`queue_pop`/`queue_front`/`deque_pop_front`/`deque_pop_back`/`deque_front`/`deque_back`/`vector_at`/`chain_get`、哈希/集合未命中、空的 `heap_pop`/`vector_erase`）。NaN 表示「没有值」，-1 表示「操作失败」，两者不混用。
 
 ## 3. 失败信号统一为 -1
 
@@ -29,28 +29,28 @@ v5 起所有「值拷贝」都写成 `set`：
 
 | 操作 | 成功 | 失败（v5） | 旧版失败值 |
 | --- | --- | --- | --- |
-| `spush` / `qpush` / `dpushb` / `dpushf` | 新元素个数 | `-1` | 原容量 / 旧头 |
-| `lappend` | 新元素个数 | `-1` | 原计数 |
-| `hpush` / `linsert` | `1` | `-1` | `0` |
-| `lset` / `cset` / `clink` | `1` | `-1`（越界） | `0` |
-| `cfree` | `1` | `-1`（非法下标） | `0` |
-| `mapdel` / `udel` | `1` | `-1`（键不存在） | `0` |
-| `mapset` | `1` | `-1`（满表 / 非法键） | 已是 `-1` |
-| `uadd` | `1` | `-1`（满表 / 非法键） | 已是 `-1` |
-| `cnew` | 新节点下标 | `-1`（空闲链耗尽） | 已是 `-1` |
-| `cnext` | 下个下标 | `-1`（非法下标 / 链尾） | 已是 `-1` |
-| `lfind` | 首个匹配下标 | `-1`（未找到） | 已是 `-1` |
+| `stack_push` / `queue_push` / `deque_push_back` / `deque_push_front` | 新元素个数 | `-1` | 原容量 / 旧头 |
+| `vector_push_back` | 新元素个数 | `-1` | 原计数 |
+| `heap_push` / `vector_insert` | `1` | `-1` | `0` |
+| `vector_set` / `chain_set` / `chain_link` | `1` | `-1`（越界） | `0` |
+| `chain_free` | `1` | `-1`（非法下标） | `0` |
+| `map_erase` / `set_remove` | `1` | `-1`（键不存在） | `0` |
+| `map_set` | `1` | `-1`（满表 / 非法键） | 已是 `-1` |
+| `set_add` | `1` | `-1`（满表 / 非法键） | 已是 `-1` |
+| `chain_alloc` | 新节点下标 | `-1`（空闲链耗尽） | 已是 `-1` |
+| `chain_next` | 下个下标 | `-1`（非法下标 / 链尾） | 已是 `-1` |
+| `vector_find` | 首个匹配下标 | `-1`（未找到） | 已是 `-1` |
 
-**查询类仍是 0/1**：`maphas`、`uhas`、`btest`。特别地 `btest` 越界仍返回 `0`（它是「这一位是否置位」的查询，而 mlog 里 `-1` 是真值，返回 -1 会让 `if btest(...)` 把越界误判成置位）。
+**查询类仍是 0/1**：`map_contains`、`set_contains`、`bitset_test`。特别地 `bitset_test` 越界仍返回 `0`（它是「这一位是否置位」的查询，而 mlog 里 `-1` 是真值，返回 -1 会让 `if bitset_test(...)` 把越界误判成置位）。
 
 ## 4. 无结果卡：`~`
 
 结果恒定、没有信息量的操作不暴露目标变量，卡片可以写 `~`：
 
-- `bset` / `bclr`（共用写回子程序，恒返回 1，越界也返回 1）
-- `cshead`（恒返回 1）
+- `bitset_set` / `bitset_reset`（共用写回子程序，恒返回 1，越界也返回 1）
+- `chain_set_head`（恒返回 1）
 
-另外 `fill`/`copy`/`sortasc`/`sortdesc`/`reverse`/`swap`/`sclear`/`qclear`/`dclear`/`mapclear`/`uclear` 本来就是无结果操作。
+另外 `array_fill`/`array_copy`/`array_sort`/`array_sort_desc`/`array_reverse`/`array_swap`/`stack_clear`/`queue_clear`/`deque_clear`/`map_clear`/`set_clear` 本来就是无结果操作。
 
 **兼容细节**：无结果卡在新存档里写 `~`；旧存档如果已经带了目标变量，`emitDataCall` 仍然写进那个变量，因此**旧存档的指令流逐字节不变**，仍然过验证门。表达式形式（如 `x = bset(bs, i)`）保留旧的结果操作数以兼容老源码。
 
@@ -81,7 +81,7 @@ funcdef f a 3          旧三 token 形态：按函数体推断（不变）
 ## 7. 迁移清单（v4 → v5）
 
 1. 需要判断结果的代码请按第 3 节改判失败：老代码写 `if 结果 == 0` 的失败分支要改成 `== -1`（成功分支 `== 1` 或非零判断通常可保留）。
-2. `bset`/`bclr`/`cshead` 卡片的目标变量可以清空写 `~`；老卡片保留目标变量仍然能用。
+2. `bitset_set`/`bitset_reset`/`chain_set_head` 卡片的目标变量可以清空写 `~`；老卡片保留目标变量仍然能用。
 3. 需要明确「这个函数有/没有返回值」时给 `funcdef` 加 `~` 或 `value`；不写就沿用旧行为（按函数体推断）。
 4. 依赖「空容器取值为 0」的代码一直是错的：空容器返回 NaN 标记，请用 `size`/`has` 先判断。
 5. 老程序不需要手动迁移：重新保存时标记会升级为 `logic-sugar-v2`，载体里的源码保持原样。

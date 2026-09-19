@@ -18,13 +18,15 @@ Example: `stack s cell1 0 8` uses cell1 addresses 0..7. The card emits no mlog. 
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `spush(s, v)` | stack, value | new size | full: returns current size and does not write |
-| `spop(s)` | stack | top value | empty: NaN; removes the value |
-| `speek(s)` | stack | top value | empty: NaN; does not remove |
-| `ssize(s)` | stack | element count | O(1) |
-| `sclear(s)` | stack | 0 | sets top to 0 |
+| `stack_push(s, v)` | stack, value | new size | full: returns current size and does not write |
+| `stack_pop(s)` | stack | top value | empty: NaN; removes the value |
+| `stack_top(s)` | stack | top value | empty: NaN; does not remove |
+| `stack_size(s)` | stack | element count | O(1) |
+| `stack_clear(s)` | stack | 0 | sets top to 0 |
 
-Sugar: `s.top()` / `s.peek()` equal `speek(s)`; `s.size()` / `s.count()` equal `ssize(s)`.
+> Note: the editor menus and cards use the new names (e.g. `stack_push`); the old short names (e.g. `spush`) still parse in existing saves, and new cards are always written with the new names.
+
+Sugar: `s.top()` / `s.peek()` equal `stack_top(s)`; `s.size()` / `s.count()` equal `stack_size(s)`.
 
 ## Lowered examples
 
@@ -32,7 +34,7 @@ Size:
 
 ```text
 stack s cell1 0 8
-x = ssize(s)
+x = stack_size(s)
 ```
 
 ```text
@@ -42,7 +44,7 @@ op add x __ls_stk_s_top 0
 Peek with branchless empty guard:
 
 ```text
-x = speek(s)
+x = stack_top(s)
 ```
 
 ```text
@@ -59,7 +61,7 @@ When top <= 0 the guard folds the address to -1, and the out-of-range read retur
 Push:
 
 ```text
-x = spush(s, 5)
+x = stack_push(s, 5)
 ```
 
 ```text
@@ -73,13 +75,13 @@ The memory write and full check live in the shared injected function `__ls_built
 
 | Operation | Complexity |
 | --- | --- |
-| spush / spop / speek / ssize / sclear | O(1) |
+| stack_push / stack_pop / stack_top / stack_size / stack_clear | O(1) |
 
 ## Caveats
 
-- Empty stack: spop / speek return NaN. spop keeps top at max(top-1, 0).
-- Full stack: spush returns the current size and does not write; it never overwrites existing elements.
-- State is not persisted: `__ls_stk_s_top` resets to 0 on reload. Starting empty is safe; call sclear(s) if old memory data should be discarded.
+- Empty stack: stack_pop / stack_top return NaN. stack_pop keeps top at max(top-1, 0).
+- Full stack: stack_push returns the current size and does not write; it never overwrites existing elements.
+- State is not persisted: `__ls_stk_s_top` resets to 0 on reload. Starting empty is safe; call stack_clear(s) if old memory data should be discarded.
 - Capacity: base + size beyond the block capacity is a compile error; the range is [base, base+size).
 - Overlaps with other structures in the same memory block are not rejected automatically.
 - The name must not collide with other structures or user functions; the __ls_ prefix is reserved.

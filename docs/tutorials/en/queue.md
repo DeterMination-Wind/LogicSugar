@@ -26,13 +26,15 @@ Invariant: tail == (head + count) % size.
 
 | Function | Arguments | Returns | Notes |
 | --- | --- | --- | --- |
-| `qpush(q, v)` | queue, value | new size | full: returns current size and does not write |
-| `qpop(q)` | queue | head value | empty: NaN; removes it |
-| `qpeek(q)` | queue | head value | empty: NaN; does not remove |
-| `qsize(q)` | queue | element count | O(1) |
-| `qclear(q)` | queue | 0 | clears head/tail/count |
+| `queue_push(q, v)` | queue, value | new size | full: returns current size and does not write |
+| `queue_pop(q)` | queue | head value | empty: NaN; removes it |
+| `queue_front(q)` | queue | head value | empty: NaN; does not remove |
+| `queue_size(q)` | queue | element count | O(1) |
+| `queue_clear(q)` | queue | 0 | clears head/tail/count |
 
-Sugar: `q.front()` / `q.peek()` equal `qpeek(q)`; `q.size()` / `q.count()` equal `qsize(q)`.
+> Note: the editor menus and cards use the new names (e.g. `queue_push`); the old short names (e.g. `qpush`) still parse in existing saves, and new cards are always written with the new names.
+
+Sugar: `q.front()` / `q.peek()` equal `queue_front(q)`; `q.size()` / `q.count()` equal `queue_size(q)`.
 
 ## Lowered examples
 
@@ -76,14 +78,14 @@ op add x __ls_que_q_count 0
 
 | Operation | Complexity |
 | --- | --- |
-| qpush / qpop / qpeek / qsize / qclear | O(1) |
+| queue_push / queue_pop / queue_front / queue_size / queue_clear | O(1) |
 
 ## Caveats
 
-- Empty queue: qpop / qpeek return NaN and leave head/count unchanged.
-- Full queue: qpush returns the current size and does not write.
+- Empty queue: queue_pop / queue_front return NaN and leave head/count unchanged.
+- Full queue: queue_push returns the current size and does not write.
 - head and tail wrap with % size; the tail variable is a cache of (head + count) % size.
-- State is not persisted: head/tail/count reset to 0 on reload. Starting empty is safe; call qclear(q) if old data should be discarded.
+- State is not persisted: head/tail/count reset to 0 on reload. Starting empty is safe; call queue_clear(q) if old data should be discarded.
 - Capacity: base + size beyond the block capacity is a compile error; the range is [base, base+size).
 - Overlaps with other structures are not rejected automatically.
 
