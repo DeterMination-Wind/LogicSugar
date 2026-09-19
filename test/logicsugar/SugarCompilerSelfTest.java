@@ -833,15 +833,64 @@ public class SugarCompilerSelfTest{
         check(missingRight.contains("[#ff5555]([]") && missingLeft.contains("[#ff5555])[]"),
             "unmatched bracket did not use error color: " + missingRight + " / " + missingLeft);
 
-        // 数组下标是合法表达式：方括号参与词法高亮，同时仍需转义富文本方括号。
+        // 数组下标是合法表达式：方括号参与词法高亮，且富文本里只有 `[` 需要转义
+        // （Arc 把 `[[` 渲染成一个 `[`）。`]` 是普通字符，转义成 `]]` 会多显示一个 `]`：
+        // 回归——`result = list[1]` 在卡片上显示成 `list[1]]`。
         String array = "a[b]";
         String arrayHighlight = ExprStatement.highlight(array);
         check(arrayHighlight.contains("[white]a[]")
                 && arrayHighlight.contains("[white]b[]")
                 && arrayHighlight.contains("[lightgray]")
-                && arrayHighlight.contains("[[")
-                && arrayHighlight.contains("]]"),
+                && arrayHighlight.contains("[["),
             "array brackets were not highlighted or escaped: " + arrayHighlight);
+
+        // 高亮后的可见文本必须与用户输入逐字相同（去掉颜色标记、还原 `[[` 转义）
+        highlightTextIsUnchanged();
+    }
+
+    /**
+     * "显示模式"（折叠态 Label）里看到的就是用户键入的表达式：把高亮串按 Arc 的标记规则还原成
+     * 可见文本后必须逐字相同。回归：`result = list[1]` 曾显示成 `result = list[1]]`，因为
+     * 高亮把 `]` 也转义成了 `]]`（Arc 只认 `[[` 这一个转义）。
+     */
+    private static void highlightTextIsUnchanged(){
+        String[] rendered = {
+            "a[b]", "list[1]", "m[i][j]", "buf[i + 1] * 2", "x = list[1]",
+            "p.hp", "unit.Health", "cos(a) * 2.5", "(a + b) * 2", "a[", "a]",
+            "foo((a), max(1, 2))", "list[index]", "map.get(k)", "a[]b"
+        };
+        for(String expression : rendered){
+            check(visible(ExprStatement.highlight(expression)).equals(expression),
+                "highlighting changed the visible text of '" + expression + "': "
+                    + visible(ExprStatement.highlight(expression)));
+        }
+    }
+
+    /**
+     * 高亮串 → 玩家实际看到的文本：按 Arc 的标记规则去掉 {@code [tag]}、把 {@code [[} 还原成
+     * 一个字面量 {@code [}（`]` 不加转义）。用它断言"显示模式"下表达式逐字可见。
+     */
+    private static String visible(String highlighted){
+        StringBuilder out = new StringBuilder(highlighted.length());
+        for(int i = 0; i < highlighted.length(); i++){
+            char c = highlighted.charAt(i);
+            if(c != '['){
+                out.append(c);
+                continue;
+            }
+            if(i + 1 < highlighted.length() && highlighted.charAt(i + 1) == '['){
+                out.append('[');
+                i++;
+                continue;
+            }
+            int end = highlighted.indexOf(']', i + 1);
+            if(end < 0){
+                out.append(c);
+                continue;
+            }
+            i = end; // 整段 `[tag]` 被解析器吞掉，不显示
+        }
+        return out.toString();
     }
 
     private static void returnExprRedMark(){

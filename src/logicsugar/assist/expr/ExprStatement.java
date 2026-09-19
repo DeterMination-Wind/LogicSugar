@@ -159,8 +159,9 @@ public class ExprStatement extends LStatement{
         Runnable updateLabel = () -> {
             if(lastError != null){
                 exprLabel.setColor(Color.scarlet);
-                // 转义 [ ] 防止富文本解析错误
-                String safe = lastError.replace("[", "[[").replace("]", "]]");
+                // 只转义 `[`（Arc 把 `[[` 渲染成一个 `[`）；`]` 是普通字符，转义成 `]]`
+                // 会在界面上多显示一个 `]`
+                String safe = lastError.replace("[", "[[");
                 errorLabel.setText("[#ff5555]" + safe);
                 errorLabel.visible = true;
             }else{
@@ -324,8 +325,10 @@ public class ExprStatement extends LStatement{
                 }else{
                     color = "lightgray";
                 }
-                // 富文本中 [ ] 需转义为 [[ ]]
-                String text = tok.text.replace("[", "[[").replace("]", "]]");
+                // 富文本里只有 `[` 需要转义：Arc 的标记解析把 `[[` 当作字面量 `[`，
+                // 而 `]` 本来就是普通字符——把 `]` 也转义成 `]]` 会在卡片上多显示一个 `]`
+                // （`result = list[1]` 显示成 `list[1]]`，见 highlightTextIsUnchanged 回归）。
+                String text = tok.text.replace("[", "[[");
                 sb.append("[").append(color).append("]").append(text).append("[]");
                 lastEnd = tok.start + tok.text.length();
             }
@@ -334,9 +337,9 @@ public class ExprStatement extends LStatement{
                 sb.append(expr, lastEnd, expr.length());
             }
         }catch(Exception e){
-            // 词法失败时原样返回（转义 [ ]），编辑态不能因中间输入抛异常。
+            // 词法失败时原样返回（只转义 `[`），编辑态不能因中间输入抛异常。
             sb.setLength(0);
-            sb.append(expr.replace("[", "[[").replace("]", "]]"));
+            sb.append(expr.replace("[", "[["));
         }
         return sb.toString();
     }

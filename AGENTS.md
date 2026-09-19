@@ -153,6 +153,12 @@ appeared to do nothing):
   `destIndex` stay untouched), which `ExprTextImport` turns back into the card on load. Multi-line
   cards keep relying on the `>= 2` fold threshold and deliberately carry no marker (collapsing
   N lines would shift indices). Add a fixture to `reconstructionMatrixTest` when the format changes.
+- **Rich-text escaping in the card display: escape `[` only.** `ExprStatement.highlight` wraps each
+  token in `[color]…[]`; Arc's markup parser treats `[[` as one literal `[` and leaves `]` alone,
+  so escaping `]` as `]]` renders an extra bracket on the card (`result = list[1]` showed as
+  `list[1]]`). The same rule applies to the card's error label. `selfTest`'s
+  `highlightTextIsUnchanged` case strips the markup and asserts the visible text equals what the
+  user typed — keep new display code on that rule.
 
 ## Data subsystem (arrays / matrix / record / containers / bitset / map / list / heap / chain)
 
