@@ -57,13 +57,13 @@ Declarations name structured memory regions. They are metadata only: every opera
 
 Array expressions can use subscripts such as `buf[i]` and `buf[i] = 5`; they compile to plain vanilla `read` and `write` instructions and fold back into the expression card on reopen. The source lines are pasteable as text as well: `array buf cell1 0 8` + `x = buf[3]` imports one declaration card and one Expr card.
 
-Every array and container intrinsic has its own persistent operation card, grouped into matching categories (Stack Operations, Queue Operations, Array Algorithms, and so on): `fill`, `sum`, `reverse`, `spush`, `qpop`, `dpushf`, `btest`, `mapset`, `uadd`, `lappend`, `hpush`, `cinit`, `cnew` and the rest. The old eight-slot `arrayinit` token remains load-compatible only. All operations still lower to plain vanilla instructions and reopen through the Sugar carrier. `sortasc` / `sortdesc` now use an in-place Shell sort, which is markedly faster than the previous insertion sort on random or reversed data.
+Every array and container intrinsic has its own persistent operation card, grouped into matching categories (Stack Operations, Queue Operations, Array Algorithms, and so on): `array_fill`, `array_sum`, `array_reverse`, `stack_push`, `queue_pop`, `deque_push_front`, `bitset_test`, `map_set`, `set_add`, `vector_push_back`, `heap_push`, `chain_init`, `chain_alloc` and the rest (renamed to C++ STL style in v5.2; old short names such as `spush` and `mapset` still parse). The old eight-slot `arrayinit` token remains load-compatible only. All operations still lower to plain vanilla instructions and reopen through the Sugar carrier. `array_sort` / `array_sort_desc` (formerly `sortasc` / `sortdesc`) now use an in-place Shell sort, which is markedly faster than the previous insertion sort on random or reversed data.
 
 Advanced tutorial: one chapter per structure, with declaration card, function table, lowered mlog walkthrough, complexity, and caveats. See [docs/tutorials/en/README.md](docs/tutorials/en/README.md).
 
 ### Data-structure getter sugar
 
-In Expr mode, a declared structure can use subscripts or method spellings for its getters. Index sugar is read-only — use `lset`, `bset`, or `cset` to write.
+In Expr mode, a declared structure can use subscripts or method spellings for its getters. Index sugar is read-only — use `vector_set`, `bitset_set`, or `chain_set` to write.
 
 | Structure | Supported spellings |
 | --- | --- |
@@ -76,7 +76,7 @@ In Expr mode, a declared structure can use subscripts or method spellings for it
 | `uset` | `s.has(v)`, `s.size()` |
 | `chain` | `c[i]`, `c.get(i)`, `c.head()`, `c.next(i)`, `c.len()` |
 
-They compile exactly like the corresponding intrinsic (`lget(l, i)`, `speek(s)`, and so on) and still lower to plain vanilla instructions.
+They compile exactly like the corresponding intrinsic (`vector_at(l, i)`, `stack_top(s)`, and so on) and still lower to plain vanilla instructions.
 
 ### Editor, debugging, and views
 

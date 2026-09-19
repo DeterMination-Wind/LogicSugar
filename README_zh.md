@@ -57,13 +57,13 @@ Logic Sugar 面向希望让逻辑更易读、更易修改、更易分享的 Mind
 
 数组表达式里可直接写 `buf[i]`、`buf[i] = 5` 这样的下标读写；它们编译为普通原版 `read`、`write` 指令，重新打开自动折回表达式卡。这些源码行也可以直接粘贴：`array buf cell1 0 8` + `x = buf[3]` 会导入一张声明卡和一张 Expr 卡。
 
-每一种 array / 容器 intrinsic 都有自己独立的操作积木，并按结构归入对应分类（栈操作、队列操作、数组算法等）：`fill`、`sum`、`reverse`、`spush`、`qpop`、`dpushf`、`btest`、`mapset`、`uadd`、`lappend`、`hpush`、`cinit`、`cnew` 等。旧八槽 `arrayinit` 只保留存档兼容。所有操作仍会降级为普通原版指令，并可通过 Sugar 载体重新打开。`sortasc` / `sortdesc` 已改为原地希尔排序，对随机或逆序数据明显快于以前的插入排序。
+每一种 array / 容器 intrinsic 都有自己独立的操作积木，并按结构归入对应分类（栈操作、队列操作、数组算法等）：`array_fill`、`array_sum`、`array_reverse`、`stack_push`、`queue_pop`、`deque_push_front`、`bitset_test`、`map_set`、`set_add`、`vector_push_back`、`heap_push`、`chain_init`、`chain_alloc` 等（v5.2 起改用 C++ STL 风格命名，旧短名如 `spush`、`mapset` 仍可解析）。旧八槽 `arrayinit` 只保留存档兼容。所有操作仍会降级为普通原版指令，并可通过 Sugar 载体重新打开。`array_sort` / `array_sort_desc`（旧名 `sortasc` / `sortdesc`）已改为原地希尔排序，对随机或逆序数据明显快于以前的插入排序。
 
 每种数据结构都有一章高级教程：声明卡、函数速查表、转译后的 mlog 逐行解释、复杂度与使用须知。从 [教程目录](docs/tutorials/README.md) 开始。
 
 ### 数据结构 getter 语法糖
 
-Expr 模式下，已声明结构可以用下标或方法写法替代 getter intrinsic。下标糖只读，写请用 `lset`、`bset`、`cset`。
+Expr 模式下，已声明结构可以用下标或方法写法替代 getter intrinsic。下标糖只读，写请用 `vector_set`、`bitset_set`、`chain_set`。
 
 | 结构 | 支持的写法 |
 | --- | --- |
@@ -76,7 +76,7 @@ Expr 模式下，已声明结构可以用下标或方法写法替代 getter intr
 | `uset` | `s.has(v)`、`s.size()` |
 | `chain` | `c[i]`、`c.get(i)`、`c.head()`、`c.next(i)`、`c.len()` |
 
-它们与对应的 intrinsic（如 `lget(l, i)`、`speek(s)`）完全等价，仍会降级为普通原版指令。
+它们与对应的 intrinsic（如 `vector_at(l, i)`、`stack_top(s)`）完全等价，仍会降级为普通原版指令。
 
 ### 编辑器、调试与视图
 
