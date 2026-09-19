@@ -1,5 +1,6 @@
 .gradle/
 build/
+构建/
 cache/
 out/
 local.properties
