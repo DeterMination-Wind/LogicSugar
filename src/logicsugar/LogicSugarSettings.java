@@ -54,10 +54,11 @@ public final class LogicSugarSettings{
         }
     }
 
-    /** Checkbox for hiding compiler-generated variables in MindustryX's variable browser. */
+    /** Checkbox for hiding compiler-generated variables in MindustryX's variable viewers. */
     static void addHideVarsPref(SettingsMenuDialog.SettingsTable table){
         table.checkPref(logicsugar.assist.VarDisplayFilter.settingHideVars, true, b -> {
-            if(b) logicsugar.assist.VarDisplayFilter.applyToAll();
+            // Both directions: turning the setting off must restore the full arrays at once.
+            logicsugar.assist.VarDisplayFilter.applyToAll();
         });
     }
 
