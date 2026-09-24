@@ -6,6 +6,7 @@ import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprHook;
 import logicsugar.assist.expr.ExprStatement;
 import mindustry.Vars;
+import mindustry.gen.Building;
 import mindustry.logic.LStatements.ReadStatement;
 import mindustry.logic.LStatements.WriteStatement;
 import mindustry.logic.SugarStatements.ArrayStatement;
@@ -68,6 +69,7 @@ public class ArraySugarTest{
         arrayInitErrors();
         emitModeEmitsBoundsAsserts();
         memoryCapacityLimits();
+        resolvedMemoryCapacity();
         newCardsOutputIsPureVanilla();
         // ===== F3: matrix fold + expression-path bounds asserts =====
         matrixFoldRoundTrip();
@@ -542,6 +544,88 @@ public class ArraySugarTest{
             && ArrayRegistry.memoryCapacity("vault1") == -1
             && ArrayRegistry.memoryCapacity("cell") == -1
             && ArrayRegistry.memoryCapacity(null) == -1, "memoryCapacity misclassifies block names");
+        // the heuristic is a guess, not a fact: this headless run has no processor context, so
+        // every name reports the inferred source and the >0 results still drive the check
+        check(ArrayRegistry.capacitySource("cell1") == ArrayRegistry.CapacitySource.inferred,
+            "capacity source without a processor should be inferred");
+        check(ArrayRegistry.capacityOf("cell1") == 64 && ArrayRegistry.capacityOf("vault1") == -1,
+            "capacityOf without a resolver should fall back to the name table");
+    }
+
+    // ===== #14: real capacity from the processor's linked memory block =====
+
+    /**
+     * Issue #14: a memory variable's capacity must come from the block it is linked to, not from
+     * its name. Vanilla names links after the last '-' of the block name (dropping a trailing
+     * {@code large}/number), so a <b>world-cell</b> — 512 slots — is linked as {@code cellN} and
+     * the name heuristic capped every {@code cell}-prefixed variable at 64. A resolved capacity
+     * must override the heuristic in both directions: it removes the false rejection and it
+     * tightens the false acceptance.
+     */
+    private static void resolvedMemoryCapacity(){
+        // (a) the world-cell collision: a `cellN` variable linked to a 512-slot block now accepts
+        //     the range the name heuristic rejected
+        withLinks(FakeLinks.cap("cell1", 512), () -> {
+            compile("array a cell1 400 100\nset x 1\n", SugarCompiler.AssertEmit.strip);
+            check(ArrayRegistry.capacityOf("cell1") == 512,
+                "a linked 512-slot cell1 was not resolved to its real capacity");
+            check(ArrayRegistry.capacitySource("cell1") == ArrayRegistry.CapacitySource.linked,
+                "a resolved capacity was still reported as inferred");
+            check(ArrayRegistry.resolvedCapacity("cell1") == 512,
+                "resolvedCapacity did not report the linked block's capacity");
+        });
+        // the same declaration is still rejected with no processor context (name heuristic only)
+        checkCompileThrows("array a cell1 400 100\nset x 1\n", "cell1 with only the name heuristic");
+
+        // (b) resolved capacity also tightens: a cellN linked to a 64-slot block keeps its limit
+        withLinks(FakeLinks.cap("cell1", 64), () ->
+            checkCompileThrows("array a cell1 57 8\nset x 1\n", "linked 64-slot cell1 overflow"));
+        // (c) a bankN variable linked to a small block is now rejected on the real capacity
+        withLinks(FakeLinks.cap("bank1", 64), () ->
+            checkCompileThrows("array a bank1 60 8\nset x 1\n", "bank1 linked to a 64-slot block"));
+
+        // (d) a linked NON-memory block is a definite "not addressable memory": the check is
+        //     skipped, and the name heuristic must NOT be applied on top of that knowledge
+        withLinks(FakeLinks.notMemory("cell1"), () -> {
+            compile("array a cell1 400 100\nset x 1\n", SugarCompiler.AssertEmit.strip);
+            check(ArrayRegistry.capacitySource("cell1") == ArrayRegistry.CapacitySource.notMemory,
+                "a linked non-memory block should report the notMemory capacity source");
+            check(ArrayRegistry.capacityOf("cell1") == 0,
+                "a linked non-memory block must not fall back to the name heuristic");
+        });
+        // an unresolved variable (no link at all) falls back to the heuristic: a memory-shaped
+        // name keeps its guessed cap, and a non-memory-shaped name still skips the check
+        withLinks(FakeLinks.none(), () -> {
+            checkCompileThrows("array a cell1 400 100\nset x 1\n",
+                "unresolved cell1 should keep the inferred 64-slot cap");
+            compile("array a aliased 400 100\nset x 1\n", SugarCompiler.AssertEmit.strip);
+            check(ArrayRegistry.resolvedCapacity("bank1") == -1,
+                "an unresolved variable should report no resolved capacity");
+            check(ArrayRegistry.capacitySource("bank1") == ArrayRegistry.CapacitySource.inferred,
+                "an unresolved memory-shaped name should report the inferred source");
+            check(ArrayRegistry.capacitySource("aliased") == ArrayRegistry.CapacitySource.unknown,
+                "an unresolved non-memory-shaped name should report an unknown source");
+        });
+
+        // (e) an inferred capacity is worded as a guess; a resolved one is stated as fact
+        withLinks(FakeLinks.cap("cell1", 8), () -> {
+            String resolved = compileError("array a cell1 0 16\nset x 1\n");
+            check(resolved.contains("only has 8 slots") && !resolved.contains("inferred"),
+                "a resolved capacity error should state the real number: " + resolved);
+        });
+        String inferred = compileError("array a cell1 57 8\nset x 1\n");
+        check(inferred.contains("only has 64 slots") && inferred.contains("inferred"),
+            "an inferred capacity error should be marked as inferred: " + inferred);
+
+        // (f) the container modules see the same resolved capacity (shared ArrayRegistry path)
+        withLinks(FakeLinks.cap("cell1", 512), () ->
+            compile("uset s cell1 400 100\nset x 1\n", SugarCompiler.AssertEmit.strip));
+
+        // (g) the resolver context is try/finally paired and restores to "no processor"
+        ArrayRegistry.LinkResolver previous = ArrayRegistry.enterLinkResolver(FakeLinks.cap("cell1", 512));
+        ArrayRegistry.restoreLinkResolver(previous);
+        check(ArrayRegistry.resolvedCapacity("cell1") == -1, "the resolver context leaked after restore");
+        check(ArrayRegistry.capacityOf("cell1") == 64, "capacity after restore should be the heuristic");
     }
 
     // ===== F1 v2: vanilla product =====
@@ -861,9 +945,8 @@ public class ArraySugarTest{
         return SugarCompiler.stripMarkers(compile(sugar, emit));
     }
 
-    /** Enters a strict registry built from the given declaration card(s); try/finally paired. */
-    private static void withRegistry(String declarations, Runnable body){
-        ArrayRegistry registry = ArrayRegistry.compileRegistry(LAssembler.read(declarations, true), null);
+    /** Enters a registry built from the given declaration card(s); try/finally paired. */
+    private static void withRegistry(String declarations, Runnable body){        ArrayRegistry registry = ArrayRegistry.compileRegistry(LAssembler.read(declarations, true), null);
         ArrayRegistry previous = ArrayRegistry.enter(registry);
         try{
             body.run();
@@ -971,5 +1054,62 @@ public class ArraySugarTest{
 
     private static void check(boolean condition, String message){
         if(!condition) throw new AssertionError(message);
+    }
+
+    // ===== #14 helpers =====
+
+    /** Enters a fake link resolver for one test body; try/finally paired. */
+    private static void withLinks(ArrayRegistry.LinkResolver resolver, Runnable body){
+        ArrayRegistry.LinkResolver previous = ArrayRegistry.enterLinkResolver(resolver);
+        try{
+            body.run();
+        }finally{
+            ArrayRegistry.restoreLinkResolver(previous);
+        }
+    }
+
+    /** The compile error message for a program, or "" when it compiles. */
+    private static String compileError(String sugar){
+        try{
+            compile(sugar, SugarCompiler.AssertEmit.strip);
+            return "";
+        }catch(IllegalArgumentException exception){
+            return String.valueOf(exception.getMessage());
+        }
+    }
+
+    /** Fake processor links: capacities by variable name, no real Building required. */
+    private static final class FakeLinks implements ArrayRegistry.LinkResolver{
+        private final java.util.Map<String, Integer> capacities = new java.util.HashMap<>();
+
+        /** A variable linked to a memory block of the given capacity. */
+        static FakeLinks cap(String name, int capacity){
+            FakeLinks result = new FakeLinks();
+            result.capacities.put(name, capacity);
+            return result;
+        }
+
+        /** A variable linked to a block that is not a memory block. */
+        static FakeLinks notMemory(String name){
+            FakeLinks result = new FakeLinks();
+            result.capacities.put(name, 0);
+            return result;
+        }
+
+        /** A processor that links nothing. */
+        static FakeLinks none(){
+            return new FakeLinks();
+        }
+
+        @Override
+        public Building linkedBuilding(String memory){
+            return null;
+        }
+
+        @Override
+        public int capacity(String memory){
+            Integer value = capacities.get(memory);
+            return value == null ? -1 : value;
+        }
     }
 }

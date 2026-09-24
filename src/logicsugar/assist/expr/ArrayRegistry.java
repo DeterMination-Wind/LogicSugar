@@ -2,13 +2,18 @@ package logicsugar.assist.expr;
 
 import arc.scene.Element;
 import arc.struct.Seq;
+import mindustry.Vars;
+import mindustry.gen.Building;
 import mindustry.logic.LCanvas;
+import mindustry.logic.LExecutor;
 import mindustry.logic.LStatement;
 import mindustry.logic.SugarCanvas;
 import mindustry.logic.SugarFunctions;
+import mindustry.logic.SugarLogicDialog;
 import mindustry.logic.SugarStatements.ArrayInitStatement;
 import mindustry.logic.SugarStatements.ArrayStatement;
 import mindustry.logic.SugarStatements.MatrixStatement;
+import mindustry.world.blocks.logic.MemoryBlock;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -266,16 +271,22 @@ public final class ArrayRegistry{
     }
 
     private static void checkCapacity(int index, String card, String name, String memory, long end){
-        int capacity = memoryCapacity(memory);
+        int capacity = capacityOf(memory);
         if(capacity > 0 && end > capacity){
-            throw error(card, index, "'" + name + "' needs addresses up to " + (end - 1)
-                + ", but memory '" + memory + "' only has " + capacity + " slots");
+            throw error(card, index, "'" + name + "' needs addresses up to "
+                + capacityExceeded(memory, end, capacity));
         }
     }
 
     /**
      * 逻辑内存块容量：{@code cellN} → 64，{@code bankN}/{@code worldN} → 512
      * （大小写不敏感，N 必须是数字）；其它名字返回 -1 表示跳过容量检查。
+     *
+     * <p><b>这是按名字猜的回落值，不是事实。</b>变量名与方块之间没有绑定关系：原版
+     * {@code LogicBlock.getLinkName} 取方块名最后一个 '-' 之后的部分，所以 world-cell 的
+     * 变量名同样是 {@code cellN}（它有 512 格，这里却猜 64）。能用 {@link #capacityOf} 拿到
+     * 真实链接时就以真实容量为准；这个表只在无处理器上下文（无头自测、脱离处理器的编辑）
+     * 时兜底。
      */
     public static int memoryCapacity(String memory){
         if(memory == null) return -1;
@@ -284,6 +295,165 @@ public final class ArrayRegistry{
         if(name.startsWith("bank")) return digitsOnly(name.substring(4)) ? 512 : -1;
         if(name.startsWith("world")) return digitsOnly(name.substring(5)) ? 512 : -1;
         return -1;
+    }
+
+    // ===== 真实容量解析（处理器链接） =====
+
+    /** 容量数值的来源，决定错误措辞：解析到真实链接就不能把猜的数字说成事实。 */
+    public enum CapacitySource{
+        /** 由处理器当前链接的方块解析出的真实容量。 */
+        linked,
+        /** {@link #memoryCapacity} 按变量名猜出的容量。 */
+        inferred,
+        /** 已确认不是可寻址的内存块：跳过检查。 */
+        notMemory,
+        /** 无从判断（未知名字且无链接）：跳过检查。 */
+        unknown
+    }
+
+    /** 把变量名解析成它当前链接的方块；返回 null 表示解析不到。 */
+    public interface LinkResolver{
+        Building linkedBuilding(String memory);
+
+        /**
+         * 该变量链接到的内存块容量。三态：
+         * <ul>
+         *   <li>{@code > 0}：解析到真实内存块，按此容量检查；</li>
+         *   <li>{@code 0}：解析到了方块，但它不是可寻址的内存块 —— 确定不该限制；</li>
+         *   <li>{@code < 0}：解析不到（无链接、变量缺失），调用方回落名字启发式。</li>
+         * </ul>
+         */
+        int capacity(String memory);
+
+        /** 延迟提供解析器：提交/渲染时按需取当前会话的处理器，取不到就是"没有上下文"。 */
+        interface Provider{
+            LinkResolver resolve();
+        }
+    }
+
+    private static LinkResolver.Provider linkResolverProvider;
+    private static LinkResolver linkResolver;
+
+    /** 安装延迟解析器提供者（mod 启动时调用一次）。 */
+    public static void setLinkResolverProvider(LinkResolver.Provider provider){
+        linkResolverProvider = provider;
+    }
+
+    /** 进入解析器上下文，返回先前的解析器供 {@link #restoreLinkResolver} 恢复（须 try/finally 配对）。 */
+    public static LinkResolver enterLinkResolver(LinkResolver resolver){
+        LinkResolver previous = linkResolver;
+        linkResolver = resolver;
+        return previous;
+    }
+
+    /** 恢复 {@link #enterLinkResolver} 返回的先前解析器。 */
+    public static void restoreLinkResolver(LinkResolver previous){
+        linkResolver = previous;
+    }
+
+    /** 当前解析器：显式上下文优先，否则按需取当前会话的处理器（渲染期也走这条）。 */
+    private static LinkResolver linkResolver(){
+        LinkResolver context = linkResolver;
+        if(context != null) return context;
+        LinkResolver.Provider provider = linkResolverProvider;
+        if(provider == null) return null;
+        try{
+            return provider.resolve();
+        }catch(Throwable t){
+            // 无头自测环境（Vars.ui 未初始化等）：视同没有处理器上下文
+            return null;
+        }
+    }
+
+    /**
+     * 真实容量：解析 {@code memory} 链接到的方块，是逻辑内存块就返回它的
+     * {@link MemoryBlock#memoryCapacity}。解析不到返回 -1（调用方回落 {@link #memoryCapacity}），
+     * 解析到但不是内存块返回 0（确定不该限制）。
+     *
+     * <p>读缓存按变量名存活在一次解析器实例内（容量是方块类型属性，不会变），所以画布渲染
+     * 期间每个名字最多查一次链接。
+     */
+    public static int resolvedCapacity(String memory){
+        LinkResolver resolver = linkResolver();
+        if(resolver == null || memory == null) return -1;
+        return resolver.capacity(memory);
+    }
+
+    /**
+     * 最终容量口径：能解析到链接就以链接为准，否则回落名字启发式。{@code > 0} 才执行检查。
+     *
+     * <p>保守方向很重要：解析到"存在链接但不是内存块"（0）时**不**回落启发式——那样会拿一个
+     * 猜的数字去拒绝一个确定的非内存目标；只有完全解析不到（-1）才用名字兜底。
+     */
+    public static int capacityOf(String memory){
+        int resolved = resolvedCapacity(memory);
+        if(resolved > 0) return resolved;
+        if(resolved == 0) return 0;
+        return memoryCapacity(memory);
+    }
+
+    /** {@link #capacityOf} 的数值来源。 */
+    public static CapacitySource capacitySource(String memory){
+        int resolved = resolvedCapacity(memory);
+        if(resolved > 0) return CapacitySource.linked;
+        if(resolved == 0) return CapacitySource.notMemory;
+        return memoryCapacity(memory) > 0 ? CapacitySource.inferred : CapacitySource.unknown;
+    }
+
+    /** 容量越界错误：解析到真实链接就直说，猜的要标明是推断值。 */
+    public static String capacityExceeded(String memory, long end, int capacity){
+        String detail = (end - 1) + ", but memory '" + memory + "' only has " + capacity + " slots";
+        if(capacitySource(memory) == CapacitySource.linked) return detail;
+        return detail + " (inferred from the variable name; no linked memory block was found)";
+    }
+
+    /** 当前的处理器链接解析器；无处理器上下文（函数库会话、无头自测）返回 null。 */
+    public static LinkResolver processorLinks(){
+        try{
+            if(Vars.ui == null || !(Vars.ui.logic instanceof SugarLogicDialog dialog)) return null;
+            LExecutor executor = dialog.executor;
+            return executor == null ? null : new ExecutorLinks(executor);
+        }catch(Throwable t){
+            // 无头自测环境（Vars.ui 未初始化等）：视同没有处理器上下文
+            return null;
+        }
+    }
+
+    /** 处理器执行器的解析实现：按需读执行器变量表，把方块链接变成容量值。 */
+    private static final class ExecutorLinks implements LinkResolver{
+        private final LExecutor executor;
+        private final Map<String, Integer> capacities = new java.util.HashMap<>();
+
+        ExecutorLinks(LExecutor executor){
+            this.executor = executor;
+        }
+
+        @Override
+        public Building linkedBuilding(String memory){
+            if(executor.build == null) return null;
+            return executor.build.optionalLink(memory);
+        }
+
+        @Override
+        public int capacity(String memory){
+            if(capacities.containsKey(memory)) return capacities.get(memory);
+            int capacity = -1;
+            try{
+                Building building = linkedBuilding(memory);
+                if(building != null){
+                    // linked to a live block: a memory block gives its real capacity, anything
+                    // else is a definite "not addressable memory" (do not guess from the name)
+                    capacity = building.isValid() && building.block instanceof MemoryBlock memoryBlock
+                        ? memoryBlock.memoryCapacity
+                        : 0;
+                }
+            }catch(Throwable t){
+                // 链接查询失败时按"无法解析"处理，回落名字启发式
+                capacity = -1;
+            }
+            capacities.put(memory, capacity);
+            return capacity;
+        }
     }
 
     private static boolean digitsOnly(String value){
@@ -386,7 +556,7 @@ public final class ArrayRegistry{
                     || names.contains(name)
                     || (functionNames != null && functionNames.contains(name));
                 if(!bad && base != null && size != null){
-                    int capacity = memoryCapacity(memory);
+                    int capacity = capacityOf(memory);
                     bad = capacity > 0 && base + size > capacity;
                 }
                 if(!bad){
@@ -418,7 +588,7 @@ public final class ArrayRegistry{
                 long area = (!bad) ? rows * cols : 0;
                 if(!bad && area > Integer.MAX_VALUE) bad = true;
                 if(!bad){
-                    int capacity = memoryCapacity(memory);
+                    int capacity = capacityOf(memory);
                     bad = capacity > 0 && base + area > capacity;
                 }
                 if(!bad){

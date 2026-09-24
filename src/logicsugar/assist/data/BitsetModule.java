@@ -220,10 +220,10 @@ public class BitsetModule extends DataModule{
             return "bitset '" + name + "' words must be an integer literal of at least 1, got '" + card.words + "'";
         }
         long end = base + words;
-        int capacity = ArrayRegistry.memoryCapacity(memory);
+        int capacity = ArrayRegistry.capacityOf(memory);
         if(capacity > 0 && end > capacity){
-            return "bitset '" + name + "' needs addresses up to " + (end - 1)
-                + ", but memory '" + memory + "' only has " + capacity + " slots";
+            return "bitset '" + name + "' needs addresses up to "
+                + ArrayRegistry.capacityExceeded(memory, end, capacity);
         }
         List<long[]> existing = spans.get(memory);
         if(existing != null){

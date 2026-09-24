@@ -27,6 +27,7 @@ import logicsugar.assist.data.ListHeapModule;
 import logicsugar.assist.data.MapModule;
 import logicsugar.assist.data.RecordModule;
 import logicsugar.assist.data.SetModule;
+import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprHook;
 
 import static arc.Events.on;
@@ -40,6 +41,12 @@ public class LogicSugarMod extends Mod{
     public void init(){
         registerStatements();
         SugarFunctions.setLibrarySource(FunctionLibrary::index);
+        // Data-structure declarations check their slot range against the real capacity of the
+        // memory block the variable is linked to (world-cell is linked as `cellN` but holds 512
+        // slots, so the name alone is not evidence). Resolved lazily per use: the function
+        // library session and headless self-tests have no processor and fall back to the name
+        // heuristic inside ArrayRegistry.
+        ArrayRegistry.setLinkResolverProvider(ArrayRegistry::processorLinks);
         on(ClientLoadEvent.class, event -> Core.app.post(() -> {
             if(Vars.ui != null && !(Vars.ui.logic instanceof SugarLogicDialog)){
                 LogicDialog old = Vars.ui.logic;

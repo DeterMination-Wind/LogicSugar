@@ -449,7 +449,7 @@ public class ContainerModule extends DataModule{
                 || externalNames.contains(name)
                 || (functionNames != null && functionNames.contains(name));
             if(!bad){
-                int capacity = ArrayRegistry.memoryCapacity(memory);
+                int capacity = ArrayRegistry.capacityOf(memory);
                 bad = capacity > 0 && base + size > capacity;
             }
             if(!bad){
@@ -513,10 +513,10 @@ public class ContainerModule extends DataModule{
     }
 
     private static void checkCapacity(String kind, int index, String name, String memory, long end){
-        int capacity = ArrayRegistry.memoryCapacity(memory);
+        int capacity = ArrayRegistry.capacityOf(memory);
         if(capacity > 0 && end > capacity){
-            throw error(kind, index, "'" + name + "' needs addresses up to " + (end - 1)
-                + ", but memory '" + memory + "' only has " + capacity + " slots");
+            throw error(kind, index, "'" + name + "' needs addresses up to "
+                + ArrayRegistry.capacityExceeded(memory, end, capacity));
         }
     }
 
