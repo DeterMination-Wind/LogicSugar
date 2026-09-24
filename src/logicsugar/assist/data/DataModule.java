@@ -159,7 +159,13 @@ public abstract class DataModule{
         StringBuilder out = new StringBuilder();
         for(int i = 0; i < arity; i++){
             if(i > 0) out.append(", ");
-            out.append(i == 0 ? first : "value").append(i > 1 ? i : "");
+            // Sequential names (value, value1, value2 …), not value, value2, value3: the second and
+            // later value slots have no dedicated bundle key (logicsugar.datacall.arg.value1 …), so
+            // whichever name is generated here falls back to the English placeholder. Keeping the
+            // sequence unbroken is what makes that fallback obvious when a new intrinsic lands on
+            // this default branch; an intrinsic that needs real labels must be added to the switch
+            // above (DataCallTest pins the 19-word name domain and their bundle keys).
+            out.append(i == 0 ? first : "value" + (i > 1 ? i - 1 : ""));
         }
         return out.toString();
     }

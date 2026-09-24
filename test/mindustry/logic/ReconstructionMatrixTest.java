@@ -322,6 +322,25 @@ public final class ReconstructionMatrixTest{
         check(SugarCompiler.verifyRestore(compiled, restored),
             "[" + fixture.name + "] verifyRestore rejected the restored carrier source");
 
+        // Entry skip: every sugar program's product must keep the compiler's own skip line inside
+        // main, and restore() must drop it again. Both halves matter and neither is visible from the
+        // carrier alone:
+        //   - without the skip in the product, execution starting at counter 0 runs off the end of
+        //     main into the carrier that follows it, re-executing the carrier every tick;
+        //   - if restore() handed the skip back, the editor would show a line the user never wrote.
+        // The skip is not necessarily the *last* statement of main: hoisted function bodies (and the
+        // jump that skips over them) are appended after it, so this checks for presence in main
+        // rather than position. Presence is still enough for the property that matters - the skip
+        // resets the counter, so nothing after main can ever be reached. Only products that carry
+        // sugar get the line at all; a program with no sugar cards returns early (see
+        // SugarCompiler.compile), and the carrier check above already proved this fixture has one.
+        String mainOnly = stripCarrierAndMarkers(compiled);
+        check(containsEntrySkipLine(mainOnly),
+            "[" + fixture.name + "] the product's main lost the entry skip line, so the carrier that "
+                + "follows it would be re-executed every tick.\nMain only:\n" + mainOnly);
+        check(!containsEntrySkipLine(restored),
+            "[" + fixture.name + "] restore() must drop the compiler's own entry skip line.\nRestored:\n" + restored);
+
         SugarDecompiler.Result carrier = SugarDecompiler.decompile(compiled, true);
         check(carrier.verified && "carrier".equals(carrier.matchedMode),
             "[" + fixture.name + "] decompiler did not take the carrier path: mode=" + carrier.matchedMode
@@ -338,14 +357,22 @@ public final class ReconstructionMatrixTest{
             check(inferred.sugar.contains(fixture.inferExpected),
                 "[" + fixture.name + "] inference lost expected text: " + fixture.inferExpected
                     + "\nRecovered:\n" + inferred.sugar);
-            checks++;
+            checks += 2;
         }
-        checks += 4;
+        checks += 6;
     }
 
     private static String compile(String sugar){
         return SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, null, null,
             SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
+    }
+
+    /** Whether any line of {@code text} is exactly the compiler's own entry skip statement. */
+    private static boolean containsEntrySkipLine(String text){
+        for(String line : text.replace("\r\n", "\n").split("\n", -1)){
+            if(line.trim().equals(SugarCompiler.entrySkipLine)) return true;
+        }
+        return false;
     }
 
     private static String stripCarrierAndMarkers(String code){

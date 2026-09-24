@@ -112,7 +112,7 @@ public final class SugarCoexist{
 
     /**
      * 把 {@code dialog} 的画布换成共存画布。返回 {@code false} 表示换不进去（布局里找不到画布所在
-     * 的单元格，或读不到保存路径）——调用方<b>必须</b>回落到接管档。
+     * 的单元格、读不到保存路径，或对话框正开着）——调用方<b>必须</b>回落到接管档。
      */
     public static boolean install(LogicDialog dialog){
         if(dialog == null || dialog.canvas == null) return false;
@@ -125,6 +125,19 @@ public final class SugarCoexist{
         }
 
         if(!probeConsumer(dialog)) return false;
+
+        // 对话框正开着时换画布，本次会话的关闭路径会把**空画布**交出去：这一会话的 consumer 仍是
+        // 对方的裸保存回调（arm() 挂在 shown 监听上，只有本次 show 时画布已经是共存画布才会包一层），
+        // 而 dialog.canvas 此刻已经换成我们那张还没 load 过的空画布 ⇒ 关闭时
+        // consumer.get(canvas.save()) 把一个空程序写进处理器。
+        // 现在的 UI 流程（要进设置页得先关掉逻辑编辑器）把它挡住了，但保护不该只存在于流程里。
+        // 返回 false ⇒ 调用方回落到接管档。
+        if(dialog.isShown()){
+            Log.warn("LogicSugar: refusing to install the coexist canvas into the open editor '@'; "
+                + "close it and switch the mode again. Falling back to taking the editor over.",
+                dialog.getClass().getName());
+            return false;
+        }
 
         // 画布原来的 z 序必须在换之前记下来：Cell.setElement() 会把新元素追加到 children 末尾，
         // 还回去时要放回这一层（见 swapCanvas）。getZIndex() 就是"在父容器 children 里的位置"。
@@ -322,12 +335,21 @@ public final class SugarCoexist{
          */
         private void arm(LogicDialog dialog){
             Cons<String> next = readConsumer(dialog);
+            boolean alreadyOurs = next != null && next == compiled;
             // 「面板僵尸」这类问题只能在这里断案，所以这条日志把四个关键事实一次说清：监听有没有
             // 跑到（每次 show 都打，看到它说明监听还挂在对方对话框上）、画布还活不活、consumer
             // 换没换、executor 读没读到（读不到就不会去动面板）。
-            Log.info("LogicSugar: coexist arm on '@' (active=@, consumer=@, alreadyOurs=@, executor=@)",
-                dialog.getClass().getSimpleName(), active, next != null, next == compiled,
-                readExecutor(dialog) != null);
+            //
+            // 已经处于目标状态（consumer 就是我们包的那层）时只打 debug：正常路径每次 show 都会
+            // 走到这里两次，一直打 info 会把真正有用的那几条（状态真的变了、重绑失败）淹掉。
+            // 排查「面板僵尸」时把日志级别放开就能拿到它。
+            if(alreadyOurs){
+                Log.debug("LogicSugar: coexist arm on '@' (already armed; active=@, executor=@)",
+                    dialog.getClass().getSimpleName(), active, readExecutor(dialog) != null);
+            }else{
+                Log.info("LogicSugar: coexist arm on '@' (active=@, consumer=@, alreadyOurs=@, executor=@)",
+                    dialog.getClass().getSimpleName(), active, next != null, false, readExecutor(dialog) != null);
+            }
 
             // 这个画布已经被换下去了（用户切到了别的档位）：shown 监听注销不掉，靠这里失效。
             if(!active) return;
@@ -431,7 +453,9 @@ public final class SugarCoexist{
 
             try{
                 logicSupportBuild.invoke(null, this, executor, (Cons<String>)this::push);
-                Log.info("LogicSugar: rebound MindustryX's logic-support panel to LogicSugar's canvas.");
+                // 成功这条只在 debug：MindustryX 宿主上每次 show 都会重绑两次，常态路径不值得刷
+                // info；失败那条（下面的 warn）才是必须看得见的那一条。
+                Log.debug("LogicSugar: rebound MindustryX's logic-support panel to LogicSugar's canvas.");
             }catch(Throwable throwable){
                 // 不吞：面板坏了只有这里能看出来，而它的失效方式是"把糖文本写进处理器"，静默失败
                 // 等于把最危险的一种失败藏起来。反射失败也只是少一个可选功能，不影响编译路径。

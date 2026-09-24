@@ -4,11 +4,14 @@ import mindustry.logic.LExecutor;
 import mindustry.logic.LVar;
 
 import java.util.Arrays;
-import java.util.Comparator;
 
 /**
  * Clipboard dumps of the inspected processor's variables and print buffer. Ported from the
  * upstream MlogAssertions mod's LogicDialogAddon.
+ *
+ * <p>Sorting uses an explicit {@link java.util.Comparator} lambda rather than
+ * {@code Comparator.comparing}: the latter is API 24 and is not backported by D8 here (no
+ * core-library desugaring), so it would throw {@code NoSuchMethodError} on API 21-23 devices.</p>
  *
  * <p>The clipboard format is a fixed data layout (TSV with an ASCII header), not UI text: it is
  * meant to be pasted into a spreadsheet and sorted, so it is intentionally not localized — only
@@ -42,7 +45,7 @@ public final class VarClipboard{
         sbr.append("Variable\tValue\n");
         LVar[] sorted = new LVar[vars.length];
         System.arraycopy(vars, 0, sorted, 0, vars.length);
-        Arrays.sort(sorted, Comparator.comparing(v -> v.name));
+        Arrays.sort(sorted, (a, b) -> a.name.compareTo(b.name));
         for(LVar v : sorted){
             sbr.append(v.name).append('\t').append(valueToText(v)).append('\n');
         }

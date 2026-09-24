@@ -2,6 +2,7 @@ package mindustry.logic;
 
 import arc.Core;
 import arc.func.Cons;
+import arc.func.Func;
 import arc.func.Prov;
 import arc.input.KeyCode;
 import arc.scene.Element;
@@ -586,11 +587,15 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     /** Reads the live processor at click time (the session may have been re-shown in between),
-     *  copies the dump, then closes the menu like the compiled-copy action above it. */
-    private void copyInspection(java.util.function.Function<LExecutor, String> dump){
+     *  copies the dump, then closes the menu like the compiled-copy action above it.
+     *
+     *  <p>Uses {@link Func} rather than {@code java.util.function.Function}: the latter is API 24
+     *  and is not backported by D8 here (no core-library desugaring), so it would throw
+     *  {@code NoSuchMethodError}/{@code NoClassDefFoundError} on API 21-23 devices.</p> */
+    private void copyInspection(Func<LExecutor, String> dump){
         LExecutor current = executor;
         if(current == null) return;
-        Core.app.setClipboardText(dump.apply(current));
+        Core.app.setClipboardText(dump.get(current));
         if(cachedCopyDialog != null) cachedCopyDialog.hide();
         Vars.ui.showInfoFade("@logicsugar.copied");
     }

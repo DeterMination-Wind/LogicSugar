@@ -150,8 +150,12 @@ public final class SugarFunctions{
         }
     }
 
-    /** {@link #withLibraryLimit(Runnable)} for actions that return a value. */
-    public static <T> T withLibraryLimitValue(java.util.function.Supplier<T> action){
+    /** {@link #withLibraryLimit(Runnable)} for actions that return a value.
+     *
+     *  <p>Takes {@code arc.func.Prov} rather than {@code java.util.function.Supplier}: the latter
+     *  is API 24 and is not backported by D8 here (no core-library desugaring), so it would throw
+     *  {@code NoSuchMethodError} on API 21-23 devices.</p> */
+    public static <T> T withLibraryLimitValue(arc.func.Prov<T> action){
         int previous = LExecutor.maxInstructions;
         if(previous < libraryInstructionLimit) LExecutor.maxInstructions = libraryInstructionLimit;
         try{
