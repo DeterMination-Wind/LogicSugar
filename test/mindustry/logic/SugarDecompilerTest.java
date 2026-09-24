@@ -40,6 +40,7 @@ public final class SugarDecompilerTest{
         deletedCarrierDegradesToInference();
         staleCarrierRecoversFromInstructions();
         dynamicCounterStaysFlat();
+        entrySkipIsRecognisedOnlyAtTheEndOfMain();
         functionZoneViolationSkipsRecovery();
         functionStructuresSurviveZoneCheck();
         System.out.println("LogicSugar decompiler self-test passed.");
@@ -363,6 +364,43 @@ public final class SugarDecompilerTest{
         check(result.structured == 0, "dynamic @counter program claimed structure");
         check(result.notes.stream().anyMatch(note -> note.contains("@counter")),
             "dynamic @counter triage left no explanatory note: " + result.notes);
+    }
+
+    /**
+     * The entry skip ({@link SugarCompiler#entrySkipLine}) is the compiler's own statement only
+     * at the end of main, and that position is part of the shape: read on shape alone, any
+     * author's {@code set @counter 0} -- a counter reset inside a loop -- would count as
+     * known-safe and swallow the triage that keeps the structured views from burning their
+     * recovery attempts on a program they cannot express.
+     *
+     * <p>Both compiled layouts have to keep reading as the compiler's: the skip sits directly
+     * above the carriers, and with function bodies hoisted past the end of main there is also
+     * one prelude jump above them. If either stops being recognised, every saved program starts
+     * triaging to flat, so this pins the positions rather than the shapes alone.</p>
+     */
+    private static void entrySkipIsRecognisedOnlyAtTheEndOfMain(){
+        // No hoisted bodies: the skip sits directly above the carriers.
+        String plain = "ifbegin x greaterThan 0 4\nset y 1\nelse\nset y 2\nblockend\nprint y\n";
+        SugarDecompiler.Result flat = SugarDecompiler.decompile(SugarCompiler.compile(plain));
+        check(flat.notes.stream().noneMatch(note -> note.contains("dynamic @counter")),
+            "a compiled program tripped the dynamic @counter triage: " + flat.notes);
+
+        // Hoisted bodies: a prelude jump now sits between the skip and the carriers, and the
+        // bodies it spans are reached from their call sites rather than from main.
+        String withFunction = "set x 1\nfunccall f \"\" ~\nprint x\nfuncdef f ~ 5\nset inside 9\nblockend\n";
+        SugarDecompiler.Result hoisted = SugarDecompiler.decompile(SugarCompiler.compile(withFunction));
+        check(hoisted.notes.stream().noneMatch(note -> note.contains("dynamic @counter")),
+            "a compiled program with a hoisted function tripped the dynamic @counter triage: "
+                + hoisted.notes);
+
+        // The same statement among ordinary statements is a computed jump, not the entry skip.
+        String authored = "set x 1\nset @counter 0\nprint x\n";
+        SugarDecompiler.Result triaged = SugarDecompiler.decompile(authored);
+        check(triaged.verified, "mid-program @counter write was rejected: " + triaged.notes);
+        check("flat".equals(triaged.matchedMode),
+            "mid-program @counter write was not triaged flat: " + triaged.matchedMode);
+        check(triaged.notes.stream().anyMatch(note -> note.contains("@counter")),
+            "mid-program @counter triage left no explanatory note: " + triaged.notes);
     }
 
     /**

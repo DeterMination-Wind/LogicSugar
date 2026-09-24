@@ -80,6 +80,7 @@ public class SugarCompilerSelfTest{
         functionUnreachableCostsNothing();
         functionInstructionLimitHint();
         instructionBudgetDetectsOverLimit();
+        sourceAtParseLimitRejectsTheSave();
         functionProgramsExecute();
         libraryFunctions();
         libraryValidationRejected();
@@ -87,6 +88,7 @@ public class SugarCompilerSelfTest{
         libraryExtractionIsSelfContained();
         carrierSurvivesVanillaRoundTrip();
         restorePrefersCarrier();
+        entrySkipKeepsCarriersIdle();
         libraryEmbeddingRoundTrip();
         libraryMergeRebasesAppendedFunctions();
         verificationDetectsExternalEdits();
@@ -120,7 +122,7 @@ public class SugarCompilerSelfTest{
         check(compiled.contains("# @logic-sugar-line forbeginc"), "collapsed state was not persisted");
 
         Seq<LStatement> lowered = LAssembler.read(compiled, true);
-        check(lowered.size == 16, "unexpected lowered instruction count: " + lowered.size + " (15 lowered + 1 persistence carrier)");
+        check(lowered.size == 17, "unexpected lowered instruction count: " + lowered.size + " (16 lowered incl. the entry skip + 1 persistence carrier)");
         for(LStatement statement : lowered){
             check(statement.getClass().getEnclosingClass() != SugarStatements.class, "compiled program contains a sugar statement");
         }
@@ -550,10 +552,13 @@ public class SugarCompilerSelfTest{
         Vars.logicVars = new GlobalVars();
         Vars.logicVars.putEntry("false", 0);
         Vars.logicVars.putEntry("true", 1);
-        // statements: funcdef@0..2, funccall@3, switchbegin@4 (dest 8), case@5, set@6,
-        // break@7, blockend@8 -> default/break label stmt_9. In normal mode the hoisted-body
-        // prelude appends "jump __ls_end" directly under that label, so break/default rows
-        // and the default jump thread straight into it; inline has no hoist section.
+        // statements once the funcdef block is hoisted out of main: funccall@0,
+        // switchbegin@1 (dest 5), case@2, set@3, break@4, blockend@5 -> default/break label
+        // stmt_6, which is now the compiler's entry skip (main's last statement). The skip sits
+        // directly above the normal-mode hoist prelude, so there is no stacked always jump left
+        // for a switch exit to collapse into: a break or the default at the end of a program now
+        // reaches the skip -- counter back to 0 -- instead of running into the persistence
+        // carrier that sits after the emitted text. Inline has no hoist section at all.
         String sugar = """
             funcdef f ~ 2
             set flagK 7
@@ -569,12 +574,14 @@ public class SugarCompilerSelfTest{
         for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
             for(SugarCompiler.SwitchStrategy strategy : SugarCompiler.SwitchStrategy.values()){
                 String lowered = loweredCode(SugarCompiler.compile(sugar, mode, null, null, strategy));
+                check(lowered.contains("__ls_stmt_6:\nset @counter 0"),
+                    mode + "/" + strategy + ": switch exit does not land on the entry skip\n" + lowered);
+                check(lowered.contains("jump __ls_stmt_6 always x false"),
+                    mode + "/" + strategy + ": the switch default lost its exit target\n" + lowered);
                 long endJumps = lowered.lines().filter(l -> l.equals("jump __ls_end always x false")).count();
                 if(mode == SugarCompiler.FuncMode.normal){
-                    check(!lowered.contains("jump __ls_stmt_9 always x false"),
-                        mode + "/" + strategy + ": pre-threading default jump survived\n" + lowered);
-                    check(endJumps >= 2, mode + "/" + strategy + ": stacked default was not threaded ("
-                        + endJumps + " end jumps)\n" + lowered);
+                    check(endJumps == 1, mode + "/" + strategy
+                        + ": expected only the hoist prelude, got " + endJumps + " end jumps\n" + lowered);
                 }else{
                     check(endJumps == 0, mode + ": bodyless program must not emit the end jump");
                 }
@@ -1401,7 +1408,8 @@ public class SugarCompilerSelfTest{
             print main
             """, SugarCompiler.FuncMode.normal));
         check(!compiled.contains("__ls_func_f_entry"), "unreachable function body was hoisted");
-        check(compiled.equals("print main\n"), "unreachable function changed the main program");
+        check(compiled.equals("print main\n" + SugarCompiler.entrySkipLine + "\n"),
+            "unreachable function changed the main program");
     }
 
     private static void functionInstructionLimitHint(){
@@ -1453,18 +1461,128 @@ public class SugarCompilerSelfTest{
         check(passthrough.over(), "vanilla programs longer than the cap should still flag the budget");
     }
 
+    /**
+     * LParser stops after {@link LExecutor#maxInstructions} statements and drops the rest without a
+     * word (comments and blank lines are free), while the entry skip is appended to the source
+     * <em>before</em> parsing ({@link SugarCompiler#withEntrySkip}). Two different things are lost
+     * that way and both must be refused:
+     *
+     * <ul><li>the appended skip itself - and a carrier without it runs once per tick again, which is
+     * the exact bug the skip exists to prevent;</li>
+     * <li>the sugar, when the whole sugar body sits past the window: the parse then sees a plain
+     * vanilla head, and returning the source unchanged stored sugar text as though it had been
+     * compiled - no carrier, no skip, and text the vanilla parser cannot read.</li></ul>
+     *
+     * <p>The second case is the one the guard had to move for: it used to sit <em>after</em> the
+     * {@code containsSugar} early return, which a vanilla-looking head walks straight past. A long
+     * <em>vanilla</em> program is still none of the compiler's business and must pass through.</p>
+     */
+    private static void sourceAtParseLimitRejectsTheSave(){
+        // ① sugar in the head, skip dropped: 500 empty ifs = 1000 statements and ~500 instructions,
+        //    so the budget is nowhere near its limit and the parse-limit check is the only thing that
+        //    can fire.
+        StringBuilder overLimit = new StringBuilder();
+        for(int i = 0; i < 500; i++){
+            overLimit.append("ifbegin a equal 0 ").append(i).append('\n').append("blockend\n");
+        }
+        try{
+            SugarCompiler.compile(overLimit.toString());
+            throw new AssertionError("a program at the " + LExecutor.maxInstructions
+                + "-statement parse limit was accepted, silently dropping the entry skip");
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("-statement parse limit"),
+                "the rejection must name the parse limit, got: " + expected.getMessage());
+            check(expected.getMessage().contains("entry skip"),
+                "the rejection must say what could not be stored, got: " + expected.getMessage());
+            check(!expected.getMessage().contains("turn the entry skip off"),
+                "the rejection must not send the user after a setting the mod does not have: "
+                    + expected.getMessage());
+        }
+
+        // ② the whole sugar body past the window: the head parses as plain vanilla, so this used to be
+        //    returned unchanged - sugar text handed back as if it were the compiled program. The sugar
+        //    here is an if/blockend pair because this test class only registers the structural
+        //    parsers; a data card would not parse at all and the case would pass for the wrong reason.
+        StringBuilder sugarInTail = new StringBuilder();
+        for(int i = 0; i < LExecutor.maxInstructions + 1; i++){
+            sugarInTail.append("set w").append(i).append(' ').append(i).append('\n');
+        }
+        sugarInTail.append("ifbegin a equal 1 0\n");
+        sugarInTail.append("set tail 1\n");
+        sugarInTail.append("blockend\n");
+        try{
+            String accepted = SugarCompiler.compile(sugarInTail.toString());
+            throw new AssertionError("sugar past the parse window came back as a compiled program: "
+                + accepted.length() + " chars, carrier=" + accepted.contains("__ls_sugar")
+                + ", skip=" + SugarCompiler.hasEntrySkip(accepted));
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("parse limit"),
+                "the dropped sugar must be reported as a parse-limit problem, got: " + expected.getMessage());
+        }
+
+        // ③ a long vanilla program stays the vanilla parser's own business
+        StringBuilder vanilla = new StringBuilder();
+        for(int i = 0; i < LExecutor.maxInstructions + 5; i++){
+            vanilla.append("set v").append(i).append(' ').append(i).append('\n');
+        }
+        check(SugarCompiler.compile(vanilla.toString()).equals(vanilla.toString()),
+            "a long vanilla program must still pass through unchanged");
+
+        // ④ the cap counts statements, not lines: a full window of comments plus three statements
+        //    still parses in full, which is why the guard can trust the parsed size.
+        StringBuilder free = new StringBuilder();
+        for(int i = 0; i < LExecutor.maxInstructions; i++){
+            free.append("# chatter ").append(i).append('\n');
+        }
+        for(int i = 0; i < 3; i++) free.append("set z").append(i).append(' ').append(i).append('\n');
+        check(LAssembler.read(free.toString(), true).size == 3,
+            "comments and blank lines must not consume the parse window");
+
+        // One pair fewer (998 statements, so the appended skip is statement 999) still fits the limit.
+        StringBuilder withinLimit = new StringBuilder();
+        for(int i = 0; i < 499; i++){
+            withinLimit.append("ifbegin a equal 0 ").append(i).append('\n').append("blockend\n");
+        }
+        String compiled = SugarCompiler.compile(withinLimit.toString());
+        check(compiled.contains(SugarCompiler.entrySkipLine),
+            "an in-limit program must still carry " + SugarCompiler.entrySkipLine);
+    }
+
     /** Runs a compiled program headless and returns the value of a variable after it ends. */
     private static double execute(String sugar, SugarCompiler.FuncMode mode, String variable){
         return executeCode(SugarCompiler.compile(sugar, mode), variable);
+    }
+
+    /**
+     * Runs exactly one pass of a compiled program: until control leaves the instruction range,
+     * or the counter comes back to instruction 0.
+     *
+     * <p>Coming back to 0 <em>is</em> the end of a pass. Every compiled program ends its main
+     * body with the compiler's entry skip ({@link SugarCompiler#entrySkipLine}), which sends the
+     * counter back to 0 -- the same place {@link LExecutor#runOnce()} puts it when execution runs
+     * past the last instruction, which is what the same program did before that line existed.
+     * Stopping at the wrap therefore executes the same instructions either way, and never steps
+     * into the persistence carriers, which the skip keeps out of the loop by construction.
+     *
+     * <p>Counting to the end of the emitted text is not a usable stop condition, and neither is
+     * stopping at the skip: in normal mode the hoisted function bodies sit <em>after</em> the
+     * skip in the instruction stream because the skip is the last statement of <em>main</em>,
+     * so the program's own call sites legitimately jump past it.
+     */
+    private static void runOnePass(LExecutor executor){
+        int instructions = executor.instructions.length;
+        for(int i = 0; i < 20000; i++){
+            if(executor.counter.numval < 0 || executor.counter.numval >= instructions) return;
+            if(i > 0 && executor.counter.numval == 0) return;
+            executor.runOnce();
+        }
     }
 
     /** Runs an already-compiled program headless (strategy-specific variants). */
     private static double executeCode(String code, String variable){
         LExecutor executor = new LExecutor();
         executor.load(LAssembler.assemble(code, true));
-        for(int i = 0; i < 20000 && executor.counter.numval >= 0 && executor.counter.numval < executor.instructions.length; i++){
-            executor.runOnce();
-        }
+        runOnePass(executor);
         LVar result = executor.optionalVar(variable);
         return result == null ? Double.NaN : result.numval;
     }
@@ -1578,9 +1696,7 @@ public class SugarCompilerSelfTest{
         String code = SugarCompiler.compile(sugar, mode, library);
         LExecutor executor = new LExecutor();
         executor.load(LAssembler.assemble(code, true));
-        for(int i = 0; i < 20000 && executor.counter.numval >= 0 && executor.counter.numval < executor.instructions.length; i++){
-            executor.runOnce();
-        }
+        runOnePass(executor);
         LVar result = executor.optionalVar(variable);
         return result == null ? Double.NaN : result.numval;
     }
@@ -1724,6 +1840,109 @@ public class SugarCompilerSelfTest{
         String tampered = compiled.replace("# @logic-sugar-line set x 1", "# @logic-sugar-line set x 999");
         check(!tampered.equals(compiled), "test setup: tampering changed nothing");
         check(SugarCompiler.restore(tampered).equals(sugar), "carrier did not take priority over the markers");
+    }
+
+    /**
+     * The entry skip keeps the persistence carriers from executing.
+     *
+     * <p>The carriers are ordinary statements after the lowered program, so before the skip
+     * existed they ran once per program cycle and left {@code __ls_sugar} holding a
+     * multi-kilobyte Base64 string. MindustryX's processor variable panel sizes its value
+     * column from that string, so a processor whose variables were looked at once stayed
+     * widened. The skip is part of the stored sugar source rather than an instruction the
+     * compiler appends, which is what lets a version older than it recompile the restored text
+     * into the identical stream instead of dropping the carrier as externally edited.
+     */
+    private static void entrySkipKeepsCarriersIdle(){
+        Vars.logicVars = new GlobalVars();
+        Vars.logicVars.putEntry("false", 0);
+        Vars.logicVars.putEntry("true", 1);
+
+        // A trailing funcdef is the hard case: main's last statement is not the last line of
+        // the text, and the function has to stay reachable for the hoist prelude to exist.
+        String sugar = "set x 1\nfunccall f \"\" ~\nprint x\nfuncdef f ~ 5\nset inside 9\nblockend\n";
+        String compiled = SugarCompiler.compile(sugar);
+        check(SugarCompiler.isSugarProgram(compiled), "compiled program lost its carrier");
+        check(SugarCompiler.restore(compiled).equals(sugar), "restore did not strip the entry skip");
+
+        String lowered = loweredCode(compiled);
+        long skips = lowered.lines().filter(SugarCompiler.entrySkipLine::equals).count();
+        check(skips == 1, "expected exactly one entry skip, found " + skips + "\n" + lowered);
+        check(lowered.contains(SugarCompiler.entrySkipLine + "\njump __ls_end always x false"),
+            "the entry skip does not sit directly above the hoist prelude\n" + lowered);
+        long markerSkips = compiled.lines()
+            .filter(l -> l.equals("# @logic-sugar-line " + SugarCompiler.entrySkipLine)).count();
+        check(markerSkips == 1, "the stored source does not carry exactly one entry skip");
+
+        // Idempotence: restoring and recompiling never stacks a second skip.
+        long reskips = loweredCode(SugarCompiler.compile(SugarCompiler.restore(compiled))).lines()
+            .filter(SugarCompiler.entrySkipLine::equals).count();
+        check(reskips == 1, "recompiling a restored program stacked a second entry skip");
+
+        // The carriers never run. If they did, __ls_sugar would hold the Base64 source as an
+        // object; untouched it keeps the null object and zero value it is born with, which is
+        // the narrow value column the panel shows.
+        LExecutor executor = new LExecutor();
+        executor.load(LAssembler.assemble(compiled, true));
+        runOnePass(executor);
+        LVar carrier = executor.optionalVar("__ls_sugar");
+        check(carrier != null, "compiled program has no __ls_sugar carrier");
+        check(carrier.objval == null && carrier.numval == 0d,
+            "the carrier executed and wrote into __ls_sugar: " + carrier.objval);
+        check(executor.optionalVar("x").numval == 1d, "one pass did not run the program");
+        check(executor.optionalVar("inside").numval == 9d, "one pass did not call the function");
+
+        // The same program without the skip does execute its carrier -- the behavior the entry
+        // skip exists to remove, and the reason the panel got widened in the first place.
+        LExecutor withoutSkip = new LExecutor();
+        withoutSkip.load(LAssembler.assemble(preEntrySkipArtifact(sugar, compiled), true));
+        runOnePass(withoutSkip);
+        LVar filled = withoutSkip.optionalVar("__ls_sugar");
+        check(filled.objval instanceof String, "test setup: a skip-less program did not run its carrier");
+
+        // Compatibility, both directions. Older versions lower without the skip, so a save they
+        // wrote has to keep verifying or its carrier -- and the sugar source behind it -- is
+        // thrown away on open.
+        check(SugarCompiler.verifyRestore(compiled, sugar), "the current save does not verify");
+        String legacy = preEntrySkipArtifact(sugar, compiled);
+        check(!legacy.contains(SugarCompiler.entrySkipLine),
+            "test setup: the legacy artifact still carries the entry skip");
+        check(SugarCompiler.verifyRestore(legacy, sugar), "a pre-entry-skip save no longer verifies");
+    }
+
+    /**
+     * Rebuilds the artifact a version without the entry skip wrote for {@code sugar}: the same
+     * program with the skip removed from the lowered stream, from the marker block and from the
+     * stored source, so only the older lowering shape is left for the verification gate.
+     */
+    private static String preEntrySkipArtifact(String sugar, String compiled){
+        String markerPrefix = "# @logic-sugar-line ";
+        StringBuilder out = new StringBuilder();
+        boolean marker = false;
+        for(String line : compiled.replace("\r\n", "\n").split("\n", -1)){
+            if(SugarCompiler.isMarkerBeginLine(line)){
+                marker = true;
+                out.append(line).append('\n');
+                continue;
+            }
+            if(SugarCompiler.isMarkerEndLine(line)){
+                marker = false;
+                out.append(line).append('\n');
+                continue;
+            }
+            if(marker && line.startsWith(markerPrefix)){
+                if(line.substring(markerPrefix.length()).equals(SugarCompiler.entrySkipLine)) continue;
+            }else if(line.equals(SugarCompiler.entrySkipLine)){
+                continue;
+            }
+            if(line.startsWith("set __ls_sugar \"")){
+                out.append("set __ls_sugar \"").append(new String(arc.util.serialization.Base64Coder.encode(
+                    sugar.getBytes(java.nio.charset.StandardCharsets.UTF_8)))).append("\"\n");
+                continue;
+            }
+            out.append(line).append('\n');
+        }
+        return out.toString();
     }
 
     /** The embedded library subset must reproduce the compiled program on any machine. */

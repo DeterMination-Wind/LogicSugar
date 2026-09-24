@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有三十七个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了三十七个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了四十个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -36,7 +36,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `listHeapTest` | `logicsugar.assist.data.ListHeapTest` | 列表/小顶堆：`vector_push_back/vector_at/vector_set/vector_insert/vector_erase/vector_find/vector_size`、`heap_push/heap_pop/heap_size` 展开与边界（越界 NaN/失败 -1/未找到 -1/空堆 NaN）、计数回写、容量与区间校验、声明卡不产行、产物纯原版、载体往返、下标糖 `l[i]` 与方法糖 `l.get(i)`/`l.size()`、`h.size()` 与 intrinsic 一致 |
 | `chainTest` | `logicsugar.assist.data.ChainTest` | 链表：`chain_init/chain_clear/chain_alloc/chain_free/chain_get/chain_set/chain_next/chain_link/chain_set_head/chain_head/chain_len` 展开（读类直线链、写内存与遍历走注入函数）、空闲链重建与 LIFO 分配、摘链/挂回空闲链、越界守卫（chain_get 返回 NaN、chain_set/chain_link/chain_free 失败返回 -1、chain_next 返回 -1）、必须显式 `chain_init` 的初始化要求、重名/保留前缀/容量/区间校验、声明卡不产行、产物纯原版、载体往返、下标糖 `c[i]` 与方法糖 `c.get(i)`/`c.head()` 与 intrinsic 一致 |
 | `dataSubsystemTest` | `logicsugar.DataSubsystemIntegrationTest` | INT 生产注册路径：`LogicSugarMod.init()` 幂等（重复 init 不重复 `LogicIO.allStatements` 条目、卡片各一份、parser 与 intrinsic 全部可见）、混合结构端到端编译且 `stripMarkers` 产物纯原版、模块 `collect` 抛异常时 `DataModules.restore()` 仍配对执行且后续编译正常、调色板分类（Advanced Flow Control / Data Structures / Array Algorithms） |
-| `dataCallTest` | `logicsugar.assist.data.DataCallTest` | 所有数据 intrinsic 的独立 palette metadata、结构族分类，以及 `datacall` 卡的编辑后持久化、carrier restore/verify 与纯原版 lower；v5 失败值/无结果卡改动后 pre-v5 存档走 legacy lowering 重新验证（篡改仍被拒绝） |
+| `dataCallTest` | `logicsugar.assist.data.DataCallTest` | 所有数据 intrinsic 的独立 palette metadata、结构族分类，以及 `datacall` 卡的编辑后持久化、carrier restore/verify 与纯原版 lower；v5 失败值/无结果卡改动后 pre-v5 存档走 legacy lowering 重新验证（篡改仍被拒绝）；运算卡引用的三族 bundle 键（`datacall.<规范名>` / `hint.datacall.<规范名>` / `lst.datacall.group.<组>` / `datacall.arg.<参数名>`）与代码可达集合双向对齐——取不到的键或多写了该有的键都会变红 |
 | `editHistoryTest` | `logicsugar.assist.EditHistorySelfTest` | 编辑器撤销/重做快照栈：record/undo/redo、未提交改动并入一次撤销、新编辑清空重做、undo 后改写放弃重做、`applied` 对齐 fold 后文本、深度上限 80 |
 | `bottomBarLayoutTest` | `logicsugar.assist.BottomBarLayoutTest` | 底栏行打包纯函数：单行/恰好放下/按容量换行、预算标签按 196px 计算、超宽单元独占一行不被吞、行宽不超限（除独占行）、不丢单元，`fitsOneRow` 与打包一致；手机/窄窗回归：5 个 160px 操作单元在 640px 栏里必须换行而非挤成一行、360/400/480/560/640/720/800/900px 各宽度下每一行都放得下且不丢单元、360px 竖屏操作组按 2/2/1 三行、640px 栏里预算标签会让位（8 个按钮 2 行 → 加标签 3 行）、1920px 宽栏仍是单行；另含真实 arc 布局几何：上游 `size(160,64)` 默认值把容器压成一格、清掉继承上限后容器铺满整行、宽栏两组不重叠、窄栏确实会重叠（换行存在的理由） |
 | `escapePreviewTest` | `logicsugar.assist.EscapePreviewSelfTest` | quoted mlog 字符串转义预览：换行、引号、反斜杠、Unicode、未知/畸形转义及现代能力探测 |
@@ -46,13 +46,16 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `funclibLimitTest` | `logicsugar.FunctionLibraryLimitTest` | 函数库行数上限：`readLibrary` 解析超过 1000 条语句不截断且用完还原 `LExecutor.maxInstructions`；`libraryOverLimit` 在 10000 条边界正确、`withLibraryLimit` 异常路径也还原；`sanitizedLibrary`/`buildLibrary`/`extractLibrarySource` 都能看到第 1000 条之后的库函数；处理器调用尾部库函数时只嵌入用到的子集并可重编译一致；函数库编辑会话整体 round-trip 不丢内容；单函数体超过 1000 条语句也能解析与校验 |
 | `dataRuntimeTest` | `logicsugar.assist.data.DataRuntimeTest` | 数据结构整程序运行：真实 `LExecutor` + 假内存/消息块执行编译产物，覆盖栈/队列/双端队列/位集/列表/小顶堆/链表的 push/pop/peek、满/空边界、非零 base 环回、空容器 NaN 标记，并钉住 `whilebegin` 条件语义（`s.size()` 能抽干容器、`!s.size()` 一次都不进循环）与 v5 值语义（返回 / 堆往返保留对象与 NaN 标记）；另含数组排序内置函数 `__ls_builtin_arrsort`（希尔排序）的运行结果：`array_sort`/`array_sort_desc`、逆序/已排序/重复元素、size=1、非零 base 不越界 |
 | `conditionLabelTest` | `logicsugar.ConditionLabelTest` | 循环条件字段的本地化标签：三份 bundle 键集一致、`while.condition`/`for.condition` 不得写成「结束条件 / 终止条件 / until」、提示语保持「为真时重复」，并断言 `WhileBeginStatement` 使用专用键而非通用 `condition`；另钉住数据操作提示的失败值措辞（13 个可失败操作的 `hint`/`lst` 提示在三份 bundle 里都必须写明 v5 的 `-1`，`map_contains`/`set_contains`/`bitset_test` 等查询类必须保持 0/1 而不出现 `-1`） |
+| `editorConflictTest` | `logicsugar.EditorConflictTest` | 编辑器所有权与四档冲突策略：`classify` 把「尚未安装 / 游戏自带 `LogicDialog`」判为 native、自家对话框及其子类判为 sugar、别的模组的 `LogicDialog` 子类判为 foreign（不得误判成 sugar）、`EditorConflict.parse` 四档映射与大小写不敏感、缺失/空/垃圾值一律回落 `ask` 而绝不落到「编辑器被停用」、设置按钮 `next()` 一圈必须恰好访问全部状态并回到默认档（漏一个状态就是用户够不到的档）、设置键与四档标签在三份 bundle 里都存在、安装守卫无不对称、选板隐藏可逆、四档切换有接线、共存编译挂在对方关闭路径上且捕异常、退出共存还原对方画布、ask 弹窗三种答案齐全且不含接管分支的私有副本、聚合设置表单与独立设置项默认档一致、共存时重新绑定对方面板且对方面板仍可点击；源码钉子统一走共享的 `SourceNails.readSource()`（归一 CRLF） |
+| `textWrapTest` | `logicsugar.assist.TextWrapTest` | `SugarTooltip` 的折行规则（测量函数换成字符数，因此无需图形上下文即可精确断言）：放得下原样返回、空串与 null 安全、只在空格处断且每行不超限、超长单词硬断不丢字符、markup 标签绝不被拆开、已有换行保留、折行幂等 |
+| `statementClipboardTest` | `logicsugar.assist.StatementClipboardSelfTest` | 跨处理器剪贴板的片段格式（全程只有语句与字符串，无画布）：`write`/`parse` 对全部语句类型 round-trip、头部标记识别（无正文不算 payload）、接受 CRLF 文本与纯原版 mlog、拒绝不可读文本、`acceptable` 双向判定、`rebase` 把 jump 映射进片段局部下标、选区外跳转被识别为 escaping、无链接的 jump 既不映射也不报 escaping、`pairBlockEnds` 修复片段内 begin/end 配对并拒绝不成对的片段、越界目标计数 |
 
 ```powershell
 .\gradlew.bat check        # 全部
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前三十七个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前四十个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 

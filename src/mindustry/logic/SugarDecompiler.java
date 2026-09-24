@@ -4,6 +4,8 @@ import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ShortCircuitCompiler;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -40,7 +42,7 @@ public final class SugarDecompiler{
             this.matchedMode = matchedMode;
             this.structured = structured;
             this.passthrough = passthrough;
-            this.notes = List.copyOf(notes);
+            this.notes = Collections.unmodifiableList(new ArrayList<>(notes));
         }
     }
 
@@ -193,7 +195,12 @@ public final class SugarDecompiler{
      * <ul>
      *   <li>{@code op add @counter @counter <idx>} - the switch jump-table dispatch;</li>
      *   <li>{@code set @counter <name>} with {@code name} starting {@code __ls_} - the
-     *       function-return trampolines ({@code set @counter __ls_func_<name>_ret}).</li>
+     *       function-return trampolines ({@code set @counter __ls_func_<name>_ret});</li>
+     *   <li>{@code set @counter <zero>} - the entry skip every compiled program ends its main
+     *       body with ({@code SugarCompiler.entrySkipLine}), which wraps the program exactly
+     *       like the executor wraps a program that ran off its end. This one is positional:
+     *       the same statement in the middle of a program is an ordinary counter write, so it
+     *       is only safe where it sits at the end of main (see {@link #isEntrySkip}).</li>
      * </ul>
      *
      * <p>Everything else (user variables, literals, {@code read} into {@code @counter}, any
@@ -212,21 +219,103 @@ public final class SugarDecompiler{
             if(block < 0 || !cfg.block(block).reachable) continue;
             Statement statement = program.statements.get(i);
             if(!MlogCFG.writesCounter(statement.tokens)) continue;
-            if(isKnownCounterShape(statement)) continue;
+            if(isKnownCounterShape(program.statements, i)) continue;
             return i;
         }
         return -1;
     }
 
-    /** Whether one {@code @counter}-writing statement is one of the compiler's own shapes. */
-    private static boolean isKnownCounterShape(Statement statement){
+    /** Whether the {@code @counter}-writing statement at {@code index} is one of the
+     *  compiler's own shapes. Takes the whole program because the entry-skip shape includes
+     *  its position. */
+    private static boolean isKnownCounterShape(List<Statement> statements, int index){
+        Statement statement = statements.get(index);
         // Switch jump-table dispatch: op add @counter @counter <idx>.
         if(statement.kind().equals("op") && statement.tokens.length >= 5
             && statement.token(1).equals("add") && statement.token(2).equals("@counter")
             && statement.token(3).equals("@counter")) return true;
+        // Entry skip: set @counter <zero>, the last statement of every compiled main body.
+        if(isEntrySkip(statements, index)) return true;
         // Compiler-internal return trampoline: set @counter __ls_*.
         return statement.kind().equals("set") && statement.tokens.length >= 3
             && statement.token(1).equals("@counter") && statement.token(2).startsWith("__ls_");
+    }
+
+    /**
+     * Whether the statement at {@code index} is the compiler's entry skip
+     * ({@link SugarCompiler#entrySkipLine}): {@code set @counter <zero>} as the last statement of
+     * a compiled main body.
+     *
+     * <p>The position is part of the shape. Without it, an author's {@code set @counter 0} sitting
+     * anywhere -- a counter reset inside a loop, say -- would count as known-safe and this triage
+     * would miss a computed jump it exists to catch, leaving the structured views to burn their
+     * recovery attempts on a program they cannot represent.</p>
+     *
+     * <p>What may follow main is only the compiler's own tail, and that is what the position is
+     * read from: at most one hoist prelude jump (there is exactly one when function bodies were
+     * hoisted past the end of main, and it skips over the region holding them), then nothing but
+     * the persistence carriers -- the {@code set __ls_sugar "<base64>"} statements appended after
+     * the lowered program, which are metadata and never execute. Ordinary statements are not
+     * allowed there, which is what separates this from an author's counter write sitting among
+     * them. A program whose carrier was stripped elsewhere still reads correctly, because then
+     * the skip is simply the last statement.</p>
+     */
+    private static boolean isEntrySkip(List<Statement> statements, int index){
+        if(!isEntrySkipShape(statements.get(index))) return false;
+
+        int at = index + 1;
+        // Hoist prelude jump: an unconditional jump forward, and the only thing that can sit
+        // between main's last statement and the carriers. Its target is the first carrier, so
+        // the region it spans -- the hoisted function bodies -- is skipped over rather than
+        // inspected: those bodies are reached from their call sites, not from main.
+        if(at < statements.size() && isHoistPreludeJump(statements.get(at))){
+            at = Math.min(Math.max(statements.get(at).target, at + 1), statements.size());
+        }
+        for(; at < statements.size(); at++){
+            if(!isCarrier(statements.get(at))) return false;
+        }
+        return true;
+    }
+
+    /** Whether one statement has the entry skip's shape, ignoring where it sits. */
+    private static boolean isEntrySkipShape(Statement statement){
+        return statement.kind().equals("set") && statement.tokens.length == 3
+            && statement.token(1).equals("@counter") && isZeroLiteral(statement.token(2));
+    }
+
+    /** Whether one statement is the normal-mode jump the compiler inserts before the hoisted
+     *  function bodies ({@code jump __ls_end always}) so main never falls through into them. */
+    private static boolean isHoistPreludeJump(Statement statement){
+        return statement.isAlways() && statement.target >= 0;
+    }
+
+    /** Whether one statement is a persistence carrier: {@code set __ls_sugar "<base64>"},
+     *  {@code set __ls_lib "<base64>"}, or one shard of a split payload
+     *  ({@code set __ls_sugar_<n> "<chunk>"}). */
+    private static boolean isCarrier(Statement statement){
+        return statement.kind().equals("set") && statement.tokens.length == 3
+            && isCarrierName(statement.token(1)) && isStringLiteral(statement.token(2));
+    }
+
+    /** The two carrier variables, plus the shard names they are numbered under. */
+    private static boolean isCarrierName(String name){
+        return name.startsWith("__ls_sugar") || name.startsWith("__ls_lib");
+    }
+
+    private static boolean isStringLiteral(String token){
+        return token.length() >= 2 && token.charAt(0) == '"' && token.charAt(token.length() - 1) == '"';
+    }
+
+    /** Whether a token is a literal zero. The same literal reads as {@code 0},
+     *  {@code ___0} or {@code ___0.0} depending on how many assembler read/write round trips
+     *  the instruction text has been through, so all spellings count. */
+    private static boolean isZeroLiteral(String token){
+        String literal = token.startsWith("___") ? token.substring(3) : token;
+        try{
+            return Double.parseDouble(literal) == 0d;
+        }catch(NumberFormatException ignored){
+            return false;
+        }
     }
 
     /**
@@ -908,6 +997,18 @@ public final class SugarDecompiler{
                 Statement s = program.statements.get(mainTailJump);
                 if(s.isAlways() && s.target >= lastEnd) hidden.add(mainTailJump);
             }
+
+            // The normal-mode compiler also ends main's statements with the entry skip
+            // (SugarCompiler.entrySkipLine), which sits immediately above that tail jump and is
+            // what keeps execution away from the persistence carriers. It is the compiler's own
+            // statement, not the author's: recompiling the recovered source appends it again
+            // (SugarCompiler restores the source without it), so emitting it here would give the
+            // round trip a second copy and fail the recompilation gate. Hide it like the tail
+            // jump. Without recovered functions there is no tail jump and the skip is the last
+            // statement of the emitted text, where recompilation recognizes it as its own.
+            int skipCursor = firstEntry - 1;
+            if(skipCursor >= 0 && hidden.contains(skipCursor)) skipCursor--;
+            if(skipCursor >= 0 && isEntrySkip(program.statements, skipCursor)) hidden.add(skipCursor);
 
             for(int position : preludePositions){
                 CallSite site = makeCallSite(position);
@@ -1980,9 +2081,9 @@ public final class SugarDecompiler{
         }
 
         private static List<String> chainOperands(Statement statement){
-            if(statement.kind().equals("sensor")) return List.of(statement.token(2));
-            if(statement.kind().equals("op")) return List.of(statement.token(3), statement.token(4));
-            return List.of();
+            if(statement.kind().equals("sensor")) return Collections.singletonList(statement.token(2));
+            if(statement.kind().equals("op")) return Collections.unmodifiableList(Arrays.asList(statement.token(3), statement.token(4)));
+            return Collections.emptyList();
         }
 
         private static boolean statementMentionsAny(Statement statement, Set<String> names){

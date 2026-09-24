@@ -62,7 +62,7 @@ public final class MlogCFG{
 
     private MlogCFG(List<Block> blocks, int[] blockOfInstruction, BitSet reachableBlocks,
                     BitSet[] dominatorSets, List<Loop> loopList){
-        this.blocks = List.copyOf(blocks);
+        this.blocks = Collections.unmodifiableList(new ArrayList<>(blocks));
         this.blockOfInstruction = blockOfInstruction;
         this.reachableBlocks = reachableBlocks;
         this.dominatorSets = dominatorSets;
@@ -191,7 +191,7 @@ public final class MlogCFG{
         List<Block> blockList = new ArrayList<>(count);
         for(int b = 0; b < count; b++){
             blockList.add(new Block(from[b], to[b],
-                List.copyOf(successors.get(b)), List.copyOf(predecessors.get(b)),
+                Collections.unmodifiableList(new ArrayList<>(successors.get(b))), Collections.unmodifiableList(new ArrayList<>(predecessors.get(b))),
                 reachable.get(b)));
         }
         return new MlogCFG(blockList, blockOfInstruction, reachable, dominators, loops);

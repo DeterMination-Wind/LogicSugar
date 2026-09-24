@@ -1,6 +1,9 @@
 package logicsugar.assist;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -59,7 +62,7 @@ public final class MlogLint{
     private MlogLint(){}
 
     /** {@code LogicOp} enum names, transcribed 1:1 from mindustry/logic/LogicOp.java. */
-    private static final Set<String> LOGIC_OPS = Set.of(
+    private static final Set<String> LOGIC_OPS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
         "add", "sub", "mul", "div", "idiv", "mod", "emod", "pow",
         "equal", "notEqual", "land", "lessThan", "lessThanEq", "greaterThan", "greaterThanEq",
         "strictEqual",
@@ -67,10 +70,10 @@ public final class MlogLint{
         "max", "min", "angle", "angleDiff", "len", "noise", "abs", "sign", "log", "logn",
         "log10", "floor", "ceil", "round", "sqrt", "rand",
         "sin", "cos", "tan", "asin", "acos", "atan"
-    );
+    )));
 
     /** @RegisterStatement ids, transcribed 1:1 from mindustry/logic/LStatements.java. */
-    private static final Set<String> KNOWN_KINDS = Set.of(
+    private static final Set<String> KNOWN_KINDS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
         "noop", "read", "write", "draw", "print", "printchar", "format", "drawflush",
         "printflush", "getlink", "control", "radar", "sensor", "set", "op", "select", "wait",
         "stop", "lookup", "packcolor", "unpackcolor", "end", "jump", "ubind", "ucontrol",
@@ -78,7 +81,7 @@ public final class MlogLint{
         "weathersense", "weatherset", "spawnwave", "setrule", "message", "cutscene", "effect",
         "explosion", "setrate", "fetch", "sync", "clientdata", "getflag", "setflag", "setprop",
         "playsound", "playmusic", "setmarker", "makemarker", "localeprint"
-    );
+    )));
 
     /** Lints a tokenized statement list; findings come back in line order. */
     public static List<Warning> lint(List<String[]> lines){

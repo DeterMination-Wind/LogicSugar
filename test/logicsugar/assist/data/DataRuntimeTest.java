@@ -601,13 +601,31 @@ public final class DataRuntimeTest{
         }
 
         int cap = 200000;
+        int steps = runOnePass(executor, cap);
+        check(steps < cap, "program did not terminate (possible infinite loop):\n" + code);
+        return run;
+    }
+
+    /**
+     * Runs {@code executor} for exactly one pass and returns the number of instructions
+     * executed, or {@code cap} when the program never came back around.
+     *
+     * <p>A pass ends where the program returns to instruction 0. A compiled program ends its
+     * main body with the compiler's entry skip ({@link SugarCompiler#entrySkipLine}), which
+     * sends the counter back to 0 -- the same place {@link LExecutor#runOnce()} puts it when
+     * execution runs past the last instruction, which is what the same program did before that
+     * line existed. Stopping at the wrap therefore executes the same instructions either way and
+     * never steps into the persistence carriers, which the skip keeps out of the loop.
+     */
+    private static int runOnePass(LExecutor executor, int cap){
+        int instructions = executor.instructions.length;
         int steps = 0;
-        while(steps < cap && executor.counter.numval >= 0 && executor.counter.numval < executor.instructions.length){
+        while(steps < cap && executor.counter.numval >= 0 && executor.counter.numval < instructions
+            && !(steps > 0 && executor.counter.numval == 0)){
             executor.runOnce();
             steps++;
         }
-        check(steps < cap, "program did not terminate (possible infinite loop):\n" + code);
-        return run;
+        return steps;
     }
 
     private static void bind(LExecutor executor, String name, Object value){

@@ -10,6 +10,9 @@ import mindustry.logic.SugarCompiler;
 import mindustry.ui.Styles;
 import mindustry.ui.dialogs.SettingsMenuDialog;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Logic Sugar settings: function expansion mode (normal/inline), the function library
  * editor entry, processor-status / unit-flag overlays, and (when not bundled
@@ -23,6 +26,14 @@ public final class LogicSugarSettings{
     public static final String settingSwitchStrategy = "logicsugar.switchStrategy";
     public static final String settingAssertEmit = "logicsugar.assertEmit";
 
+    /** The page this mod owns. Kept so its descriptions can be re-flowed whenever the page is
+     *  opened: the line breaks depend on the window width, which can change while the game runs. */
+    private static SettingsMenuDialog.SettingsTable settingsTable;
+    /** Description text exactly as the bundle delivered it, keyed by setting name. Re-flowing
+     *  always starts from this, never from a previously wrapped string, so a wider window really
+     *  does get wider lines back instead of staying at the narrowest width ever seen. */
+    private static final Map<String, String> rawDescriptions = new HashMap<>();
+
     private LogicSugarSettings(){}
 
     /** Adds the Logic Sugar settings category (idempotent). */
@@ -34,15 +45,23 @@ public final class LogicSugarSettings{
                 if(category.name.equals("@logicsugar.settings")) return;
             }
             dialog.addCategory("@logicsugar.settings", Icon.edit, table -> build(table, includeJumpLines));
+            if(settingsTable != null){
+                // Vanilla gives a tooltip no width limit at all — it only clamps the position — so
+                // a 500-character description slides off both edges. Re-flow it for the window in
+                // use at open time; the pass costs nothing when the widths already agree.
+                dialog.shown(() -> reflowDescriptions(settingsTable));
+            }
         }catch(Exception e){
             Log.warn("LogicSugar: failed to setup settings: @", e);
         }
     }
 
     private static void build(SettingsMenuDialog.SettingsTable table, boolean includeJumpLines){
+        settingsTable = table;
         table.pref(new FuncModeSetting(settingFuncMode, "normal"));
         table.pref(new SwitchStrategySetting(settingSwitchStrategy, "auto"));
         table.pref(new AssertEmitSetting(settingAssertEmit, "strip"));
+        table.pref(new EditorConflictSetting(LogicSugarMod.settingEditorConflict, LogicSugarMod.EditorConflict.ask.id));
         table.pref(new LibraryButtonSetting("logicsugar.funclib"));
         addProcessorStatusPrefs(table);
         addUnitFlagsPref(table);
@@ -51,6 +70,45 @@ public final class LogicSugarSettings{
         addCompactCardsPref(table);
         if(includeJumpLines){
             logicsugar.assist.JumpLineColor.buildSettings(table);
+        }
+        // Settings descriptions are prose and run to ~500 characters, while vanilla's tooltip has
+        // no width limit at all, so they used to slide off both edges of the screen. Re-flow them
+        // once the list is complete — addDesc() captured the raw text while each setting was being
+        // added, which is what the rebuild at the end of reflowDescriptions() corrects. The
+        // deferred pass from setup() retries this for whatever window is in use when the page is
+        // actually opened, and re-does it after a resize.
+        reflowDescriptions(table);
+    }
+
+    /**
+     * Re-wraps every setting description in place so its hover tooltip fits on screen.
+     *
+     * <p>Rewriting {@code description} rather than the tooltip label is what makes this survive the
+     * "Reset to Defaults" button: that calls {@code SettingsTable.rebuild()}, which re-runs
+     * {@code add()} for every setting and builds a fresh tooltip from the same field.</p>
+     */
+    private static void reflowDescriptions(SettingsMenuDialog.SettingsTable table){
+        try{
+            boolean changed = false;
+            for(SettingsMenuDialog.SettingsTable.Setting setting : table.getSettings()){
+                if(setting.name == null || setting.description == null || setting.description.isEmpty()) continue;
+                // always re-flow the bundle text, never a previous result: wrapping can only split
+                // lines further, so starting from a wrapped string would never widen back after
+                // the window grows
+                String raw = rawDescriptions.get(setting.name);
+                if(raw == null){
+                    raw = setting.description;
+                    rawDescriptions.put(setting.name, raw);
+                }
+                String wrapped = logicsugar.assist.SugarTooltip.fit(raw);
+                if(!wrapped.equals(setting.description)){
+                    setting.description = wrapped;
+                    changed = true;
+                }
+            }
+            if(changed) table.rebuild();
+        }catch(Exception e){
+            Log.warn("LogicSugar: could not re-flow setting descriptions: @", e);
         }
     }
 
@@ -224,6 +282,56 @@ public final class LogicSugarSettings{
 
         private String label(){
             return Core.bundle.get("logicsugar.settings.assertemit." + current, current);
+        }
+    }
+
+    /** Click-to-cycle picker for how the install pass treats a logic editor another mod already owns. */
+    public static class EditorConflictSetting extends SettingsMenuDialog.SettingsTable.Setting{
+        private final String def;
+        private String current;
+        private Button button;
+
+        public EditorConflictSetting(String name, String def){
+            super(name);
+            this.def = def;
+            Core.settings.defaults(name, def);
+            this.current = Core.settings.getString(name, def);
+        }
+
+        @Override
+        public void add(SettingsMenuDialog.SettingsTable table){
+            // single-cell row for the same grid alignment reason as FuncModeSetting
+            addDesc(table.table(box -> {
+                box.left();
+                box.add(title).padRight(12f).padLeft(4f);
+                button = box.button(button -> button.add(label()), Styles.logict, () -> {
+                    current = next(LogicSugarMod.EditorConflict.parse(current)).id;
+                    Core.settings.put(name, current);
+                    button.clearChildren();
+                    button.add(label());
+                    // Apply it now: the setting used to be read only during startup, so switching it
+                    // looked broken until the next launch, and the two states the user could see
+                    // (label vs. live editor) disagreed.
+                    LogicSugarMod.reapplyEditorConflict();
+                }).minWidth(150f).height(44f).get();
+            }).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().left().padTop(4f).get());
+            table.row();
+        }
+
+        /** takeover -> ask -> stepAside -> coexist -> takeover, so the default is one click away in
+         *  either direction. Package-private so the test can pin the invariant that actually matters:
+         *  one lap visits every state exactly once and returns to the start. */
+        static LogicSugarMod.EditorConflict next(LogicSugarMod.EditorConflict value){
+            return switch(value){
+                case takeover -> LogicSugarMod.EditorConflict.ask;
+                case ask -> LogicSugarMod.EditorConflict.stepAside;
+                case stepAside -> LogicSugarMod.EditorConflict.coexist;
+                case coexist -> LogicSugarMod.EditorConflict.takeover;
+            };
+        }
+
+        private String label(){
+            return Core.bundle.get("logicsugar.settings.editorconflict." + current, current);
         }
     }
 

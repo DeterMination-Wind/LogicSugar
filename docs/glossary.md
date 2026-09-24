@@ -21,6 +21,9 @@ Mindustry 原生逻辑指令集（`set` / `op` / `jump` / `read` / …）。Logi
 ### 注释标记块（marker block）
 v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar-line ` / `# @logic-sugar-v1 end`。现仅作读取兼容，新程序一律用载体。
 
+### 入口跳过（entry skip）
+编译产物在 main 末尾统一多出的一条 `set @counter 0`（`SugarCompiler.entrySkipLine`），让紧随其后的几 KB 载体 `set __ls_sugar` **永不执行**——否则 MDTX 逻辑面板的值列会把载体当成一条运行中的赋值显示出来。等价性依据：`runOnce()` 在 `@counter` 越界时本就「置 0 执行指令 0」，跳过条不改变语义。要点：① 这条 skip **是被存储的糖源码的一部分**（随载体一起保存，编译期不额外 append），旧版本重编译这段文本能原样复现，`verifyRestore` 仍然通过；② 代价是**有效指令上限变成 `maxInstructions − 1`**；③ 反编译侧位置是「形状的一部分」（跳过至多一条 hoist `jump` 之后只许剩载体），`isEntrySkip` 带位置约束。已知边界：源文本超过解析窗口（`LExecutor.maxInstructions` 条**语句**，注释与空行免费）时 `LParser` 只解析窗口内的部分、其余静默丢弃；`compile` 在解析后随即确认（头部带糖却没有 skip、或糖整体落在窗口之后）并抛 `IllegalArgumentException` 拒绝保存，纯 vanilla 的长程序则照常通过。详见[架构总览](architecture.md)「编译器」。
+
 ### FuncMode（函数模式）
 函数展开方式。`normal` = 共享 `@counter` 子程序（函数体上提到程序尾部，一次定义多处跳转）；`inline` = 每个调用点展开一份副本，编译器临时名带 `__ls_i_<callId>_`。设置项 `logicsugar.funcMode`。
 
@@ -95,7 +98,13 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 一个数据结构 = 一个 `DataModule` 子类（声明卡解析器 + 编译期注册表 + intrinsic provider + 注入函数源文本）。`DataModules` 是统一驱动点：`register` 登记模块并注册 provider（按 `id()` 幂等），`registerParsers` 安装声明卡解析器，`collectAll`/`restore` 在每次编译前后配对建立/清理程序级注册表（`SugarCompiler` 的 `finally` 保证异常路径也恢复），`markInvalid` 供编辑期标红。
 
 ### 数据调用积木（DataCallStatement）
-`datacall <operation> <destination> "<arguments>"` 是数据 intrinsic 的通用可编辑卡。其 operation/category/default arguments/`returnsValue` 来自模块的 `PaletteCall` metadata；有返回值时默认显示 `result = op(args)`，结果写入左侧变量；无返回值时显示 `op(args)`，不要求结果变量。当前数组 `array_fill/array_copy/array_sort/array_sort_desc/array_reverse/array_swap` 与结构清空操作属于无返回值卡；保存时仍进入 Sugar carrier，编译时复用 `ExprIntrinsics` 展开，因此不会把 `datacall` 或内置 `funccall` 泄漏到原版 mlog。
+`datacall <operation> <destination> "<arguments>"` 是数据 intrinsic 的通用可编辑卡。其 operation/category/default arguments/`returnsValue` 来自模块的 `PaletteCall` metadata；有返回值时默认显示 `result = op(args)`，结果写入左侧变量；无返回值时显示 `op(args)`，不要求结果变量。当前数组 `array_fill/array_copy/array_sort/array_sort_desc/array_reverse/array_swap` 与结构清空操作属于无返回值卡；保存时仍进入 Sugar carrier，编译时复用 `ExprIntrinsics` 展开，因此不会把 `datacall` 或内置 `funccall` 泄漏到原版 mlog。**一张卡一个结构**：选板从 68 张运算卡收敛为 10 张，卡内按钮切换该结构的运算；参数元数据不另建表——`PaletteCall.arguments` 的默认实参串逐位就是参数名，`splitArgs` 做括号感知拆分，`argumentSlots()` 决定「每参数一框」还是「退回单框」。
+
+### 栏位（palette column）
+运算卡进入哪个选板栏由**该结构的声明卡在哪一栏**决定（`DataModules.paletteColumn`），规则表 `DataModules.GROUP_COLUMNS` 只登记数组组（`arrayalgo`），未登记的结构一律落在 `dataStructures`。**栏位 ≠ 分组**：分组键（`DataModules.groupKey`，如 `stackops`）只用来回答「哪几个运算属于同一结构」，本身不是选板栏，只作分组标签与悬停标题。新结构若不在数据结构栏，必须在这张表里补一行。
+
+### 运算卡的 bundle 键（三族）
+运算卡只引用三族键，每一族都只有一个取用点：卡片正文/卡内运算按钮/实参输入框占位取 `logicsugar.datacall.<规范运算名>` 与 `logicsugar.datacall.arg.<参数名>`（`DataCallStatement.operationLabel` / `argumentLabel`）；卡内运算选择器每一条的悬停取 `logicsugar.hint.datacall.<规范运算名>`；调色板按钮描述取 `logicsugar.lst.datacall.group.<分组键>`——**一张卡覆盖整组，所以不存在逐运算的 `lst.datacall.<运算名>`**。旧短名（`spush`/`sum`/…）在卡片解析时就被 `DataModules.canonicalOperation` 归一化成规范名，旧名那套键已随之删除。这条可达性不变量由 `DataCallTest.everyOperationBundleKeyIsReachable` 双向钉住（三族键集合 == 代码可达集合）：新增运算漏写某一族键，或重新引入取不到的键，都会直接变红。
 
 ### 隐藏状态变量
 栈/队列/列表/堆/链表/双端队列等结构的运行时状态（如 `__ls_stk_<name>_top`、`__ls_que_<name>_head/_tail/_count`、`__ls_deq_<name>_head/_tail/_count`、`__ls_lst_<name>_count`、`__ls_chn_<name>_head/_free`）是普通 mlog 变量，用 `__ls_` 保留前缀声明，`VarDisplayFilter` 自动隐藏、用户不得使用同前缀命名。mlog 变量未赋值读取为 0，因此初始状态不需要初始化指令；代价是它们不随存档持久化——处理器代码重新载入后计数归零而内存块内容保留。链表是例外：`head`/`free` 读作 0 会被当成合法节点下标，首次使用前必须显式 `chain_init(c)` / `chain_clear(c)` 重建空闲链。
@@ -155,6 +164,15 @@ Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[
 
 ### 逻辑语句本地化（logic localization）
 上游 #12158 + #12569 的改动：`LStatement` 增加 `bundle()` / `localizedName()` / `statementKey()`，卡片标题、语句菜单与搜索文案走 bundle，约定键 `instruction.<statementKey小写>`（上游设置项 `logiclocalization`，默认开）。LogicSugar 自身卡片标题跟随同一个 `logiclocalization` 开关，文案仍使用 `logicsugar.*` 键，不再维护重复的 `logicsugar.localizeCards` 开关。详见[架构总览](architecture.md)「上游版本适配笔记」。
+
+### 编辑器归属（EditorOwner）与编辑器冲突四档
+逻辑编辑器是**一个全局引用**（`Vars.ui.logic`），扩展 `LogicDialog` 的模组都可以替换它，于是「两个模组只能有一个生效」。`LogicSugarMod.classify(LogicDialog)` 把当前 owner 判为 `vanilla`（`null` 与游戏自带 `LogicDialog`，可安全替换）/ `sugar`（自家 `SugarLogicDialog` **及其子类**）/ `foreign`（其余 `LogicDialog` 子类）。设置项 `logicsugar.editorConflict` 四档：`ask`(默认) / `takeover` / `stepaside` / `coexist`，`parse` 大小写不敏感，缺失/空/未知值一律回落 `ask`（**绝不回落到「编辑器被停用」，也不默默选带不可逆副作用的 `takeover`**），切换后立即生效。安装顺序是确定的：其它模组在构造函数里注册 `ClientLoadEvent`、本模组在 `init()` 里注册，`Core.app.post` 是 FIFO ⇒ 对方总是先安装。
+
+### 共存画布（SugarCoexist）
+`logicsugar.editorConflict=coexist` 档的实现：保留对方整套编辑器界面，把 LogicSugar 的画布**跑在对方的编辑器里**，跨 classloader 反射读写 `LCanvas`/`LogicDialog` 的包级字段（统一走 `SugarCoexist.field(Class,String)`），并把 MDTX 的逻辑辅助面板重新绑定到新画布。`push` 挂在对方对话框关闭时的原版 `hidden(...)` 出口上，因此捕 `RuntimeException`、绝不逃逸；放置失败时退回接管（`logicsugar.conflict.coexistfailed`）。**已知限制**：会话中途切档、第三方在构造期缓存画布两种形状可能写回空程序，详见[架构总览](architecture.md)「编辑器接管与共存」。
+
+### 跨逻辑剪贴板（StatementClipboard）
+编辑菜单「复制选区 / 粘贴选区」（Ctrl+C/V 驱动同一实现）。**剪贴板放糖源码而不是编译后的 mlog**，片段落进另一个处理器后仍可继续编辑；片段文本带自描述头 `# @ls-fragment`，粘贴侧据此识别并 `rebase`。跨程序时 `jump` 的数字目标是另一程序的指令下标，因此**双侧拒绝**；块配对由 `pairBlockEnds` 在插入前校验，之后每帧 `syncStatementIndices` 自愈。
 
 ## 构建与发布
 

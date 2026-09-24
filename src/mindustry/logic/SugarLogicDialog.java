@@ -2,12 +2,11 @@ package mindustry.logic;
 
 import arc.Core;
 import arc.func.Cons;
+import arc.func.Func;
 import arc.func.Prov;
 import arc.input.KeyCode;
 import arc.scene.Element;
 import arc.scene.Group;
-import arc.scene.event.InputEvent;
-import arc.scene.event.InputListener;
 import arc.scene.style.Drawable;
 import arc.graphics.Color;
 import arc.scene.ui.Button;
@@ -32,8 +31,12 @@ import mindustry.world.blocks.logic.LogicBlock;
 import logicsugar.FunctionLibrary;
 import logicsugar.FunctionLibraryDialog;
 import logicsugar.assist.BottomBarLayout;
+import logicsugar.assist.BoxSelect;
 import logicsugar.assist.EditHistory;
 import logicsugar.assist.InstructionBudget;
+import logicsugar.assist.StatementClipboard;
+import logicsugar.assist.SugarTooltip;
+import logicsugar.assist.VarClipboard;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprStatement;
 
@@ -46,6 +49,8 @@ import java.util.Map;
 public class SugarLogicDialog extends LogicDialog{
     private static final String compiledCopyName = "logicsugar-copy-compiled";
     private static final String originalViewName = "logicsugar-view-original";
+    private static final String copySelectionName = "logicsugar-copy-selection";
+    private static final String pasteSelectionName = "logicsugar-paste-selection";
     private static final Field consumerField = field(LogicDialog.class, "consumer");
     /** LogicDialog.privileged is package-private and lives in the MindustryX mod class loader at
      *  runtime, so it must be read reflectively (cross-loader package access throws
@@ -86,6 +91,8 @@ public class SugarLogicDialog extends LogicDialog{
     private Button discardButton;
     private Element editButton;
     private float menuScanTimer;
+    /** Ctrl+Z/Y/C/V 的长按去抖：正在按住的键；物理松开后清空（见 {@link #pollEditorShortcuts}）。 */
+    private KeyCode heldEditorShortcut;
     /** Live compiled-size banner; rebuilt with the vanilla button row. */
     private Label budgetLabel;
     private float budgetTimer;
@@ -131,23 +138,6 @@ public class SugarLogicDialog extends LogicDialog{
         // (clearChildren) on EVERY show — wiping anything added outside it. Re-append the
         // Sugar-owned buttons after each rebuild; find() guards make it idempotent.
         shown(this::installSugarButtons);
-        addCaptureListener(new InputListener(){
-            @Override
-            public boolean keyDown(InputEvent event, KeyCode keycode){
-                if(Vars.mobile || !isShown()) return false;
-                boolean ctrl = Core.input.keyDown(KeyCode.controlLeft) || Core.input.keyDown(KeyCode.controlRight);
-                if(!ctrl) return false;
-                if(keycode == KeyCode.z){
-                    performUndo();
-                    return true;
-                }
-                if(keycode == KeyCode.y){
-                    performRedo();
-                    return true;
-                }
-                return false;
-            }
-        });
         update(() -> {
             installEditHook();
             // Device-independent on purpose: mobile and narrow desktop windows take the same
@@ -166,6 +156,8 @@ public class SugarLogicDialog extends LogicDialog{
                 menuScanTimer = 0f;
                 installCompiledCopy();
                 installOriginalView();
+                installInspectionCopy();
+                installSelectionClipboard();
             }
             budgetTimer += Time.delta;
             if(budgetTimer >= 24f){
@@ -177,7 +169,66 @@ public class SugarLogicDialog extends LogicDialog{
                 historyTimer = 0f;
                 pollCanvasHistory();
             }
+            pollEditorShortcuts();
         });
+    }
+
+    /**
+     * 编辑器级快捷键：Ctrl+Z / Ctrl+Y 撤销重做，Ctrl+C / Ctrl+V 复制粘贴选区。
+     *
+     * <p>轮询而不是事件驱动，因为事件派发有两个坑，而轮询对两者都不敏感：</p>
+     * <ul>
+     *   <li><b>焦点。</b>{@code Scene.keyDown} 只把事件交给当前键盘焦点，再沿父链冒泡。对话框
+     *       显示时焦点是自己，但用户一旦编辑过某个输入框、随后点了别处，Mindustry 的
+     *       {@code UI.update} 会把焦点清成 null —— 此后事件从 root 开始，挂在对话框上的
+     *       capture 监听器根本收不到（撤销因此看起来"有时不灵"）。反过来，<b>arc 的
+     *       {@code handle()} 只标记 handled、不停止冒泡</b>，所以输入框也没法靠"消费"按键
+     *       保护自己（在 Expr 输入框里按 Ctrl+Z 会撤销画布而不是文本）。两件事都靠
+     *       {@link arc.scene.Scene#hasField()} 一次问清。</li>
+     *   <li><b>生命周期。</b>冲突设置一切换，编辑器实例就被换掉；轮询随实例来去，不必注册和
+     *       注销场景监听器，也就没有重复挂载或悬空引用的问题。</li>
+     * </ul>
+     *
+     * <p>帧序上是安全的：按键状态由 {@code input.postUpdate()} 在整帧最后清除，而本回调跑在
+     * {@code ApplicationListener.update()} 里、早于它 —— 与 Mindustry 自己的快捷键
+     * （{@code Vars.control}）读的是同一份状态。</p>
+     */
+    private void pollEditorShortcuts(){
+        // 松手用物理状态判断，不用 key-up 事件：窗口失焦时事件可能丢，一旦丢了按键就会卡成
+        // "一直按着"，之后所有按键都失效。这同时也是唯一需要的去抖 —— keyTap 在系统连发期间
+        // 持续为真，不挡住的话按住不放会一直撤销、一直粘贴。
+        if(heldEditorShortcut != null && !Core.input.keyDown(heldEditorShortcut)) heldEditorShortcut = null;
+        if(heldEditorShortcut != null || Vars.mobile || !isShown()) return;
+        // 输入框优先。Mindustry 在点击非输入框处就会清掉焦点，所以这一问等价于"用户此刻在打字"。
+        if(Core.scene != null && Core.scene.hasField()) return;
+        if(!Core.input.ctrl() || Core.input.alt()) return;
+
+        if(Core.input.keyTap(KeyCode.z)){
+            heldEditorShortcut = KeyCode.z;
+            performUndo();
+        }else if(Core.input.keyTap(KeyCode.y)){
+            heldEditorShortcut = KeyCode.y;
+            performRedo();
+        }else if(Core.input.keyTap(KeyCode.c)){
+            heldEditorShortcut = KeyCode.c;
+            // 没有可复制的选区时静默：Ctrl+C 是大家的快捷键，用户也可能想复制别的东西。
+            // （EMPTY 也覆盖了跨会话残留的旧选区，那种情况下提示只是噪音。）
+            StatementClipboard.Result result = BoxSelect.copySelection(canvas);
+            if(result != StatementClipboard.Result.EMPTY) finishClipboardShortcut(result, true);
+        }else if(Core.input.keyTap(KeyCode.v)){
+            heldEditorShortcut = KeyCode.v;
+            // 剪贴板里不是逻辑代码时同样静默 —— 快捷键没有解释自己的机会，
+            // 「粘贴选区」菜单项才是那种情形该走的显式入口。
+            if(!StatementClipboard.isAcceptable(Core.app.getClipboardText())) return;
+            StatementClipboard.Result result = BoxSelect.pasteClipboard(canvas);
+            if(result != StatementClipboard.Result.EMPTY) finishClipboardShortcut(result, false);
+        }
+    }
+
+    /** 与编辑菜单里的两项同路：菜单若开着先收起，否则粘贴的结果会被菜单挡住看不见。 */
+    private void finishClipboardShortcut(StatementClipboard.Result result, boolean copying){
+        if(cachedCopyDialog != null && cachedCopyDialog.isShown()) cachedCopyDialog.hide();
+        showClipboardResult(result, copying);
     }
 
     /** Re-appends the Sugar-owned buttons after vanilla {@code setup()} has rebuilt the row. */
@@ -191,9 +242,9 @@ public class SugarLogicDialog extends LogicDialog{
         }
         // show() sets this before super.show() fires the shown callbacks, so re-apply it here
         discardButton.visible = executor == null;
-        // processor-inspection copy buttons (variables dump + print buffer); no-op in
-        // library-file editing sessions where there is no processor to inspect
-        logicsugar.assist.VarClipboard.addButtons(buttons, this);
+        // The processor-inspection copies (variables dump + print buffer) are mounted into the
+        // edit menu by installInspectionCopy(), not here: the bar is width-bound, and two more
+        // fixed-width cells are what pushed it off narrow windows.
         installBudgetLabel();
         installHistoryButtons();
         bottomButtonsWidth = -1f;
@@ -234,19 +285,22 @@ public class SugarLogicDialog extends LogicDialog{
             }
         }
 
+        // Add closes the action group: it is the control used most often while editing (a
+        // statement lands right where the pointer already is), and keeping it last also puts it
+        // next to the inspection readout instead of buried between the view controls.
         Element[] centered = {
             buttons.find("back"),
             buttons.find("edit"),
             buttons.find("variables"),
-            add,
             buttons.find("funclib"),
             buttons.find("funclib-discard"),
             buttons.find("logicsugar-undo"),
-            buttons.find("logicsugar-redo")
+            buttons.find("logicsugar-redo"),
+            add
         };
+        // Only the readout is a bar control now; the two clipboard actions live in the edit menu
+        // (see installInspectionCopy), which has room for them and no width budget to blow.
         Element[] debug = {
-            buttons.find(logicsugar.assist.VarClipboard.copyVarsButtonName),
-            buttons.find(logicsugar.assist.VarClipboard.copyBufferButtonName),
             buttons.find("instruction-budget")
         };
 
@@ -510,6 +564,93 @@ public class SugarLogicDialog extends LogicDialog{
         });
     }
 
+    /**
+     * Mounts the processor-inspection clipboard actions (variables dump and print buffer) into the
+     * edit menu.
+     *
+     * <p>They used to be bottom-bar buttons. The bar's cells are fixed-width and the row is the
+     * scarce dimension — seven of them overflow a narrow window, which is exactly why the two
+     * least-used ones moved here, where a 280x60 row costs nothing. Library-file sessions have no
+     * processor to inspect, so they simply do not get the entries.</p>
+     */
+    private void installInspectionCopy(){
+        if(cachedCopyMenu == null || cachedCopyDialog == null) return;
+        if(executor == null) return;
+        if(cachedCopyMenu.find(VarClipboard.copyVarsButtonName) == null){
+            installMenuButton(cachedCopyMenu, VarClipboard.copyVarsButtonName, "@logicsugar.copyvars",
+                Icon.copy, () -> copyInspection(VarClipboard::variablesToText));
+        }
+        if(cachedCopyMenu.find(VarClipboard.copyBufferButtonName) == null){
+            installMenuButton(cachedCopyMenu, VarClipboard.copyBufferButtonName, "@logicsugar.copybuffer",
+                Icon.copy, () -> copyInspection(VarClipboard::bufferToText));
+        }
+    }
+
+    /** Reads the live processor at click time (the session may have been re-shown in between),
+     *  copies the dump, then closes the menu like the compiled-copy action above it.
+     *
+     *  <p>Uses {@link Func} rather than {@code java.util.function.Function}: the latter is API 24
+     *  and is not backported by D8 here (no core-library desugaring), so it would throw
+     *  {@code NoSuchMethodError}/{@code NoClassDefFoundError} on API 21-23 devices.</p> */
+    private void copyInspection(Func<LExecutor, String> dump){
+        LExecutor current = executor;
+        if(current == null) return;
+        Core.app.setClipboardText(dump.get(current));
+        if(cachedCopyDialog != null) cachedCopyDialog.hide();
+        Vars.ui.showInfoFade("@logicsugar.copied");
+    }
+
+    /**
+     * Mounts the cross-processor copy/paste entries, so a selection can be carried to another
+     * processor rather than only across the canvas it came from.
+     *
+     * <p>They live in the edit menu because that is where the rest of the clipboard actions
+     * already are, and because the bottom bar has no room left (see
+     * {@link #installInspectionCopy}).</p>
+     */
+    private void installSelectionClipboard(){
+        if(cachedCopyMenu == null || cachedCopyDialog == null || canvas == null) return;
+        Dialog dialog = cachedCopyDialog;
+
+        if(cachedCopyMenu.find(copySelectionName) == null){
+            installMenuButton(cachedCopyMenu, copySelectionName, "@logicsugar.copyselection",
+                Icon.copy, () -> {
+                    StatementClipboard.Result result = BoxSelect.copySelection(canvas);
+                    dialog.hide();
+                    showClipboardResult(result, true);
+                });
+        }
+        if(cachedCopyMenu.find(pasteSelectionName) == null){
+            installMenuButton(cachedCopyMenu, pasteSelectionName, "@logicsugar.pasteselection",
+                Icon.paste, () -> {
+                    StatementClipboard.Result result = BoxSelect.pasteClipboard(canvas);
+                    dialog.hide();
+                    showClipboardResult(result, false);
+                });
+        }
+    }
+
+    /** Turns a clipboard outcome into a message. Success of a paste reports the count, since a
+     *  paste that lands off-screen otherwise looks like nothing happened. */
+    private void showClipboardResult(StatementClipboard.Result result, boolean copying){
+        switch(result){
+            case OK -> Vars.ui.showInfoFade(copying
+                ? "@logicsugar.copyselection.done"
+                : Core.bundle.format("logicsugar.pasteselection.done", BoxSelect.lastPasteCount()));
+            case EMPTY -> Vars.ui.showInfoFade(copying
+                ? "@logicsugar.copyselection.empty"
+                : "@logicsugar.pasteselection.empty");
+            case INCOMPLETE_STRUCTURE -> Vars.ui.showInfoFade(copying
+                ? "@logicsugar.copyselection.incomplete"
+                : "@logicsugar.pasteselection.incomplete");
+            case ESCAPING_JUMP -> Vars.ui.showInfoFade(copying
+                ? "@logicsugar.copyselection.escaping"
+                : "@logicsugar.pasteselection.escaping");
+            case NOT_LOGIC -> Vars.ui.showInfoFade("@logicsugar.pasteselection.notlogic");
+            case TOO_BIG -> Vars.ui.showInfoFade("@logicsugar.pasteselection.toobig");
+        }
+    }
+
     /** Adds a menu action for switching between an inferred Sugar view and the stored mlog. */
     private void installOriginalView(){
         if(originalCode == null || recoveredSugar == null) return;
@@ -692,10 +833,15 @@ public class SugarLogicDialog extends LogicDialog{
                     for(Prov<LStatement> prov : LogicIO.allStatements){
                         LStatement example = prov.get();
                         String displayName = statementDisplayName(example);
+                        // Cards that cover several features (data-operation cards) contribute their
+                        // own keywords, so searching a specific operation still finds the family card.
+                        String searchTerms = example instanceof SugarStatements.SugarStatement sugar
+                            ? sugar.searchTerms() : null;
                         if(example instanceof LStatements.InvalidStatement || example.hidden() || (example.privileged() && !priv) || (example.nonPrivileged() && priv) ||
                             (!text.isEmpty() && !displayName.toLowerCase(Locale.ROOT).contains(text)
                                 && !example.name().toLowerCase(Locale.ROOT).contains(text)
-                                && !example.typeName().toLowerCase(Locale.ROOT).contains(text)) ||
+                                && !example.typeName().toLowerCase(Locale.ROOT).contains(text)
+                                && (searchTerms == null || !searchTerms.toLowerCase(Locale.ROOT).contains(text))) ||
                             (!priv && !Vars.state.rules.logicUnitControl && example.category() == LCategory.unit)) continue;
 
                         if(matched[0] == null){
@@ -709,7 +855,8 @@ public class SugarLogicDialog extends LogicDialog{
                                 if(category.icon != null){
                                     s.image(category.icon, Pal.darkishGray).left().size(15f).padRight(10f);
                                 }
-                                s.add(category.localized()).color(Pal.darkishGray).left().tooltip(category.description());
+                                s.add(category.localized()).color(Pal.darkishGray).left()
+                                    .self(c -> SugarTooltip.attach(c, category.description()));
                                 s.image(Tex.whiteui, Pal.darkishGray).left().height(5f).growX().padLeft(10f);
                             }).growX().pad(5f).padTop(10f);
 
@@ -733,7 +880,7 @@ public class SugarLogicDialog extends LogicDialog{
                             // LogicSugar statements use dedicated hint keys; vanilla ones keep the original lookup
                             String sugarKey = "logicsugar.lst." + example.typeName().toLowerCase(Locale.ROOT);
                             String bundleKey = Core.bundle.has(sugarKey) ? sugarKey : statementBundleKey(example);
-                            LCanvas.tooltip(c, bundleKey != null ? bundleKey : sugarKey);
+                            SugarTooltip.hint(c, bundleKey != null ? bundleKey : sugarKey);
                         }).top().left();
 
                         if(cat.getChildren().size % 3 == 0) cat.row();

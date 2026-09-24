@@ -269,6 +269,9 @@ public class BoxSelect{
                 @Override
                 public boolean keyDown(InputEvent event, KeyCode key){
                     if(key != KeyCode.del && key != KeyCode.backspace) return false;
+                    // 输入框优先。arc 只把事件标成 handled，不会停止冒泡，所以焦点在文本框里时
+                    // 这里照样会收到按键：少了这道门，退格删字符会连带删掉画布上的选区。
+                    if(Core.scene != null && Core.scene.hasField()) return false;
                     LogicDialog dialog = Vars.ui.logic;
                     if(dialog == null || !dialog.isShown()) return false;
                     if(state != State.SELECTED || selected.isEmpty()) return false;
@@ -482,8 +485,10 @@ public class BoxSelect{
         // 只处理 canvas 内的点击。
         // MindustryX 的 LogicSupport 左侧面板等非 canvas UI 直接放行，
         // 避免其按钮（ImageButton 内的 Image）进入 tryHijackButton 影响事件传递。
-        // z-order 已在 replaceCanvas 中修正（canvas 在 children 列表中的位置保持原样），
-        // 面板按钮的 hit test 能正确返回面板元素而非 canvas。
+        // 面板能命中到自己而不是 canvas，靠的是 SugarCoexist.swapCanvas() 换完画布后把它放回
+        // 原来的 children 层——Cell.setElement() 内部是 addChild()，会把画布追加到末尾，那样画布
+        // 会画在面板之上并抢走它所有按钮的点击。这里只是第二道保险：万一层还是不对，落在面板上的
+        // 点击也绝不能被当成"点击积木"吞掉。
         if(!isDescendantOfCanvas(target, canvas)){
             return false;
         }
@@ -2136,6 +2141,167 @@ public class BoxSelect{
             draggingField.set(canvas, null);
         }catch(Exception e){
             Log.warn("[LogicAssist] Failed to clear dragging field", e);
+        }
+    }
+
+    // ===== 跨逻辑复制粘贴（编辑菜单入口）=====
+
+    /**
+     * 把当前选区作为糖源码写入系统剪贴板，供其它逻辑处理器（或其它会话）粘贴。
+     *
+     * <p>边界判定与同画布拖拽复制逐条对齐：空选区不做任何事，结构不完整的选区拒绝（拖动
+     * 复制同样在这个条件下直接 return），插入上限沿用 {@link LExecutor#maxInstructions}。</p>
+     *
+     * <p>跳转目标是唯一必须另立规则的地方。同画布复制时"目标在选区外就保留原目标"是对的，
+     * 因为程序没变；跨程序时那个数字是**源程序的行号**，粘到别处就会指向一条无关语句，因此
+     * 这里选择拒绝并让调用方给出提示，而不是留下一个会静默改坏程序的剪贴板。</p>
+     */
+    public static StatementClipboard.Result copySelection(LCanvas canvas){
+        if(canvas == null || canvas.statements == null) return StatementClipboard.Result.EMPTY;
+        List<StatementElem> sorted = sortedSelectedIn(canvas);
+        if(sorted.isEmpty()) return StatementClipboard.Result.EMPTY;
+
+        // 与 startDrag 同一条门：撕裂结构的行为一律不做
+        if(isStructureSelectionIncomplete(canvas)){
+            Log.debug("[LogicAssist] Copy blocked: incomplete structure selection");
+            return StatementClipboard.Result.INCOMPLETE_STRUCTURE;
+        }
+
+        Seq<Element> children = canvas.statements.getChildren();
+        Seq<LStatement> fragment = new Seq<>(sorted.size());
+        Map<Integer, Integer> absoluteToRelative = new HashMap<>();
+        for(StatementElem elem : sorted){
+            SugarCanvas.normalizeJumpUI(elem.st);
+            LStatement copy = elem.st.copy();
+            if(copy == null) continue;
+            int absolute = children.indexOf(elem, true);
+            if(absolute >= 0) absoluteToRelative.put(absolute, fragment.size);
+            fragment.add(copy);
+        }
+        if(fragment.isEmpty()) return StatementClipboard.Result.EMPTY;
+
+        int escaped = StatementClipboard.rebase(fragment, absoluteToRelative);
+        if(escaped > 0){
+            Log.debug("[LogicAssist] Copy blocked: @ jump(s) leave the selection", escaped);
+            return StatementClipboard.Result.ESCAPING_JUMP;
+        }
+
+        Core.app.setClipboardText(StatementClipboard.write(fragment));
+        Log.debug("[LogicAssist] Copied @ statements to the clipboard.", fragment.size);
+        return StatementClipboard.Result.OK;
+    }
+
+    /** 上一次粘贴插入的语句条数，仅在 {@link #pasteClipboard} 返回 OK 时有效。 */
+    private static int lastPasteCount = 0;
+
+    public static int lastPasteCount(){
+        return lastPasteCount;
+    }
+
+    /**
+     * 从系统剪贴板取出糖源码并插入当前画布。落点与"Ctrl+点击复制"一致：选中积木的最后一块
+     * 之下；没有选区时追加到末尾。
+     */
+    public static StatementClipboard.Result pasteClipboard(LCanvas canvas){
+        lastPasteCount = 0;
+        if(canvas == null || canvas.statements == null) return StatementClipboard.Result.EMPTY;
+
+        String text = Core.app.getClipboardText();
+        // 我们自己的载荷是原样复刻的（源画布上本来就有的无效卡也要照搬）；外来文本则要求
+        // 每一条都解析成功，否则一段散文会变成一堆静默的无效卡。判定只有这一个实现 —— 轮询
+        // 的 Ctrl+V 也问它，各自写一份迟早会漂。
+        if(!StatementClipboard.isAcceptable(text)) return StatementClipboard.Result.NOT_LOGIC;
+
+        Seq<LStatement> incoming = StatementClipboard.parse(text);
+        if(incoming == null) return StatementClipboard.Result.NOT_LOGIC;
+
+        if(StatementClipboard.countEscapingJumps(incoming) > 0){
+            return StatementClipboard.Result.ESCAPING_JUMP;
+        }
+
+        int insertPos = pasteInsertPosition(canvas);
+        int currentSize = canvas.statements.getChildren().size;
+        if(currentSize + incoming.size > LExecutor.maxInstructions){
+            Log.debug("[LogicAssist] Paste aborted: would exceed maxInstructions");
+            return StatementClipboard.Result.TOO_BIG;
+        }
+
+        // 配对必须在插入之前完成：一半的结构是收不回来的。载荷由本模组写出时源选区已经过了
+        // isStructureSelectionIncomplete，这里主要拦外来文本（手写的 ifbegin 没有 end）。
+        if(!SugarStatements.pairBlockEnds(incoming)){
+            Log.debug("[LogicAssist] Paste aborted: fragment has unpaired begin/end");
+            return StatementClipboard.Result.INCOMPLETE_STRUCTURE;
+        }
+
+        insertPastedStatements(canvas, insertPos, incoming);
+
+        finalizeLayout(canvas);
+        // 插入改变了所有下标，跳转层与结构引导线都要跟着重算
+        saveAllJumpUI(canvas);
+        SugarCanvas.refreshJumpLayer(canvas);
+        refreshStructureLayout(canvas);
+        restoreButtonIcons(canvas);
+        reselectRange(canvas, insertPos, incoming.size);
+        enterSelectedState(canvas);
+
+        lastPasteCount = incoming.size;
+        Log.debug("[LogicAssist] Pasted @ statements at @.", incoming.size, insertPos);
+        return StatementClipboard.Result.OK;
+    }
+
+    /** 选中积木最后一块的下方；没有选区时接在末尾（与 duplicateSelectedBelow 同一口径）。 */
+    private static int pasteInsertPosition(LCanvas canvas){
+        Seq<Element> children = canvas.statements.getChildren();
+        List<StatementElem> sorted = sortedSelectedIn(canvas);
+        if(sorted.isEmpty()) return children.size;
+        int lastIdx = children.indexOf(sorted.get(sorted.size() - 1), true);
+        return Math.max(0, Math.min(lastIdx + 1, children.size));
+    }
+
+    /**
+     * 选区中属于这本画布的元素，按画布顺序排列。
+     *
+     * <p>{@code selected} 是跨对话框存活的静态集合，而编辑器复用的是同一个 canvas 对象、每次
+     * load 换掉全部子元素 —— 旧选区里的 {@link StatementElem} 于是成了无主引用。按 children
+     * 遍历天然把它们滤掉，顺带也给出了顺序；这比 {@code getSortedSelected} 里的排序更稳妥，
+     * 因为那里的 {@code indexOf} 对非成员返回 -1，会把陈旧元素排到最前面去。</p>
+     */
+    private static List<StatementElem> sortedSelectedIn(LCanvas canvas){
+        List<StatementElem> result = new ArrayList<>();
+        if(canvas == null || canvas.statements == null) return result;
+        for(Element child : canvas.statements.getChildren()){
+            if(child instanceof StatementElem elem && selected.contains(elem)) result.add(elem);
+        }
+        return result;
+    }
+
+    /**
+     * 插入一段从文本解析出来的语句，并把块与跳转重新指向新副本。
+     *
+     * <p>与 {@link #insertCopiedStatements} 的区别在于这里没有源积木可参照：文本里的下标都是
+     * 片段内部的相对下标，所以 begin 的配对已由调用方用 {@link SugarStatements#pairBlockEnds}
+     * 按嵌套重算好，这里只按下标把 {@code dest} 指到同一批次里的目标。</p>
+     */
+    private static void insertPastedStatements(LCanvas canvas, int insertPos, Seq<LStatement> copies){
+        for(int i = 0; i < copies.size; i++){
+            canvas.statements.addChildAt(insertPos + i, canvas.new StatementElem(copies.get(i)));
+        }
+
+        for(int i = 0; i < copies.size; i++){
+            LStatement copy = copies.get(i);
+            if(copy instanceof BeginStatement begin){
+                if(begin.destIndex >= 0 && begin.destIndex < copies.size){
+                    begin.dest = copies.get(begin.destIndex).elem;
+                }
+            }else if(copy instanceof JumpStatement jump){
+                if(jump.destIndex >= 0 && jump.destIndex < copies.size){
+                    jump.dest = copies.get(jump.destIndex).elem;
+                }else{
+                    jump.dest = null;
+                }
+            }else{
+                copy.setupUI();
+            }
         }
     }
 }

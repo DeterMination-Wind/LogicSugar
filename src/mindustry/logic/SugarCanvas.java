@@ -31,9 +31,7 @@ import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.logic.SugarStatements.CaseStatement;
 import mindustry.logic.SugarStatements.ElseIfStatement;
 import mindustry.logic.SugarStatements.ElseStatement;
-import mindustry.logic.SugarStatements.ForBeginStatement;
 import mindustry.logic.SugarStatements.IfBeginStatement;
-import mindustry.logic.SugarStatements.WhileBeginStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
 import logicsugar.assist.BoxSelect;
 import logicsugar.assist.JumpLineColor;
@@ -134,6 +132,19 @@ public class SugarCanvas extends LCanvas{
         String result = super.save();
         ExprHook.foldAll(this);
         return result;
+    }
+
+    /** Reads {@code LCanvas.privileged} via reflection: it is package-private and the mod class
+     *  loader cannot access it directly (IllegalAccessError) even though the package names match.
+     *  Unreadable degrades to non-privileged, so a privileged statement is refused rather than
+     *  silently allowed. */
+    protected boolean editingPrivileged(){
+        if(privilegedField == null) return false;
+        try{
+            return privilegedField.getBoolean(this);
+        }catch(IllegalAccessException e){
+            return false;
+        }
     }
 
     @Override
@@ -672,15 +683,10 @@ public class SugarCanvas extends LCanvas{
             Vars.ui.showInfoFade(Core.bundle.get("logicsugar.textEdit.convertError", "Cannot convert this statement to/from text."));
         }
 
-        /** Reads LCanvas.privileged via reflection: it is package-private and the mod class
-         *  loader cannot access it directly (IllegalAccessError) even though the package names match. */
+        /** The privilege level of the canvas this element belongs to; see
+         *  {@link SugarCanvas#editingPrivileged()}. */
         private boolean isPrivileged(){
-            if(privilegedField == null) return false;
-            try{
-                return privilegedField.getBoolean(SugarCanvas.this);
-            }catch(IllegalAccessException e){
-                return false;
-            }
+            return SugarCanvas.this.editingPrivileged();
         }
     }
 
@@ -712,6 +718,8 @@ public class SugarCanvas extends LCanvas{
         final IdentityHashMap<StatementElem, Integer> indices = new IdentityHashMap<>();
         boolean[] compilerInvalid = {};
         private int signature;
+        /** 复用缓冲：refresh() 每帧对每条语句算一次签名，复用可避免每帧等量垃圾。 */
+        private final StringBuilder signatureBuffer = new StringBuilder();
 
         void refresh(){
             if(statements == null) return;
@@ -727,24 +735,15 @@ public class SugarCanvas extends LCanvas{
                     nextSignature = 31 * nextSignature + System.identityHashCode(begin.dest);
                     nextSignature = 31 * nextSignature + (begin.collapsed ? 1 : 0);
                 }
-                // Condition content changes (typing in the Expr editor, switching op/Expr mode)
-                // must re-run invalidStatements, or stale red marking never refreshes.
-                if(elem.st instanceof IfBeginStatement ifBegin){
-                    nextSignature = 31 * nextSignature + (ifBegin.expressionMode ? 1 : 0);
-                    nextSignature = 31 * nextSignature + (ifBegin.shortCircuitMode ? 1 : 0);
-                    nextSignature = 31 * nextSignature + ifBegin.conditionExpr.hashCode();
-                }else if(elem.st instanceof ElseIfStatement elseIf){
-                    nextSignature = 31 * nextSignature + (elseIf.expressionMode ? 1 : 0);
-                    nextSignature = 31 * nextSignature + (elseIf.shortCircuitMode ? 1 : 0);
-                    nextSignature = 31 * nextSignature + elseIf.conditionExpr.hashCode();
-                }else if(elem.st instanceof WhileBeginStatement whileBegin){
-                    nextSignature = 31 * nextSignature + (whileBegin.expressionMode ? 1 : 0);
-                    nextSignature = 31 * nextSignature + (whileBegin.shortCircuitMode ? 1 : 0);
-                    nextSignature = 31 * nextSignature + whileBegin.conditionExpr.hashCode();
-                }else if(elem.st instanceof ForBeginStatement forBegin){
-                    nextSignature = 31 * nextSignature + (forBegin.expressionMode ? 1 : 0);
-                    nextSignature = 31 * nextSignature + (forBegin.shortCircuitMode ? 1 : 0);
-                    nextSignature = 31 * nextSignature + forBegin.conditionExpr.hashCode();
+                // Every editable card field must count, and it does so through the card's own
+                // serialisation. Condition cards used to be hashed field by field right here (op/Expr
+                // mode, short-circuit flag, conditionExpr) - the same enumerate-the-fields pattern that
+                // made declaration cards miss out, so editing an array/record/stack field to an invalid
+                // value left the red marking stale. SugarStatement.invalidSignature() hashes the card's
+                // write() output, which is every field of every current and future card type; adding a
+                // card type must not mean coming back here.
+                if(elem.st instanceof SugarStatements.SugarStatement sugar){
+                    nextSignature = 31 * nextSignature + sugar.invalidSignature(signatureBuffer);
                 }
             }
             if(nextSignature == signature) return;

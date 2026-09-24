@@ -51,15 +51,16 @@ public class FunctionLibraryDialog extends Dialog{
     }
 
     private void openEditor(String sugar){
-        if(Vars.ui.logic instanceof SugarLogicDialog logic){
-            logic.passThroughSugarOnError = true;
-            logic.show(sugar, null, true, compiled -> {
-                logic.passThroughSugarOnError = false;
-                storeBack(compiled);
-            });
-        }else{
+        SugarLogicDialog logic = LogicSugarMod.ownEditor();
+        if(logic == null){
             Vars.ui.showErrorMessage("@logicsugar.funclib.noeditor");
+            return;
         }
+        logic.passThroughSugarOnError = true;
+        logic.show(sugar, null, true, compiled -> {
+            logic.passThroughSugarOnError = false;
+            storeBack(compiled);
+        });
     }
 
     private void storeBack(String compiledOrSugar){
