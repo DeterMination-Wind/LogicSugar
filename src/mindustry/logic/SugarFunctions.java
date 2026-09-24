@@ -612,6 +612,22 @@ public final class SugarFunctions{
      * into {@link #exitTarget} as usual, and body targets become body-relative.
      */
     public static String extractLibrarySource(String libraryText, Set<String> usedNames){
+        return extractLibrarySource(libraryText, usedNames, 0);
+    }
+
+    /**
+     * {@link #extractLibrarySource(String, Set)} with an explicit {@code outBase}: the number of
+     * statements that already precede this slice in the text it is appended to.
+     *
+     * <p>A funcdef/begin/jump {@code destIndex} is an <em>absolute</em> statement index of the
+     * library text it belongs to ("must point to a block end below it"), so a slice concatenated
+     * after another one must be shifted by that prefix length. Merging an embedded
+     * {@code __ls_lib} subset with the newly used functions of the local library file is exactly
+     * that case: without the shift every appended funcdef points back into the prefix and is
+     * rejected as damaged, which silently drops the function from the effective library.
+     * Callers appending to an empty builder pass 0 (the default overload).
+     */
+    public static String extractLibrarySource(String libraryText, Set<String> usedNames, int outBase){
         Seq<LStatement> statements = readLibrary(libraryText, true);
         int n = statements.size;
         int[] endOf = new int[n];
@@ -627,7 +643,7 @@ public final class SugarFunctions{
         for(int i = 0; i < n; i++){
             int e = endOf[i];
             if(e < 0) continue;
-            appended += copySlice(statements, i, e, out, appended);
+            appended += copySlice(statements, i, e, out, outBase + appended);
         }
         return out.toString();
     }

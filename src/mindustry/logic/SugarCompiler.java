@@ -573,8 +573,15 @@ public final class SugarCompiler{
             Set<String> extras = new HashSet<>(sanitizedLocal.index.functions.keySet());
             extras.removeAll(embeddedNames);
             if(!extras.isEmpty()){
-                // extract from the sanitized text: raw slices could copy damaged duplicates
-                String extracted = SugarFunctions.extractLibrarySource(sanitizedLocal.text, extras);
+                // Extract from the sanitized text: raw slices could copy damaged duplicates.
+                // The slice is appended AFTER the embedded subset and destIndex values are
+                // absolute statement indices of the merged text, so it must be rebased by the
+                // statement count already in the builder (the '\n' separator is a blank line
+                // and consumes no index). Without the rebase every appended funcdef points back
+                // into the prefix, is rejected as damaged, and the function is silently dropped
+                // from the effective library.
+                String extracted = SugarFunctions.extractLibrarySource(sanitizedLocal.text, extras,
+                    SugarFunctions.readLibrary(text.toString(), true).size);
                 if(!extracted.isEmpty()){
                     if(text.length() > 0) text.append('\n');
                     text.append(extracted);

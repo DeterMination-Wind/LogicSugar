@@ -88,6 +88,7 @@ public class SugarCompilerSelfTest{
         carrierSurvivesVanillaRoundTrip();
         restorePrefersCarrier();
         libraryEmbeddingRoundTrip();
+        libraryMergeRebasesAppendedFunctions();
         verificationDetectsExternalEdits();
         oversizeStripsComments();
         libraryDamageHarness();
@@ -1756,6 +1757,79 @@ public class SugarCompilerSelfTest{
         check(effective.index != null && effective.index.functions.containsKey("add"), "embedded library was not merged over an empty local library");
         String noLocal = SugarCompiler.compile(restored, SugarCompiler.FuncMode.normal, effective.index, effective.text);
         check(normalize(noLocal).equals(normalize(compiled)), "compiling without the local library changed the output");
+    }
+
+    /**
+     * Issue #13: the effective-library merge must rebase the appended local slice.
+     *
+     * <p>{@code __ls_lib} carries only the subset that save actually inlined. When the local
+     * library file holds further functions, the dialog merges the embedded subset with a freshly
+     * extracted slice of the local file; funcdef/begin/jump {@code destIndex} values are absolute
+     * statement indices, so the slice must be shifted by the prefix length. Without the rebase
+     * every appended funcdef pointed back into the prefix, was rejected as damaged, and the
+     * function was silently dropped — adding a call to a library function that had not been
+     * inlined before then failed with a misleading "calls undefined function".
+     */
+    private static void libraryMergeRebasesAppendedFunctions(){
+        String libraryText = """
+            funcdef x ~ 2
+            print "x"
+            blockend
+            funcdef y ~ 5
+            print "y"
+            blockend
+            """;
+        SugarFunctions.LibraryIndex full = SugarFunctions.buildLibrary(LAssembler.read(libraryText, true));
+        check(full.functions.containsKey("y"), "test setup: local library misses the second function");
+
+        // a program that inlined only x: the carrier holds x alone
+        String compiled = SugarCompiler.compile("funccall x \"\" ~\n", SugarCompiler.FuncMode.normal, full, libraryText);
+        String embedded = SugarCompiler.libraryFromCode(compiled);
+        check(embedded != null && embedded.contains("funcdef x") && !embedded.contains("funcdef y"),
+            "test setup: the carrier should hold only the inlined subset");
+
+        // the merge the dialog performs on open, with the local file holding the extra function
+        SugarCompiler.EffectiveLibrary effective = SugarCompiler.effectiveLibrary(compiled, full, libraryText);
+        check(effective.index != null && effective.index.functions.containsKey("x")
+            && effective.index.functions.containsKey("y"),
+            "effective library dropped the not-yet-inlined function 'y'");
+        check(!effective.index.damaged, "effective library was reported damaged: " + effective.index.warnings);
+
+        // the reporter's step: add a call to the function that was not inlined before
+        String edited = SugarCompiler.restore(compiled) + "funccall y \"\" ~\n";
+        String merged = SugarCompiler.compile(edited, SugarCompiler.FuncMode.normal, effective.index, effective.text);
+
+        // and it must equal compiling the same source against the full local library
+        String direct = SugarCompiler.compile(edited, SugarCompiler.FuncMode.normal, full, libraryText);
+        check(normalize(merged).equals(normalize(direct)), "merged-library compile differs from the full-library compile");
+        check(SugarCompiler.verifyRestore(merged, SugarCompiler.restore(merged)), "merged library product failed verification");
+
+        // the rebase is not specific to a leading subset: a middle function merge must work too
+        String threeText = """
+            funcdef a ~ 2
+            print "a"
+            blockend
+            funcdef b ~ 5
+            print "b"
+            blockend
+            funcdef c ~ 8
+            print "c"
+            blockend
+            """;
+        SugarFunctions.LibraryIndex three = SugarFunctions.buildLibrary(LAssembler.read(threeText, true));
+        String onlyA = SugarCompiler.compile("funccall a \"\" ~\n", SugarCompiler.FuncMode.normal, three, threeText);
+        SugarCompiler.EffectiveLibrary threeEffective = SugarCompiler.effectiveLibrary(onlyA, three, threeText);
+        check(threeEffective.index != null && threeEffective.index.functions.keySet().containsAll(List.of("a", "b", "c")),
+            "effective library dropped functions after a rebase: "
+                + (threeEffective.index == null ? "null" : threeEffective.index.functions.keySet().toString()));
+
+        // and the appended slice is also correct on its own (extractLibrarySource outBase 0)
+        String aOnly = SugarFunctions.extractLibrarySource(threeText, Set.of("a"));
+        String cOnly = SugarFunctions.extractLibrarySource(threeText, Set.of("c"));
+        check(SugarFunctions.buildLibrary(LAssembler.read(aOnly, true)).functions.containsKey("a"),
+            "single-function extraction lost its function");
+        check(SugarFunctions.buildLibrary(LAssembler.read(cOnly, true)).functions.containsKey("c"),
+            "single-function extraction of a later function lost its function");
     }
 
     /** External edits to the compiled code must be detected; innocent round trips must pass. */
