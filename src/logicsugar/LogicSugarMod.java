@@ -547,7 +547,15 @@ public class LogicSugarMod extends Mod{
 
     /** Host (Neon) settings aggregation: function mode, editor conflict, library entry, overlays and
      *  jump line coloring. Must stay in sync with {@link LogicSugarSettings#setup} - a row missing
-     *  here is a row a bundled user cannot reach at all. */
+     *  here is a row a bundled user cannot reach at all, which is the bug class the editorConflict
+     *  row below exists to prevent.
+     *
+     *  <p>Deliberate exception: {@code logicsugar.switchStrategy} is registered only in the standalone
+     *  page, so a bundled user is pinned to the {@code auto} default. Unlike editorConflict that
+     *  default is non-destructive - it only selects the cheaper lowering - so the row is left out to
+     *  keep the aggregate settings page shorter. Do not add it here casually, and if either form ever
+     *  changes, update the Neon-side note and the sync assertions in the same change (this repo's rule
+     *  requires a deliberate dual-form gap to be recorded on both sides, not just here). */
     public void bekBuildSettings(SettingsMenuDialog.SettingsTable table){
         table.pref(new LogicSugarSettings.FuncModeSetting(LogicSugarSettings.settingFuncMode, "normal"));
         table.pref(new LogicSugarSettings.AssertEmitSetting(LogicSugarSettings.settingAssertEmit, "strip"));
