@@ -1,6 +1,7 @@
 package logicsugar.assist.data;
 
 import logicsugar.LogicSugarMod;
+import logicsugar.SourceNails;
 import logicsugar.assist.expr.ExprIntrinsics;
 import mindustry.gen.LogicIO;
 import mindustry.logic.LAssembler;
@@ -16,7 +17,13 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
+import java.util.Set;
 
 /** Regression checks for persistent intrinsic operation cards. */
 public final class DataCallTest{
@@ -50,6 +57,7 @@ public final class DataCallTest{
         structureCardsSitNextToTheirDeclaration();
         operationCardsShareTheirDeclarationColumn();
         operationLabelsAreTranslated();
+        everyOperationBundleKeyIsReachable();
         declarationHintsUseTheOperationCardsLabels();
         argumentSlotsAreFixedAndLossless();
         operationCardsMarkInvalidArguments();
@@ -185,7 +193,7 @@ public final class DataCallTest{
     /**
      * v5.2 改名：加号菜单只提供新名（{@link DataModules#paletteCalls()}），旧载体重开的卡片
      * 也必须在解析时归一化成新名——否则旧存档里的积木仍然显示 {@code spush(...)}、悬停提示
-     * 走 {@code logicsugar.lst.datacall.spush}，并且把旧名写回下一次保存的载体。
+     * 也按旧名取键（旧名那套键已随死键清理删除，只会退回英文原文），并且把旧名写回下一次保存的载体。
      */
     private static void legacyCarrierCardsUseCanonicalNames(){
         LStatement parsed = LAssembler.read("datacall spush pushed \"s, 7\"", true).first();
@@ -420,7 +428,7 @@ public final class DataCallTest{
      * 英文 STL 名（"翻译丢失"），所以这里把键和三份译文一起钉住。
      */
     private static void operationLabelsAreTranslated() throws IOException{
-        File root = projectRoot();
+        File root = SourceNails.root();
         check(DataCallStatement.operationLabelKey("stack_push").equals("datacall.stack_push"),
             "the operation label must be looked up under the localised datacall key: "
                 + DataCallStatement.operationLabelKey("stack_push"));
@@ -438,8 +446,7 @@ public final class DataCallTest{
 
         // 卡片正文（按钮）与弹窗条目都必须走这个键；直接 cardText(<op>) 会查 logicsugar.<op>（不存在）
         // 而退回英文 STL 名——这正是本次修掉的显示问题。
-        String source = Files.readString(
-            root.toPath().resolve("src/logicsugar/assist/data/DataCallStatement.java"), StandardCharsets.UTF_8);
+        String source = SourceNails.readSource("src/logicsugar/assist/data/DataCallStatement.java");
         check(source.contains("cardText(operationLabelKey("),
             "the card must resolve operation labels through operationLabelKey()");
         check(source.contains("operationLabel(canonicalOperation())"),
@@ -453,6 +460,74 @@ public final class DataCallTest{
             "measured text width must be converted from pixels back to design units before Cell.width()");
         check(!source.contains("+ BUTTON_PADDING"),
             "widget widths must come from measured text metrics, not a hardcoded padding constant");
+    }
+
+    /**
+     * 运算卡引用的 bundle 键必须都有代码路径能取到，反过来可达的键也必须都写出来。
+     *
+     * <p>加号菜单改成「一个结构一张卡」之后，逐运算的 {@code logicsugar.lst.datacall.<op>} 全部
+     * 变成不可达 —— {@link DataCallStatement#typeName()} 只返回 {@code datacall.group.<组>}，
+     * 所以调色板按钮的描述改由 {@code logicsugar.lst.datacall.group.<组>} 提供；同理，旧短名
+     * （{@code spush}/{@code sum}/…）在卡片解析时就被归一化成规范名，{@code datacall.<旧名>} 与
+     * {@code hint.datacall.<旧名>} 也不再被取用。</p>
+     *
+     * <p>死键不只是占地方：它们让「译文丢了会静默退回英文」这类排查失效 —— 看到键还在就以为
+     * 文案生效，实际取的是另一个键。这里把可达集合算出来与三份 bundle 双向对齐，任何一侧对不上
+     * 都在这里变红，而不是等玩家发现某张卡显示英文。</p>
+     */
+    private static void everyOperationBundleKeyIsReachable() throws IOException{
+        Set<String> reachable = new LinkedHashSet<>();
+        // 卡内「运算」按钮/「实参」输入框自身的提示（不是逐运算的）
+        reachable.add("logicsugar.datacall.operation");
+        reachable.add("logicsugar.datacall.arguments");
+        reachable.add("logicsugar.hint.datacall.operation");
+        reachable.add("logicsugar.hint.datacall.arguments");
+        for(DataModule.PaletteCall call : DataModules.paletteCalls().values()){
+            String operation = call.name.toLowerCase(Locale.ROOT);
+            // 卡片正文与卡内运算按钮：logicsugar.datacall.<规范名>
+            reachable.add("logicsugar.datacall." + operation);
+            // 卡内运算选择器每一条的悬停提示：logicsugar.hint.datacall.<规范名>
+            reachable.add("logicsugar.hint.datacall." + operation);
+            // 调色板按钮描述：一张卡覆盖整组，所以只有分组键
+            reachable.add("logicsugar.lst.datacall.group."
+                + DataModules.groupKey(call).toLowerCase(Locale.ROOT));
+            // 实参输入框的灰色占位：logicsugar.datacall.arg.<参数名>
+            for(String parameter : DataModules.paletteParams(call.name)){
+                reachable.add("logicsugar.datacall.arg." + parameter.toLowerCase(Locale.ROOT));
+            }
+        }
+
+        for(String name : new String[]{"bundle.properties", "bundle_zh_CN.properties", "bundle_zh_TW.properties"}){
+            Properties bundle = load(SourceNails.root(), name);
+
+            List<String> dead = new ArrayList<>();
+            for(String key : bundle.stringPropertyNames()){
+                if(!isOperationCardKey(key)) continue;
+                if(!reachable.contains(key)) dead.add(key);
+            }
+            Collections.sort(dead);
+            check(dead.isEmpty(), name + " has " + dead.size()
+                + " operation key(s) that no code path can reach (delete them): " + preview(dead));
+
+            List<String> missing = new ArrayList<>();
+            for(String key : reachable){
+                if(!bundle.containsKey(key)) missing.add(key);
+            }
+            Collections.sort(missing);
+            check(missing.isEmpty(), name + " is missing " + missing.size()
+                + " reachable operation key(s) (the UI would silently fall back to English): " + preview(missing));
+        }
+    }
+
+    /** 运算卡自己那一族键（不含声明卡、设置页等其它 {@code logicsugar.*} 键）。 */
+    private static boolean isOperationCardKey(String key){
+        return key.startsWith("logicsugar.datacall.")
+            || key.startsWith("logicsugar.hint.datacall.")
+            || key.startsWith("logicsugar.lst.datacall.");
+    }
+
+    private static String preview(List<String> keys){
+        return keys.subList(0, Math.min(keys.size(), 8)) + (keys.size() > 8 ? " ..." : "");
     }
 
     /**
@@ -497,7 +572,7 @@ public final class DataCallTest{
         }
 
         for(String name : new String[]{"bundle.properties", "bundle_zh_CN.properties", "bundle_zh_TW.properties"}){
-            Properties bundle = load(projectRoot(), name);
+            Properties bundle = load(SourceNails.root(), name);
             for(java.util.Map.Entry<String, String> entry : stems.entrySet()){
                 // 同一批运算在界面上有两处文案，两处都必须与运算卡一致：
                 //   logicsugar.hint.<stem>.name —— 声明卡「名字」字段的悬停提示
@@ -532,7 +607,7 @@ public final class DataCallTest{
         // provider.callNames() 同时列出规范名与别名，靠 paletteCall 归一后的名字来区分两者。
         java.util.List<Properties> languages = new java.util.ArrayList<>();
         for(String name : new String[]{"bundle.properties", "bundle_zh_CN.properties", "bundle_zh_TW.properties"}){
-            languages.add(load(projectRoot(), name));
+            languages.add(load(SourceNails.root(), name));
         }
         for(DataModule module : DataModules.activeModules()){
             ExprIntrinsics.Provider provider = module.intrinsics();
@@ -602,7 +677,7 @@ public final class DataCallTest{
             "the shared argument-name vocabulary changed to " + vocabulary
                 + "; add the new names to logicsugar.datacall.arg.* in all three bundles and to this list");
 
-        File rootForBundles = projectRoot();
+        File rootForBundles = SourceNails.root();
         for(String bundleName : new String[]{
             "bundle.properties", "bundle_zh_CN.properties", "bundle_zh_TW.properties"}){
             Properties bundle = load(rootForBundles, bundleName);
@@ -706,8 +781,7 @@ public final class DataCallTest{
             "the carrier shape must stay unchanged: " + carrier);
 
         // 源码钉子：build() 必须真的走这套判定与写回（否则上面的逻辑没人调用）
-        String source = Files.readString(rootForBundles.toPath()
-            .resolve("src/logicsugar/assist/data/DataCallStatement.java"), StandardCharsets.UTF_8);
+        String source = SourceNails.readSource("src/logicsugar/assist/data/DataCallStatement.java");
         check(source.contains("argumentSlots()"),
             "the card must decide its argument shape through argumentSlots()");
         check(source.contains("table.add(\",\")"),
@@ -829,12 +903,10 @@ public final class DataCallTest{
             "a program without operation cards must not enter a validation context");
 
         // ⑥ 接线钉子：编译路径必须真的调用它，且编辑器用的是编译期同一条路径
-        String modules = Files.readString(projectRoot().toPath()
-            .resolve("src/logicsugar/assist/data/DataModules.java"), StandardCharsets.UTF_8);
+        String modules = SourceNails.readSource("src/logicsugar/assist/data/DataModules.java");
         check(modules.contains("ExprCompiler.compileForcedIntrinsic(destination, operation,"),
             "the editor pass must reuse the compiler's own intrinsic lowering");
-        String compiler = Files.readString(projectRoot().toPath()
-            .resolve("src/mindustry/logic/SugarCompiler.java"), StandardCharsets.UTF_8);
+        String compiler = SourceNails.readSource("src/mindustry/logic/SugarCompiler.java");
         check(compiler.contains("DataModules.markInvalidCalls(statementList, invalid, arrayReservedNames)"),
             "the editor's invalid-statement pass must invoke the operation-card check");
 
@@ -890,18 +962,6 @@ public final class DataCallTest{
             properties.load(reader);
         }
         return properties;
-    }
-
-    /** Project directory that contains {@code assets/bundles}; gradle runs from it, tests may run from a subdirectory. */
-    private static File projectRoot(){
-        for(String candidate : new String[]{".", ".."}){
-            File root = new File(candidate);
-            if(new File(root, "assets/bundles/bundle.properties").isFile()
-                && new File(root, "src/logicsugar/assist/data/DataModules.java").isFile()){
-                return root;
-            }
-        }
-        throw new AssertionError("LogicSugar project directory not found from " + new File(".").getAbsolutePath());
     }
 
     /**

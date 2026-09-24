@@ -15,11 +15,7 @@ import mindustry.logic.SugarCompiler;
 import mindustry.logic.SugarFunctions;
 import mindustry.logic.SugarStatements;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -43,7 +39,7 @@ public class DataSubsystemIntegrationTest{
     private static boolean armCollectFailure;
     private static int failingRestoreCalls;
 
-    public static void main(String[] args){
+    public static void main(String[] args) throws IOException{
         // 生产注册路径：与游戏内 Mod.init() 完全一致（不调用测试专用的 clearModules）。
         LogicSugarMod mod = new LogicSugarMod();
         mod.init();
@@ -66,7 +62,7 @@ public class DataSubsystemIntegrationTest{
      * {@code invalidStatements}，而签名原先只含 if/while/for 的表达式，于是把声明卡字段改成
      * 非法值后标红停留在旧状态（用户报的「数组等声明语句不合法时不会立即标红」）。</p>
      */
-    private static void declarationFieldEditsInvalidateTheRedMarking(){
+    private static void declarationFieldEditsInvalidateTheRedMarking() throws IOException{
         // 非法声明确实会被标红（前置条件；这里直接调 ArrayRegistry 的模块级入口，
         // 因为 SugarCompiler.invalidStatements 会去读函数库文件、依赖 Core.settings，
         // 无头环境不可用——invalidStatements → 模块校验的接线由 dataFrameworkTest 覆盖）
@@ -126,7 +122,7 @@ public class DataSubsystemIntegrationTest{
         }
 
         // canvas 必须真的把它折进签名（否则上面的方法没人调用）
-        String canvas = read(rootPath().resolve("src/mindustry/logic/SugarCanvas.java"));
+        String canvas = SourceNails.readSource("src/mindustry/logic/SugarCanvas.java");
         check(canvas.contains("sugar.invalidSignature("),
             "SugarCanvas must fold SugarStatement.invalidSignature() into the refresh signature");
         check(canvas.contains("instanceof SugarStatements.SugarStatement sugar"),
@@ -524,25 +520,6 @@ public class DataSubsystemIntegrationTest{
         "sync", "clientdata", "getflag", "setflag", "setprop", "playsound", "playmusic",
         "setmarker", "makemarker", "localeprint"
     ));
-
-    private static String read(Path path){
-        try{
-            return Files.readString(path, StandardCharsets.UTF_8);
-        }catch(IOException e){
-            throw new AssertionError("cannot read " + path, e);
-        }
-    }
-
-    private static Path rootPath(){
-        for(String candidate : new String[]{".", ".."}){
-            File root = new File(candidate);
-            if(new File(root, "assets/bundles/bundle.properties").isFile()
-                && new File(root, "src/logicsugar/assist/data/DataModules.java").isFile()){
-                return root.toPath();
-            }
-        }
-        throw new AssertionError("LogicSugar project directory not found from " + new File(".").getAbsolutePath());
-    }
 
     private static void check(boolean condition, String message){
         if(!condition) throw new AssertionError(message);

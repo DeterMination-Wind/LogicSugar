@@ -1179,24 +1179,69 @@ public final class SugarFunctions{
         return ((FuncDefStatement)statements.get(funcdefIndex)).name;
     }
 
-    /** Splits a comma-separated argument list, respecting parentheses. */
+    /**
+     * Splits a comma-separated argument list, respecting parentheses **and string literals**.
+     *
+     * <p>Quotes matter: a comma or an unbalanced bracket inside {@code "..."} is text, not structure.
+     * Ignoring them used to merge arguments - {@code array_replace [buf, "a(b", 5]} split into two
+     * segments instead of three, because the {@code (} inside the literal left the depth at 1 and the
+     * following comma stopped splitting - and every consumer that rebuilds the list from its segments
+     * (the fixed-slot card UI) then silently rewrote the call signature.</p>
+     */
     public static List<String> splitArgs(String args){
         List<String> result = new ArrayList<>();
         if(args == null || args.trim().isEmpty()) return result;
         int depth = 0, start = 0;
+        boolean quoted = false, escaped = false;
         for(int i = 0; i < args.length(); i++){
             char c = args.charAt(i);
-            if(c == '('){
+            if(escaped){
+                escaped = false;
+            }else if(quoted && c == '\\'){
+                escaped = true;
+            }else if(c == '"'){
+                quoted = !quoted;
+            }else if(!quoted && c == '('){
                 depth++;
-            }else if(c == ')'){
+            }else if(!quoted && c == ')'){
                 depth--;
-            }else if(c == ',' && depth == 0){
+            }else if(!quoted && c == ',' && depth == 0){
                 result.add(args.substring(start, i).trim());
                 start = i + 1;
             }
         }
         result.add(args.substring(start).trim());
         return result;
+    }
+
+    /**
+     * Whether {@code args} is a well-formed argument list: every {@code (} matched, every string
+     * literal closed, no stray {@code )}.
+     *
+     * <p>Callers that rebuild an argument list from {@link #splitArgs}'s segments - which is what the
+     * fixed-slot card UI does on every edit - must refuse a list this returns {@code false} for:
+     * segments of a malformed list cannot be rejoined into what the author wrote, so editing any one
+     * of them would rewrite the whole call. See {@code DataCallStatement.argumentSlots()}.</p>
+     */
+    public static boolean balancedArgs(String args){
+        if(args == null) return true;
+        int depth = 0;
+        boolean quoted = false, escaped = false;
+        for(int i = 0; i < args.length(); i++){
+            char c = args.charAt(i);
+            if(escaped){
+                escaped = false;
+            }else if(quoted && c == '\\'){
+                escaped = true;
+            }else if(c == '"'){
+                quoted = !quoted;
+            }else if(!quoted && c == '('){
+                depth++;
+            }else if(!quoted && c == ')'){
+                if(--depth < 0) return false;
+            }
+        }
+        return depth == 0 && !quoted;
     }
 
     // ===== body preparation ===============================================================
@@ -1719,6 +1764,19 @@ public final class SugarFunctions{
             throw new IllegalArgumentException("data call '" + operation + "' requires a destination variable");
         }
         String args = call.arguments == null ? "" : call.arguments;
+        // Arity is part of the shape, and the one-box-per-parameter card makes "left the last box
+        // empty" the most common mistake. Without this the call falls through to the expression
+        // compiler, which can only answer "unknown function" - a message that says nothing about the
+        // argument count. This is the same rule DataModules.callShapeInvalid paints red on the card,
+        // so the editor and the save finally agree on what is wrong.
+        int expectedArgs = DataModules.paletteParams(operation).size();
+        if(expectedArgs > 0){
+            int actualArgs = splitArgs(args).size();
+            if(actualArgs != expectedArgs){
+                throw new IllegalArgumentException("data call '" + operation + "' takes " + expectedArgs
+                    + " argument(s) but got " + actualArgs + ": \"" + args + "\"");
+            }
+        }
         List<ExprCompiler.Line> lines;
         try{
             lines = ExprCompiler.compileForcedIntrinsic(destination, operation, args,

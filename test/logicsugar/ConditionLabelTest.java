@@ -39,7 +39,7 @@ public final class ConditionLabelTest{
     };
 
     public static void main(String[] args) throws IOException{
-        File root = projectRoot();
+        File root = SourceNails.root();
         Properties en = load(root, "bundle.properties");
         Properties cn = load(root, "bundle_zh_CN.properties");
         Properties tw = load(root, "bundle_zh_TW.properties");
@@ -83,8 +83,7 @@ public final class ConditionLabelTest{
         failureSignalWording(en, cn, tw);
 
         // The card must actually use the dedicated key, not the generic fallback.
-        String statements = Files.readString(root.toPath().resolve("src/mindustry/logic/SugarStatements.java"),
-            StandardCharsets.UTF_8);
+        String statements = SourceNails.readSource("src/mindustry/logic/SugarStatements.java");
         check(statements.contains("text(\"while.condition\""),
             "WhileBeginStatement must label its condition with the dedicated while.condition key");
         check(!statements.contains("text(\"condition\", \"condition\")"),
@@ -110,13 +109,16 @@ public final class ConditionLabelTest{
         };
         for(Properties bundle : new Properties[]{en, cn, tw}){
             for(String operation : operations){
-                for(String prefix : new String[]{"hint", "lst"}){
-                    String key = "logicsugar." + prefix + ".datacall." + operation;
-                    String value = bundle.getProperty(key);
-                    check(value != null, "bundle is missing the hint " + key);
-                    check(value.contains("-1"),
-                        key + " must document the v5 failure value -1, got '" + value + "'");
-                }
+                // 逐运算的悬停提示才是挂失败值的地方：卡内运算选择器每一条都取
+                // logicsugar.hint.datacall.<运算>。调色板按钮描述自「一个结构一张卡」起只剩分组键
+                // （logicsugar.lst.datacall.group.<组>，整组共用一条摘要），逐运算的
+                // logicsugar.lst.datacall.<运算> 已无代码路径可取 —— 那条不变量由
+                // DataCallTest.everyOperationBundleKeyIsReachable 双向钉住，这里不再重复断言。
+                String key = "logicsugar.hint.datacall." + operation;
+                String value = bundle.getProperty(key);
+                check(value != null, "bundle is missing the hint " + key);
+                check(value.contains("-1"),
+                    key + " must document the v5 failure value -1, got '" + value + "'");
             }
             // Queries stay 0/1: mentioning -1 there would send players down the wrong branch.
             for(String operation : new String[]{"map_contains", "set_contains", "bitset_test"}){
@@ -153,18 +155,6 @@ public final class ConditionLabelTest{
         TreeSet<String> keys = new TreeSet<>(reference.stringPropertyNames());
         keys.removeAll(candidate.stringPropertyNames());
         return keys.toString();
-    }
-
-    /** Project directory that contains {@code assets/bundles}; gradle runs from it, tests may run from a subdirectory. */
-    private static File projectRoot(){
-        for(String candidate : new String[]{".", ".."}){
-            File root = new File(candidate);
-            if(new File(root, "assets/bundles/bundle.properties").isFile()
-                && new File(root, "src/mindustry/logic/SugarStatements.java").isFile()){
-                return root;
-            }
-        }
-        throw new AssertionError("LogicSugar project directory not found from " + new File(".").getAbsolutePath());
     }
 
     private static void check(boolean condition, String message){

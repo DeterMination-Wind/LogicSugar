@@ -78,7 +78,9 @@ public class LogicSugarMod extends Mod{
 
     /** How the install pass treats a logic editor that another mod has already replaced. */
     public enum EditorConflict{
-        /** Replace it, keeping only LogicSugar's editor. */
+        /** Replace it, keeping only LogicSugar's editor. Destructive for the other mod: its editor
+         *  UI is detached and only that mod could restore it, so this is deliberately not the
+         *  default any more - see {@link #ask}. */
         takeover("takeover"),
         /** Ask once per launch, before touching anything. */
         ask("ask"),
@@ -94,16 +96,18 @@ public class LogicSugarMod extends Mod{
             this.id = id;
         }
 
-        /** Tolerant of unknown or missing values, so a hand-edited settings file cannot break startup. */
+        /** Tolerant of unknown or missing values, so a hand-edited settings file cannot break startup.
+         *  Unknown, empty and missing all fall back to {@link #ask}: an unreadable value must never
+         *  land on the destructive branch, and must never land on "editor disabled" either. */
         public static EditorConflict parse(String value){
             for(EditorConflict option : values()){
                 if(option.id.equalsIgnoreCase(value)) return option;
             }
-            return takeover;
+            return ask;
         }
 
         public static EditorConflict current(){
-            return parse(Core.settings.getString(settingEditorConflict, takeover.id));
+            return parse(Core.settings.getString(settingEditorConflict, ask.id));
         }
     }
 
@@ -411,8 +415,10 @@ public class LogicSugarMod extends Mod{
         });
         dialog.hidden(() -> {
             if(!answered[0]){
-                // dismissing without an answer keeps the default, which is to take the editor over
-                takeEditorOver();
+                // Dismissing without an answer must not pick the destructive branch: leave the other
+                // mod's editor exactly as it is. The setting stays on ask, so the next launch asks
+                // again; answering is what opts into takeover or coexistence.
+                stepAside();
             }
         });
         dialog.show();
@@ -539,10 +545,15 @@ public class LogicSugarMod extends Mod{
         DataModules.registerParsers();
     }
 
-    /** Host (Neon) settings aggregation: function mode, library entry, overlays and jump line coloring. */
+    /** Host (Neon) settings aggregation: function mode, editor conflict, library entry, overlays and
+     *  jump line coloring. Must stay in sync with {@link LogicSugarSettings#setup} - a row missing
+     *  here is a row a bundled user cannot reach at all. */
     public void bekBuildSettings(SettingsMenuDialog.SettingsTable table){
         table.pref(new LogicSugarSettings.FuncModeSetting(LogicSugarSettings.settingFuncMode, "normal"));
         table.pref(new LogicSugarSettings.AssertEmitSetting(LogicSugarSettings.settingAssertEmit, "strip"));
+        // Reachable in the aggregate form too: this is the only settings page a Neon user sees, and
+        // without it the editor conflict stays stuck on whatever value it happens to hold.
+        table.pref(new LogicSugarSettings.EditorConflictSetting(LogicSugarMod.settingEditorConflict, LogicSugarMod.EditorConflict.ask.id));
         table.pref(new LogicSugarSettings.LibraryButtonSetting("logicsugar.funclib"));
         LogicSugarSettings.addProcessorStatusPrefs(table);
         LogicSugarSettings.addUnitFlagsPref(table);

@@ -176,6 +176,29 @@ public final class SugarCompiler{
         return out.toString();
     }
 
+    /** Whether {@code statements} ends with the very {@link #entrySkipLine} that
+     *  {@link #withEntrySkip} appends.
+     *
+     *  <p>Needed because the line can be lost on the way in: {@code LAssembler.read} runs the vanilla
+     *  {@code LParser}, which stops after {@link LExecutor#maxInstructions} lines and drops the rest
+     *  silently, while a sugar source may legally be longer than that in lines (500 empty {@code if}
+     *  blocks are 1000 source lines and 500 instructions). See {@link #compile} for what happens then.
+     *
+     *  <p>Compared through the written text rather than by class, so it does not depend on how
+     *  {@code set} is represented; a program whose author wrote the same statement by hand is
+     *  indistinguishable from one carrying the appended line, which is correct - they are the same
+     *  instruction in the same place. */
+    static boolean endsWithEntrySkip(Seq<LStatement> statements){
+        if(statements == null || statements.size == 0) return false;
+        Seq<LStatement> skip = LAssembler.read(entrySkipLine, true);
+        if(skip.size != 1) return false;
+        StringBuilder last = new StringBuilder();
+        statements.peek().write(last);
+        StringBuilder expected = new StringBuilder();
+        skip.peek().write(expected);
+        return last.toString().equals(expected.toString());
+    }
+
     /** Persistence carrier prefixes: real "set" statements that survive the vanilla
      *  parse/save round trip (comment markers are dropped by it). The sugar carrier holds
      *  the sugar source; the library carrier holds the used subset of the function library.
@@ -517,6 +540,20 @@ public final class SugarCompiler{
             ? SugarFunctions.readLibrary(source, privileged)
             : LAssembler.read(source, privileged);
         if(!containsSugar(statements)) return sugar;
+
+        // LParser stops after LExecutor.maxInstructions lines and drops the rest without a word, but a
+        // sugar source can be longer than that in lines at a legal instruction count (500 empty `if`
+        // blocks are 1000 source lines and only 500 instructions). If the dropped tail is the entry
+        // skip this method just appended, the carriers run once per cycle again - the exact bug the
+        // skip exists to prevent - and nothing would report it. A carrier is only written when there
+        // is sugar to persist, which is why this check sits after that gate: without sugar the skip is
+        // discarded and a long vanilla program is none of this method's business. Refusing the save is
+        // the recoverable outcome; storing a carrier-executing program is not.
+        if(!librarySource && entrySkip && !endsWithEntrySkip(statements)){
+            throw new IllegalArgumentException("The program's source reaches the " + LExecutor.maxInstructions
+                + "-line parse limit, so the entry skip cannot be stored; shorten the program or turn the"
+                + " entry skip off.");
+        }
 
         // destIndex on begin cards is a jump comment. Older saves and hand-edited
         // carriers can leave it pointing past the program while if/for/while/switch

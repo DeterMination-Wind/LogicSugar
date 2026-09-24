@@ -80,6 +80,7 @@ public class SugarCompilerSelfTest{
         functionUnreachableCostsNothing();
         functionInstructionLimitHint();
         instructionBudgetDetectsOverLimit();
+        sourceAtParseLimitRejectsTheSave();
         functionProgramsExecute();
         libraryFunctions();
         libraryValidationRejected();
@@ -1458,6 +1459,42 @@ public class SugarCompilerSelfTest{
         logicsugar.assist.InstructionBudget.Snapshot passthrough = logicsugar.assist.InstructionBudget.of(
             vanilla.toString(), SugarCompiler.FuncMode.normal, null, null);
         check(passthrough.over(), "vanilla programs longer than the cap should still flag the budget");
+    }
+
+    /**
+     * LParser stops after {@link LExecutor#maxInstructions} statement-bearing lines and drops the rest
+     * without a word, while the entry skip is appended to the source <em>before</em> parsing
+     * ({@link SugarCompiler#withEntrySkip}). A program whose source reaches that many lines but whose
+     * compiled size is legal therefore loses the skip - and a carrier without it runs once per tick
+     * again, which is the exact bug the skip exists to prevent. Refusing the save is the recoverable
+     * outcome, so it must be reported instead of silently storing a carrier-executing program.
+     */
+    private static void sourceAtParseLimitRejectsTheSave(){
+        // 500 empty ifs = 1000 source lines and ~500 instructions: line limit reached, budget nowhere
+        // near it, so the parse-limit check is the only thing that can fire.
+        StringBuilder overLimit = new StringBuilder();
+        for(int i = 0; i < 500; i++){
+            overLimit.append("ifbegin a equal 0 ").append(i).append('\n').append("blockend\n");
+        }
+        try{
+            SugarCompiler.compile(overLimit.toString());
+            throw new AssertionError("a program at the " + LExecutor.maxInstructions
+                + "-line parse limit was accepted, silently dropping the entry skip");
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("-line parse limit"),
+                "the rejection must name the parse limit, got: " + expected.getMessage());
+            check(expected.getMessage().contains("entry skip"),
+                "the rejection must say what could not be stored, got: " + expected.getMessage());
+        }
+
+        // One pair fewer (998 source lines, so the appended skip is line 999) still fits the limit.
+        StringBuilder withinLimit = new StringBuilder();
+        for(int i = 0; i < 499; i++){
+            withinLimit.append("ifbegin a equal 0 ").append(i).append('\n').append("blockend\n");
+        }
+        String compiled = SugarCompiler.compile(withinLimit.toString());
+        check(compiled.contains(SugarCompiler.entrySkipLine),
+            "an in-limit program must still carry " + SugarCompiler.entrySkipLine);
     }
 
     /** Runs a compiled program headless and returns the value of a variable after it ends. */

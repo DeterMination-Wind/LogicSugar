@@ -47,6 +47,7 @@ public final class EditorConflictTest{
         coexistCompilesOnTheClosePath();
         leavingCoexistRestoresTheForeignCanvas();
         askOffersEveryAnswer();
+        aggregateFormExposesTheConflictSetting();
         coexistRebindsForeignPanels();
         coexistKeepsTheForeignPanelClickable();
 
@@ -75,10 +76,12 @@ public final class EditorConflictTest{
         check(LogicSugarMod.EditorConflict.parse("coexist") == LogicSugarMod.EditorConflict.coexist, "coexist");
         check(LogicSugarMod.EditorConflict.parse("stepAside") == LogicSugarMod.EditorConflict.stepAside,
             "the stored value is matched case-insensitively");
-        check(LogicSugarMod.EditorConflict.parse(null) == LogicSugarMod.EditorConflict.takeover,
-            "a missing setting must fall back to takeover, never to a disabled editor");
-        check(LogicSugarMod.EditorConflict.parse("") == LogicSugarMod.EditorConflict.takeover, "empty value");
-        check(LogicSugarMod.EditorConflict.parse("garbage") == LogicSugarMod.EditorConflict.takeover, "unknown value");
+        // The fallback exists so a hand-edited settings file cannot break startup; it must land on the
+        // non-destructive default (ask), never on takeover and never on "editor disabled".
+        check(LogicSugarMod.EditorConflict.parse(null) == LogicSugarMod.EditorConflict.ask,
+            "a missing setting must fall back to ask, never to takeover or a disabled editor");
+        check(LogicSugarMod.EditorConflict.parse("") == LogicSugarMod.EditorConflict.ask, "empty value");
+        check(LogicSugarMod.EditorConflict.parse("garbage") == LogicSugarMod.EditorConflict.ask, "unknown value");
     }
 
     /**
@@ -108,7 +111,7 @@ public final class EditorConflictTest{
         check("logicsugar.editorConflict".equals(LogicSugarMod.settingEditorConflict),
             "the setting key is what makes setting.<key>.name resolve; changing it breaks the title silently");
 
-        File root = projectRoot();
+        File root = SourceNails.root();
         for(String name : new String[]{"bundle.properties", "bundle_zh_CN.properties", "bundle_zh_TW.properties"}){
             Properties bundle = load(root, name);
             for(String key : new String[]{
@@ -155,7 +158,7 @@ public final class EditorConflictTest{
      * so it silently replaced other mods. The classifier must stay the entry point instead.
      */
     private static void installGuardHasNoAsymmetry() throws IOException{
-        String source = readSource("src/logicsugar/LogicSugarMod.java");
+        String source = SourceNails.readSource("src/logicsugar/LogicSugarMod.java");
 
         check(!source.contains("!(Vars.ui.logic instanceof SugarLogicDialog)"),
             "the asymmetric guard must not come back: a foreign subclass fails it, so we would take over again");
@@ -221,8 +224,8 @@ public final class EditorConflictTest{
      * be inserted but never compile.
      */
     private static void liveSwitchIsWired() throws IOException{
-        String mod = readSource("src/logicsugar/LogicSugarMod.java");
-        String settings = readSource("src/logicsugar/LogicSugarSettings.java");
+        String mod = SourceNails.readSource("src/logicsugar/LogicSugarMod.java");
+        String settings = SourceNails.readSource("src/logicsugar/LogicSugarSettings.java");
 
         check(mod.contains("public static void reapplyEditorConflict()"),
             "the settings button needs an entry point that re-applies the policy");
@@ -259,8 +262,8 @@ public final class EditorConflictTest{
      * </ol>
      */
     private static void coexistCompilesOnTheClosePath() throws IOException{
-        String source = readSource("src/mindustry/logic/SugarCoexist.java");
-        String mod = readSource("src/logicsugar/LogicSugarMod.java");
+        String source = SourceNails.readSource("src/mindustry/logic/SugarCoexist.java");
+        String mod = SourceNails.readSource("src/logicsugar/LogicSugarMod.java");
 
         check(!source.contains("public String save()"),
             "the coexist canvas must not override save(): the other editor polls it every frame, "
@@ -280,7 +283,7 @@ public final class EditorConflictTest{
             "coexist must hand the editor back: switched from the settings button, Vars.ui.logic may still be ours");
         check(mod.contains("public static SugarLogicDialog ownEditor()"),
             "the function library can only run in a SugarLogicDialog, so coexist must keep one reachable");
-        check(readSource("src/logicsugar/FunctionLibraryDialog.java")
+        check(SourceNails.readSource("src/logicsugar/FunctionLibraryDialog.java")
                 .contains("LogicSugarMod.ownEditor()"),
             "the function library entry must go through ownEditor(), not through Vars.ui.logic");
     }
@@ -293,8 +296,8 @@ public final class EditorConflictTest{
      * switched off as well or it would re-wrap the consumer the next time the dialog opens.
      */
     private static void leavingCoexistRestoresTheForeignCanvas() throws IOException{
-        String source = readSource("src/mindustry/logic/SugarCoexist.java");
-        String mod = readSource("src/logicsugar/LogicSugarMod.java");
+        String source = SourceNails.readSource("src/mindustry/logic/SugarCoexist.java");
+        String mod = SourceNails.readSource("src/logicsugar/LogicSugarMod.java");
 
         check(source.contains("public static boolean uninstall(LogicDialog dialog)"),
             "coexist needs an uninstall: the swapped-in canvas must be swappable back out");
@@ -315,7 +318,7 @@ public final class EditorConflictTest{
      * corresponding setting, or answering the prompt and switching the setting would diverge.
      */
     private static void askOffersEveryAnswer() throws IOException{
-        String mod = readSource("src/logicsugar/LogicSugarMod.java");
+        String mod = SourceNails.readSource("src/logicsugar/LogicSugarMod.java");
 
         check(mod.contains("case takeover -> takeEditorOver();")
                 && mod.contains("case stepAside -> stepAside();")
@@ -336,8 +339,27 @@ public final class EditorConflictTest{
         }
         check(body.contains("logicsugar.conflict.useCoexist"),
             "the coexisting answer needs its own label key");
-        check(!body.contains("replaceEditor(foreign, false)"),
-            "the ask dialog must not keep a second copy of the takeover branch");
+        check(!body.contains("replaceEditor("),
+            "the ask dialog must not keep a private copy of the takeover branch");
+    }
+
+    /**
+     * The mod's aggregate "build all settings" form is easy to forget: it used to build the
+     * editor-conflict row while defaulting to takeover, which contradicted the per-setting default
+     * and left the destructive branch one click away. Pin the row's presence and that both entry
+     * points share the same (non-destructive) fallback.
+     */
+    private static void aggregateFormExposesTheConflictSetting() throws IOException{
+        String mod = SourceNails.readSource("src/logicsugar/LogicSugarMod.java");
+        int aggregate = mod.indexOf("public void bekBuildSettings(");
+        check(aggregate > 0, "the aggregate settings form must exist");
+        String body = mod.substring(aggregate);
+        check(body.contains("new LogicSugarSettings.EditorConflictSetting("),
+            "the aggregate form must expose the editor-conflict row");
+        check(body.contains("EditorConflict.ask.id"),
+            "the aggregate row must default to ask, the same as the dedicated setting");
+        check(SourceNails.readSource("src/logicsugar/LogicSugarSettings.java").contains("EditorConflict.ask.id"),
+            "the dedicated setting must default to ask");
     }
 
     /**
@@ -362,7 +384,7 @@ public final class EditorConflictTest{
      * </ol>
      */
     private static void coexistRebindsForeignPanels() throws IOException{
-        String source = readSource("src/mindustry/logic/SugarCoexist.java");
+        String source = SourceNails.readSource("src/mindustry/logic/SugarCoexist.java");
 
         check(source.contains("mindustryX.features.ui.LogicSupport"),
             "the MindustryX logic-support panel must be re-bound to our canvas");
@@ -423,7 +445,7 @@ public final class EditorConflictTest{
      * only reorders {@code children}; {@code cells} and the cell/element link stay intact.</p>
      */
     private static void coexistKeepsTheForeignPanelClickable() throws IOException{
-        String source = readSource("src/mindustry/logic/SugarCoexist.java");
+        String source = SourceNails.readSource("src/mindustry/logic/SugarCoexist.java");
 
         check(source.contains("private static boolean swapCanvas(LogicDialog dialog, LCanvas old, "
                 + "LCanvas replacement, int index)"),
@@ -441,7 +463,7 @@ public final class EditorConflictTest{
                 + "it - by then the new canvas has already been appended to the end");
         check(source.contains("coexist.originalIndex"),
             "uninstall must restore the z-order remembered at install time");
-        check(readSource("src/logicsugar/assist/BoxSelect.java")
+        check(SourceNails.readSource("src/logicsugar/assist/BoxSelect.java")
                 .contains("if(!isDescendantOfCanvas(target, canvas)){"),
             "BoxSelect must keep letting clicks outside the canvas through, or a mis-layered panel is "
                 + "still unclickable even after the z-order is fixed");
@@ -464,25 +486,4 @@ public final class EditorConflictTest{
     }
 
     /** Project directory that contains {@code assets/bundles}; gradle runs from it, tests may run from a subdirectory. */
-    /**
-     * Reads a repository file for a source nail, with the line endings normalised to LF.
-     * Windows checkouts hand these files back with CRLF (core.autocrlf), which makes any anchor
-     * that expects a newline directly after a token miss - silently, since contains() just returns
-     * false. Normalising here keeps the nails about the code and not the checkout.
-     */
-    private static String readSource(String relative) throws IOException{
-        return Files.readString(projectRoot().toPath().resolve(relative), StandardCharsets.UTF_8)
-            .replace("\r\n", "\n");
-    }
-
-    private static File projectRoot(){
-        for(String candidate : new String[]{".", ".."}){
-            File root = new File(candidate);
-            if(new File(root, "assets/bundles/bundle.properties").isFile()
-                && new File(root, "src/logicsugar/LogicSugarMod.java").isFile()){
-                return root;
-            }
-        }
-        throw new AssertionError("LogicSugar project directory not found from " + new File(".").getAbsolutePath());
-    }
 }

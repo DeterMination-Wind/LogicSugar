@@ -61,7 +61,7 @@ public final class LogicSugarSettings{
         table.pref(new FuncModeSetting(settingFuncMode, "normal"));
         table.pref(new SwitchStrategySetting(settingSwitchStrategy, "auto"));
         table.pref(new AssertEmitSetting(settingAssertEmit, "strip"));
-        table.pref(new EditorConflictSetting(LogicSugarMod.settingEditorConflict, LogicSugarMod.EditorConflict.takeover.id));
+        table.pref(new EditorConflictSetting(LogicSugarMod.settingEditorConflict, LogicSugarMod.EditorConflict.ask.id));
         table.pref(new LibraryButtonSetting("logicsugar.funclib"));
         addProcessorStatusPrefs(table);
         addUnitFlagsPref(table);

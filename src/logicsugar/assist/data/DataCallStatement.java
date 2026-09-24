@@ -148,21 +148,28 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
      * （Table/Label 都建不起来），但"这张卡要不要用定参框、每个槽初始显示什么"是纯数据问题，
      * 而且正是最容易出错的地方（旧载体缺参、多余参、括号嵌套）。</p>
      *
-     * <p>两种情形退回单框：① 未知运算（损坏载体/未来版本写入的名字）取不到参数名；
-     * ② 载体的实参数**多于**运算定义——定参框按参数量显示会静默丢掉第 N+1 项之后的内容，
-     * 宁可让用户看到原始字符串。实参数**少于**参数量则补空槽，用户一眼看得出少填了哪个。</p>
+     * <p>三种情形退回单框：① 未知运算（损坏载体/未来版本写入的名字）取不到参数名；
+     * ② 载体的实参数**多于**运算定义——定参框按参数量显示会静默丢掉第 N+1 项之后的内容；
+     * ③ 实参串**残缺**（括号/引号不配对，{@link SugarFunctions#balancedArgs}）或这次拆分
+     * **可逆性不成立**（拼回去与原文不同）——这时槽位并不对应作者写的实参，编辑任意一格都会
+     * 用 {@link #joinArguments} 重拼整串、静默改掉别的实参。宁可让用户看到原始字符串。
+     * 实参数**少于**参数量则补空槽（清空末几个框就是这条路径），用户一眼看得出少填了哪个。</p>
      *
      * @return 长度恒等于 {@link DataModules#paletteParams} 的槽位列表；或 {@code null} 表示单框
      */
     public List<String> argumentSlots(){
         List<String> params = DataModules.paletteParams(canonicalOperation());
         if(params.isEmpty()) return null;
+        if(!SugarFunctions.balancedArgs(arguments)) return null;
         List<String> values = SugarFunctions.splitArgs(arguments);
         if(values.size() > params.size()) return null;
         List<String> slots = new ArrayList<>(params.size());
         for(int i = 0; i < params.size(); i++){
             slots.add(i < values.size() ? values.get(i) : "");
         }
+        // 拆分必须可逆：拼回去和原文不同，说明这次拆分丢过信息（某两段被并成一段），槽位就不再
+        // 对应作者写的实参。定参框唯一的写回路径是「改一格 → 重拼整串」，所以这里必须退回单框。
+        if(!joinArguments(slots).equals(arguments.trim())) return null;
         return slots;
     }
 

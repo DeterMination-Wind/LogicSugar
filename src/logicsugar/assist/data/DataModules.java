@@ -370,8 +370,8 @@ public final class DataModules{
     /** 旧操作名（v5.1 及更早的 carrier/卡片文本）→ 规范新名；新名与未知名字原样返回。
      *
      * <p>卡片解析时用它归一化 {@code operation} 字段：c7511b9 的承诺是"菜单只显示新名"，
-     * 但只做别名解析会让旧载体重开的卡片继续显示旧名（卡片正文 {@code spush(...)}、
-     * 悬停提示键 {@code logicsugar.lst.datacall.spush}）并把它写回下一次保存的载体。
+     * 但只做别名解析会让旧载体重开的卡片继续显示旧名（卡片正文写 {@code spush(...)}、悬停提示
+     * 也按旧名取键）并把它写回下一次保存的载体。
      * 归一化后旧存档打开即显示新名，重新保存也只写新名；两者的可执行流逐字相同
      *（{@code DataSubsystemIntegrationTest.renamedOpsLowerIdentically} 钉住这一点）。</p>
      */
@@ -469,8 +469,9 @@ public final class DataModules{
      * <p>分两层，都是为了让编辑器说的和编译器说的**是同一句话**：</p>
      * <ol>
      *   <li><b>形状检查</b>（不需要任何注册表，纯读卡片字段）：未知运算、有返回值的运算缺目标
-     *       变量、实参数多于运算定义。这三条正是 {@code SugarFunctions.emitDataCall} 在调用
-     *       {@code ExprCompiler.compileForcedIntrinsic} **之前**拦下的错误。</li>
+     *       变量、实参数个数与运算定义不符（或实参串残缺到拆不开）。这三条正是
+     *       {@code SugarFunctions.emitDataCall} 在调用 {@code ExprCompiler.compileForcedIntrinsic}
+     *       **之前**拦下的错误。</li>
      *   <li><b>试编译</b>：临时建立编译期的静态上下文（数组注册表、声明种类表、用户函数遮蔽、
      *       各数据模块注册表——顺序见 {@code SugarCompiler.compile}），然后对每张卡跑与编译期
      *       同一个 {@link ExprCompiler#compileForcedIntrinsic}，抛错即标红。判断来源是同一个函数，
