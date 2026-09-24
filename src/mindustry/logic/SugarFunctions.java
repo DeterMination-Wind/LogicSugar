@@ -1219,13 +1219,106 @@ public final class SugarFunctions{
     }
 
     /**
+     * Like {@link #splitArgs}, but **tolerant of a list that is not finished yet**: a bracket or
+     * quote that never gets closed does not swallow the separators after it.
+     *
+     * <p>This exists for the fixed-slot operation card, which shows one box per parameter and must
+     * therefore decide the box boundaries from the raw argument text <em>while the user is
+     * typing</em>. Typing {@code (} to start a nested call - or {@code "} to start a string
+     * literal - leaves the whole list unbalanced until the call is finished, and that is the normal
+     * state of the text for as long as it takes to type the rest. A strict split reads an unclosed
+     * {@code (} as "everything after me is nested", so it returns the whole list as a single
+     * segment: the first box then absorbs everything and the remaining boxes come up empty (the
+     * text the user already typed appears to jump out of its box, and reopening the card cannot
+     * recover the layout because the split is derived from the stored text alone).</p>
+     *
+     * <p>Only the brackets that actually pair up are allowed to nest, and only the quotes that pair
+     * up are allowed to quote - a trailing unpaired one is inert. For a well-formed list every
+     * bracket and quote pairs, so the result is <b>identical to {@link #splitArgs}</b>; the two can
+     * only disagree on input that fails to compile, where the card's job is to keep showing the user
+     * what they typed. The compiler keeps calling {@link #splitArgs}: an unbalanced list is refused
+     * by {@code DataModules.callShapeInvalid} and by the trial compile, with a message about the
+     * unfinished expression.</p>
+     *
+     * <p>Escape handling mirrors {@link #splitArgs} (a backslash escapes the next character inside a
+     * quote). An unpaired quote can legitimately change which bracket positions were treated as
+     * quoting during the first pass, so on malformed input this is best-effort - it is a layout
+     * decision for text that has no valid reading at all.</p>
+     */
+    public static List<String> splitArgsLenient(String args){
+        List<String> result = new ArrayList<>();
+        if(args == null || args.trim().isEmpty()) return result;
+        int n = args.length();
+        boolean[] openMatched = new boolean[n], closeMatched = new boolean[n];
+        int[] stack = new int[n];
+        int top = 0, quoteCount = 0;
+        boolean quoted = false, escaped = false;
+
+        // Pass 1: collect the bracket pairs (ignoring what is inside quotes) and count the quotes.
+        for(int i = 0; i < n; i++){
+            char c = args.charAt(i);
+            if(escaped){
+                escaped = false;
+            }else if(quoted && c == '\\'){
+                escaped = true;
+            }else if(c == '"'){
+                quoteCount++;
+                quoted = !quoted;
+            }else if(!quoted){
+                if(c == '('){
+                    stack[top++] = i;
+                }else if(c == ')' && top > 0){
+                    openMatched[stack[--top]] = true;
+                    closeMatched[i] = true;
+                }
+            }
+        }
+
+        // Only paired quotes may quote: a trailing unpaired one would otherwise turn every later
+        // separator into quoted text, which is the quote-shaped version of the same defect.
+        int pairedQuotes = quoteCount - (quoteCount & 1);
+
+        // Pass 2: split at the commas that are at depth 0. Depth moves only for matched brackets,
+        // so an unclosed '(' leaves the separators after it visible to this pass.
+        int depth = 0, start = 0, seenQuotes = 0;
+        quoted = false;
+        escaped = false;
+        for(int i = 0; i < n; i++){
+            char c = args.charAt(i);
+            if(escaped){
+                escaped = false;
+            }else if(quoted && c == '\\'){
+                escaped = true;
+            }else if(c == '"'){
+                if(seenQuotes < pairedQuotes) quoted = !quoted;
+                seenQuotes++;
+            }else if(!quoted){
+                if(c == '(' && openMatched[i]){
+                    depth++;
+                }else if(c == ')' && closeMatched[i]){
+                    depth--;
+                }else if(c == ',' && depth == 0){
+                    result.add(args.substring(start, i).trim());
+                    start = i + 1;
+                }
+            }
+        }
+        result.add(args.substring(start).trim());
+        return result;
+    }
+
+    /**
      * Whether {@code args} is a well-formed argument list: every {@code (} matched, every string
      * literal closed, no stray {@code )}.
      *
-     * <p>Callers that rebuild an argument list from {@link #splitArgs}'s segments - which is what the
-     * fixed-slot card UI does on every edit - must refuse a list this returns {@code false} for:
-     * segments of a malformed list cannot be rejoined into what the author wrote, so editing any one
-     * of them would rewrite the whole call. See {@code DataCallStatement.argumentSlots()}.</p>
+     * <p>This answers "is this a complete expression list" - a <em>validity</em> question. It is
+     * not what splitting needs: {@link #splitArgs} only ever cuts at top-level commas, so the
+     * segment boundaries are just as clear while the user is midway through typing {@code f(a,}.
+     * The fixed-slot card therefore does <em>not</em> refuse an unbalanced list - it used to, and
+     * the cost was that every keystroke after the {@code (} was dropped and the card collapsed to
+     * a single field on reopen. The invalid-list decision belongs to
+     * {@code DataModules.callShapeInvalid} (red marking) and to the trial compile; see
+     * {@code DataCallStatement.argumentSlots()}.</p>
      */
     public static boolean balancedArgs(String args){
         if(args == null) return true;
@@ -1771,12 +1864,15 @@ public final class SugarFunctions{
         // Arity is part of the shape, and the one-box-per-parameter card makes "the last box was left
         // empty" the most common mistake. Without this the call falls through to the expression
         // compiler, which can only answer "unknown function" - a message that says nothing about the
-        // argument count. Both directions are refused here, which is one case more than the card
-        // paints red: DataModules.callShapeInvalid flags "more arguments than parameters" (the
-        // fixed-slot card would otherwise silently drop the extras), while fewer arguments stay
-        // unmarked on purpose - the empty slot with its placeholder name is exactly how the card
-        // shows what is still missing (pinned by DataCallTest.argumentSlotsAreFixedAndLossless).
-        // Saving must refuse either way.
+        // argument count. Saving must refuse either direction.
+        //
+        // The editor paints both red, through different layers: DataModules.callShapeInvalid flags
+        // "more arguments than parameters", while "fewer arguments than parameters" is left to the
+        // trial compile in the second layer. Red is about the mistake, not about the card's shape:
+        // the card keeps its fixed slots either way - extras are merged into the last slot, and a
+        // short list keeps its empty boxes under the parameter-name placeholders, which is exactly
+        // how it shows what is still missing
+        // (DataCallTest.argumentSlotsAreFixedAndLossless pins that padding).
         int expectedArgs = DataModules.paletteParams(operation).size();
         if(expectedArgs > 0){
             int actualArgs = splitArgs(args).size();

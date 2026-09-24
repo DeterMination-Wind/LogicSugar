@@ -56,6 +56,25 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
     public String arguments = "s, 1";
     private transient DataModule.PaletteCall palette;
 
+    /**
+     * 定参框的**真值**：一格一条实参，与 {@link #arguments} 互为"界面 ↔ 载体"。
+     *
+     * <p>只在需要时从 {@link #arguments} 派生一次，之后每次编辑只改自己那一格、末尾把整份拼回
+     * {@link #arguments}；{@link #slotCacheFrom} 记住它是从哪份实参串派生出来的，于是任何
+     * <b>绕过本类</b>对 {@link #arguments} 的写入（载体重读、{@link #selectOperation}、
+     * {@link #parse}、自测直接赋值）都会让缓存立刻失效、下次取用时重新派生，两条路不会各说各话。</p>
+     *
+     * <p>为什么必须有这份真值：早先每一键都拿 {@link #arguments} **重新拆分**，而"拼回"与"拆分"
+     * 在某一格含顶层逗号时并不互逆——用户在第 0 格连打 {@code a,b,c,d}，每敲一键都把上一轮已敲的
+     * 文本重新当成"多出来的段"并进最后一格，下次拼回时它又成了新的段，逐键累积增长（实测敲完
+     * {@code a,b,c,d} 得到 {@code a,b,c,d, b, c, , b, c, b, , b, value}，敲 {@code a,b,c,d(} 得到
+     * 46 字符），用户看到的就是"输入逗号就爆炸"。格子的边界是用户在界面上给定的，不该在下一次
+     * 按键时拿载体串重新猜一遍。</p>
+     */
+    private transient List<String> slotCache;
+    /** {@link #slotCache} 派生自哪份 {@link #arguments}；两者不相等即缓存失效。 */
+    private transient String slotCacheFrom;
+
     public DataCallStatement(){
     }
 
@@ -142,35 +161,67 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
     }
 
     /**
-     * 定参输入框的各槽初值；**返回 {@code null} 表示本卡应退回单框**。
+     * 定参输入框的各槽初值；**返回 {@code null} 表示本卡应退回单框**（唯一情形：运算名未知）。
      *
      * <p>判定逻辑从 {@link #build} 里提出来，是为了让它可以无头自测：{@code build} 需要 GL
      * （Table/Label 都建不起来），但"这张卡要不要用定参框、每个槽初始显示什么"是纯数据问题，
      * 而且正是最容易出错的地方（旧载体缺参、多余参、括号嵌套）。</p>
      *
-     * <p>三种情形退回单框：① 未知运算（损坏载体/未来版本写入的名字）取不到参数名；
-     * ② 载体的实参数**多于**运算定义——定参框按参数量显示会静默丢掉第 N+1 项之后的内容；
-     * ③ 实参串**残缺**（括号/引号不配对，{@link SugarFunctions#balancedArgs}）或这次拆分
-     * **可逆性不成立**（拼回去与原文不同）——这时槽位并不对应作者写的实参，编辑任意一格都会
-     * 用 {@link #joinArguments} 重拼整串、静默改掉别的实参。宁可让用户看到原始字符串。
-     * 实参数**少于**参数量则补空槽（清空末几个框就是这条路径），用户一眼看得出少填了哪个。</p>
+     * <p>拆分**只按字段数锚定**，与当前串可不可解析无关——这是刻意的，因为本方法同时服务两条路径：
+     * 建卡（{@link #build}）与逐键写回（{@link #setArgument}）。写回发生在用户**正在打字**的那一刻，
+     * 刚敲下一个 {@code (} 或一个 {@code "} 时串必然不配平，可那一格的内容与其它格的边界并没有歧义
+     * （拆分只按顶层逗号切、从不要求整串配平）。**必须用 {@link SugarFunctions#splitArgsLenient}
+     * 而不是 {@link SugarFunctions#splitArgs}**：严格版把未闭合的 {@code (} 读成"我后面全是嵌套"，
+     * 于是 {@code f(, value} 会被读成整整一段、第二格的内容在下一次写回时**丢掉**。早先这里拿
+     * {@link SugarFunctions#balancedArgs} 与"拆分可逆"两条严格判据把中间态一律否掉，后果分两层：
+     * 写回侧是从敲下 {@code (} 那一刻起**每一次按键都被静默丢弃**（框里显示 {@code f(a, b)}、
+     * 载体里还是旧的 {@code map, f(}）；建卡侧是**重开就塌成单框、且不可逆**——用户只是没写完就关了
+     * 对话框，再打开就失去了分格编辑，得先把内容改配平才能拿回来。两条路径共用这一份实现，
+     * 就不会再出现"一边放宽、另一边没跟上"的偏差。</p>
      *
-     * @return 长度恒等于 {@link DataModules#paletteParams} 的槽位列表；或 {@code null} 表示单框
+     * <p><b>而且只在这里拆一次</b>：结果缓存进 {@link #slotCache}，之后每次编辑都直接改那一格
+     * （见 {@link #setArgument}），不拿 {@link #arguments} 重新拆。理由是"拼回"与"拆分"
+     * <b>不是互逆的</b>——某一格含顶层逗号时（{@code s} 与 {@code a,b} 拼成 {@code "s, a,b"}，
+     * 再拆回来是 {@code [s, a, b]} 三段），逐键重拆会把用户已经敲进去的文字在格与格之间反复搬家
+     * 并累加，串长按敲键次数增长。格子边界是界面给的，不是载体串给的。</p>
+     *
+     * <p>各情形的落法：① 未知运算（损坏载体/未来版本写入的名字）取不到参数名，只能退回单框；
+     * ② 实参数**少于**参数量补空槽（清空末几个框就是这条路径），用户一眼看得出少填了哪个；
+     * ③ 实参数**多于**参数量把多出来的段并进最后一格，内容不丢、位置也不搬家（拼接用的空白可能被
+     * 规范化，编译结果不变）。</p>
+     *
+     * @return 长度恒等于 {@link DataModules#paletteParams} 的槽位列表（可安全修改，与缓存无关）；
+     *         或 {@code null} 表示单框
      */
     public List<String> argumentSlots(){
         List<String> params = DataModules.paletteParams(canonicalOperation());
         if(params.isEmpty()) return null;
-        if(!SugarFunctions.balancedArgs(arguments)) return null;
-        List<String> values = SugarFunctions.splitArgs(arguments);
-        if(values.size() > params.size()) return null;
-        List<String> slots = new ArrayList<>(params.size());
-        for(int i = 0; i < params.size(); i++){
-            slots.add(i < values.size() ? values.get(i) : "");
+        int count = params.size();
+        // 缓存只在"派生的源头没变、槽位数也没变"时才可信：换运算、载体重新赋值都会让它失效
+        if(slotCache != null && slotCache.size() == count && slotCacheFrom != null
+            && slotCacheFrom.equals(arguments)){
+            return new ArrayList<>(slotCache);
         }
-        // 拆分必须可逆：拼回去和原文不同，说明这次拆分丢过信息（某两段被并成一段），槽位就不再
-        // 对应作者写的实参。定参框唯一的写回路径是「改一格 → 重拼整串」，所以这里必须退回单框。
-        if(!joinArguments(slots).equals(arguments.trim())) return null;
-        return slots;
+
+        // 用宽松拆分：用户敲到一半的 `(` / `"` 不配平，严格拆分会把其后的每一个逗号都当成嵌套内容
+        // 而返回整整一段，于是第一格吞下全文、其余格空掉（= "变成一个输入框"）。见 splitArgsLenient。
+        List<String> parts = SugarFunctions.splitArgsLenient(arguments);
+        while(parts.size() < count) parts.add("");
+        List<String> slots;
+        if(parts.size() == count){
+            slots = parts;
+        }else{
+            slots = new ArrayList<>(parts.subList(0, count - 1));
+            StringBuilder overflow = new StringBuilder();
+            for(int i = count - 1; i < parts.size(); i++){
+                if(overflow.length() > 0) overflow.append(", ");
+                overflow.append(parts.get(i));
+            }
+            slots.add(overflow.toString());
+        }
+        slotCache = slots;
+        slotCacheFrom = arguments;
+        return new ArrayList<>(slots);
     }
 
     /**
@@ -184,7 +235,8 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
     private void argumentFields(Table table){
         List<String> slots = argumentSlots();
         if(slots == null){
-            // 未知运算 / 实参数超出运算定义：退回单框（本轮之前的形状），已有内容零丢失
+            // 唯一退到单框的情形：运算名未知（损坏载体 / 未来版本写入的名字），取不到参数名。
+            // 已有内容零丢失——原文原样交给单框，用户仍可整串编辑。
             table.add(new ExpressionEditor(arguments, "data, value", value -> arguments = value))
                 .growX().minWidth(90f);
             return;
@@ -206,14 +258,22 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
      *
      * <p>这是定参输入框唯一的写回路径（{@link #build} 里每个框都调它），提到 public 是为了
      * 让自测能覆盖"编辑某一格"的语义——UI 需要 GL 建不起来，而"只动那一格、其余原样、
-     * 逗号怎么拼"正是最容易出错的地方。卡片当前不是定参形态（见 {@link #argumentSlots()}）
-     * 或下标越界时不做任何事。</p>
+     * 逗号怎么拼"正是最容易出错的地方。槽位与建卡共用 {@link #argumentSlots()}：**同一份实现**
+     * 是刻意的，早先那边用严格判据、这边用宽松判据，于是用户刚敲下 {@code (} 后的每一次按键
+     * 都被静默丢弃（见 {@link #argumentSlots()} 的说明）；共用之后两边不可能再对中间态持不同口径。
+     * 运算未知（取不到参数名）或下标越界时不做任何事。</p>
+     *
+     * <p>写回后把这份槽位留在 {@link #slotCache} 里，是"不逐键重拆"的落地点：本次写进最后一格的
+     * 文字（可能含顶层逗号）在下一次按键时**不会**被重新当成分隔符搬走。见 {@link #slotCache}。</p>
      */
     public void setArgument(int index, String value){
         List<String> slots = argumentSlots();
         if(slots == null || index < 0 || index >= slots.size()) return;
         slots.set(index, value);
         arguments = joinArguments(slots);
+        // 与刚拼出来的载体串对齐：下次取槽直接命中缓存，不再从串上重新猜格子边界
+        slotCache = slots;
+        slotCacheFrom = arguments;
     }
 
     /**
@@ -494,6 +554,10 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
         result.operation = operation;
         result.destination = destination;
         result.arguments = arguments;
+        // 槽位跟着走：撤销/重做与剪贴板都走 copy()，粘贴回来的卡片必须还是用户离开时那副分格样子
+        // （某一格含顶层逗号时，只有这份布局能让它原样重现——从串上重拆必被重新分配）
+        result.slotCache = slotCache == null ? null : new ArrayList<>(slotCache);
+        result.slotCacheFrom = slotCacheFrom;
         result.palette = palette;
         return result;
     }

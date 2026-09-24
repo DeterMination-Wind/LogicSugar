@@ -1462,16 +1462,25 @@ public class SugarCompilerSelfTest{
     }
 
     /**
-     * LParser stops after {@link LExecutor#maxInstructions} statement-bearing lines and drops the rest
-     * without a word, while the entry skip is appended to the source <em>before</em> parsing
-     * ({@link SugarCompiler#withEntrySkip}). A program whose source reaches that many lines but whose
-     * compiled size is legal therefore loses the skip - and a carrier without it runs once per tick
-     * again, which is the exact bug the skip exists to prevent. Refusing the save is the recoverable
-     * outcome, so it must be reported instead of silently storing a carrier-executing program.
+     * LParser stops after {@link LExecutor#maxInstructions} statements and drops the rest without a
+     * word (comments and blank lines are free), while the entry skip is appended to the source
+     * <em>before</em> parsing ({@link SugarCompiler#withEntrySkip}). Two different things are lost
+     * that way and both must be refused:
+     *
+     * <ul><li>the appended skip itself - and a carrier without it runs once per tick again, which is
+     * the exact bug the skip exists to prevent;</li>
+     * <li>the sugar, when the whole sugar body sits past the window: the parse then sees a plain
+     * vanilla head, and returning the source unchanged stored sugar text as though it had been
+     * compiled - no carrier, no skip, and text the vanilla parser cannot read.</li></ul>
+     *
+     * <p>The second case is the one the guard had to move for: it used to sit <em>after</em> the
+     * {@code containsSugar} early return, which a vanilla-looking head walks straight past. A long
+     * <em>vanilla</em> program is still none of the compiler's business and must pass through.</p>
      */
     private static void sourceAtParseLimitRejectsTheSave(){
-        // 500 empty ifs = 1000 source lines and ~500 instructions: line limit reached, budget nowhere
-        // near it, so the parse-limit check is the only thing that can fire.
+        // ① sugar in the head, skip dropped: 500 empty ifs = 1000 statements and ~500 instructions,
+        //    so the budget is nowhere near its limit and the parse-limit check is the only thing that
+        //    can fire.
         StringBuilder overLimit = new StringBuilder();
         for(int i = 0; i < 500; i++){
             overLimit.append("ifbegin a equal 0 ").append(i).append('\n').append("blockend\n");
@@ -1479,15 +1488,57 @@ public class SugarCompilerSelfTest{
         try{
             SugarCompiler.compile(overLimit.toString());
             throw new AssertionError("a program at the " + LExecutor.maxInstructions
-                + "-line parse limit was accepted, silently dropping the entry skip");
+                + "-statement parse limit was accepted, silently dropping the entry skip");
         }catch(IllegalArgumentException expected){
-            check(expected.getMessage().contains("-line parse limit"),
+            check(expected.getMessage().contains("-statement parse limit"),
                 "the rejection must name the parse limit, got: " + expected.getMessage());
             check(expected.getMessage().contains("entry skip"),
                 "the rejection must say what could not be stored, got: " + expected.getMessage());
+            check(!expected.getMessage().contains("turn the entry skip off"),
+                "the rejection must not send the user after a setting the mod does not have: "
+                    + expected.getMessage());
         }
 
-        // One pair fewer (998 source lines, so the appended skip is line 999) still fits the limit.
+        // ② the whole sugar body past the window: the head parses as plain vanilla, so this used to be
+        //    returned unchanged - sugar text handed back as if it were the compiled program. The sugar
+        //    here is an if/blockend pair because this test class only registers the structural
+        //    parsers; a data card would not parse at all and the case would pass for the wrong reason.
+        StringBuilder sugarInTail = new StringBuilder();
+        for(int i = 0; i < LExecutor.maxInstructions + 1; i++){
+            sugarInTail.append("set w").append(i).append(' ').append(i).append('\n');
+        }
+        sugarInTail.append("ifbegin a equal 1 0\n");
+        sugarInTail.append("set tail 1\n");
+        sugarInTail.append("blockend\n");
+        try{
+            String accepted = SugarCompiler.compile(sugarInTail.toString());
+            throw new AssertionError("sugar past the parse window came back as a compiled program: "
+                + accepted.length() + " chars, carrier=" + accepted.contains("__ls_sugar")
+                + ", skip=" + SugarCompiler.hasEntrySkip(accepted));
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("parse limit"),
+                "the dropped sugar must be reported as a parse-limit problem, got: " + expected.getMessage());
+        }
+
+        // ③ a long vanilla program stays the vanilla parser's own business
+        StringBuilder vanilla = new StringBuilder();
+        for(int i = 0; i < LExecutor.maxInstructions + 5; i++){
+            vanilla.append("set v").append(i).append(' ').append(i).append('\n');
+        }
+        check(SugarCompiler.compile(vanilla.toString()).equals(vanilla.toString()),
+            "a long vanilla program must still pass through unchanged");
+
+        // ④ the cap counts statements, not lines: a full window of comments plus three statements
+        //    still parses in full, which is why the guard can trust the parsed size.
+        StringBuilder free = new StringBuilder();
+        for(int i = 0; i < LExecutor.maxInstructions; i++){
+            free.append("# chatter ").append(i).append('\n');
+        }
+        for(int i = 0; i < 3; i++) free.append("set z").append(i).append(' ').append(i).append('\n');
+        check(LAssembler.read(free.toString(), true).size == 3,
+            "comments and blank lines must not consume the parse window");
+
+        // One pair fewer (998 statements, so the appended skip is statement 999) still fits the limit.
         StringBuilder withinLimit = new StringBuilder();
         for(int i = 0; i < 499; i++){
             withinLimit.append("ifbegin a equal 0 ").append(i).append('\n').append("blockend\n");

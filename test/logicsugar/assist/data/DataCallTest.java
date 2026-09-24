@@ -1,5 +1,6 @@
 package logicsugar.assist.data;
 
+import arc.struct.Seq;
 import logicsugar.LogicSugarMod;
 import logicsugar.SourceNails;
 import logicsugar.assist.expr.ExprIntrinsics;
@@ -7,6 +8,7 @@ import mindustry.gen.LogicIO;
 import mindustry.logic.LAssembler;
 import mindustry.logic.LStatement;
 import mindustry.logic.SugarCompiler;
+import mindustry.logic.SugarFunctions;
 import mindustry.logic.SugarStatements;
 
 import java.io.File;
@@ -60,6 +62,7 @@ public final class DataCallTest{
         everyOperationBundleKeyIsReachable();
         declarationHintsUseTheOperationCardsLabels();
         argumentSlotsAreFixedAndLossless();
+        everyKeystrokeReachesTheCarrier();
         operationCardsMarkInvalidArguments();
         reentrantValidationKeepsTheOuterContext();
         operationSwitchBehavior();
@@ -731,6 +734,39 @@ public final class DataCallTest{
         check(nested.arguments.equals("arr, f(a, b)"),
             "editing a slot must preserve a nested argument verbatim: " + nested.arguments);
 
+        // ④b 引号感知：字符串字面量里的逗号与括号是文本，不是结构。M3 之前 `"a(b", 5` 会被切成一段
+        //     （字面量里的 `(` 把深度抬起来，后面的逗号就不再切分），定参框于是把三段显示成一段、
+        //     占掉两个空槽，编辑任意一格都会把实参挪位。三条断言分别钉 splitArgs、balancedArgs
+        //     与卡片层：删掉任何一处的引号感知都会红。
+        java.util.List<String> quoted = SugarFunctions.splitArgs("\"a(b\", 5");
+        check(quoted.size() == 2 && quoted.get(0).equals("\"a(b\"") && quoted.get(1).equals("5"),
+            "a comma after a string literal must still split the argument list: " + quoted);
+        check(SugarFunctions.balancedArgs("\"a(b\", 5"),
+            "a bracket inside a string literal must not count towards balance");
+
+        DataCallStatement quotedCard = new DataCallStatement(DataModules.paletteCall("array_replace"));
+        quotedCard.arguments = "\"a(b\", 5, 9";
+        java.util.List<String> quotedSlots = quotedCard.argumentSlots();
+        check(quotedSlots != null && quotedSlots.size() == 3 && quotedSlots.get(0).equals("\"a(b\""),
+            "a bracket inside a string literal must stay inside its own slot: " + quotedSlots);
+
+        // ④c 分隔符的写法**不**决定卡片形态。`splitArgs` 只按顶层逗号切，所以 `s,value`（无空格）
+        //     与 `s, value` 切出同样的两段；早先这里拿"拼回必须逐字符相同"当门槛，于是用户只要
+        //     手打过一次简写分隔符，卡片就永久塌成单框（重开也回不来）。现在形态只按字段数定，
+        //     格式随写回规范化（`s,value` 改一格 → `s, x`）——编译结果不变，这是明说过的取舍。
+        DataCallStatement notInverse = new DataCallStatement(DataModules.paletteCall("stack_push"));
+        notInverse.arguments = "s,value";
+        java.util.List<String> looseSlots = notInverse.argumentSlots();
+        check(looseSlots != null && looseSlots.size() == 2
+                && looseSlots.get(0).equals("s") && looseSlots.get(1).equals("value"),
+            "a non-canonical separator must not collapse the card: " + looseSlots);
+        check(notInverse.arguments.equals("s,value"),
+            "deciding the shape must not touch the stored argument text: " + notInverse.arguments);
+        notInverse.setArgument(1, "x");
+        check(notInverse.arguments.equals("s, x"),
+            "editing a slot rewrites the separators in canonical form, which is the accepted price of "
+                + "keeping the fixed-slot shape: " + notInverse.arguments);
+
         // ⑤ 旧载体：实参数偏少 → 补空槽（用户一眼看出少填了哪个）
         DataCallStatement shortList = new DataCallStatement(DataModules.paletteCall("stack_push"));
         shortList.arguments = "s";
@@ -738,10 +774,13 @@ public final class DataCallTest{
         check(padded != null && padded.size() == 2 && padded.get(1).isEmpty(),
             "a carrier with fewer arguments than parameters must pad empty slots: " + padded);
 
-        // 实参数偏多 → 退回单框，绝不定参截断（那会静默丢掉第 N+1 项起的内容）
+        // 实参数偏多 → 保住定参形态，把多出来的段并进最后一格（内容不丢，编译期仍报个数不符）
         shortList.arguments = "s, 1, 2";
-        check(shortList.argumentSlots() == null,
-            "more arguments than parameters must fall back to the single field rather than drop them");
+        java.util.List<String> overflowSlots = shortList.argumentSlots();
+        check(overflowSlots != null && overflowSlots.size() == 2
+                && overflowSlots.get(0).equals("s") && overflowSlots.get(1).equals("1, 2"),
+            "more arguments than parameters must merge into the last slot rather than drop them: "
+                + overflowSlots);
 
         // 未知运算（损坏载体 / 未来版本写入的名字）→ 没有参数名可用，同样退回单框
         DataCallStatement unknown = (DataCallStatement)LAssembler.read("datacall nosuchop r \"a\"", true).first();
@@ -796,6 +835,131 @@ public final class DataCallTest{
             "the card must supply the commas between argument slots");
         check(source.contains("value -> setArgument(index, value)"),
             "every slot must write back through setArgument()");
+    }
+
+    /**
+     * 定参框的每一次按键都必须落到 {@link DataCallStatement#arguments} 上。
+     *
+     * <p>钉住的是一条**只在中间态才暴露**的回归：写回曾经先问 {@code argumentSlots()} 要槽位，
+     * 而那个方法对不配平的实参串返回 {@code null}（配平校验是给"这张卡要不要用定参框"这个建卡决定
+     * 用的）。于是用户刚敲下一个 {@code (} 或一个 {@code "}，之后的每一次按键都被静默丢弃——
+     * 框里显示 {@code f(a, b)}，载体里还是旧的 {@code map, f(}。编译门禁能挡住写坏的程序，
+     * 但用户会被卡住，而且"一参数一输入框"这个招牌在嵌套调用与字符串实参上直接失效。</p>
+     *
+     * <p>所以这里逐字符模拟输入（用户就是这么打字的），断言每个前缀都真的写进去了，并且最后落到
+     * 完整的串上。同时也钉住**重开那一侧**：建卡与写回共用同一份槽位实现，所以关掉对话框时那一格
+     * 还没写完（括号/引号没闭合）也不会塌成单框——早先建卡走严格判据、写回走宽松判据，用户只是没
+     * 写完就关了对话框，再打开就得先把内容改配平才拿得回分格编辑。</p>
+     */
+    private static void everyKeystrokeReachesTheCarrier(){
+        // 嵌套调用：每个前缀都要写进载体，最后收敛到完整串
+        DataCallStatement nested = new DataCallStatement(DataModules.paletteCall("array_fill"));
+        nested.arguments = "map, x";
+        String[] typed = {"f(", "f(a", "f(a,", "f(a, b", "f(a, b)"};
+        for(int step = 0; step < typed.length; step++){
+            nested.setArgument(1, typed[step]);
+            check(nested.arguments.equals("map, " + typed[step]),
+                "keystroke " + (step + 1) + " was dropped: expected [map, " + typed[step]
+                    + "], got [" + nested.arguments + "]");
+        }
+
+        // 字符串字面量：第一个字符就是那个不配平的引号，同样不能丢
+        DataCallStatement quoted = new DataCallStatement(DataModules.paletteCall("array_fill"));
+        quoted.arguments = "map, x";
+        for(String step : new String[]{"\"", "\"k", "\"ke", "\"key", "\"key\""}){
+            quoted.setArgument(1, step);
+            check(quoted.arguments.equals("map, " + step),
+                "a quoted argument lost keystrokes: expected [map, " + step + "], got ["
+                    + quoted.arguments + "]");
+        }
+
+        // 一格处于中间态，不影响其它格写回（槽位是按字段数锚定的，不是按当前串可不可解析）
+        DataCallStatement mixed = new DataCallStatement(DataModules.paletteCall("array_fill"));
+        mixed.arguments = "map, x";
+        mixed.setArgument(1, "f(");
+        mixed.setArgument(0, "other");
+        check(mixed.arguments.equals("other, f("),
+            "a mid-edit sibling slot blocked the other slot: " + mixed.arguments);
+
+        // 重开也必须扛得住中间态：关闭对话框时那一格还没写完（括号/引号没闭合）是常事，
+        // 早先这会塌成单框，用户得先把内容补齐再重开才拿得回分格编辑。
+        DataCallStatement reopened = new DataCallStatement(DataModules.paletteCall("array_fill"));
+        reopened.arguments = "map, x";
+        reopened.setArgument(1, "f(");
+        check(reopened.arguments.equals("map, f("),
+            "a mid-edit keystroke must reach the carrier: " + reopened.arguments);
+        java.util.List<String> reopenedSlots = reopened.argumentSlots();
+        check(reopenedSlots != null && reopenedSlots.size() == 2 && reopenedSlots.get(1).equals("f("),
+            "reopening on an unclosed bracket must keep the fixed-argument shape instead of collapsing "
+                + "to one box: " + reopenedSlots);
+        check(reopened.arguments.equals("map, f("),
+            "deciding the shape must not rewrite the text the user typed: " + reopened.arguments);
+
+        // 某一格里打了顶层逗号：留在串里（并进最后一格），不丢内容、也不把文字在格与格之间搬家
+        DataCallStatement comma = new DataCallStatement(DataModules.paletteCall("stack_push"));
+        comma.arguments = "s, value";
+        comma.setArgument(1, "a,b");
+        check(comma.arguments.equals("s, a,b"),
+            "a top-level comma typed inside a box must be kept, not dropped: " + comma.arguments);
+
+        // ⑦ 在**同一格**里连打顶层逗号：文字必须原地稳定累加。这一条钉住的是一条实测出来的
+        //     爆炸——"拼回"与"拆分"不是互逆的：某一格含顶层逗号时（`s` 与 `a,b` 拼成 `s, a,b`，
+        //     再拆回来是 `[s, a, b]` 三段），早先每一键都拿 {@code arguments} 重新拆分，于是
+        //     上一轮敲进去的文字被当成"多出来的段"并进最后一格，下次拼回时又成了新的段，逐键
+        //     累积：敲 `a,b,c` 得到 20 字符、`a,b,c,d` 得到
+        //     `a,b,c,d, b, c, , b, c, b, , b, value`（36 字符），`a,b,c,d(` 更是 46 字符。
+        //     用户报的"输入逗号就爆炸"就是它。修法是把槽位当界面给定的真值缓存下来，不再逐键重拆。
+        DataCallStatement growth = new DataCallStatement(DataModules.paletteCall("stack_push"));
+        String typedText = "a,b,c,d";
+        StringBuilder grown = new StringBuilder();
+        for(int step = 0; step < typedText.length(); step++){
+            grown.append(typedText.charAt(step));
+            growth.setArgument(0, grown.toString());
+            java.util.List<String> live = growth.argumentSlots();
+            check(live != null && live.size() == 2 && live.get(1).equals("value"),
+                "typing a comma in slot 0 must not disturb slot 1 at step " + (step + 1)
+                    + ": " + live);
+        }
+        check(growth.arguments.equals("a,b,c,d, value"),
+            "commas typed inside one slot must accumulate in place instead of being re-fed into "
+                + "the argument list on every keystroke: " + growth.arguments);
+
+        // ⑧ 未闭合的 `(` 不能让后面那一格的内容被吞掉。严格拆分把 `f(, value` 读成整整一段
+        //     （未闭合的括号把深度抬起来，后面的逗号就不再切分），于是"写回第 0 格"会连同
+        //     `value` 一起覆盖掉——内容静默丢失。宽松拆分只让**成对**的括号抬高深度。
+        DataCallStatement unbalanced = new DataCallStatement(DataModules.paletteCall("stack_push"));
+        unbalanced.arguments = "f(, value";
+        java.util.List<String> unbalancedSlots = unbalanced.argumentSlots();
+        check(unbalancedSlots != null && unbalancedSlots.size() == 2
+                && unbalancedSlots.get(1).equals("value"),
+            "an unclosed bracket must not swallow the following slot: " + unbalancedSlots);
+        unbalanced.setArgument(0, "f(a");
+        check(unbalanced.arguments.equals("f(a, value"),
+            "writing slot 0 must not erase the slot behind an unclosed bracket: "
+                + unbalanced.arguments);
+
+        // ⑨ 槽位布局是界面给的，不是每次从载体串重猜的；但它必须对**绕过本类**的写入立刻失效，
+        //     否则载体重读、切换运算、自测直接赋值都会读到上一张卡的格子。两条路都要钉住。
+        DataCallStatement cacheHandoff = new DataCallStatement(DataModules.paletteCall("stack_push"));
+        cacheHandoff.setArgument(1, "a,b");
+        cacheHandoff.arguments = "x, y";                       // 绕过写回，模拟载体重读
+        java.util.List<String> afterBypass = cacheHandoff.argumentSlots();
+        check(afterBypass != null && afterBypass.size() == 2
+                && afterBypass.get(0).equals("x") && afterBypass.get(1).equals("y"),
+            "a slot cache must not survive a direct write to the carrier text: " + afterBypass);
+
+        DataCallStatement cacheCopy = new DataCallStatement(DataModules.paletteCall("stack_push"));
+        cacheCopy.setArgument(1, "a,b");
+        java.util.List<String> copiedSlots = ((DataCallStatement)cacheCopy.copy()).argumentSlots();
+        check(copiedSlots != null && copiedSlots.size() == 2 && copiedSlots.get(1).equals("a,b"),
+            "copy() must carry the slot layout, otherwise paste/undo re-distributes the text: "
+                + copiedSlots);
+
+        // 非定参形态（运算名未知）仍然不写：那不是中间态，是这张卡没有槽位可言
+        DataCallStatement unknown = (DataCallStatement)LAssembler.read("datacall nosuchop r \"a\"", true).first();
+        unknown.setArgument(0, "changed");
+        check(unknown.arguments.equals("a"),
+            "a card with no parameter names must not accept slot writes: " + unknown.arguments);
     }
 
     /**
@@ -856,6 +1020,10 @@ public final class DataCallTest{
             {"clean", "nested expression", "datacall stack_push r \"s, count + 1\""},
             {"clean", "nested call", "datacall stack_push r \"s, max(1, 2)\""},
             {"clean", "free variable as value", "datacall stack_push r \"s, unsetvar\""},
+            // 分隔符的写法不是错误：`s,value` 与 `s, value` 编译结果相同。早先编辑期拿"拆分必须
+            // 逐字符可逆"当形状判据（好决定要不要用定参框），于是这条会标红、而编译器说它合法
+            // ——"同进退"的不变量当场被打破。放宽形态之后这条同时钉住了"标红不再看分隔符写法"。
+            {"clean", "non-canonical separator", "datacall stack_push r \"s,value\""},
             {"red", "unknown operation", "datacall nosuchop r \"a\""},
             {"red", "undeclared container", "datacall stack_push r \"ss, 1\""},
             {"red", "undeclared array", "datacall array_swap r \"b, 0, 3\""},
@@ -866,6 +1034,9 @@ public final class DataCallTest{
             {"red", "empty middle slot", "datacall array_swap r \"a, , 3\""},
             {"red", "illegal expression", "datacall stack_push r \"s, a1.1\""},
             {"red", "dangling operator", "datacall stack_push r \"s, 1 +\""},
+            // 括号没闭合是**真错误**（表达式残缺），所以标红这一条与卡片形态无关、必须独立成立：
+            // 形态放宽到"中间态也保持定参框"之后，第一层仍要自己看配平，不能跟着一起松掉。
+            {"red", "unclosed bracket", "datacall stack_push r \"s, max(a\""},
             {"red", "missing destination on value operation", "datacall stack_push ~ \"s, 1\""},
         };
         for(String[] item : cases){
@@ -888,6 +1059,20 @@ public final class DataCallTest{
         // 失败之后下一次仍然要能正常工作（上下文没被上一次弄脏）
         check(invalidOperationLines(declarationsFor + "datacall stack_push r \"s, 1\"\n").isEmpty(),
             "a failed validation pass must not poison the next one");
+
+        // ③b 第二层被放弃时，第一层仍必须**独立**抓住「参数偏多」。这条是唯一能翻「层 1 偏多判据」
+        //     的用例：层 2 的试编译走的是 `ExprCompiler.compileForcedIntrinsic`，**不经过**
+        //     `emitDataCall` 的 arity 守卫 —— 可它自己恰好也拒绝偏多的实参，于是在正常程序里两层
+        //     是**双保险**：2026-09-24 变异实测，把层 1 那条判据改成永假，全部用例照样绿。
+        //     只有第二层缺席（声明卡非法 ⇒ collect 抛错 ⇒ 整层放弃，宁可漏报不误报）时，零注册表
+        //     的层 1 才是唯一防线。没有这条断言，层 1 的偏多判据可以被静默删掉而无人察觉。
+        //     索引 3 = 追加的运算卡（brokenDeclarations 自带的那行合法卡是索引 2）。
+        java.util.List<Integer> fallbackRed = invalidOperationLines(
+            brokenDeclarations + "datacall stack_push r \"s, 1, 2\"\n");
+        check(fallbackRed.equals(java.util.List.of(3)),
+            "with the trial-compile layer abandoned, the zero-registry pass must still flag an "
+                + "operation card with too many arguments; got red lines " + fallbackRed
+                + " (expected exactly [3] = the operation card)");
 
         // ④ 形状层单独钉一遍：不依赖任何注册表就能判定的错
         DataCallStatement unknown = new DataCallStatement();
@@ -914,6 +1099,21 @@ public final class DataCallTest{
         String modules = SourceNails.readSource("src/logicsugar/assist/data/DataModules.java");
         check(modules.contains("ExprCompiler.compileForcedIntrinsic(destination, operation,"),
             "the editor pass must reuse the compiler's own intrinsic lowering");
+
+        // 标红判据必须与卡片形态**解耦**：第一层自己看实参串（配平、个数），不拿
+        // DataCallStatement.argumentSlots() 的 null 当信号——那个方法要给"中间态也保持定参框"
+        // 让路，一耦合就会互相牵制：放宽形态等于顺手松掉标红，收紧形态等于让用户打字打到一半
+        // 就退框。这条源码钉子钉住"两边各自判据"这件事本身。
+        String shapeCheck = SourceNails.methodBody(modules,
+            "private static boolean callShapeInvalid(DataCallStatement call){");
+        check(shapeCheck.contains("balancedArgs"),
+            "red marking must still reject an argument list whose brackets never close");
+        check(shapeCheck.contains("splitArgs"),
+            "red marking must count the arguments on its own, not through the shape API");
+        check(!shapeCheck.contains("argumentSlots"),
+            "red marking must not be driven by the card-shape API: relaxing the shape would then "
+                + "silently relax what counts as an error, and tightening it would drop the card out "
+                + "of the fixed-slot shape mid-typing");
         String compiler = SourceNails.readSource("src/mindustry/logic/SugarCompiler.java");
         check(compiler.contains("DataModules.markInvalidCalls(statementList, invalid, arrayReservedNames)"),
             "the editor's invalid-statement pass must invoke the operation-card check");

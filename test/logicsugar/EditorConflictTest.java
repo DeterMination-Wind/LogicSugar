@@ -48,6 +48,7 @@ public final class EditorConflictTest{
         leavingCoexistRestoresTheForeignCanvas();
         askOffersEveryAnswer();
         aggregateFormExposesTheConflictSetting();
+        coexistRefusesTheOpenEditor();
         coexistRebindsForeignPanels();
         coexistKeepsTheForeignPanelClickable();
 
@@ -342,6 +343,31 @@ public final class EditorConflictTest{
             "the coexisting answer needs its own label key");
         check(!body.contains("replaceEditor("),
             "the ask dialog must not keep a private copy of the takeover branch");
+
+        // Which branch a dismissed prompt runs is the whole point of the ask mode, and it is decided
+        // in a different callback from the three buttons - so it needs its own scope. A whole-method
+        // "must not contain takeEditorOver()" would be useless here (the LogicSugar button calls it),
+        // and a whole-method "must contain stepAside()" is already satisfied by the Other-mod button.
+        String dismiss = SourceNails.blockFrom(body, "dialog.hidden(() ->");
+        check(dismiss.contains("stepAside();"),
+            "dismissing the ask dialog without an answer must leave the other mod's editor alone: "
+                + "the fallback is step-aside, never takeover");
+        check(!dismiss.contains("takeEditorOver();"),
+            "dismissing the ask dialog must not take the editor over - that is the destructive branch, "
+                + "and a prompt the user clicked away is not an answer");
+        check(dismiss.contains("!answered[0]"),
+            "the dismiss fallback must be conditional on no answer having been given, or it would "
+                + "undo the answer the user did give");
+
+        // ...and each answer has to mark itself answered before hiding, or the fallback above fires on
+        // every button press and silently downgrades all three answers to step-aside.
+        int marked = 0;
+        for(int i = body.indexOf("answered[0] = true;"); i >= 0; i = body.indexOf("answered[0] = true;", i + 1)){
+            marked++;
+        }
+        check(marked == 3,
+            "each of the three answers must mark itself answered before hiding; found " + marked
+                + " - the ones that do not will be undone by the dismiss fallback");
     }
 
     /**
@@ -361,6 +387,39 @@ public final class EditorConflictTest{
             "the aggregate row must default to ask, the same as the dedicated setting");
         check(SourceNails.readSource("src/logicsugar/LogicSugarSettings.java").contains("EditorConflict.ask.id"),
             "the dedicated setting must default to ask");
+    }
+
+    /**
+     * {@code SugarCoexist.install()} must refuse a dialog that is already open, and the refusal has to
+     * come with a {@code false} so the caller falls back to takeover.
+     *
+     * <p>Why it is not cosmetic: {@code arm()} runs from a {@code shown} listener and only wraps the
+     * consumer when the canvas is <em>already</em> the coexist canvas. Swapping the canvas mid-session
+     * therefore leaves this session's consumer pointing at the other mod's raw save callback while
+     * {@code dialog.canvas} is already our not-yet-loaded canvas - so closing the editor calls
+     * {@code consumer.get(canvas.save())} and writes an <em>empty program</em> into the processor. The
+     * current UI flow (reaching the settings page requires closing the logic editor first) keeps that
+     * from happening, which is exactly why the guard has to be pinned in code and not left to a flow.
+     *
+     * <p>Scoped to the {@code if} block itself: a bare {@code dialog.isShown()} test with no
+     * {@code return false} would be worse than no guard at all (it would log the refusal and then do
+     * the swap anyway), and a whole-method {@code contains("return false;")} accepts the null check
+     * three lines above.</p>
+     */
+    private static void coexistRefusesTheOpenEditor() throws IOException{
+        String source = SourceNails.readSource("src/mindustry/logic/SugarCoexist.java");
+
+        String guard = SourceNails.blockFrom(source, "if(dialog.isShown()){");
+        check(guard.contains("return false;"),
+            "the open-editor refusal must return false: the caller falls back to takeover, while "
+                + "carrying on would hand the other mod's raw save callback an empty canvas on close");
+        check(guard.contains("Log.warn("),
+            "the refusal must be logged: it otherwise looks like coexist silently stopped working");
+
+        String install = SourceNails.methodBody(source, "public static boolean install(LogicDialog dialog){");
+        check(install.contains("if(dialog.isShown()){"),
+            "install() must still refuse the open editor (the guard must sit in install(), not in "
+                + "some other method that does not gate the swap)");
     }
 
     /**

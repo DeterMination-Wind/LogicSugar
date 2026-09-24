@@ -539,21 +539,41 @@ public final class SugarCompiler{
         Seq<LStatement> statements = librarySource
             ? SugarFunctions.readLibrary(source, privileged)
             : LAssembler.read(source, privileged);
-        if(!containsSugar(statements)) return sugar;
 
-        // LParser stops after LExecutor.maxInstructions lines and drops the rest without a word, but a
-        // sugar source can be longer than that in lines at a legal instruction count (500 empty `if`
-        // blocks are 1000 source lines and only 500 instructions). If the dropped tail is the entry
-        // skip this method just appended, the carriers run once per cycle again - the exact bug the
-        // skip exists to prevent - and nothing would report it. A carrier is only written when there
-        // is sugar to persist, which is why this check sits after that gate: without sugar the skip is
-        // discarded and a long vanilla program is none of this method's business. Refusing the save is
-        // the recoverable outcome; storing a carrier-executing program is not.
-        if(!librarySource && entrySkip && !endsWithEntrySkip(statements)){
-            throw new IllegalArgumentException("The program's source reaches the " + LExecutor.maxInstructions
-                + "-line parse limit, so the entry skip cannot be stored; shorten the program or turn the"
-                + " entry skip off.");
+        // LParser stops after LExecutor.maxInstructions statements and drops the rest without a word
+        // (comments and blank lines are free, so a sugar source can be past that many lines at a legal
+        // instruction count - 500 empty `if` blocks are 1000 statements and only 500 instructions).
+        // What it drops is lost silently in two different ways, so both are refused together, ahead of
+        // the containsSugar early return below - that early return used to hide the second one:
+        //
+        //  - the dropped tail was the entry skip this method just appended, and the head carries sugar:
+        //    the carriers run once per cycle again, the exact bug the skip exists to prevent. Without
+        //    sugar in the head there is no carrier, so nothing needs keeping idle and there is nothing
+        //    to refuse.
+        //  - the dropped tail was the sugar itself: `statements` then holds only the head, which looks
+        //    like a plain vanilla program, and returning the source unchanged would store sugar text as
+        //    though it had been compiled - no carrier, no skip, and text the vanilla parser cannot
+        //    read. The window that dropped the tail is exactly what hides it, so this case is decided
+        //    by re-parsing the whole source with the raised limit the library path already uses.
+        //
+        // A vanilla program past the window is refused by neither: that truncation is the vanilla
+        // parser's own, it has no carrier to keep idle, and every version before Logic Sugar truncated
+        // it the same way. Refusing the save is the recoverable outcome; storing a carrier-executing
+        // program, or sugar text no parser can read, is not.
+        boolean lostEntrySkip = !librarySource && entrySkip && containsSugar(statements)
+            && !endsWithEntrySkip(statements);
+        // Only worth a second parse when the window actually closed over a head that carries no sugar.
+        boolean lostSugar = !librarySource && statements.size >= LExecutor.maxInstructions
+            && !containsSugar(statements)
+            && containsSugar(SugarFunctions.readLibrary(source, privileged));
+        if(lostEntrySkip || lostSugar){
+            throw new IllegalArgumentException("The program's source is past the " + LExecutor.maxInstructions
+                + "-statement parse limit, so its last statements are dropped before they can be compiled"
+                + " or stored (with the entry skip enabled, the skip this save appends is one of them);"
+                + " shorten the program.");
         }
+
+        if(!containsSugar(statements)) return sugar;
 
         // destIndex on begin cards is a jump comment. Older saves and hand-edited
         // carriers can leave it pointing past the program while if/for/while/switch

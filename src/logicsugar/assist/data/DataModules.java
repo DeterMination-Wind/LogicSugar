@@ -511,19 +511,29 @@ public final class DataModules{
     }
 
     /** 编辑期第一层：不依赖任何注册表的形状错误。覆盖范围与 {@code emitDataCall} 的前置校验
-     *  <b>有重叠但不相等</b>：这里管「这张卡能不能按一参数一框编辑」（运算名未知、有返回值却没目标、
-     *  实参数多于参数量、实参串括号不平衡或拆分不可逆），编译期那边管「参数个数必须完全相等」。
-     *  两者只在一处<b>刻意</b>不同：实参数<b>少于</b>参数量时这里不标红 —— 空槽连着占位参数名，本身
-     *  就是「这里还没填」的提示（{@code DataCallTest.argumentSlotsAreFixedAndLossless} 钉住这一点），
-     *  而保存时仍会如实报出参数个数不符。 */
+     *  <b>有重叠但不相等</b>：这里管「这张卡能不能编译」（运算名未知、有返回值却没目标、
+     *  实参数多于参数量、实参串括号/引号不配平），编译期那边管「参数个数必须完全相等」。
+     *
+     *  <p>判据**独立于** {@link DataCallStatement#argumentSlots()}，这是刻意的：那个方法只负责
+     *  「按字段数拆槽」（好让建卡与逐键写回共用同一份实现），它对中间态一律照拆——未配平的
+     *  {@code max(a,}、某一格里多打的逗号，都仍然给出定参框。若拿它的 {@code null} 当标红信号，
+     *  两者就互相牵制：放宽拆分等于顺手松掉标红，收紧拆分等于让用户打字打到一半就退框。
+     *  所以这里自己看实参串，只看真正说明问题的两件事——配平与个数。</p>
+     *
+     *  <p>实参数<b>多于</b>参数量是错误（编译期必然报参数个数不符）；<b>少于</b>则不在这里判，
+     *  交给 {@link #markInvalidCalls} 第二层的试编译——空槽连着占位参数名，本身就是「这里还没填」
+     *  的提示（{@code DataCallTest.argumentSlotsAreFixedAndLossless} 钉住补齐空槽这一点），
+     *  而卡片形态与标红是两件事：偏少该红，但红的同时必须保住定参框。</p> */
     private static boolean callShapeInvalid(DataCallStatement call){
         DataModule.PaletteCall spec = paletteCall(call.canonicalOperation());
         // 未知运算（损坏载体、或未来版本写入的名字）：编译期 emitDataCall 直接抛 unknown data intrinsic
         if(spec == null) return true;
         // 有返回值的运算必须有目标变量，否则编译期抛 requires a destination variable
         if(spec.returnsValue && isBlank(call.destination)) return true;
-        // 实参数多于运算定义：定参框按参数量显示会静默丢掉多出来的内容，编译期也必然报参数个数不符
-        return call.argumentSlots() == null;
+        // 括号/引号不配平的实参串编译不过（表达式残缺），当场标红比等到保存再报更直接
+        if(!SugarFunctions.balancedArgs(call.arguments)) return true;
+        // 实参数多于运算定义：定参框会把多出来的段并进最后一格（内容不丢），但编译期仍然报个数不符
+        return SugarFunctions.splitArgs(call.arguments).size() > paletteParams(call.canonicalOperation()).size();
     }
 
     /**

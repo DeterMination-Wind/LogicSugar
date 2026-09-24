@@ -52,8 +52,33 @@ public final class SourceNails{
     public static String methodBody(String source, String signature){
         int at = source.indexOf(signature);
         if(at < 0) throw new AssertionError("source nail: method signature not found: " + signature);
+        return block(source, at, signature);
+    }
+
+    /**
+     * The text from {@code anchor} to the end of the first brace block that follows it.
+     *
+     * <p>{@link #methodBody} is this anchored at a signature; the same reasoning applies to any nested
+     * block a nail has to isolate - the lambda handed to {@code dialog.hidden(...)} or
+     * {@code Element.shown(...)}, for instance, where "which callback runs this" is the entire point
+     * and a whole-file {@code contains()} would happily accept the call from a different callback
+     * that happens to sit nearby. The anchor is normally the opening line of the block, braces
+     * included, so the matched block is exactly what the reader sees there.</p>
+     *
+     * @throws AssertionError if the anchor is absent or its braces do not balance, so a deleted or
+     *         rewritten block fails loudly instead of yielding an empty string that satisfies every
+     *         "must not contain" check.
+     */
+    public static String blockFrom(String source, String anchor){
+        int at = source.indexOf(anchor);
+        if(at < 0) throw new AssertionError("source nail: anchor not found: " + anchor);
+        return block(source, at, anchor);
+    }
+
+    /** Brace-match the block that starts at the first {@code {} after {@code at}. */
+    private static String block(String source, int at, String what){
         int open = source.indexOf('{', at);
-        if(open < 0) throw new AssertionError("source nail: no body after: " + signature);
+        if(open < 0) throw new AssertionError("source nail: no body after: " + what);
         int depth = 0;
         for(int i = open; i < source.length(); i++){
             char c = source.charAt(i);
@@ -65,6 +90,6 @@ public final class SourceNails{
                 if(--depth == 0) return source.substring(at, i + 1);
             }
         }
-        throw new AssertionError("source nail: unbalanced braces after: " + signature);
+        throw new AssertionError("source nail: unbalanced braces after: " + what);
     }
 }

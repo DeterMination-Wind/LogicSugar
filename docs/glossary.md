@@ -22,7 +22,7 @@ Mindustry 原生逻辑指令集（`set` / `op` / `jump` / `read` / …）。Logi
 v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar-line ` / `# @logic-sugar-v1 end`。现仅作读取兼容，新程序一律用载体。
 
 ### 入口跳过（entry skip）
-编译产物在 main 末尾统一多出的一条 `set @counter 0`（`SugarCompiler.entrySkipLine`），让紧随其后的几 KB 载体 `set __ls_sugar` **永不执行**——否则 MDTX 逻辑面板的值列会把载体当成一条运行中的赋值显示出来。等价性依据：`runOnce()` 在 `@counter` 越界时本就「置 0 执行指令 0」，跳过条不改变语义。要点：① 这条 skip **是被存储的糖源码的一部分**（随载体一起保存，编译期不额外 append），旧版本重编译这段文本能原样复现，`verifyRestore` 仍然通过；② 代价是**有效指令上限变成 `maxInstructions − 1`**；③ 反编译侧位置是「形状的一部分」（跳过至多一条 hoist `jump` 之后只许剩载体），`isEntrySkip` 带位置约束。已知边界：源文本 ≥1000 行时 `LParser` 只解析前 1000 行，追加的 skip 会被静默丢弃。详见[架构总览](architecture.md)「编译器」。
+编译产物在 main 末尾统一多出的一条 `set @counter 0`（`SugarCompiler.entrySkipLine`），让紧随其后的几 KB 载体 `set __ls_sugar` **永不执行**——否则 MDTX 逻辑面板的值列会把载体当成一条运行中的赋值显示出来。等价性依据：`runOnce()` 在 `@counter` 越界时本就「置 0 执行指令 0」，跳过条不改变语义。要点：① 这条 skip **是被存储的糖源码的一部分**（随载体一起保存，编译期不额外 append），旧版本重编译这段文本能原样复现，`verifyRestore` 仍然通过；② 代价是**有效指令上限变成 `maxInstructions − 1`**；③ 反编译侧位置是「形状的一部分」（跳过至多一条 hoist `jump` 之后只许剩载体），`isEntrySkip` 带位置约束。已知边界：源文本超过解析窗口（`LExecutor.maxInstructions` 条**语句**，注释与空行免费）时 `LParser` 只解析窗口内的部分、其余静默丢弃；`compile` 在解析后随即确认（头部带糖却没有 skip、或糖整体落在窗口之后）并抛 `IllegalArgumentException` 拒绝保存，纯 vanilla 的长程序则照常通过。详见[架构总览](architecture.md)「编译器」。
 
 ### FuncMode（函数模式）
 函数展开方式。`normal` = 共享 `@counter` 子程序（函数体上提到程序尾部，一次定义多处跳转）；`inline` = 每个调用点展开一份副本，编译器临时名带 `__ls_i_<callId>_`。设置项 `logicsugar.funcMode`。
