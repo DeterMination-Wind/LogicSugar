@@ -14,6 +14,7 @@ import mindustry.logic.SugarCanvas;
 import mindustry.logic.SugarStatements;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,8 +48,8 @@ public class BitsetModule extends DataModule{
     /** analyze 阶段方法糖解析用的轻量声明扫描（不依赖 collect 注册表）。 */
     @Override
     public Map<String, String> declaredKinds(LStatement statement){
-        if(statement instanceof BitsetStatement card && card.name != null && !card.name.trim().isEmpty()) return Map.of(card.name.trim(), ID);
-        return Map.of();
+        if(statement instanceof BitsetStatement card && card.name != null && !card.name.trim().isEmpty()) return Collections.singletonMap(card.name.trim(), ID);
+        return Collections.emptyMap();
     }
 
     @Override

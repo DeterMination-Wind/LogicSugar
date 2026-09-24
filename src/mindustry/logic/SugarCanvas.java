@@ -136,6 +136,19 @@ public class SugarCanvas extends LCanvas{
         return result;
     }
 
+    /** Reads {@code LCanvas.privileged} via reflection: it is package-private and the mod class
+     *  loader cannot access it directly (IllegalAccessError) even though the package names match.
+     *  Unreadable degrades to non-privileged, so a privileged statement is refused rather than
+     *  silently allowed. */
+    protected boolean editingPrivileged(){
+        if(privilegedField == null) return false;
+        try{
+            return privilegedField.getBoolean(this);
+        }catch(IllegalAccessException e){
+            return false;
+        }
+    }
+
     @Override
     public void act(float delta){
         super.act(delta);
@@ -672,15 +685,10 @@ public class SugarCanvas extends LCanvas{
             Vars.ui.showInfoFade(Core.bundle.get("logicsugar.textEdit.convertError", "Cannot convert this statement to/from text."));
         }
 
-        /** Reads LCanvas.privileged via reflection: it is package-private and the mod class
-         *  loader cannot access it directly (IllegalAccessError) even though the package names match. */
+        /** The privilege level of the canvas this element belongs to; see
+         *  {@link SugarCanvas#editingPrivileged()}. */
         private boolean isPrivileged(){
-            if(privilegedField == null) return false;
-            try{
-                return privilegedField.getBoolean(SugarCanvas.this);
-            }catch(IllegalAccessException e){
-                return false;
-            }
+            return SugarCanvas.this.editingPrivileged();
         }
     }
 
@@ -712,6 +720,8 @@ public class SugarCanvas extends LCanvas{
         final IdentityHashMap<StatementElem, Integer> indices = new IdentityHashMap<>();
         boolean[] compilerInvalid = {};
         private int signature;
+        /** 复用缓冲：refresh() 每帧对每条语句算一次签名，复用可避免每帧等量垃圾。 */
+        private final StringBuilder signatureBuffer = new StringBuilder();
 
         void refresh(){
             if(statements == null) return;
@@ -745,6 +755,13 @@ public class SugarCanvas extends LCanvas{
                     nextSignature = 31 * nextSignature + (forBegin.expressionMode ? 1 : 0);
                     nextSignature = 31 * nextSignature + (forBegin.shortCircuitMode ? 1 : 0);
                     nextSignature = 31 * nextSignature + forBegin.conditionExpr.hashCode();
+                }
+                // Every other editable card field must count too. Listing the fields of each card type
+                // here is what made declaration cards miss out: editing an array/record/stack field to
+                // an invalid value left the red marking stale. SugarStatement.invalidSignature() hashes
+                // the card's own serialisation instead, so it covers current and future card types.
+                if(elem.st instanceof SugarStatements.SugarStatement sugar){
+                    nextSignature = 31 * nextSignature + sugar.invalidSignature(signatureBuffer);
                 }
             }
             if(nextSignature == signature) return;

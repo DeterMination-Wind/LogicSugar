@@ -91,13 +91,98 @@ public final class SugarCompiler{
         {"# @logic-sugar-v1 begin", "# @logic-sugar-v1 end"},
     };
 
+    /**
+     * The compiler's entry skip: the last statement of every compiled sugar program, stored in
+     * the sugar source itself so that every LogicSugar version reproduces it.
+     *
+     * <p>It exists to keep the persistence carriers from executing. Carriers are ordinary
+     * statements appended after the lowered program, so without a skip they run once per
+     * program cycle and leave {@code __ls_sugar} (and {@code __ls_lib}) holding a multi-kilobyte
+     * Base64 string. MindustryX's processor variable panel sizes its value column from that
+     * string and repacks the surrounding dialog around it, so a processor widened by one look
+     * at its variables stays widened. Sending execution back to instruction 0 first is exactly
+     * what the executor does when a program runs off its last instruction --
+     * {@link LExecutor#runOnce()} resets an out-of-range counter to 0 and runs instruction 0 in
+     * the same call -- so the skip is observationally free: the same instructions run per tick,
+     * the program still wraps at the same point, and the carriers (metadata, not logic) never
+     * execute. Only the {@code __ls_*} variables they would have written stay at their initial
+     * value, which is the point.
+     *
+     * <p><b>It costs one instruction of capacity.</b> The skip is a real instruction being
+     * committed, so it counts towards the limit checked at the end of {@link #compile} along with
+     * the carriers: a program already at {@link LExecutor#maxInstructions} instructions stops
+     * fitting once the skip is added, and the save is refused with an
+     * {@link IllegalArgumentException} instead of being stored. The effective ceiling with the
+     * skip enabled is therefore {@code LExecutor.maxInstructions - 1} -- the price of keeping the
+     * carriers from executing, not a counting bug.</p>
+     *
+     * <p>Which is why the line belongs to the <em>stored source</em> instead of being an extra
+     * instruction the compiler appends to its output. {@link #verifyRestore} recompiles the
+     * restored source and demands an exact instruction-stream match, so every version -- those
+     * predating this line included -- reproduces the skip by compiling the text it restored. An
+     * extra instruction outside that text would make every new save fail the verification of
+     * every older version, which drops the carrier and loses the sugar source with it.
+     */
+    public static final String entrySkipLine = "set @counter 0";
+
+    /** Whether {@code text}'s last non-blank line is already {@link #entrySkipLine}. */
+    public static boolean hasEntrySkip(String text){
+        String[] lines = text.replace("\r\n", "\n").split("\n", -1);
+        for(int i = lines.length - 1; i >= 0; i--){
+            String line = lines[i].trim();
+            if(!line.isEmpty()) return line.equals(entrySkipLine);
+        }
+        return false;
+    }
+
+    /**
+     * {@code sugar} with {@link #entrySkipLine} ensured as its last statement, so any version
+     * compiling the result reproduces the skip.
+     *
+     * <p>Idempotent: a source that already ends with the line -- a program whose author wrote
+     * {@code set @counter 0} to restart it, which is the same statement at the same place -- is
+     * returned unchanged rather than gaining a second copy on every save. The trailing-newline
+     * shape of the input is preserved so {@link #withoutEntrySkip} can take the line back out
+     * and hand the editor exactly the text the user wrote.
+     */
+    public static String withEntrySkip(String sugar){
+        if(hasEntrySkip(sugar)) return sugar;
+        String normalized = sugar.replace("\r\n", "\n");
+        boolean endsWithNewline = normalized.isEmpty() || normalized.endsWith("\n");
+        if(!normalized.isEmpty() && !endsWithNewline) normalized += "\n";
+        return normalized + entrySkipLine + (endsWithNewline ? "\n" : "");
+    }
+
+    /** {@code text} with a trailing {@link #entrySkipLine} removed, the exact inverse of
+     *  {@link #withEntrySkip} for the text it produced. Applied on restore so the editor shows
+     *  the source as its author wrote it; the compiler puts the line back on the next save. */
+    public static String withoutEntrySkip(String text){
+        String normalized = text.replace("\r\n", "\n");
+        String[] lines = normalized.split("\n", -1);
+        int last = -1;
+        for(int i = lines.length - 1; i >= 0; i--){
+            if(!lines[i].trim().isEmpty()){
+                last = i;
+                break;
+            }
+        }
+        if(last < 0 || !lines[last].trim().equals(entrySkipLine)) return text;
+        StringBuilder out = new StringBuilder(normalized.length());
+        for(int i = 0; i < last; i++) out.append(lines[i]).append('\n');
+        // split(-1) leaves a trailing empty element when the text ended with a newline
+        if(last == lines.length - 1 && out.length() > 0 && out.charAt(out.length() - 1) == '\n'){
+            out.setLength(out.length() - 1);
+        }
+        return out.toString();
+    }
+
     /** Persistence carrier prefixes: real "set" statements that survive the vanilla
      *  parse/save round trip (comment markers are dropped by it). The sugar carrier holds
      *  the sugar source; the library carrier holds the used subset of the function library.
      *
      *  <p>Carriers come in two shapes. The single shape {@code set __ls_sugar "<encoded>"}
-     *  is byte-for-byte what every LogicSugar version has emitted and is used whenever the
-     *  encoded payload fits {@link #carrierMaxChars}, so small saves never change. A larger
+     *  is byte-for-byte the shape every LogicSugar version has emitted, and is used whenever the
+     *  encoded payload fits {@link #carrierMaxChars}, so small saves keep their size. A larger
      *  payload is split into the sharded shape {@code set __ls_sugar_1 "<chunk>"},
      *  {@code set __ls_sugar_2 "<chunk>"}, ... (the same scheme for {@code set __ls_lib_N
      *  "..."}): consecutive shard numbers starting at 1, one "set" line per shard, every
@@ -160,17 +245,24 @@ public final class SugarCompiler{
      *  without one (v2.0.0 legacy programs) the comment marker block is used. Scanning from
      *  the end, a sharded carrier is assembled first (continuous {@code __ls_sugar_N}
      *  numbering from 1 — any gap means "not a shard set"), then the single
-     *  {@code set __ls_sugar "..."} shape, then the marker block. */
+     *  {@code set __ls_sugar "..."} shape, then the marker block.
+     *
+     *  <p>The compiler's own trailing {@link #entrySkipLine} is dropped from the result: it is
+     *  the compiler's statement rather than the author's, so the editor keeps showing exactly
+     *  the source that was written and {@code restore(compile(s)) == s} keeps holding. The next
+     *  compile puts the line back. */
     public static String restore(String code){
-        return restoreInternal(code);
+        return withoutEntrySkip(restoreInternal(code));
     }
 
     /** {@link #restore(String)} for function-library text, which may exceed the processor
      *  instruction cap: the stale-dest rewrite pass parses the text with the raised library
-     *  limit instead of the vanilla cap. */
+     *  limit instead of the vanilla cap. No entry skip is stripped here: a library is not a
+     *  program, compiles without a skip of its own, and any trailing {@code set @counter 0} in
+     *  it is the author's own statement. */
     public static String restore(String code, boolean libraryText){
         return libraryText ? SugarFunctions.withLibraryLimitValue(() -> restoreInternal(code))
-            : restoreInternal(code);
+            : restore(code);
     }
 
     private static String restoreInternal(String code){
@@ -332,14 +424,21 @@ public final class SugarCompiler{
                 || SugarAsserts.containsAssertStatements(code)
                 ? AssertEmit.values() : new AssertEmit[]{AssertEmit.strip};
             for(AssertEmit emit : emitShapes){
-                try{
-                    String recompiled = compile(restored, mode, embedded, embeddedSource, currentStrategy(), emit);
-                    // Threaded current output against either the stored stream (saved by this
-                    // version) or the same stream normalized through the idempotent threading
-                    // pass (pre-2.3.1 saves were lowered without it).
-                    if(matchesStoredStream(recompiled, code)) return true;
-                }catch(RuntimeException ignored){
-                    // one mode may legitimately fail (e.g. inline blowup); the other may match
+                // The stored stream was produced by some version of Logic Sugar, and versions
+                // before entrySkipLine lowered without it. Both eras are tried, exactly like
+                // the API eras above: a save written before the skip reproduces its stream only
+                // with the append off, and rejecting it would drop its carrier and lose the
+                // sugar source. Saves carrying the skip match the first attempt.
+                for(boolean entrySkip : new boolean[]{true, false}){
+                    try{
+                        String recompiled = compile(restored, mode, embedded, embeddedSource, currentStrategy(), emit, true, false, entrySkip);
+                        // Threaded current output against either the stored stream (saved by this
+                        // version) or the same stream normalized through the idempotent threading
+                        // pass (pre-2.3.1 saves were lowered without it).
+                        if(matchesStoredStream(recompiled, code)) return true;
+                    }catch(RuntimeException ignored){
+                        // one mode may legitimately fail (e.g. inline blowup); the other may match
+                    }
                 }
             }
         }
@@ -401,9 +500,22 @@ public final class SugarCompiler{
     public static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
                                  SwitchStrategy switchStrategy, AssertEmit assertEmit, boolean privileged,
                                  boolean librarySource){
+        return compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged, librarySource, true);
+    }
+
+    /** {@code entrySkip} off reproduces the lowering of every version before
+     *  {@link #entrySkipLine} existed. Only {@link #verifyLowering} uses it, to accept a save
+     *  written before the skip instead of reporting it as edited outside Logic Sugar. */
+    private static String compile(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library, String libraryText,
+                                 SwitchStrategy switchStrategy, AssertEmit assertEmit, boolean privileged,
+                                 boolean librarySource, boolean entrySkip){
+        // The entry skip is lowered as part of the source, stored in the carrier and the marker
+        // block with it, and therefore reproduced by every version that recompiles the restored
+        // text (see entrySkipLine). Library text is never executed, so it gets none.
+        String source = librarySource || !entrySkip ? sugar : withEntrySkip(sugar);
         Seq<LStatement> statements = librarySource
-            ? SugarFunctions.readLibrary(sugar, privileged)
-            : LAssembler.read(sugar, privileged);
+            ? SugarFunctions.readLibrary(source, privileged)
+            : LAssembler.read(source, privileged);
         if(!containsSugar(statements)) return sugar;
 
         // destIndex on begin cards is a jump comment. Older saves and hand-edited
@@ -490,11 +602,14 @@ public final class SugarCompiler{
             // Persistence carriers: real "set" statements appended after the marker block. They
             // survive the vanilla parse/save round trip that drops the comment markers, and are
             // placed after them so lowered-code consumers (and the test helper) see the lowered
-            // program untouched. They execute harmlessly every tick and count toward the limit.
-            // A payload whose encoded form fits carrierMaxChars keeps the exact single-carrier
-            // line every previous version emitted; only a larger one is sharded (see
-            // appendCarrier), so small saves stay byte-identical.
-            String sugarPayload = sugar.replace("\r\n", "\n");
+            // program untouched. The entry skip the program ends with keeps execution away from
+            // them, so they never run; they still count toward the limit. A payload whose
+            // encoded form fits carrierMaxChars keeps the exact single-carrier line every
+            // previous version emitted; only a larger one is sharded (see appendCarrier), so
+            // small saves keep their shape. The stored text is the source that was actually
+            // compiled -- entry skip included -- so a reader that recompiles it reproduces this
+            // exact instruction stream, in every version.
+            String sugarPayload = source.replace("\r\n", "\n");
             String libPayload = null;
             Set<String> usedLibrary = new HashSet<>();
             for(SugarFunctions.Function function : functions.hoistOrder()){
@@ -536,7 +651,7 @@ public final class SugarCompiler{
             }
 
             StringBuilder result = new StringBuilder(lowered);
-            appendMarker(result, sugar);
+            appendMarker(result, source);
             result.append(carriers);
             return result.toString();
         }finally{
@@ -875,6 +990,9 @@ public final class SugarCompiler{
         java.util.List<LStatement> statementList = new java.util.ArrayList<>(statements.size);
         for(LStatement statement : statements) statementList.add(statement);
         DataModules.markInvalid(statementList, invalid, arrayReservedNames);
+        // 运算卡的实参标红（引用不存在的结构、参数个数不符、表达式非法、缺少目标变量）：
+        // 走与编译期同一条 compileForcedIntrinsic，编辑期不另立一份参数校验规则
+        DataModules.markInvalidCalls(statementList, invalid, arrayReservedNames);
         return invalid;
     }
 

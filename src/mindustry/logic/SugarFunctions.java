@@ -36,6 +36,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -737,12 +738,12 @@ public final class SugarFunctions{
             statements = readLibrary(text, true);
         }catch(Throwable t){
             String message = "the library text cannot be parsed: " + t.getMessage();
-            return new SanitizedLibrary("", new LibraryIndex(), List.of(message), true);
+            return new SanitizedLibrary("", new LibraryIndex(), Collections.singletonList(message), true);
         }
 
         // Fast path: the whole library validates unchanged (output must equal the input).
         try{
-            return new SanitizedLibrary(text, buildLibrary(statements), List.of(), false);
+            return new SanitizedLibrary(text, buildLibrary(statements), Collections.emptyList(), false);
         }catch(IllegalArgumentException ignored){
             // buildLibrary remaps the bodies it processed before failing; parse again fresh
             statements = readLibrary(text, true);

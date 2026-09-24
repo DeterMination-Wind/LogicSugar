@@ -26,7 +26,7 @@ public final class FunctionLibrary{
     private static boolean cachedDamaged;
     private static boolean cachedExists;
     private static long cachedModified;
-    private static java.util.List<String> cachedWarnings = java.util.List.of();
+    private static java.util.List<String> cachedWarnings = java.util.Collections.emptyList();
 
     private FunctionLibrary(){}
 
@@ -99,6 +99,6 @@ public final class FunctionLibrary{
         cachedHash = null;
         cached = null;
         cachedDamaged = false;
-        cachedWarnings = java.util.List.of();
+        cachedWarnings = java.util.Collections.emptyList();
     }
 }

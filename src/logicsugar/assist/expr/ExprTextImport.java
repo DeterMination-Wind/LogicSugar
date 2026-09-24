@@ -11,6 +11,7 @@ import mindustry.logic.LStatements.SetStatement;
 import mindustry.logic.SugarCanvas;
 import mindustry.logic.SugarStatements;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -112,7 +113,7 @@ public final class ExprTextImport{
     public static Plan plan(String asm){
         boolean marked = asm != null && asm.contains(ExprStatement.cardMarkerPrefix);
         if(asm == null || asm.isEmpty() || (!marked && asm.indexOf('=') < 0) || asm.contains(sentinelPrefix)){
-            return new Plan(asm == null ? "" : asm, Map.of());
+            return new Plan(asm == null ? "" : asm, Collections.emptyMap());
         }
 
         String text = asm.replace("\r\n", "\n");
@@ -148,7 +149,7 @@ public final class ExprTextImport{
         }
 
         // 没有匹配时返回原文本（不做 \r\n 归一化），保证既有路径零差异。
-        if(found.isEmpty()) return new Plan(asm, Map.of());
+        if(found.isEmpty()) return new Plan(asm, Collections.emptyMap());
         return new Plan(String.join("\n", lines), found);
     }
 

@@ -1,8 +1,12 @@
 package logicsugar;
 
 import arc.struct.Seq;
+import logicsugar.assist.data.DataCallStatement;
+import logicsugar.assist.data.DataDeclaration;
 import logicsugar.assist.data.DataModule;
 import logicsugar.assist.data.DataModules;
+import logicsugar.assist.data.RecordModule;
+import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprIntrinsics;
 import mindustry.gen.LogicIO;
 import mindustry.logic.LAssembler;
@@ -11,6 +15,11 @@ import mindustry.logic.SugarCompiler;
 import mindustry.logic.SugarFunctions;
 import mindustry.logic.SugarStatements;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -43,10 +52,158 @@ public class DataSubsystemIntegrationTest{
         dataDeclarationsAreVisible();
         endToEndStructuresCompileToVanilla();
         renamedOpsLowerIdentically();
+        declarationFieldEditsInvalidateTheRedMarking();
         collectFailureRestoresContext();
         stillCompilesAfterCollectFailure();
 
         System.out.println("LogicSugar data subsystem integration self-test passed.");
+    }
+
+    /**
+     * 声明卡字段改动必须能触发重新标红。
+     *
+     * <p>{@code SugarCanvas.StructureController.refresh()} 只在签名变化时才重跑
+     * {@code invalidStatements}，而签名原先只含 if/while/for 的表达式，于是把声明卡字段改成
+     * 非法值后标红停留在旧状态（用户报的「数组等声明语句不合法时不会立即标红」）。</p>
+     */
+    private static void declarationFieldEditsInvalidateTheRedMarking(){
+        // 非法声明确实会被标红（前置条件；这里直接调 ArrayRegistry 的模块级入口，
+        // 因为 SugarCompiler.invalidStatements 会去读函数库文件、依赖 Core.settings，
+        // 无头环境不可用——invalidStatements → 模块校验的接线由 dataFrameworkTest 覆盖）
+        boolean[] invalid = new boolean[1];
+        SugarStatements.ArrayStatement bad = new SugarStatements.ArrayStatement();
+        bad.array = "buf";
+        bad.memory = "cell1";
+        bad.base = "0";
+        bad.size = "0"; // size < 1 → 非法
+        ArrayRegistry.markInvalidStatements(Seq.with(bad), invalid, null);
+        check(invalid[0], "an array declaration with size 0 must be marked invalid");
+
+        // 名字与已有数组重名也要标红
+        boolean[] pair = new boolean[2];
+        SugarStatements.ArrayStatement first = new SugarStatements.ArrayStatement();
+        first.array = "buf";
+        first.memory = "cell1";
+        first.base = "0";
+        first.size = "8";
+        SugarStatements.ArrayStatement duplicate = new SugarStatements.ArrayStatement();
+        duplicate.array = "buf";
+        duplicate.memory = "cell1";
+        duplicate.base = "8";
+        duplicate.size = "8";
+        ArrayRegistry.markInvalidStatements(Seq.with(first, duplicate), pair, null);
+        check(!pair[0] && pair[1], "a duplicated array name must mark the second declaration invalid");
+
+        // 核心回归：字段一改，invalidSignature() 必须变，否则 canvas 的签名门控会提前返回、
+        // invalidStatements 不重跑、标红不刷新。
+        int validSignature = first.invalidSignature();
+        first.size = "0";
+        check(first.invalidSignature() != validSignature,
+            "editing an array declaration field must change SugarStatement.invalidSignature()");
+        check(duplicate.invalidSignature() != validSignature,
+            "two different declarations must not share one invalidSignature()");
+        // 同一字段值必须稳定（签名每帧比较，抖动会导致每帧重建结构）
+        int stable = duplicate.invalidSignature();
+        check(duplicate.invalidSignature() == stable, "invalidSignature() must be stable for unchanged fields");
+
+        // 类型无关地覆盖每一种卡、每一个字段：把 public 非 final 的 String 字段各改一次，
+        // 签名都必须变。按类型硬编码字段名会随新卡种腐烂，反射遍历能直接钉住
+        // 「字段都进了 write()」这一前提（fields 这类 final List 会被自动跳过，单独测）。
+        for(LStatement card : editableCards()){
+            checkEveryStringFieldFeedsTheSignature(card);
+        }
+        SugarStatements.ArrayStatement arrayCard = new SugarStatements.ArrayStatement();
+        checkEveryStringFieldFeedsTheSignature(arrayCard);
+        SugarStatements.MatrixStatement matrixCard = new SugarStatements.MatrixStatement();
+        checkEveryStringFieldFeedsTheSignature(matrixCard);
+
+        // record 的字段是 List<String>（非 String 字段），单独钉一次
+        LStatement record = cardOfType("RecordStatement");
+        if(record instanceof RecordModule.RecordStatement rec){
+            int before = rec.invalidSignature();
+            rec.fields.set(0, "changed");
+            check(rec.invalidSignature() != before, "editing a record field slot must change invalidSignature()");
+        }
+
+        // canvas 必须真的把它折进签名（否则上面的方法没人调用）
+        String canvas = read(rootPath().resolve("src/mindustry/logic/SugarCanvas.java"));
+        check(canvas.contains("sugar.invalidSignature("),
+            "SugarCanvas must fold SugarStatement.invalidSignature() into the refresh signature");
+        check(canvas.contains("instanceof SugarStatements.SugarStatement sugar"),
+            "the signature must consult every editable sugar card, not a hand-written field list");
+        // refresh() 挂在 update() 上、每帧都跑：签名必须复用缓冲，否则每帧产生等量垃圾
+        check(canvas.contains("sugar.invalidSignature(signatureBuffer)"),
+            "the refresh signature must reuse one buffer instead of allocating per statement per frame");
+
+        // 复用缓冲版本与单次版本必须给出同一个值（否则热路径与测试会看到不同的签名）
+        StringBuilder reused = new StringBuilder();
+        for(LStatement card : editableCards()){
+            SugarStatements.SugarStatement sugar = (SugarStatements.SugarStatement)card;
+            check(sugar.invalidSignature(reused) == sugar.invalidSignature(),
+                card.getClass().getSimpleName() + ": the reused buffer must not change invalidSignature()");
+        }
+        // 缓冲被复用也不允许把上一条的内容带进来
+        SugarStatements.ArrayStatement leased = new SugarStatements.ArrayStatement();
+        leased.array = "buf";
+        leased.size = "8";
+        int beforeLeak = leased.invalidSignature();
+        reused.setLength(0);
+        reused.append("stale contents from a previous statement");
+        check(leased.invalidSignature(reused) == beforeLeak,
+            "invalidSignature(buffer) must overwrite the buffer, not append to it");
+    }
+
+    /** 每个可编辑卡实例（声明卡 + 运算卡）各一个，供字段级签名回归使用。 */
+    private static List<LStatement> editableCards(){
+        List<LStatement> cards = new ArrayList<>();
+        for(arc.func.Prov<LStatement> prov : LogicIO.allStatements){
+            LStatement statement = prov.get();
+            if(statement instanceof DataDeclaration || statement instanceof DataCallStatement){
+                cards.add(statement);
+            }
+        }
+        check(cards.size() >= 10, "expected at least 10 declaration cards, found " + cards.size());
+        return cards;
+    }
+
+    private static LStatement cardOfType(String simpleName){
+        for(LStatement statement : editableCards()){
+            if(statement.getClass().getSimpleName().equals(simpleName)) return statement;
+        }
+        throw new AssertionError("no card of type " + simpleName + " in the palette");
+    }
+
+    /**
+     * 把卡上每一个 {@code public} 非 {@code final} 的 {@code String} 字段改成别的值，
+     * 断言签名随之变化。这些字段正是用户在卡里能编辑的内容，任一字段没进
+     * {@link SugarStatements.SugarStatement#invalidSignature()} 就等于编辑它不会触发重新标红。
+     */
+    private static void checkEveryStringFieldFeedsTheSignature(LStatement card){
+        SugarStatements.SugarStatement sugar = (SugarStatements.SugarStatement)card;
+        List<java.lang.reflect.Field> fields = new ArrayList<>();
+        for(java.lang.reflect.Field field : card.getClass().getFields()){
+            if(field.getType() == String.class
+                && !java.lang.reflect.Modifier.isFinal(field.getModifiers())
+                && !java.lang.reflect.Modifier.isStatic(field.getModifiers())){
+                fields.add(field);
+            }
+        }
+        check(!fields.isEmpty(), card.getClass().getSimpleName() + " exposes no editable String field");
+        for(java.lang.reflect.Field field : fields){
+            try{
+                String original = (String)field.get(card);
+                int before = sugar.invalidSignature();
+                field.set(card, original == null ? "changed" : original + "_changed");
+                int after = sugar.invalidSignature();
+                check(before != after, card.getClass().getSimpleName() + "." + field.getName()
+                    + " must feed invalidSignature() (otherwise editing it never refreshes the red marking)");
+                field.set(card, original);
+                check(sugar.invalidSignature() == before,
+                    card.getClass().getSimpleName() + "." + field.getName() + " must be restorable");
+            }catch(IllegalAccessException e){
+                throw new AssertionError("cannot reflect on " + field.getName(), e);
+            }
+        }
     }
 
     // ===== 生产注册 =====
@@ -367,6 +524,25 @@ public class DataSubsystemIntegrationTest{
         "sync", "clientdata", "getflag", "setflag", "setprop", "playsound", "playmusic",
         "setmarker", "makemarker", "localeprint"
     ));
+
+    private static String read(Path path){
+        try{
+            return Files.readString(path, StandardCharsets.UTF_8);
+        }catch(IOException e){
+            throw new AssertionError("cannot read " + path, e);
+        }
+    }
+
+    private static Path rootPath(){
+        for(String candidate : new String[]{".", ".."}){
+            File root = new File(candidate);
+            if(new File(root, "assets/bundles/bundle.properties").isFile()
+                && new File(root, "src/logicsugar/assist/data/DataModules.java").isFile()){
+                return root.toPath();
+            }
+        }
+        throw new AssertionError("LogicSugar project directory not found from " + new File(".").getAbsolutePath());
+    }
 
     private static void check(boolean condition, String message){
         if(!condition) throw new AssertionError(message);

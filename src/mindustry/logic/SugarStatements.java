@@ -17,6 +17,7 @@ import mindustry.logic.LExecutor.LInstruction;
 import mindustry.logic.LExecutor.NoopI;
 import mindustry.logic.LStatements.JumpStatement;
 import mindustry.ui.Styles;
+import logicsugar.assist.SugarTooltip;
 import logicsugar.assist.expr.ExpressionEditor;
 
 import java.util.List;
@@ -117,6 +118,48 @@ public final class SugarStatements{
             return false;
         }
 
+        /** Extra palette-search keywords for cards that cover more than one feature
+         *  (e.g. a data-operation card lists every operation it can run).
+         *  {@code null} means name()/typeName() are the only searchable terms. */
+        public String searchTerms(){
+            return null;
+        }
+
+        /**
+         * 编辑期标红所依赖的字段摘要。
+         *
+         * <p>{@code SugarCanvas.StructureController.refresh()} 每帧比较一个签名来判断是否需要重跑
+         * {@code SugarCompiler.invalidStatements}：签名没变就提前返回、不重跑。所以**卡内字段一变，
+         * 本方法的返回值就必须变**，否则把声明卡的某个字段改成非法值后标红会停留在旧状态
+         * （表现就是「不合法时不会立即标红」，2026-09-19 用户报的数组声明卡问题）。</p>
+         *
+         * <p>默认取 {@link #write(StringBuilder)} 的哈希：{@code write} 是本卡全部字段的序列化
+         * （存档也依赖它），因此任何字段变化都会改变它，新增卡种无需再回来改 SugarCanvas——
+         * 这正是之前按「if/while/for 显式列 conditionExpr」的写法漏掉声明卡的原因。字段半填导致
+         * {@code write} 抛错时退回 0（等价于旧行为），保证纯 UI 路径不因校验而崩。</p>
+         *
+         * @param buffer 复用缓冲。refresh() 每帧对每条语句都要算一次，逐次 new StringBuilder
+         *               会在每帧产生与语句数同量级的垃圾；调用方复用一个实例即可零分配。
+         */
+        public int invalidSignature(StringBuilder buffer){
+            try{
+                buffer.setLength(0);
+                write(buffer);
+                int hash = 0;
+                for(int i = 0, n = buffer.length(); i < n; i++){
+                    hash = 31 * hash + buffer.charAt(i);
+                }
+                return hash;
+            }catch(Throwable ignored){
+                return 0;
+            }
+        }
+
+        /** 单次调用版本（测试与外部查询用）；热路径请用 {@link #invalidSignature(StringBuilder)}。 */
+        public int invalidSignature(){
+            return invalidSignature(new StringBuilder());
+        }
+
         @Override
         public LInstruction build(LAssembler builder){
             return new NoopI();
@@ -147,9 +190,11 @@ public final class SugarStatements{
             if(op != ConditionOp.always) field(t, compare, setCompare).width(75f).pad(2f);
         }
 
-        /** Attaches a vanilla-style hover hint to a parameter label (bundle key: logicsugar.hint.<key>). */
+        /** Attaches a vanilla-style hover hint to a parameter label (bundle key: logicsugar.hint.<key>).
+         *  These hints are prose and run to ~200 characters, so they go through the wrapping
+         *  tooltip rather than vanilla's single unbounded line. */
         protected void hint(Cell<?> cell, String key){
-            LCanvas.tooltip(cell, "logicsugar.hint." + key);
+            SugarTooltip.hint(cell, "logicsugar.hint." + key);
         }
 
         /** Label + input grouped into one nested cell, preventing sibling fields from expanding
@@ -257,7 +302,7 @@ public final class SugarStatements{
             var fold = table.button(collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen, foldStyle, () -> {
                 collapsed = !collapsed;
                 SugarCanvas.refreshCurrent();
-            }).size(34f, 40f).pad(4f).tooltip(text("fold", "Fold block")).get();
+            }).size(34f, 40f).pad(4f).self(c -> SugarTooltip.attach(c, text("fold", "Fold block"))).get();
             fold.update(() -> fold.getStyle().imageUp = collapsed ? mindustry.gen.Icon.rightOpen : mindustry.gen.Icon.downOpen);
         }
 
@@ -1172,5 +1217,24 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
             }
         }
         return out.toString();
+    }
+
+    /**
+     * Re-pairs the begin/end blocks of a detached fragment and writes fragment-local indices
+     * back onto the begin cards.
+     *
+     * <p>Needed when a fragment arrives from somewhere other than the canvas it is going into —
+     * a clipboard payload, say — because the index a begin carries is absolute in the program it
+     * was copied from. Pairing from nesting is the unique non-crossing answer, so the stored
+     * number is discarded rather than adjusted. {@code SugarCompiler.recomputeBlockDests} is the
+     * canonical implementation and sits in this package, so this is only a door onto it for
+     * callers such as the paste path in {@code logicsugar.assist}.</p>
+     *
+     * @return false when the fragment cannot be paired — a begin without its end, or an end
+     *         without its begin. The caller is expected to check this <em>before</em> inserting,
+     *         since a half-inserted structure cannot be undone.
+     */
+    public static boolean pairBlockEnds(Seq<LStatement> fragment){
+        return SugarCompiler.recomputeBlockDests(fragment);
     }
 }
