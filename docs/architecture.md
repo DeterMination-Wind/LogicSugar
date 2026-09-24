@@ -38,6 +38,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - `SwitchStrategy` 决定 `switch` 的下降形态：`auto` 在整数 case、值域跨度 ≤255 时按实际可执行指令成本在比较链与 `@counter` 跳转表之间二选一；`chainOnly` 恒用比较链（与 2.3.1 之前输出逐字节一致）。lowering 之后还有无条件跳转链穿线（`threadAlwaysJumpTargets`，带环检测）。
 - **持久化载体（carrier）**：Sugar 源码以 `set __ls_sugar "<base64>"` 载体行存回程序末尾，程序用到的库函数子集以 `set __ls_lib "<base64>"` 一并嵌入（跨机器可重编译）。载体是真实 `set` 语句，能挺过原版 parse/save 往返；单条载体不超过 60000 字符（LParser 字符串 token 上限 65535 UTF 字节以下）。**载体分片**：编码后超限的载荷自动切分为连续编号的多条语句 `set __ls_sugar_1/2/…`（`__ls_lib_N` 同理），每片 ≤60000 字符，restore 侧按"从末尾锚定、向前连续递减到 1"重拼后一次 decode（避免劈开 UTF-8 序列）；≤ 阈值时保持单条形状字节不变。分片行计入指令预算，极端超限时重现旧行为（丢弃超限载体并告警）。v2.0.0 旧程序回退到注释标记块 `# @logic-sugar-v1 begin` / `# @logic-sugar-line ` / `# @logic-sugar-v1 end`。
 - 编译器保留前缀 `__ls_` 是用户不可用的命名空间；表达式临时变量用 `_0, _1, …` 栈式编号。
+- **载体不执行（entry skip）**：编译产物在 main 末尾统一多一条 `set @counter 0`（`SugarCompiler.entrySkipLine`，配 `hasEntrySkip()` / `withEntrySkip()` / `withoutEntrySkip()`），让紧随其后的几 KB 载体 `set __ls_sugar` 永不执行——否则 MDTX 逻辑面板的值列会把载体当成一条运行中的赋值显示出来。等价性依据：`runOnce()` 在 `@counter` 越界时本就「置 0 执行指令 0」，跳过条不改变任何语义。**这条 skip 是被存储的糖源码的一部分**（随 `# @logic-sugar-line` 一起进载体，编译期不额外 append），因此旧版本重编译这段文本能原样复现，`verifyRestore` 仍然通过；代价是旧版编辑器多显示一行 `set @counter 0`（显示层，不影响数据与再保存），以及**有效指令上限变成 `maxInstructions - 1`**（skip 与载体一起计入末尾的上限检查，顶格程序会抛 `IllegalArgumentException`）。反编译侧 `isEntrySkip` 带位置约束：跳过至多一条 hoist `jump` 之后必须只剩载体行——既不能简化成「必须是最后一条」，也不能要求「其后一定有载体」（`stripGenerated()` 会剥掉载体的程序里它照样在）。设计取舍与跨版本双向实测结论记在 `entrySkipLine` 的 javadoc。**已知边界（源文本 ≥1000 行）**：skip 是「拼到糖源码末尾再交给 `LAssembler.read` 解析」，而原版 `LParser` 只解析前 `LExecutor.maxInstructions`(1000) 行、其余**静默丢弃**。糖源码行数可以在指令数 ≤1000 的前提下突破 1000（例如 500 个空 `if` 块 = 1000 行、只编译出 500 条指令），此时第 1001 行恰是编译器追加的那条 skip → 产物里没有 skip、载体重新每周期执行，且没有任何警告或异常。用户自写的最后一行不会因此丢失（被丢的永远是编译器追加的那一行），属**功能静默失效**而非数据丢失，需按「解析后确认 skip 落地，否则明确报错」的口径修。
 
 ## 表达式子系统
 
@@ -61,7 +62,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - **`ExprIntrinsics`**（`logicsugar.assist.expr`）：表达式函数名 → 原版指令链的展开点。Provider 实现必须放在 `expr` 包（`Node` / `Line` 是 `ExprCompiler` 的包私有类型）。`ExprCompiler` 的 `compileNode(Call)` / `compileNode(Member)` / 成员赋值路径先查 provider，未命中退回普通 `funccall` / sensor 路径。用户 `funcdef` / 库函数同名时优先（`enterUserFunctions` 遮蔽 intrinsic），数组最值用 `array_min` / `array_max`，旧短名 `min` / `max` 仍按实参个数分派（1 参 = 数组运算，2 参 = 原版内置），名字匹配大小写不敏感。
 - **`DataModule` / `DataModules`**（`logicsugar.assist.data`）：每个数据结构一个模块（`id()` 去重）。`LogicSugarMod.registerStatements()` 注册全部模块（同时把 `intrinsics()` 注册进 `ExprIntrinsics`）并调用 `DataModules.registerParsers()` 安装声明卡解析器与调色板卡片；`SugarCompiler.compile` 在 `analyze` 之后、`lower` 之前 `DataModules.collectAll(...)` 建立程序级注册表，`finally` 里 `restore()` 清理——配对标记在 `collectAll` 之前置位，任一模块 `collect` 抛异常也会恢复，不把注册表泄漏给下一次编译或编辑器渲染。`markInvalid` 供编辑期标红，`builtinSugar()` 提供注入函数源文本。
-- 数据 intrinsic 还通过 `DataModule.PaletteCall` 提供 palette metadata。`DataModules` 统一注册 `datacall <operation> <destination> "<arguments>"`，每个 intrinsic 都是独立、可编辑、可持久化的卡；lower 阶段把卡的调用转回既有 `ExprIntrinsics` 链，最终只输出原版 mlog。`PaletteCall` 同时记录源代码形参默认值和 `returnsValue`：有返回值的卡默认显示 `result = op(args)`，结果写入左侧可编辑变量；无返回值的卡只显示 `op(args)`，lower 时把实现内部的兼容哨兵丢入每个调用专用的 `__ls_*datacall_discard` 变量。当前无返回值的操作是数组原地变换 `array_fill/array_copy/array_sort/array_sort_desc/array_reverse/array_swap`，以及各容器的 `stack_clear/queue_clear/deque_clear/map_clear/set_clear`；其余操作的返回值/失败哨兵均保留并在卡片提示中说明。按模块/结构族分别进入 Stack/Queue/Deque/Array Algorithms/Bitset/Hash Map/Set/List/Heap/Linked List Operations 分类，避免把模块细节硬编码在编译器中。
+- 数据 intrinsic 还通过 `DataModule.PaletteCall` 提供 palette metadata。`DataModules` 统一注册 `datacall <operation> <destination> "<arguments>"`，每个 intrinsic 都可编辑、可持久化；lower 阶段把卡的调用转回既有 `ExprIntrinsics` 链，最终只输出原版 mlog。**一张卡一个结构**：选板从 68 张运算卡收敛为 10 张（同族的卡挨着），卡内按钮切换该结构的运算，切换时把实参重设成该运算的默认形状。**参数元数据不另建表**——`PaletteCall.arguments` 的默认实参串逐位就是参数名，`splitArgs` 做括号感知拆分，UI 与编译路径共用同一套拆分规则；尾部空槽丢弃、中间空槽保留（`array_swap(buf, , j)` 与 `array_swap(buf, j)` 语义不同，宁可如实报参数错误），实参数多于参数量或运算名未知则退回单框。`argumentSlots()` 把判定逻辑外提（`build()` 需要 GL，无头测不了）。`PaletteCall` 同时记录源代码形参默认值和 `returnsValue`：有返回值的卡默认显示 `result = op(args)`，结果写入左侧可编辑变量；无返回值的卡只显示 `op(args)`，lower 时把实现内部的兼容哨兵丢入每个调用专用的 `__ls_*datacall_discard` 变量。当前无返回值的操作是数组原地变换 `array_fill/array_copy/array_sort/array_sort_desc/array_reverse/array_swap`，以及各容器的 `stack_clear/queue_clear/deque_clear/map_clear/set_clear`；其余操作的返回值/失败哨兵均保留并在卡片提示中说明。卡内运算按钮的悬停键是 `logicsugar.hint.datacall.operation`，每组一张卡对应一个 `lst.datacall.group.<族>` 说明；实参输入框的灰色占位取 `logicsugar.datacall.arg.<参数名>`（全部运算共用的 19 个词）。按模块/结构族分别进入 Stack/Queue/Deque/Array Algorithms/Bitset/Hash Map/Set/List/Heap/Linked List Operations 分类，避免把模块细节硬编码在编译器中；这些分组标签与**选板栏**是两件事，见「调色板分类」。
 - **注入函数**：模块把循环型 / 写内存型操作写成 `funcdef __ls_builtin_*`，由 `SugarCompiler` 经 `SugarFunctions.withBuiltins` 并入本次编译的 `LibraryIndex`。normal 模式全程序共享一份子程序，未使用不进产物；`extractLibrarySource` 只处理用户库文本，内置函数不会进入 `__ls_lib` 载体、也不会出现在用户函数库。inline 模式按调用点展开函数体。
 - **内置函数体版本与旧存档断代（重要）**：注入函数体是**编译期烘焙进产物**的普通 mlog，会随处理器一起保存。`SugarCompiler.verifyRestore` 用 `matchesStoredStream` 把载体里的 sugar 重新编译后与存档指令流**逐条比对**（`executableStream` 剥掉 carrier 后经 `read → write` 归一化，其中包含 hoist 的函数体），任何一行不同都会判失败。因此**改动任一 `__ls_builtin_*` 的函数体，都会让旧版本保存过、且用过该内置的处理器重开时落到 vanilla 视图**：`SugarLogicDialog` 回退到 `SugarDecompiler` 推断，而 `array` / `sortasc` 这类只活在载体里的卡片不会被凭空恢复（既不能进载体、也不能被推断 → 按规则显示原版）。已确认的断代：`sortasc` / `sortdesc` 由插入排序改为希尔排序（`ArrayBulkIntrinsics.sort()`，函数体 27 → 33 条指令）；`indexof` 为「命中即停」新增一条跳出循环的 `jump`；`copy` 修正读/写基址交叉（`ArrayBulkIntrinsics.copy()` / `indexof()`，见 `dataRuntimeTest` 的对应用例）。这类改动属于产品决策级的兼容性变更：要么接受断代并在教程与发布说明写明，要么给内置函数体做版本化、让 `verifyRestore` 额外尝试旧 body（框架级改动，成本高于改算法本身）。
 
@@ -179,17 +180,32 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - 缓解策略分级：编辑器赖以工作的字段用硬反射（无降级模式）；锦上添花的功能字段用 `optionalField`/`optionalMethod`（`SugarCanvas`），上游改名时功能退化而不是整个编辑器崩溃。
 - `crossLoaderTest` 以 child-first 加载器无头复现该拓扑，防止模式回退。
 
+## 编辑器接管与共存（`logicsugar.editorConflict` 四档）
+
+逻辑编辑器是**一个全局引用**（`Vars.ui.logic`），而扩展 `LogicDialog` 的模组都可以替换它，于是「两个模组只能有一个生效」。本模组不再假设「不是我的就替换」，而是显式判定当前 owner：
+
+- `LogicSugarMod.classify(LogicDialog)` 返回 `EditorOwner`：`null` 与游戏自带的 `LogicDialog` 都是 `vanilla`（可安全替换），自家 `SugarLogicDialog` **及其子类**是 `sugar`，其余 `LogicDialog` 子类一律 `foreign`——把 foreign 误判成 sugar 正是旧实现的失效点。
+- **安装顺序是确定的**：对方模组（如 逻辑工具）在**构造函数**里注册 `ClientLoadEvent` 监听，本模组在 `init()` 里注册，而 `Core.app.post` 是 FIFO ⇒ 对方总是先安装，本模组总是看到一个外来对话框。旧守卫只拿 `SugarLogicDialog` 比较，别的模组不可能是它，于是它替换掉对方对话框、把对方面板搬到自己的画布上，而那些面板仍指向已脱离的实例。
+- 四档 `logicsugar.editorConflict`：`ask`(默认) / `takeover` / `stepaside` / `coexist`，`EditorConflict.parse` 大小写不敏感，缺失/空/未知值一律回落 `ask`（**绝不回落到「编辑器被停用」**）。默认档不是 `takeover` 是因为它带不可逆的副作用：接管走 `replaceEditor(foreign, false)`，不搬运对方的子元素，于是对方模组的面板此后指向被拆掉的实例。用户没做选择时不该发生这种事。设置按钮走单个 `next()` 遍历，`editorConflictTest` 断言一圈恰好访问全部状态并回到默认档——漏一个状态就是用户够不到的档。设置键 `logicsugar.editorConflict` 决定 `setting.<key>.name` 能否解析，改名会静默丢标题。切换后立即生效，不需要重启。
+- **`ask` 档**（默认）：启动时弹一次选择框，三个答案（用 LogicSugar / 保留对方 / 两者共存）都要有接线；**点掉弹窗不答 = 让位**，因为「没做选择」不能落进破坏性的接管。设置页的聚合表单（`bekBuildSettings`）也必须带上这一行、且与独立设置项用同一个默认值——聚合表单曾经默认接管，两处默认值不一致时用户看到的默认档取决于从哪个入口进设置。回答不写回设置：设置仍停在 `ask`，所以下次启动还会问，答一次只对本次会话生效。
+- **`coexist` 档**（`mindustry.logic.SugarCoexist`）：保留对方整套编辑器界面，把 LogicSugar 的画布**跑在对方的编辑器里**。需要跨 classloader 反射读写 `LCanvas` / `LogicDialog` 的包级字段（`Field.setAccessible(true)` 可跨 loader 生效），统一走 `SugarCoexist.field(Class,String)`；同时把 MDTX 的逻辑辅助面板重新绑定到新画布上，对方的面板照常可用。放置失败时退回接管（`logicsugar.conflict.coexistfailed`）。
+- **跑在别人的关闭路径上**：`SugarCoexist.push` 挂在对方对话框关闭时的原版 `hidden(...)` 出口上，因此必须捕 `RuntimeException`、绝不逃逸——对方的关闭流程不该被本模组打断；退出共存时要把对方的画布还原回去。
+- **共存的两个已知限制**（残余风险，需真机验证）：① **会话中途切档**——`SugarCoexist.install()` 会在对话框**正开着**时换掉画布，而本次会话的保存回调仍是对方的裸 consumer（`arm()` 只在当次 `show()` 时 `dialog.canvas` 已是 `CoexistCanvas` 才包装），于是关闭时 `consumer.get(canvas.save())` 会写入我们**空的**画布 → 空程序。当前 UI 流程（进设置页必须先关掉逻辑编辑器）挡住了这条路，但代码里没有断言或保护。② **第三方在构造期缓存画布**——`CoexistCanvas` 把原画布存进 `original` 字段，第三方浮层面板若在构造时抓住那个 `LCanvas`，此后 `captured.save()` 拿到的是从未被 `load` 过的空画布 → 把空程序写回处理器；目前只反射重绑了 MindustryX 的 `LogicSupport`，对其它面板没有通用答案。
+
 ## 编辑器辅助功能
 
 | 功能 | 类 | 要点 |
 | --- | --- | --- |
 | 框选/批量操作 | `assist.BoxSelect` + `BoxSelectDragPolicy` | capture 监听器事件驱动；拖动阈值为纯函数（8px slop、移动端 430ms 长按）便于自测 |
+| 跨处理器剪贴板 | `assist.StatementClipboard` | 编辑菜单「复制选区 / 粘贴选区」，Ctrl+C/V 驱动同一实现。**剪贴板放糖源码而不是编译后的 mlog**，片段落进另一个处理器后仍可继续编辑；唯一必须区别对待的是 `jump`——跨程序时旧的数字目标是另一程序的指令下标，因此复制与粘贴**双侧拒绝**。块配对由 `pairBlockEnds` 在插入前校验，之后每帧 `syncStatementIndices` 自愈。全程只有语句与字符串，无画布依赖（`statementClipboardTest` 无头跑）。快捷键只能轮询不能事件驱动：`UI.update()` 会把焦点清成 `null`，挂在对话框上的 capture 监听器再也收不到，而 arc 的 `handle()` 不停止冒泡、`TextField` 也保护不了自己；两件事由 `Core.scene.hasField()` 一次问清（原版无 Ctrl+C/V 键位） |
+| 提示折行 | `assist.TextWrap` + `assist.SugarTooltip` | arc 的 `Tooltip` 只把容器**位置**夹进舞台，比屏幕宽的容器仍会两边溢出 ⇒ 提前把**文字**折行（按 `min(屏宽×0.5, 560 design)` 预折、resize 时重折）。规则是纯函数（测量函数可替换，`textWrapTest` 用字符数精确断言）：只在空格断、超长单词硬断不丢字符、markup 标签绝不拆开、幂等 |
 | 跳转线着色 | `assist.JumpLineColor` | 按目标着色三模式：关闭 / 分散色 / 积木色 |
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
-| 复制变量/打印缓冲 | `assist.VarClipboard` | SugarLogicDialog 按钮行，全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示按钮 |
+| 复制变量/打印缓冲 | `assist.VarClipboard` | 全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示入口。**入口在编辑菜单，不在底部按钮行**——原先两个固定宽按钮正是把底栏顶出窄窗口的原因，能力由 `SugarLogicDialog.installInspectionCopy()` 装配（旧的 public `VarClipboard.addButtons(Table, LogicDialog)` 已移除，能力迁到私有装配点） |
 | 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器（`Groups.build`，视野外按 hitbox 裁剪）：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；扫描预算按帧时长换算（`min(delta*60,5) × 每帧扫描数`，低帧率不爆发）；设置三滑杆（阈值 0 关闭 / 每帧扫描数 1–5000 档位 / 警告特效）+ 断点三开关（禁用断点 / 断言失败即断点 / 断点分离视角） |
 | 单位 flag 显示 | `assist.UnitFlags` | 设置可选；drawOver 遍历 `Groups.unit`，在单位正上方绘制逻辑 `flag`。默认使用红色；打开 `logicsugar.colorizeUnitFlags` 后，不同 flag 按首次遇到顺序优先使用 10 种高对比度颜色，超出后分配高饱和度随机色；默认 0 / 非有限值不显示，视野外与迷雾中的单位跳过。纯展示，不改保存产物 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
+| 编辑期标红 | `SugarCanvas.invalidSignature()` | 标红刷新走**签名门控**：`SugarCanvas` 比较语句的 `invalidSignature()` 是否变化来决定重标，不再按 `if`/`while`/`for` 显式列 `conditionExpr`——原实现漏掉声明卡与运算卡，改字段后不重标红；新增卡种从此不需要再改 `SugarCanvas` |
 | 撤销/重做 | `assist.EditHistory` + `SugarLogicDialog` | 快照栈（最多 80 层）记录 `canvas.save()`；桌面 Ctrl+Z / Ctrl+Y，移动端底部 Undo/Redo 按钮。纯编辑器状态，不改保存产物 |
 
 ### 底部按钮行布局
@@ -213,9 +229,11 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 | --- | --- | --- |
 | `advcontrol` | Advanced Flow Control | For / While / Switch / If / Case / Elif / Else / Break / Continue / BlockEnd / FuncDef / FuncCall / Return |
 | `datastruct` | Data Structures | record / stack / queue / deque / bitset / map / uset / list / heap / chain |
-| `arrayalgo` | Array Algorithms | array / matrix，以及 `array_fill` / `array_sum` / `array_reverse` / `array_lower_bound` 等独立数据调用积木；旧 `arrayinit` 仅兼容读取 |
+| `arrayalgo` | Array Algorithms | array / matrix，以及**一张**批量运算卡（卡内按钮切换求和、平均值、最小值、最大值等 14 个运算）；旧 `arrayinit` 仅兼容读取 |
 | `asserts` | Assertions | 既有断言卡 |
 | 原版 `control` / `operation` | Flow Control / Operations | 原版 jump/end 与 `ExprStatement` |
+
+**栏位 ≠ 分组**（`DataModules.paletteColumn`）：分组键（`DataModules.groupKey`，即各族 `LCategory` 的名字 `stackops` / `mapops` / …）只用来回答「哪几个运算属于同一结构」，它本身**不是选板栏**，只作分组标签与悬停标题；运算卡该进哪一栏由**该结构的声明卡在哪一栏**决定。规则表 `DataModules.GROUP_COLUMNS` 目前只登记数组组（`arrayAlgo`），未登记的结构一律落在 `dataStructures`——因为数组/矩阵是三处例外，它们的声明卡在「数组算法」栏，若不登记就会把声明卡与运算卡拆到两栏、跳转行滚动条配色也跟着错。**新结构若不在数据结构栏，必须在这张表里补一行**（`DataCallStatement.category()` 取用该查询）。
 
 ### 结构语句布局
 
@@ -286,15 +304,17 @@ bump 到新上游版本时按序执行：
 ## 目录速查
 
 ```text
-src/logicsugar/           模组侧：入口、设置、函数库、FunctionLibraryDialog
-src/logicsugar/assist/    编辑器辅助：BoxSelect、JumpLineColor、VarDisplayFilter、MlogLint、
-                          VarClipboard、ProcessorStatus、UnitFlags、AssertInstructions、EditHistory、InstructionBudget
+src/logicsugar/           模组侧：入口与编辑器所有权判定（LogicSugarMod）、设置、函数库、FunctionLibraryDialog
+src/logicsugar/assist/    编辑器辅助：BoxSelect、StatementClipboard、JumpLineColor、VarDisplayFilter、MlogLint、
+                          VarClipboard、TextWrap/SugarTooltip、ProcessorStatus、UnitFlags、AssertInstructions、
+                          EditHistory、InstructionBudget
 src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ArrayRegistry、
                           ShortCircuitCompiler、ExprIntrinsics 与各数据结构的 *Intrinsics
-src/logicsugar/assist/data/  数据子系统：DataModule/DataModules/DataDeclaration 框架 +
+src/logicsugar/assist/data/  数据子系统：DataModule/DataModules/DataDeclaration 框架（含 paletteColumn 栏位查询）+
                           ArrayBulkModule、RecordModule、ContainerModule、BitsetModule、MapModule、SetModule、ListHeapModule
 src/mindustry/logic/      与游戏同包名的扩展层：SugarCompiler、SugarDecompiler、SugarStatements、
-                          SugarAsserts、SugarCanvas、SugarLogicDialog、SugarFunctions、RecoveryPredicate、MlogCFG
+                          SugarAsserts、SugarCanvas、SugarLogicDialog、SugarCoexist、SugarFunctions、
+                          RecoveryPredicate、MlogCFG
 test/                     与 src 同构的 main() 式自测（无 JUnit）
 assets/bundles/           bundle.properties / bundle_zh_CN / bundle_zh_TW（用户可见文案）
 ```

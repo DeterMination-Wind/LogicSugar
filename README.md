@@ -66,7 +66,7 @@ Write common control flow as blocks; on save, everything compiles to plain vanil
 
 Subscript reads and writes such as `buf[i]` and `buf[i] = 5` are supported in Expr.
 
-The corresponding functions for each data structure can be viewed in the in-game *Add Block* interface.
+Each structure corresponds to **one operation card** in the *Add Block* interface, whose in-card button switches between all of that structure's operations — the stack card, for instance, offers Push, Pop, Peek, Size and Clear. Arguments get **one input box per parameter**, with the parameter name shown on hover, and a card whose arguments cannot compile turns red on the spot. Operation cards live in the same palette column as that structure's declaration card (the array/matrix operation card sits under "Array Operations").
 
 Each data structure has an advanced tutorial chapter: declaration card, function quick-reference table, line-by-line explanation of the lowered mlog, complexity, and usage notes. Start from the [tutorial index](docs/tutorials/en/README.md).
 
@@ -90,11 +90,16 @@ They are fully equivalent to the corresponding individual operation blocks (such
 | Feature | Description |
 | --- | --- |
 | **Rebuild from source** | When opening a saved processor, it tries to rebuild Mlog into sugar code (conservative; it only attempts to recover control flow, not data structures). |
-| **Editor helpers** | Colored jump lines, Ctrl+Click and Ctrl+Drag block copying, hover hints, search highlighting, undo and redo (`Ctrl+Z` and `Ctrl+Y` on desktop, bottom buttons on mobile), and a live display of the compiled instruction count against the limit. |
+| **Editor helpers** | Colored jump lines, Ctrl+Click and Ctrl+Drag block copying, hover hints (a hint wider than the screen wraps instead of overflowing it), search highlighting, undo and redo (`Ctrl+Z` and `Ctrl+Y` on desktop, bottom buttons on mobile), and a live display of the compiled instruction count against the limit. |
+| **Cross-processor copy and paste** | *Copy Selection* / *Paste Selection* in the edit menu, or `Ctrl+C` / `Ctrl+V` on desktop. The clipboard holds **sugar code itself**, so a selection pasted into another processor comes back as editable blocks; a selection containing a jump that leaves it is rejected, because a numeric target means nothing in another program. |
 | **Assertions** | Provides some statements that can be used for debugging and displaying error messages above the processor; see the [upstream README](https://github.com/cardillan/MlogAssertions/blob/main/README.md) for details. |
 | **Processor status indicator** | Stopped processors show above them which line they stopped on; long-waiting processors draw a progress ring; runtime errors show their message in place, with expected and actual values shown together when available. |
 | **Unit flag display** | Optional in settings: show each unit's logic flag above it, with different vivid colors for different flags; flag value 0 is hidden by default. |
-| **Copy variables and print buffer** | Copy all variables of the current processor to the clipboard as a table organized by name and preserving full precision (ready to paste into a spreadsheet), or copy the mlog output buffer. |
+| **Copy variables and print buffer** | In the **edit menu**: copy all variables of the current processor to the clipboard as a table organized by name and preserving full precision (ready to paste into a spreadsheet), or copy the mlog output buffer. These two buttons used to occupy fixed-width slots in the bottom bar and have moved to the edit menu, so the bar no longer overflows a narrow window. |
+| **Logic editor conflict** | A setting. Other mods (for example 逻辑工具) also replace `Vars.ui.logic` to take the logic editor over, and only one mod can own it. Choose between **ask each launch** (the default: one prompt at startup; answering applies that choice for the session, and the setting stays on ask so the next launch asks again), **take over** (keep LogicSugar's editor and replace the other mod's UI), **step aside** (keep the other mod's editor, which also disables LogicSugar's editor and sugar language) and **coexist** (keep the other mod's whole editor UI and run LogicSugar's canvas inside it, so both work at once). Dismissing the prompt without answering steps aside - it never takes over by accident. Switching takes effect immediately. |
+
+> [!note]
+> So that the multi-KB sugar carrier never executes, compiled output appends one `set @counter 0` at the end of main. It is a real instruction counted alongside the carrier, so a processor's **effective instruction limit is one below the limit (999)**; an existing program already at the limit reports the overflow when it is saved again.
 
 ## Install
 
