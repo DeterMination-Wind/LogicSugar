@@ -101,7 +101,7 @@ op add x 8 0
 
 - Literal out-of-range indices are compile errors. Variable out-of-range reads return NaN and writes are no-ops in strip mode; debug assert builds insert assertBounds before the read/write.
 - base and size must be integer literals. The length cannot change at runtime.
-- Capacity: cellN is 64 slots, bankN / worldN are 512; base + size beyond capacity is a compile error. Other memory names skip the check.
+- Capacity: resolved from the memory block the `memory` variable is **actually linked to**; only when no link can be resolved does the name table apply (cellN 64, bankN / worldN 512 — a world-cell is also linked as cellN but holds 512, and the linked block wins). base + size beyond capacity is a compile error, and a guessed capacity is labelled as inferred in the message.
 - Names must not collide with other arrays, matrices or user functions. Cross-module overlaps are a known limitation and are not rejected automatically.
 - Memory slots currently hold numbers. Convert units/buildings to numbers with sensor / op before storing objects; see the architecture overview for the memory object storage note.
 - If x is not a declared array, `x[i]` degrades to a plain `read x i` when no array declarations exist, and becomes an unknown-array error once any array is declared.

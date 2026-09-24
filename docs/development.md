@@ -62,4 +62,4 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 - 运行时抛 `IllegalAccessError` 且栈顶是本模组静态方法 → 九成是跨类加载器访问陷阱，按 AGENTS.md 规则改为子类实例方法或反射；修完跑 `crossLoaderTest`。
 - 反编译结果"少了结构"通常是安全门拒绝（`Result.notes` 会说明原因），这不是 bug：检查新模式是否绕过了 verify 或候选编译不等价。
 - 设置项不显示：确认是独立态还是聚合态——聚合态由宿主调 `bekBuildSettings`，模组自建分类被 `if(!bekBundled)` 跳过。
-- MindustryX 相关功能（变量过滤等）在原版客户端本来就不生效（依赖 X 侧的 `allVars`），不要当回归。
+- 变量过滤分两块：`allVars`（MindustryX 浮动逻辑辅助器，纯展示、随时安全）总能过滤；`vars`（原版 `@variables` 对话框、MindustryX 处理器配置面板）只在单机 `!Vars.net.active()` 时过滤，联机一律不动 `vars`（它是 `sync` 的索引空间）。过滤器在 `SaveWriteEvent` 时先还原完整 `vars`，所以单机存档仍会带上 `__ls_*` 隐藏状态。

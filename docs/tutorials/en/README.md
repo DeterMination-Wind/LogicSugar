@@ -42,16 +42,16 @@ Consequences:
 
 ### Memory blocks, addresses and capacity
 
-The memory field names the memory block variable that holds the data:
+The memory field names the memory block variable that holds the data. Capacity comes from the block the variable is **actually linked to** (name the block with the link tool); the name table is only a fallback for when no processor context is available:
 
-| Name | Example | Capacity (slots) | Note |
+| Name | Example | Guessed capacity (slots) | Note |
 | --- | --- | --- | --- |
-| cellN | cell1 | 64 | most common |
+| cellN | cell1 | 64 | most common; a **world-cell is also linked as cellN but holds 512**, and the linked block wins |
 | bankN | bank1 | 512 | large |
-| worldN | world1 | 512 | world processor rules may apply |
-| other | mem | not checked | capacity check is skipped at compile time |
+| worldN | world1 | 512 | world processor rules may apply; vanilla rarely produces this name |
+| other | mem | not checked | the name carries no capacity, so the check is skipped |
 
-base is the starting physical address. size / capacity / words / rows x cols is the occupied length. base + length beyond the capacity is a compile error for cellN / bankN / worldN; other names skip the check.
+base is the starting physical address. size / capacity / words / rows x cols is the occupied length. base + length beyond the capacity is a compile error. A resolved link always wins (so world-cell and modded memory blocks are judged by their real slot count); only when no link can be resolved at all does the guessed table above apply, and the error then says the capacity is `inferred from the variable name`.
 
 All array/matrix/record/container memory accesses stay inside that range. Overlaps between different modules are not rejected automatically; see the caveats in each chapter.
 

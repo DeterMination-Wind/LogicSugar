@@ -12,6 +12,15 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 除设置入口外，两种形态的行为完全一致；不存在单独的聚合分支代码。
 
+**每个改动都要过一遍 Neon 兼容性（项目所有者明文要求）**：任何用户能看见、能改的东西，必须在**两种形态下都看得见、都能改**。`bekBuildSettings(SettingsTable)` 就是聚合态用户能碰到的完整清单——`bekBundled` 为 `true` 时 `LogicSugarSettings.setup(...)` 根本不执行，所以只在 `setup()` 里注册的设置对聚合态用户**不存在**：没有设置行、没有报错、也没有任何入口能改它。提 PR / 宣布功能完成前先回答两件事：
+
+- 新增的设置行 / 调色板条目 / 按钮 / 浮层 / 偏好项，是否在 `LogicSugarSettings.setup(...)` 与 `bekBuildSettings(...)` **两处**都有注册行？只注册一处就是同一个改动里的 bug；若某处确实是刻意不提供的，必须在同一次改动里写进本文与 Neon 侧，而不是只在评审口头说明。只挂在 `bekBuildSettings` 的行同样需要这个理由。
+- 它的**默认值**对「够不到这个设置的用户」安全吗？破坏性默认值 + 漏注册行是最坏组合：聚合态用户被静默锁死在那个默认档上。
+- 不要为了绕开这一点再自建一个 `@logicsugar.settings` 分类；也不要在设置/安装路径之外分支 `bekBundled`——编译产物、持久化与编辑器行为在两种形态下必须一致。
+- 改 `bekBundled` / `bekBuildSettings` 的契约（改名、加行、改行语义）时，与 Neon 仓 `tools/submods.json` 的同步断言放在同一个改动里完成。
+
+反例（`editorConflict`，PR #15）：该设置只在 `LogicSugarSettings.setup(...)` 注册，聚合形态下完全不可达，而它的默认档 `takeover` 会摘掉第三方逻辑编辑器 UI —— 聚合态用户既没有入口切走，也不会收到任何提示。修法只是 `bekBuildSettings(...)` 加一行 + Neon 侧同步断言；这条兼容性要求就是为了不再出现这一类问题。
+
 ## 入口与生命周期
 
 入口类 `logicsugar.LogicSugarMod`（`mod.json` 的 `main`），初始化流程：
@@ -77,7 +86,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 链表 | `chain <name> <memory> <base> <size>` | `chain_init` `chain_clear` `chain_alloc` `chain_free` `chain_get` `chain_set` `chain_next` `chain_link` `chain_set_head` `chain_head` `chain_len` | 节点 i 的值槽 `base+2*i`、next 槽 `base+2*i+1`（`next = -1` 为链尾）；`read` / `write` + `__ls_chn_<name>_head/_free` |
 
 - **getter 语法糖（只读）**：已声明结构在 Expr 模式下可用下标/方法写法替代 getter intrinsic——`list` 的 `l[i]` / `l.get(i)`，`list`/`heap` 的 `.size()`/`.length()`/`.count()`，`stack` 的 `.top()`/`.peek()`，`queue` 的 `.front()`/`.peek()`，`deque` 的 `.front()`/`.back()`，`bitset` 的 `b[i]`/`.test(i)`/`.get(i)`，`chain` 的 `c[i]`/`.get(i)`/`.head()`。实现走 `ExprIntrinsics.Provider` 的 `kindOf` / `methodIntrinsic` / `indexIntrinsic` 扩展点，由 `compileNode(Method)` / `compileNode(Index)` 分派；语义与对应 intrinsic 完全一致，已声明数组优先于同名结构的 `[i]`。映射覆盖只读 getter，既包括无注入函数的 `vector_at` / `stack_top` / `bitset_test` / `chain_get` / `chain_head` / `*size`，也包括走注入函数的 `map_get` / `set_contains` / `vector_find` / `bitset_count` / `chain_next` / `chain_len`。`SugarCompiler.compile` 在 `analyze` 之前用 `DataModules.declaredKinds(statements)` 安装轻量声明表；`collectCallNodes` 据此把方法/下标解析成 intrinsic 并发出 root-intrinsic `CallSite`，`registerExprCalls` 再用 `calleesOfRoot` 登记 `__ls_builtin_*` 可达性（否则 normal 模式会漏 hoist）。下标糖只读：`l[i] = v` 显式报编译错误并提示使用 `vector_set` / `bitset_set` / `chain_set`，避免静默降级为 `write <v> l <i>`。
-- **容量检查**：`memory` 形如 `cellN` 容量 64、`bankN` / `worldN` 容量 512（大小写不敏感），`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`，集合为 `base+capacity`）超容量编译期报错；其它名字跳过。
+- **容量检查**：容量优先取**处理器当前链接的方块**——解析 `memory` 变量到 `LogicBuild.optionalLink`，命中原版 `MemoryBlock` 就用它的真实 `memoryCapacity`（模组内存块、world-cell 都由此得到正确值）。解析不到时才回落按名字猜的 `<cellN>` = 64、`<bankN>` / `<worldN>` = 512（大小写不敏感）；解析到方块但不是内存块则确定不限制、跳过检查。`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`，集合为 `base+capacity`）超容量编译期报错；猜出来的容量在错误信息里明确标注 `inferred from the variable name`。名字不是证据：原版 `LogicBlock.getLinkName` 取方块名最后一个 `-` 之后的部分，所以 **world-cell（512 格）的变量名同样是 `cellN`**，纯按名字判断会把它错限成 64。`ArrayRegistry.capacityOf` / `capacitySource` 是唯一口径，各模块不得自己读 `memoryCapacity`。
 - **越界断言**：仅 `AssertEmit=emit` 的调试构建下、下标为非常量时，在 `read` / `write` 前发射 `assertBounds`（复用 `SugarAsserts` 线格式）；`strip` 模式不发射。数组/矩阵字面量越界始终是编译错误。
 - **空容器语义**：pop / peek 在空时返回 NaN（`op div <tmp> 0 0` 或越界 `read`）；可失败操作（push / append / insert / delete / set / free）失败时按 v5 API 统一返回 **-1**，且不写入（`vector_push_back` / `vector_insert` / `heap_push` / `vector_set` / `chain_set` / `chain_link` / `chain_free` / `map_erase` / `set_remove` 同理；`bitset_set` / `bitset_reset` 越界不写入但恒返回 1，是无结果卡，见 [api-v5.md](api-v5.md) 第 3、4 节）；`vector_at` 越界返回 NaN，`vector_erase` 越界返回 NaN、成功返回被删除值，`vector_find` 未找到返回 -1，`map_get` 未命中返回 NaN，`map_set` / `set_add` 在 NaN/±Inf 键上返回 -1，查询类 `map_contains` / `set_contains` / `bitset_test` 恒为 0/1（`bitset_test` 越界也是 0）；链表 `chain_get` 越界返回 NaN，`chain_next` 越界返回 -1，`chain_alloc` 在空闲链为空时返回 -1，`chain_len` 空链返回 0。`array_lower_bound` 在升序数组上未命中返回 -1。
 - **保留命名空间**：隐藏状态变量与注入函数名都以 `__ls_` 开头（`VarDisplayFilter` 自动隐藏，用户声明名使用该前缀会被模块拒绝）。记录字段变量 `<name>_<field>` 是普通用户变量，不隐藏、可调试。
@@ -111,6 +120,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - 库语义（方案2）：库函数不得改写调用方变量——函数体写入的每个名字（含参数）都被重整为 `__ls_func_<name>_<name>`；`@` 系统变量与 `cellN` / `bankN` / `memoryN` 存储设备豁免，只读名字不动。
 - 编辑入口 `FunctionLibraryDialog` 复用逻辑处理器编辑器（不绑定处理器），关闭时自动校验保存；保存失败会重开编辑器且修改不丢（`passThroughSugarOnError` + `discardButton` 逃生口）。
 - **行数上限（当前 10000 条语句）**：`LAssembler.read` 会静默截断在 `LExecutor.maxInstructions`，所以库文本统一走 `SugarFunctions.readLibrary`（解析期间临时抬高、`finally` 还原，处理器的 1000 条预算不受影响）；库编辑会话里原版 `LCanvas.load` 也走 `SugarFunctions.withLibraryLimit`。`FunctionLibrary.save` 与 `FunctionLibraryDialog.editInProcessor` 用 `libraryOverLimit` 在超限时明确拒绝，避免静默丢尾部；编辑器预算条显示「库源码行数 / 上限」。库文本整体存在本地 `functions.txt`，进入 `__ls_lib` 载体的仍只是被调用的函数子集。
+- **载体子集 vs. 本地库的合并（`SugarCompiler.effectiveLibrary`）**：`__ls_lib` 只含**保存时真正内联过**的子集，所以重开处理器时要把它与本地 `functions.txt` 里其余函数合并成本次会话的有效库（否则用户新加一个「以前没调用过」的库函数调用就会撞上 `calls undefined function`）。`funcdef`/`begin`/`jump` 的 `destIndex` 是**目标库文本里的绝对语句下标**（"must point to a block end below it"），因此追加在载体子集之后的那一段必须整体平移前缀语句数——`SugarFunctions.extractLibrarySource(text, usedNames, outBase)` 的第三个参数就是这个前缀长度，`effectiveLibrary` 用它传入已写入的语句数。漏掉这次 rebase 的后果不是报错而是**静默丢函数**：`buildLibrary` 抛出的 "must point to a block end below it" 会被 `sanitizedLibrary` 的抢救路径吞掉，被追加的函数从有效库里消失。`SugarCompilerSelfTest.libraryMergeRebasesAppendedFunctions` 钉住这条路径（旧用例只传空本地库，覆盖不到）。
 
 ## 重建（reconstruction）：打开已保存程序
 

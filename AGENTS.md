@@ -258,3 +258,25 @@ Neon aggregate mod. The dual form is handled entirely by `LogicSugarMod`:
   Neon repo) and asserts the injected structure (`bekBundled` + `bekBuildSettings`); if you
   rename either member, the Neon sync check will fail — coordinate the rename across both
   repos in one change.
+- **Neon compatibility is a checklist item on every change, not a detail of the settings
+  page (owner-declared requirement, failure seen in practice).** Anything a user can reach or
+  change must be reachable and changeable in *both* forms. `bekBuildSettings(SettingsTable)`
+  is the complete list of what a bundled user can touch: when `bekBundled` is true
+  `LogicSugarSettings.setup(...)` never runs, so a setting registered only there **does not
+  exist** for a bundled user — there is no row, no error, and no way to change it. Before
+  claiming a feature done, answer both questions:
+  - New setting / palette entry / button / overlay / preference row: does it have a
+    registration line in *both* `LogicSugarSettings.setup(...)` and `bekBuildSettings(...)`?
+    Registering in only one is a bug in the same change — unless the dual form is deliberate,
+    in which case say so in writing in that same change (`docs/architecture.md` + the Neon
+    side), not just in review talk. A `bekBuildSettings`-only row needs the same justification.
+  - Is its default safe for a user who cannot reach the setting? A destructive default plus a
+    missing row is the worst case: the bundled user is silently forced into it.
+  - Do not add a second self-registered `@logicsugar.settings` category to compensate, and do
+    not branch on `bekBundled` outside the settings/install path — behavior, compilation
+    output and persistence stay identical in both forms.
+- Recorded example (`editorConflict`, PR #15): the new setting was registered only in
+  `LogicSugarSettings.setup(...)`, so under `bekBundled` it was unreachable while its default
+  `takeover` detaches a third-party logic editor's UI. The fix was one row in
+  `bekBuildSettings(...)` plus the matching Neon sync assertion — the class of bug this rule
+  exists to prevent.

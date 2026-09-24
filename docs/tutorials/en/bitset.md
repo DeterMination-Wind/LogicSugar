@@ -85,7 +85,7 @@ funccall __ls_builtin_bitcount "cell1, 0, 2" x
 
 ## Caveats
 
-- Capacity: base + words must fit the block (cellN 64, bankN / worldN 512).
+- Capacity: base + words must fit the block, resolved from the block the `memory` variable is actually linked to; only an unresolvable link falls back to the name table (cellN 64, bankN / worldN 512), and a guessed capacity is labelled as inferred.
 - Out-of-range bitset_set/bitset_reset do not write but still return 1 (they are result-less cards in v5); bitset_test returns 0. Negative indices and indices >= words*64 are out of range.
 - Bit order: bit = i % 64, bit 0 is 1 << 0. Cross-word ordering follows your own access order; LogicSugar only keeps the formula consistent.
 - bitset_count is an O(words) loop. Avoid calling it every tick in a hot condition.

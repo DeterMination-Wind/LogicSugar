@@ -59,6 +59,9 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 
 ## 表达式与恢复
 
+### 容量解析（capacity resolution）
+声明卡的容量上限口径：`ArrayRegistry.capacityOf(memory)` 先向当前会话的处理器解析该变量链接到的方块（`LinkResolver`；mod 启动时用 `ArrayRegistry.setLinkResolverProvider(ArrayRegistry::processorLinks)` 装延迟提供者，按需从 `SugarLogicDialog.executor` 取），命中 `MemoryBlock` 就返回真实 `memoryCapacity`；解析到方块但不是内存块返回 0（确定不限制）；完全解析不到（无处理器上下文、变量缺失）才回落到按名字猜的 `memoryCapacity(String)`。三态由 `CapacitySource` 区分（`linked` / `notMemory` / `inferred` / `unknown`），只有 `inferred` 的错误信息会标注是猜的。函数库会话与无头自测没有处理器，因此回落分支必须保留；由 `arrayTest` 的 `resolvedMemoryCapacity` 钉住。
+
 ### 数组（array）
 `array` 声明卡定义的纯 sugar 抽象：把内存块变量（如 `cell1`）上 `[base, base+size)` 的一段物理地址登记为命名数组。卡片本身不产出任何 mlog 行（lower 时剥离，产物保持纯原版指令）；表达式下标 `buf[i]` / 下标赋值 `buf[i] = x` 在编译期查 `ArrayRegistry` 换算物理地址（= base + 逻辑下标）后发射原版 `read` / `write`。v0 限制：base/size 仅接受整数字面量，重名与同内存块区间重叠是编译错误，数组名不得与函数重名。编辑器折叠只在注册表把 `read`/`write` 的内存块命中到已声明数组时把该行折回下标表达式——纯原版 mlog（无声明卡）不做数组推断恢复；字面量下标越界是编译错误，变量下标不做静态越界检查，运行时保持 v160.1 的内存语义（越界读返回 null）。由 `arrayTest` 钉住。
 

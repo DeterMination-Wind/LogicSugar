@@ -112,7 +112,7 @@ funccall __ls_builtin_bitcount "cell1, 0, 2" x
 
 ## 使用须知
 
-- **容量**：`base + words` 不能超过内存块容量（`cellN` = 64，`bankN` / `worldN` = 512）。
+- **容量**：`base + words` 不能超过内存块容量。容量按 `memory` 变量实际链接到的方块判断；解析不到链接时才按名字猜（`cellN` = 64、`bankN` / `worldN` = 512），猜出来的值在错误信息里标注为推断值。
 - **越界语义**：`bitset_set` / `bitset_reset` 越界不写入、但仍返回 1（结果没有信息量，v5 起它们是无结果卡）；`bitset_test` 越界返回 0。位下标是负数或 `>= words*64` 都属于越界。
 - **位序**：word 内 `bit = i % 64`，第 0 位对应 `1 << 0`；跨 word 的大端/小端由你自己的读写顺序决定，LogicSugar 只保证公式一致。
 - **`bitset_count` 频率**：它是 O(words) 的循环，放在每 tick 都执行的条件里会明显增加处理器负载；尽量只在需要时统计，或自己维护计数。

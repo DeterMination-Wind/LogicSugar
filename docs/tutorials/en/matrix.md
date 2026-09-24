@@ -89,6 +89,6 @@ write 5 cell1 5
 - Literal row/column out-of-range values are compile errors. Variable indices are not checked at runtime: out-of-range reads return NaN and writes are no-ops.
 - len(m) is not supported. Use rows * cols; only 1-D arrays have len.
 - Row-major order: the next address after m[i][j] is j+1, crossing to (i+1, 0) only at the end of a row. Bulk operations flatten matrices in this order.
-- Capacity: base + rows*cols beyond the block capacity is a compile error (cellN 64, bankN / worldN 512).
+- Capacity: base + rows*cols beyond the block capacity is a compile error, resolved from the block the `memory` variable is actually linked to; only an unresolvable link falls back to the name table (cellN 64, bankN / worldN 512), and a guessed capacity is labelled as inferred.
 - Names must not collide with other arrays/matrices/functions. Cross-module overlaps are a known limitation.
 
