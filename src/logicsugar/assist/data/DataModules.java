@@ -510,7 +510,12 @@ public final class DataModules{
         }
     }
 
-    /** 编辑期第一层：不依赖任何注册表的形状错误（与 {@code emitDataCall} 的前置校验一一对应）。 */
+    /** 编辑期第一层：不依赖任何注册表的形状错误。覆盖范围与 {@code emitDataCall} 的前置校验
+     *  <b>有重叠但不相等</b>：这里管「这张卡能不能按一参数一框编辑」（运算名未知、有返回值却没目标、
+     *  实参数多于参数量、实参串括号不平衡或拆分不可逆），编译期那边管「参数个数必须完全相等」。
+     *  两者只在一处<b>刻意</b>不同：实参数<b>少于</b>参数量时这里不标红 —— 空槽连着占位参数名，本身
+     *  就是「这里还没填」的提示（{@code DataCallTest.argumentSlotsAreFixedAndLossless} 钉住这一点），
+     *  而保存时仍会如实报出参数个数不符。 */
     private static boolean callShapeInvalid(DataCallStatement call){
         DataModule.PaletteCall spec = paletteCall(call.canonicalOperation());
         // 未知运算（损坏载体、或未来版本写入的名字）：编译期 emitDataCall 直接抛 unknown data intrinsic

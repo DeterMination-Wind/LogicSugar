@@ -330,10 +330,11 @@ public final class EditorConflictTest{
             check(mod.contains("case " + state.name() + " ->"), state.id + " is missing from the dispatch");
         }
 
-        // the prompt's three buttons call the shared behaviours, not a private copy of them
-        int prompt = mod.indexOf("private static void askForEditor()");
-        check(prompt > 0, "the ask dialog must exist");
-        String body = mod.substring(prompt, Math.min(mod.length(), prompt + 2600));
+        // the prompt's three buttons call the shared behaviours, not a private copy of them.
+        // The body is brace-matched, not taken from a fixed-width window: a window would let the
+        // "must not contain replaceEditor(" nail below pass by simply pushing the method past the
+        // cut, and would let the three "must contain" nails pick up calls from a later method.
+        String body = SourceNails.methodBody(mod, "private static void askForEditor()");
         for(String call : new String[]{"takeEditorOver();", "coexist();", "stepAside();"}){
             check(body.contains(call), "the ask dialog must offer " + call);
         }
@@ -351,9 +352,9 @@ public final class EditorConflictTest{
      */
     private static void aggregateFormExposesTheConflictSetting() throws IOException{
         String mod = SourceNails.readSource("src/logicsugar/LogicSugarMod.java");
-        int aggregate = mod.indexOf("public void bekBuildSettings(");
-        check(aggregate > 0, "the aggregate settings form must exist");
-        String body = mod.substring(aggregate);
+        // Scoped to the method, not to "everything from here to EOF": the latter would also accept
+        // the conflict row if it were only ever constructed somewhere later in the file.
+        String body = SourceNails.methodBody(mod, "public void bekBuildSettings(");
         check(body.contains("new LogicSugarSettings.EditorConflictSetting("),
             "the aggregate form must expose the editor-conflict row");
         check(body.contains("EditorConflict.ask.id"),
@@ -392,9 +393,10 @@ public final class EditorConflictTest{
 
         // arm()'s own body is indented 12 spaces; a line inside its branches is indented deeper.
         // Anchoring on the indentation is how this pins "runs unconditionally, at method level".
-        int arm = source.indexOf("private void arm(LogicDialog dialog){");
-        check(arm > 0, "arm() must exist");
-        String armBody = source.substring(arm, Math.min(source.length(), arm + 2400));
+        // The body is brace-matched rather than taken from a 2400-char window: that window stood
+        // just 136 characters short of truncating the method, after which the first nail would fail
+        // open and the "must not early-return" nail would pass without ever seeing the early return.
+        String armBody = SourceNails.methodBody(source, "private void arm(LogicDialog dialog){");
         check(armBody.contains("\n            bindLogicSupport();"),
             "bindLogicSupport() must sit at arm()'s own indentation level: inside the "
                 + "consumer-rewrapping branch, a session whose consumer did not change skips the rebind");

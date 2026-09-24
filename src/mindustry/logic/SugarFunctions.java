@@ -1768,11 +1768,15 @@ public final class SugarFunctions{
             throw new IllegalArgumentException("data call '" + operation + "' requires a destination variable");
         }
         String args = call.arguments == null ? "" : call.arguments;
-        // Arity is part of the shape, and the one-box-per-parameter card makes "left the last box
+        // Arity is part of the shape, and the one-box-per-parameter card makes "the last box was left
         // empty" the most common mistake. Without this the call falls through to the expression
         // compiler, which can only answer "unknown function" - a message that says nothing about the
-        // argument count. This is the same rule DataModules.callShapeInvalid paints red on the card,
-        // so the editor and the save finally agree on what is wrong.
+        // argument count. Both directions are refused here, which is one case more than the card
+        // paints red: DataModules.callShapeInvalid flags "more arguments than parameters" (the
+        // fixed-slot card would otherwise silently drop the extras), while fewer arguments stay
+        // unmarked on purpose - the empty slot with its placeholder name is exactly how the card
+        // shows what is still missing (pinned by DataCallTest.argumentSlotsAreFixedAndLossless).
+        // Saving must refuse either way.
         int expectedArgs = DataModules.paletteParams(operation).size();
         if(expectedArgs > 0){
             int actualArgs = splitArgs(args).size();

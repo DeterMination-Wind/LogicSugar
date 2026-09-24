@@ -130,6 +130,14 @@ public final class DataCallTest{
         checkCompileThrows("stack s cell1 0 4\n"
             + "datacall spush ~ \"s, 7\"\n", "requires a destination variable");
 
+        // 参数个数写错必须报出精确个数。旧行为是落到表达式编译器，只回一句 "Unknown function" ——
+        // 对「最后一个框忘了填」这个最常见的错误毫无提示。两个方向都要报；注意卡片只在「多于」时标红，
+        // 「少于」刻意不标（空槽 + 占位参数名就是提示），所以保存这一关必须自己把两种都挡住。
+        checkCompileThrows("stack s cell1 0 4\n"
+            + "datacall spush r \"s\"\n", "takes 2 argument(s) but got 1");
+        checkCompileThrows("stack s cell1 0 4\n"
+            + "datacall spush r \"s, 7, 8\"\n", "takes 2 argument(s) but got 3");
+
         // A dedicated operation card must choose its intrinsic even if ordinary expressions
         // would let a same-named local function shadow it.  Test both lowering modes because
         // normal mode needs builtin reachability/hoisting and inline expands at the call site.

@@ -35,4 +35,36 @@ public final class SourceNails{
         return Files.readString(root().toPath().resolve(relative), StandardCharsets.UTF_8)
             .replace("\r\n", "\n");
     }
+
+    /**
+     * The source text of one method or constructor, from its signature to the matching closing brace.
+     *
+     * <p>Exists because the alternative - {@code source.substring(at, at + 2400)} - fails open. A
+     * {@code !body.contains("...")} nail over a fixed window passes as soon as the method grows past
+     * the window, so the nail keeps reporting green while the thing it forbids sits just beyond the
+     * cut. One of these windows stood 136 characters away from that (see {@code arm()} in
+     * {@code SugarCoexist}), which is less than a single edit. Brace matching cannot drift.</p>
+     *
+     * @throws AssertionError if {@code signature} is absent or its braces do not balance, so a
+     *         renamed method fails loudly instead of yielding an empty string that satisfies every
+     *         "must not contain" check.
+     */
+    public static String methodBody(String source, String signature){
+        int at = source.indexOf(signature);
+        if(at < 0) throw new AssertionError("source nail: method signature not found: " + signature);
+        int open = source.indexOf('{', at);
+        if(open < 0) throw new AssertionError("source nail: no body after: " + signature);
+        int depth = 0;
+        for(int i = open; i < source.length(); i++){
+            char c = source.charAt(i);
+            if(c == '{'){
+                depth++;
+            }else if(c == '}'){
+                // Strings and comments are not parsed on purpose: a source file that had an
+                // unbalanced brace inside a literal would break the compiler first.
+                if(--depth == 0) return source.substring(at, i + 1);
+            }
+        }
+        throw new AssertionError("source nail: unbalanced braces after: " + signature);
+    }
 }
