@@ -35,7 +35,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - 结构语句（`ifbegin` / `forbegin` / … / `blockend`）被 lowering 成 `jump` / `op` / 标签注释组合；`SugarStatement.build()` 返回 `NoopI`，结构语句本身不产生指令。
 - 函数由 `SugarFunctions.analyze` + `lower` 处理：本地函数（处理器内定义）与库函数走同一条管线。`FuncMode.normal` 生成共享 `@counter` 子程序（函数体 hoist 到程序尾部）；`FuncMode.inline` 按调用点展开副本，编译器临时名带 `__ls_i_<callId>_` 前缀。
-- `SwitchStrategy` 决定 `switch` 的下降形态：`auto` 在整数 case、值域跨度 ≤255 时按实际可执行指令成本在比较链与 `@counter` 跳转表之间二选一；`chainOnly` 恒用比较链（与 2.3.1 之前输出逐字节一致）。lowering 之后还有无条件跳转链穿线（`threadAlwaysJumpTargets`，带环检测）。**例外是裸表**：`switchbegin … raw`（恢复出来的手写跳转表）无视策略恒发跳转表，因为它是程序属性而非本机偏好。**`default:`** 卡片是"没有 case 命中"的目标：比较链里是末尾跳转的目标，跳转表里是所有空槽行（带守卫形态下还有两条边界守卫）的目标；每个 switch 至多一张，validation 与标红共用 `SugarFunctions.defaultViolations`。
+- `SwitchStrategy` 决定 `switch` 的下降形态：`auto` 在整数 case、值域跨度 ≤255 时按实际可执行指令成本在比较链与 `@counter` 跳转表之间二选一；`chainOnly` 恒用比较链（与 2.3.1 之前输出逐字节一致）。带守卫的跳转表在派发前先把下标收到与 `jump equal` 相同的 1e-6 容差里：离某个整数 case 不超过这个容差才进该槽，否则进 `default`，因此 `auto` 与 `chainOnly` 选中同一分支。裸表不收口。lowering 之后还有无条件跳转链穿线（`threadAlwaysJumpTargets`，带环检测）。**例外是裸表**：`switchbegin … raw`（恢复出来的手写跳转表）无视策略恒发跳转表，因为它是程序属性而非本机偏好。**`default:`** 卡片是"没有 case 命中"的目标：比较链里是末尾跳转的目标，跳转表里是所有空槽行（带守卫形态下还有两条边界守卫）的目标；每个 switch 至多一张，validation 与标红共用 `SugarFunctions.defaultViolations`。
 - **持久化载体（carrier）**：Sugar 源码以 `set __ls_sugar "<base64>"` 载体行存回程序末尾，程序用到的库函数子集以 `set __ls_lib "<base64>"` 一并嵌入（跨机器可重编译）。载体是真实 `set` 语句，能挺过原版 parse/save 往返；单条载体不超过 60000 字符（LParser 字符串 token 上限 65535 UTF 字节以下）。**载体分片**：编码后超限的载荷自动切分为连续编号的多条语句 `set __ls_sugar_1/2/…`（`__ls_lib_N` 同理），每片 ≤60000 字符，restore 侧按"从末尾锚定、向前连续递减到 1"重拼后一次 decode（避免劈开 UTF-8 序列）；≤ 阈值时保持单条形状字节不变。分片行计入指令预算，极端超限时重现旧行为（丢弃超限载体并告警）。v2.0.0 旧程序回退到注释标记块 `# @logic-sugar-v1 begin` / `# @logic-sugar-line ` / `# @logic-sugar-v1 end`。
 - 编译器保留前缀 `__ls_` 是用户不可用的命名空间；表达式临时变量用 `_0, _1, …` 栈式编号。
 - **载体不执行（entry skip）**：编译产物在 main 末尾统一多一条 `set @counter 0`（`SugarCompiler.entrySkipLine`，配 `hasEntrySkip()` / `withEntrySkip()` / `withoutEntrySkip()`），让紧随其后的几 KB 载体 `set __ls_sugar` 永不执行——否则 MDTX 逻辑面板的值列会把载体当成一条运行中的赋值显示出来。等价性依据：`runOnce()` 在 `@counter` 越界时本就「置 0 执行指令 0」，跳过条不改变任何语义。**这条 skip 是被存储的糖源码的一部分**（随 `# @logic-sugar-line` 一起进载体，编译期不额外 append），因此旧版本重编译这段文本能原样复现，`verifyRestore` 仍然通过；代价是旧版编辑器多显示一行 `set @counter 0`（显示层，不影响数据与再保存），以及**有效指令上限变成 `maxInstructions - 1`**（skip 与载体一起计入末尾的上限检查，顶格程序会抛 `IllegalArgumentException`）。反编译侧 `isEntrySkip` 带位置约束：跳过至多一条 hoist `jump` 之后必须只剩载体行——既不能简化成「必须是最后一条」，也不能要求「其后一定有载体」（`stripGenerated()` 会剥掉载体的程序里它照样在）。设计取舍与跨版本双向实测结论记在 `entrySkipLine` 的 javadoc。**解析上限（源文本超窗口）与现状**：skip 是「拼到糖源码末尾再交给 `LAssembler.read` 解析」，而原版 `LParser` 只解析前 `LExecutor.maxInstructions`(1000) 条语句、其余**静默丢弃**（上限按**语句数**计，注释与空行免费——实测 1000 行注释 + 3 条语句仍解析出 3 条）。糖源码的语句数可以在指令数 ≤1000 的前提下突破 1000（例如 500 个空 `if` 块 = 1000 条语句、只编译出 500 条指令）。窗口一旦关闭就有两种丢失，`compile` 都在 `containsSugar` 早返回**之前**拦住并抛 `IllegalArgumentException`（消息说明是解析上限）：① 头部带糖却没有 skip 落地 —— 载体重新每周期执行，正是 skip 要防的那个 bug；② 头部无糖而整份源码在提升上限下含糖 —— 糖整体落在窗口之后，原实现会把糖文本当成「产物」原样存下，存进处理器的代码原版解析器根本读不了。判 ② 要拿提升到 `libraryInstructionLimit` 的上限重解析整份源码（丢尾巴的正是同一个窗口，不重解析看不见）。**纯 vanilla 的长程序不拦**：那是原版解析器自己的截断，且没有载体需要保活。
@@ -95,7 +95,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 ### 单机 / 联机与 1000 指令约束
 
 - 声明卡不产指令，全部运算都是原版指令：产物在任何原版客户端可解析、可运行，联机（含自建服）与单机一致；数据子系统不引入任何 `AssertEmit` 例外。
-- 1000 条上限沿用 `SugarCompiler` 既有检查（lowered 指令 + 载体行一起计数），新功能不绕过。循环型操作（push / sort / find / 哈希探测等）在 normal 模式做成共享 `funcdef`，指令预算与调用点数量线性、与结构数量无关；inline 模式会复制函数体，长程序需切回 normal（编译器在超限报错里提示）。
+- 1000 条上限沿用 `SugarCompiler` 既有检查（lowered 指令 + 载体行一起计数），新功能不绕过。保存产物还必须落在原版 `LParser` 的 500 个跳转标签以内：lowering 之后若标签超过 500，编译直接拒绝，避免写出原版读不了的 mlog。没有 `continue` 的 `for` 不再发射空的 `for_continue_` 标签。处理器指令上限仍是 1000；「放宽到 756 个 for」没有做——那既放不进 1000 条指令，也放不进 500 个标签。循环型操作（push / sort / find / 哈希探测等）在 normal 模式做成共享 `funcdef`，指令预算与调用点数量线性、与结构数量无关；inline 模式会复制函数体，长程序需切回 normal（编译器在超限报错里提示）。
 - **函数库文件不受 1000 条限制**：`functions.txt` 不是保存到处理器的程序，`SugarFunctions.libraryInstructionLimit`（当前 10000 条语句）是库文件自身的安全上限。处理器仍然只能保存 ≤1000 条；调用库函数时只通过 `extractLibrarySource` 嵌入用到的子集，子集与主程序一起计入 1000 条预算。
 
 ### 已知限制
@@ -183,6 +183,8 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - `switchbegin <切换值> <dest> raw`（可选第 4 个 token；缺省即带守卫）只发射派发 + `span` 条槽位行，且**忽略 `SwitchStrategy`**——形态是程序属性，这也正是门的策略矩阵能接受它的原因。非法裸表（非整数 case、跨度超 `MAX_TABLE_SPAN`）直接编译报错。
 - `default:` 是 switch 自己的"没有 case 命中"卡片：比较链里它是末尾跳转的目标；跳转表里它是所有空槽行的目标，带守卫形态下边界守卫也指向它（越界值落在这里）。每个 switch 至多一个、必须在 switch 内；`defaultViolations` 是编译器、编辑器标红与函数库构建共用的一条规则。
 - 裸表推断（`tryBareSwitchTable`）：槽位 *k* 直接寻址第 *k* 行，所以 case 值就是行号、跨度从 0 开始；行的目标按无条件跳转链（作者自己的穿线）读取。目标落在体区之外的行是空槽，它们必须同指一处，该处成为 `default`——并且必须落在**已存在**的指令上（其自身跳转链终于同一处），否则重编译出的空槽行会落到程序从未有过的跳转上。跨度两端若正好是空槽，就用一个 case 标签钉住（标签与 default 共位，编译出的行完全相同）。任何不吻合都返回 null，视图保持 vanilla。
+- **步长表**（`switchbegin … stride <n> <tmp> abs|rel`）：手写程序用 `op mul <tmp> <idx> <n>` 再写入 `@counter`，case 正文按固定长度紧挨着排，而不是每个槽一条跳转行。`abs` 的常数在编译时按第一条正文的指令下标重算；`rel` 的偏移是 `1 - firstCase * n`，使第一个 case 落在三条派发指令的下一行。推断要求至少两个完整槽，且槽尾同为 `end` 或同指一处的无条件跳转；对不上就保持 vanilla。动态 `@counter` 分诊只把 `recognizeStride` 接受的派发当成已知安全形状。
+- **步长表**（`switchbegin … stride <n> <tmp> abs|rel`）：手写程序用 `op mul` 再写入 `@counter`，case 正文按固定长度紧挨着排。`abs` 的常数在编译时按第一条正文的指令下标重算；`rel` 使第一个 case 落在三条派发指令的下一行。推断要求至少两个完整槽，槽尾同为 `end` 或同指一处的无条件跳转。动态 `@counter` 分诊只把 `recognizeStride` 接受的派发当成已知安全形状。
 - 带守卫跳转表的推断同样恢复 `default`：守卫与空槽行落在 switch *内部*的体上而不是出口，此时 switch 真正的结尾是各 case 体 break 跳转的目标（`switchEndBeyond`）。两种读法都作为候选给出——体里跳出 switch 的跳转在这一层与 default 无法区分——由门裁决，与其余恢复逻辑同一套做法。
 
 短路守卫恢复（`tryShortCircuitFrames`）是这套机制的核心用户：`ShortCircuitCompiler` 的 lowering 是若干 `[条件 jump, fallback jump]` 原子对的连续拼接（内部续接标签都落在原子对起点），守卫解析器从对的目标关系重建布尔树（`parseGuardTree`，带换目标环检测的备忘递归），为同一片守卫区域同时给出 `if` / `while` / `for` 候选。由此单原子守卫、顶层 `!`、任意嵌套 `&&`/`||` 树以及 `whilebegin`/`forbegin` 的 `exprsc` 条件都能恢复，不再限于固定四指令布局。体内跳回 while 守卫头的 always 跳转就是 `continue` 的 lowering 形状，由循环上下文恢复为 `continue` 语句。
@@ -224,6 +226,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器（`Groups.build`，视野外按 hitbox 裁剪）：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；扫描预算按帧时长换算（`min(delta*60,5) × 每帧扫描数`，低帧率不爆发）；设置三滑杆（阈值 0 关闭 / 每帧扫描数 1–5000 档位 / 警告特效）+ 断点三开关（禁用断点 / 断言失败即断点 / 断点分离视角） |
 | 单位 flag 显示 | `assist.UnitFlags` | 设置可选；drawOver 遍历 `Groups.unit`，在单位正上方绘制逻辑 `flag`。默认使用红色；打开 `logicsugar.colorizeUnitFlags` 后，不同 flag 按首次遇到顺序优先使用 10 种高对比度颜色，超出后分配高饱和度随机色；默认 0 / 非有限值不显示，视野外与迷雾中的单位跳过。纯展示，不改保存产物 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
+| 卡片左侧序号 | `SugarCanvas` | 用户看到的是 Sugar 视图。卡片左侧的数字是积木序号（声明卡和结构语句各占一行），不是处理器指令下标。`Stopped at #N` 才是 `LExecutor.counter` |
 | 编辑期标红 | `SugarCanvas.invalidSignature()` | 标红刷新走**签名门控**：`SugarCanvas` 比较语句的 `invalidSignature()` 是否变化来决定重标，不再按 `if`/`while`/`for` 显式列 `conditionExpr`——原实现漏掉声明卡与运算卡，改字段后不重标红；新增卡种从此不需要再改 `SugarCanvas` |
 | 撤销/重做 | `assist.EditHistory` + `SugarLogicDialog` | 快照栈（最多 80 层）记录 `canvas.save()`；桌面 Ctrl+Z / Ctrl+Y，移动端底部 Undo/Redo 按钮。纯编辑器状态，不改保存产物 |
 

@@ -426,6 +426,14 @@ public final class DataRuntimeTest{
             checkMem(duplicates, "cell1", i, expected[i], "duplicates must sort deterministically");
         }
 
+        // Issue: a key that must land at index 0 used to read base-1 and write the element away.
+        Run intoZero = run("array buf cell1 0 2\ndatacall sortasc ~ \"buf\"\n", "cell1", 0, new double[]{-1, -5});
+        checkMem(intoZero, "cell1", 0, -5, "sortasc must place the smaller key at index 0");
+        checkMem(intoZero, "cell1", 1, -1, "sortasc must keep the displaced element");
+        Run descIntoZero = run("array buf cell1 0 2\ndatacall sortdesc ~ \"buf\"\n", "cell1", 0, new double[]{1, 5});
+        checkMem(descIntoZero, "cell1", 0, 5, "sortdesc must place the larger key at index 0");
+        checkMem(descIntoZero, "cell1", 1, 1, "sortdesc must keep the displaced element");
+
         // size 1: gap = 1/2 = 0, the body must be a no-op
         Run single = run("array buf cell1 0 1\ndatacall sortasc ~ \"buf\"\n", "cell1", 0, new double[]{42});
         checkMem(single, "cell1", 0, 42, "a one-element array must be untouched");

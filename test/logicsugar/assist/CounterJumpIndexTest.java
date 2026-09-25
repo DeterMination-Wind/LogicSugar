@@ -508,10 +508,10 @@ public final class CounterJumpIndexTest{
         return "funcdef func x,y,z 2\nreturn \"x+y+z\"\nblockend\nfunccall func \"1, 2, 3\" x\n";
     }
 
-    /** 值只有 0/1 的密集 switch：代价模型必然选跳转表（chain 9 > table 5）。 */
+    /** 值只有 0/1 的密集 switch：代价模型必然选跳转表（chain 13，带容差收口的表是 12）。 */
     private static String dupSwitch(){
         StringBuilder body = new StringBuilder();
-        for(int i = 0; i < 4; i++){
+        for(int i = 0; i < 6; i++){
             body.append("case 0\nprint zero\n");
             body.append("case 1\nprint one\n");
         }

@@ -48,6 +48,9 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 ### 跳转表（jump table）
 `switch` 的一种下降结果：先做上下界守卫，再用 `op add @counter @counter` 按槽位分派；越界与空洞槽走默认路径。非整数或跨度过大的 case 集合自动回退比较链。
 
+### 步长表（stride table）
+`switchbegin … stride <n> <tmp> abs|rel`：手写 `@counter` switch 的另一种形态。`abs` 是 `op mul` 后 `op add @counter <tmp> K`，case `v` 落在指令 `v*n+K`；`rel` 是三条指令的相对派发，第一个 case 紧跟在派发之后。case 正文本身就是槽，每槽恰好 `n` 条指令（区域末尾允许一个较短的最后一槽）。`K` 在编译时按第一条正文的指令下标重算，不写进源码。选板不创建这种形态。
+
 ### 裸表（raw table）
 `switchbegin … raw`：手写/第三方工具生成的无边界守卫跳转表，只发 `op add @counter @counter <切换值>` 加每条槽位一条跳转行，且无视 `SwitchStrategy`。恢复出来的表用它保持产物逐条不变；越界值不再被夹回默认分支（只有跨度内的空槽走 `default`）。
 

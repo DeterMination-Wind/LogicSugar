@@ -46,6 +46,9 @@ public class SugarCompilerSelfTest{
         switchDefaultCaseShape();
         rawSwitchTableShape();
         switchTableExecutesSemantics();
+        switchTableMatchesEqualTolerance();
+        logicalOrAndStrictEqualExecute();
+        jumpLocationsStayVanillaParseable();
         switchRegressionGrid();
         chainOnlyPreservesLegacySwitchOutput();
         jumpThreadCollapsesKnownChains();
@@ -257,9 +260,11 @@ public class SugarCompilerSelfTest{
         expectFailure("elif a equal 0\n", "elif outside an if");
         expectFailure("else\n", "else outside an if");
 
-        // strictEqual has no strict-not-equal op, so negation falls back to notEqual
+        // strictEqual has no exact inverse; notEqual would treat a string and 1 as equal
         String strict = loweredCode(SugarCompiler.compile("ifbegin a strictEqual b 2\nset x 1\nblockend\n"));
-        check(strict.contains("jump __ls_stmt_3 notEqual a b"), "strictEqual did not negate to notEqual");
+        check(strict.contains("jump __ls_if_body_0 strictEqual a b"), "strictEqual was not kept: " + strict);
+        check(strict.contains("jump __ls_stmt_3 always x false"), "strictEqual skip jump missing: " + strict);
+        check(!strict.contains("notEqual a b"), "strictEqual was negated to notEqual: " + strict);
 
         // an if chain may have at most one else, and no elif may follow it (compile path)
         expectFailure("ifbegin a equal 0 5\nelse\nset x 1\nelif b equal 0\nset x 2\nblockend\n", "elif after else");
@@ -372,15 +377,17 @@ public class SugarCompilerSelfTest{
         String chainLowered = loweredCode(SugarCompiler.compile(dup,
             SugarCompiler.FuncMode.normal, null, null, SugarCompiler.SwitchStrategy.chainOnly));
 
-        // Bang-style executable-cost assertions on both shapes
-        check(instructionLines(autoLowered) == instructionLines(chainLowered) - 12,
-            "table saving must equal (chain cost 17 - table cost 5): "
+        // Bang-style executable-cost assertions on both shapes.
+        // Guarded table cost is the equal-tolerance snap (10) plus span rows: 12 vs chain 17.
+        check(instructionLines(autoLowered) == instructionLines(chainLowered) - 5,
+            "table saving must equal (chain cost 17 - table cost 12): "
                 + instructionLines(autoLowered) + " vs " + instructionLines(chainLowered));
 
-        // table shape: two bounds guards onto the default label, one dispatch, span slot rows
-        check(autoLowered.contains("jump __ls_stmt_34 lessThan x 0"), "lower guard missing:\n" + autoLowered);
-        check(autoLowered.contains("jump __ls_stmt_34 greaterThan x 1"), "upper guard missing");
-        check(autoLowered.contains("op add @counter @counter x"), "dispatch missing");
+        // table shape: snap, two bounds guards onto the default label, one dispatch, span slot rows
+        check(autoLowered.contains("op floor __ls_sw_fl_0 x 0"), "equal-tolerance snap missing:\n" + autoLowered);
+        check(autoLowered.contains("jump __ls_stmt_34 lessThan __ls_sw_fl_0 0"), "lower guard missing:\n" + autoLowered);
+        check(autoLowered.contains("jump __ls_stmt_34 greaterThan __ls_sw_fl_0 1"), "upper guard missing");
+        check(autoLowered.contains("op add @counter @counter __ls_sw_fl_0"), "dispatch missing:\n" + autoLowered);
         long rowsAuto = autoLowered.lines().filter(l -> l.equals("jump __ls_case_1 always x false")
             || l.equals("jump __ls_case_3 always x false")).count();
         check(rowsAuto == 2, "expected exactly span slot rows, got " + rowsAuto);
@@ -410,11 +417,13 @@ public class SugarCompilerSelfTest{
         check(!fracAuto.contains("@counter @counter"), "fractional case value emitted a table");
 
         // negative minimum normalizes through an explicit op sub into the index variable
-        StringBuilder neg = dupSwitch(-2, 3, 6, "set y 20", "set y 30", "set y 99");
+        // 8 pairs: 16 cases, chain cost 17, normalized table cost 1+10+6 = 17, so auto still picks the table
+        StringBuilder neg = dupSwitch(-2, 3, 8, "set y 20", "set y 30", "set y 99");
         String negAuto = loweredCode(SugarCompiler.compile(neg.toString()));
         check(negAuto.contains("op sub __ls_sw_0 x -2"), "negative-minimum table missed its op sub normalization:\n" + negAuto);
-        check(negAuto.contains("jump __ls_stmt_27 lessThan __ls_sw_0 0"), "normalized lower guard wrong");
-        check(negAuto.contains("jump __ls_stmt_27 greaterThan __ls_sw_0 5"), "normalized upper guard wrong");
+        check(negAuto.contains("op floor __ls_sw_fl_0 __ls_sw_0 0"), "normalized value was not snapped:\n" + negAuto);
+        check(negAuto.contains("lessThan __ls_sw_fl_0 0"), "normalized lower guard wrong:\n" + negAuto);
+        check(negAuto.contains("greaterThan __ls_sw_fl_0 5"), "normalized upper guard wrong:\n" + negAuto);
         check(!negAuto.contains("lessThan x 0"), "guards compared the un-normalized source value");
     }
 
@@ -427,14 +436,16 @@ public class SugarCompilerSelfTest{
         StringBuilder body = new StringBuilder();
         body.append("case 0\nprint zero\nbreak\n");
         body.append("default\nprint other\nbreak\n");
-        for(int i = 0; i < 4; i++) body.append("case 0\n");
+        // Enough duplicate cases that the guarded table (cost 11 for span 1) still beats the chain.
+        for(int i = 0; i < 12; i++) body.append("case 0\n");
         int dest = 1 + body.toString().split("\n", -1).length - 1;
         String sugar = "switchbegin x " + dest + "\n" + body + "blockend\nend\n";
 
         String table = loweredCode(SugarCompiler.compile(sugar));
-        check(table.contains("jump __ls_default_4 lessThan x 0"), "guard lost the default body:\n" + table);
-        check(table.contains("jump __ls_default_4 greaterThan x 0"), "upper guard lost the default body");
-        check(!table.contains("lessThan x 0\n") || !table.contains("jump __ls_stmt_12 lessThan x 0"),
+        check(table.contains("jump __ls_default_4 lessThan __ls_sw_fl_"), "guard lost the default body:\n" + table);
+        check(table.contains("jump __ls_default_4 greaterThan __ls_sw_fl_"), "upper guard lost the default body");
+        check(!table.contains("jump __ls_stmt_") || !table.contains("lessThan __ls_sw_fl_0 0\n")
+            || table.contains("jump __ls_default_4 lessThan __ls_sw_fl_"),
             "guards still aimed at the switch exit:\n" + table);
 
         // A chain-eligible switch names the default in its trailing jump, not the exit.
@@ -487,7 +498,7 @@ public class SugarCompilerSelfTest{
         Vars.logicVars.putEntry("true", 1);
 
         // two leading lines shift every statement; recompute the destIndex token accordingly
-        String head0 = dupSwitch(-2, 3, 6, "set y 20\nbreak", "set y 30\nbreak", null).toString();
+        String head0 = dupSwitch(-2, 3, 8, "set y 20\nbreak", "set y 30\nbreak", null).toString();
         int dest = Integer.parseInt(head0.split("\n")[0].split(" ")[2]);
         String sugarHead = head0.replaceFirst("^switchbegin x \\d+", "switchbegin x " + (dest + 2));
         double[] probes = {-9, -3, -2, -1, 0, 1, 2, 3, 4, 99};
@@ -498,6 +509,107 @@ public class SugarCompilerSelfTest{
                 "probe " + probe + ": expected y=" + expected
                     + "\n" + loweredCode(SugarCompiler.compile(program)));
         }
+    }
+
+    /** Non-integers must take the same branch under auto (jump table) and chainOnly (jump equal). */
+    private static void switchTableMatchesEqualTolerance(){
+        Vars.logicVars = new GlobalVars();
+        Vars.logicVars.putEntry("false", 0);
+        Vars.logicVars.putEntry("true", 1);
+        String body = dupSwitch(0, 1, 8, "set y 10\nbreak", "set y 20\nbreak", null).toString();
+        String auto = loweredCode(SugarCompiler.compile(body));
+        check(auto.contains("op add @counter @counter"), "tolerance fixture did not select a jump table:\n" + auto);
+        double[] probes = {0, 1, 0.5, 1.5, -0.0000004, 0.9999995};
+        for(double probe : probes){
+            String program = "set x " + formatProbe(probe) + "\nset y 0\n" + body;
+            double chain = execute(program, SugarCompiler.FuncMode.normal, "y");
+            String tableCode = SugarCompiler.compile(program, SugarCompiler.FuncMode.normal, null, null,
+                SugarCompiler.SwitchStrategy.auto);
+            double table = executeCode(tableCode, "y");
+            // chainOnly is the equal-tolerance reference
+            String chainCode = SugarCompiler.compile(program, SugarCompiler.FuncMode.normal, null, null,
+                SugarCompiler.SwitchStrategy.chainOnly);
+            chain = executeCode(chainCode, "y");
+            check(table == chain, "probe " + probe + " table y=" + table + " chain y=" + chain);
+        }
+    }
+
+    /** || in an expression is logical (only exact 0 is false); if/elif strictEqual is not rewritten to notEqual. */
+    private static void logicalOrAndStrictEqualExecute(){
+        Vars.logicVars = new GlobalVars();
+        Vars.logicVars.putEntry("false", 0);
+        Vars.logicVars.putEntry("true", 1);
+        String orOps = exprOps("hit", "a || b");
+        check(orOps.contains("op land") && orOps.contains("op or"), "|| did not lower to land/or: " + orOps);
+        check(!orOps.contains("op or hit a b") && !orOps.contains("op or _0 a b"),
+            "|| still bitwise-ors the operands: " + orOps);
+        String rebuilt = ExprCompiler.rebuild(ExprCompiler.compile("hit", "a || b"));
+        check("a||b".equals(rebuilt), "|| did not rebuild from its land/or chain, got: " + rebuilt);
+        check(executeCode("set a 0.5\nset b 0\n" + orOps, "hit") == 1, "0.5 || 0 must be 1");
+        check(executeCode("set a 0\nset b 0\n" + orOps, "hit") == 0, "0 || 0 must be 0");
+        check(executeCode("set a -0.5\nset b 0\n" + orOps, "hit") == 1, "-0.5 || 0 must be 1");
+        String strict = "set a \"hello\"\nset b 1\nset hit 0\nifbegin a strictEqual b 5\nset hit 1\nblockend\n";
+        check(execute(strict, SugarCompiler.FuncMode.normal, "hit") == 0,
+            "strictEqual of a string and 1 must not enter the branch");
+        String strictHit = "set a \"hello\"\nset b \"hello\"\nset hit 0\nifbegin a strictEqual b 5\nset hit 1\nblockend\n";
+        check(execute(strictHit, SugarCompiler.FuncMode.normal, "hit") == 1,
+            "strictEqual of two equal strings must enter the branch");
+    }
+
+    /**
+     * A plain for emits no continue label, so ~126 loops stay within vanilla's 500 jump
+     * locations. A continue in every loop spends the extra label and must be refused
+     * instead of saving text vanilla cannot parse. 756 fors are not allowed: that would
+     * pass both the label cap and the 1000-instruction cap.
+     */
+    private static void jumpLocationsStayVanillaParseable(){
+        String plain = repeatedFors(120, false);
+        String compiled = SugarCompiler.compile(plain);
+        int labels = 0;
+        for(String line : compiled.split("\n", -1)){
+            String bare = line.trim();
+            if(bare.length() >= 2 && bare.endsWith(":") && bare.indexOf(' ') < 0) labels++;
+        }
+        check(labels <= SugarCompiler.MAX_JUMP_LOCATIONS,
+            "120 plain fors used " + labels + " jump locations");
+        try{
+            SugarCompiler.compile(repeatedFors(130, true));
+            throw new AssertionError("fors with a continue label were accepted past the vanilla jump cap");
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("jump locations"),
+                "over-limit fors were not rejected for jump locations: " + expected.getMessage());
+        }
+        try{
+            SugarCompiler.compile(repeatedFors(756, false));
+            throw new AssertionError("756 fors were accepted");
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("jump locations") || expected.getMessage().contains("parse limit")
+                || expected.getMessage().contains("instructions"),
+                "756 fors were not refused: " + expected.getMessage());
+        }
+    }
+
+    private static String exprOps(String dest, String expr){
+        StringBuilder out = new StringBuilder();
+        for(ExprCompiler.Line line : ExprCompiler.compile(dest, expr)){
+            if(out.length() > 0) out.append('\n');
+            out.append(line.toText());
+        }
+        return out.append('\n').toString();
+    }
+
+    private static String repeatedFors(int count, boolean withContinue){
+        StringBuilder out = new StringBuilder();
+        int at = 0;
+        for(int i = 0; i < count; i++){
+            int end = at + (withContinue ? 3 : 2);
+            out.append("forbegin i 0 1 lessThan 1 ").append(end).append('\n');
+            out.append("print i\n");
+            if(withContinue) out.append("continue\n");
+            out.append("blockend\n");
+            at = end + 1;
+        }
+        return out.toString();
     }
 
     private static String formatProbe(double probe){
@@ -587,7 +699,7 @@ public class SugarCompilerSelfTest{
         String auto = SugarCompiler.compile(dup);
         String chainOnly = SugarCompiler.compile(dup,
             SugarCompiler.FuncMode.normal, null, null, SugarCompiler.SwitchStrategy.chainOnly);
-        check(auto.contains("op add @counter @counter x"), "auto did not pick the table for a dup-heavy switch");
+        check(auto.contains("op add @counter @counter __ls_sw_fl_0"), "auto did not pick the table for a dup-heavy switch:\n" + auto);
         check(!chainOnly.contains("@counter @counter") && !chainOnly.contains("__ls_sw_"),
             "chainOnly leaked table instructions:\n" + chainOnly);
         // legacy shape: comparisons plus one unconditional default jump, nothing else
@@ -597,12 +709,12 @@ public class SugarCompilerSelfTest{
             "chainOnly emitted table guards");
 
         // negative-minimum duplication-heavy switches also stay verbatim under chainOnly
-        String neg = dupSwitch(-2, 3, 6, "set y 20", "set y 30", "set y 99").toString();
+        String neg = dupSwitch(-2, 3, 8, "set y 20", "set y 30", "set y 99").toString();
         String negAuto = loweredCode(SugarCompiler.compile(neg));
         String negChain = loweredCode(SugarCompiler.compile(neg,
             SugarCompiler.FuncMode.normal, null, null, SugarCompiler.SwitchStrategy.chainOnly));
         check(negAuto.contains("op sub __ls_sw_0 x -2"), "negative minimum did not build a normalized table:\n" + negAuto);
-        check(negAuto.contains("jump __ls_stmt_27 greaterThan __ls_sw_0 5"), "normalized upper guard wrong");
+        check(negAuto.contains("greaterThan __ls_sw_fl_0 5"), "normalized upper guard wrong:\n" + negAuto);
         check(negChain.contains("jump __ls_case_1 equal x -2") && negChain.contains("jump __ls_case_3 equal x 3"),
             "chainOnly negative case lost comparisons");
         check(!negChain.contains("__ls_sw_") && !negChain.contains("@counter @counter"),

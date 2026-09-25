@@ -259,6 +259,8 @@ public final class SugarDecompiler{
      * still walks the regular recovery flow instead of triaging to flat):</p>
      * <ul>
      *   <li>{@code op add @counter @counter <idx>} - the switch jump-table dispatch;</li>
+     *   <li>a packed stride dispatch ({@code op mul} plus {@code op add @counter}, or the
+     *       three-op relative form) that {@link #recognizeStride} accepts as a switch;</li>
      *   <li>{@code set @counter <name>} with {@code name} starting {@code __ls_} - the
      *       function-return trampolines ({@code set @counter __ls_func_<name>_ret});</li>
      *   <li>{@code set @counter <zero>} - the entry skip every compiled program ends its main
@@ -299,11 +301,124 @@ public final class SugarDecompiler{
         if(statement.kind().equals("op") && statement.tokens.length >= 5
             && statement.token(1).equals("add") && statement.token(2).equals("@counter")
             && statement.token(3).equals("@counter")) return true;
+        // Packed stride table: the @counter write is the 2nd op (absolute) or the 3rd (relative).
+        if(isStrideCounterWrite(statements, index)) return true;
         // Entry skip: set @counter <zero>, the last statement of every compiled main body.
         if(isEntrySkip(statements, index)) return true;
         // Compiler-internal return trampoline: set @counter __ls_*.
         return statement.kind().equals("set") && statement.tokens.length >= 3
             && statement.token(1).equals("@counter") && statement.token(2).startsWith("__ls_");
+    }
+
+    /** Whether {@code index} is the {@code @counter} write of a packed stride table. */
+    private static boolean isStrideCounterWrite(List<Statement> statements, int index){
+        if(index >= 1 && recognizeStride(statements, index - 1, statements.size()) != null) return true;
+        return index >= 2 && recognizeStride(statements, index - 2, statements.size()) != null;
+    }
+
+    /**
+     * A packed {@code @counter} switch: {@code op mul tmp idx stride} then either
+     * {@code op add @counter tmp K} (absolute: slot {@code v} is instruction {@code v*stride+K})
+     * or {@code op add tmp @counter tmp} plus {@code op add|sub @counter tmp off} (relative:
+     * slot {@code v} is the instruction right after the dispatch when {@code v} is the first case).
+     * Slots are contiguous bodies of {@code stride} instructions. An {@code end} trailer may
+     * finish with one short slot at the region limit; a shared unconditional jump trailer
+     * stops at the first slot that jumps elsewhere. Fewer than two full slots is not a table.
+     */
+    private record StrideHit(int tableStart, int exit, int stride, long firstCase, String index, String temp, boolean relative){}
+
+    private static StrideHit recognizeStride(List<Statement> statements, int at, int limit){
+        if(at < 0 || at + 2 >= limit || at + 2 >= statements.size()) return null;
+        Statement mul = statements.get(at);
+        if(!mul.kind().equals("op") || mul.tokens.length < 5 || !"mul".equals(mul.token(1))) return null;
+        String temp = mul.token(2);
+        String index = mul.token(3);
+        if(!isStrideName(temp) || !isStrideName(index)) return null;
+        Double strideValue = Candidate.integerLiteral(mul.token(4));
+        if(strideValue == null || strideValue < 1 || strideValue > SugarFunctions.MAX_TABLE_SPAN) return null;
+        int stride = (int)(double)strideValue;
+
+        Statement second = statements.get(at + 1);
+        boolean relative;
+        int tableStart;
+        long firstCase;
+        if(second.kind().equals("op") && second.tokens.length >= 5
+            && "add".equals(second.token(1)) && "@counter".equals(second.token(2)) && temp.equals(second.token(3))){
+            Double constant = Candidate.integerLiteral(second.token(4));
+            if(constant == null) return null;
+            relative = false;
+            tableStart = at + 2;
+            long delta = tableStart - (long)(double)constant;
+            if(delta % stride != 0) return null;
+            firstCase = delta / stride;
+        }else if(at + 3 < limit && at + 3 < statements.size()
+            && second.kind().equals("op") && second.tokens.length >= 5
+            && "add".equals(second.token(1)) && temp.equals(second.token(2))
+            && "@counter".equals(second.token(3)) && temp.equals(second.token(4))){
+            Statement third = statements.get(at + 2);
+            if(!third.kind().equals("op") || third.tokens.length < 5 || !"@counter".equals(third.token(2))
+                || !temp.equals(third.token(3))) return null;
+            Double offset = Candidate.integerLiteral(third.token(4));
+            if(offset == null || offset < 0) return null;
+            long signed;
+            if("add".equals(third.token(1))) signed = (long)(double)offset;
+            else if("sub".equals(third.token(1))) signed = -(long)(double)offset;
+            else return null;
+            long numer = 1 - signed;
+            if(numer % stride != 0) return null;
+            relative = true;
+            tableStart = at + 3;
+            firstCase = numer / stride;
+        }else{
+            return null;
+        }
+        if(tableStart >= limit) return null;
+
+        int firstEnd = tableStart + stride - 1;
+        if(firstEnd >= limit) return null;
+        Statement trailer = statements.get(firstEnd);
+        boolean endTrailer = "end".equals(trailer.kind());
+        boolean jumpTrailer = trailer.isAlways() && trailer.target >= 0;
+        if(!endTrailer && !jumpTrailer) return null;
+        int jumpTarget = jumpTrailer ? trailer.target : -1;
+        int slots = 0;
+        while(tableStart + (slots + 1L) * stride <= limit){
+            int lastAt = tableStart + (slots + 1) * stride - 1;
+            Statement last = statements.get(lastAt);
+            if(endTrailer){
+                if(!"end".equals(last.kind())) break;
+            }else if(!last.isAlways() || last.target != jumpTarget){
+                break;
+            }
+            slots++;
+            if(slots >= SugarFunctions.MAX_TABLE_SPAN) break;
+        }
+        if(slots < 2) return null;
+        int exit = tableStart + slots * stride;
+        if(endTrailer){
+            int rem = limit - exit;
+            if(rem > 0 && rem < stride && exit + rem <= statements.size()){
+                boolean prefix = true;
+                for(int i = 0; i < rem; i++){
+                    if(!statements.get(exit + i).kind().equals(statements.get(tableStart + i).kind())){
+                        prefix = false;
+                        break;
+                    }
+                }
+                boolean trailingSkip = rem == 1 && isEntrySkipShape(statements.get(exit));
+                if(prefix && !trailingSkip && slots + 1 <= SugarFunctions.MAX_TABLE_SPAN) exit += rem;
+            }
+        }
+        return new StrideHit(tableStart, exit, stride, firstCase, index, temp, relative);
+    }
+
+    private static boolean isStrideName(String token){
+        if(token == null || token.length() < 1 || token.charAt(0) == '@' || token.charAt(0) == '"') return false;
+        for(int i = 0; i < token.length(); i++){
+            char c = token.charAt(i);
+            if(c == ' ' || c == '\n' || c == '"') return false;
+        }
+        return true;
     }
 
     /**
@@ -860,18 +975,30 @@ public final class SugarDecompiler{
     private static final class SwitchItem extends Item{
         final String value;
         final boolean rawTable;
+        final int strideLen;
+        final String strideTemp;
+        final boolean strideRelative;
         BlockEndItem end;
         SwitchItem(int origin, String value, boolean rawTable){
+            this(origin, value, rawTable, 0, "", false);
+        }
+        SwitchItem(int origin, String value, boolean rawTable, int strideLen, String strideTemp, boolean strideRelative){
             super(origin, origin);
             this.value = value;
             this.rawTable = rawTable;
+            this.strideLen = strideLen;
+            this.strideTemp = strideTemp == null ? "" : strideTemp;
+            this.strideRelative = strideRelative;
         }
         @Override void write(StringBuilder out, Emitter emitter){
             out.append("switchbegin ").append(value).append(' ')
                 .append(emitter.itemSlot(end));
             // The mode token has to survive into the carrier: it is what reproduces a
-            // guard-less table instead of the bounds-checked one.
-            if(rawTable) out.append(" raw");
+            // guard-less table, or a packed stride table, instead of the bounds-checked one.
+            if(strideLen > 0){
+                out.append(" stride ").append(strideLen).append(' ').append(strideTemp)
+                    .append(strideRelative ? " rel" : " abs");
+            }else if(rawTable) out.append(" raw");
             out.append('\n');
         }
         @Override int priority(){ return 20; }
@@ -976,6 +1103,11 @@ public final class SugarDecompiler{
          * These fields are only set by {@link Candidate#tryBareSwitchTable}.
          */
         boolean rawTable;
+        /** Packed stride table ({@link Candidate#tryStrideSwitch}). */
+        boolean strideTable;
+        int strideLen;
+        String strideTemp = "";
+        boolean strideRelative;
         int rowsEnd = -1;
         /** Slot values per {@link #caseTargets} entry, ascending. */
         List<List<Long>> caseSlotValues;
@@ -1413,7 +1545,9 @@ public final class SugarDecompiler{
             // A guard-less table carries its rows straight after the dispatch; the guarded
             // lowering puts two bounds guards there instead, so the two never match the same
             // position and the order between them only decides which is tried first.
-            Frame frame = tryBareSwitchTable(at, limit);
+            Frame frame = tryStrideSwitch(at, limit);
+            if(frame != null) candidates.add(frame);
+            frame = tryBareSwitchTable(at, limit);
             if(frame != null) candidates.add(frame);
             candidates.addAll(trySwitchTable(at, limit));
             candidates.addAll(trySwitch(at, limit));
@@ -1451,14 +1585,98 @@ public final class SugarDecompiler{
         }
 
         /**
-         * Recovers the @counter jump-table lowering of a switch: [optional op sub] + two
-         * bounds guards + {@code op add @counter @counter idx} + span unconditional slot
-         * rows. Guards and hole slots share the default target; case slots point at body
-         * starts and group back into ascending case labels. Slot targets retargeted by jump
-         * threading (a hole that hops straight to wherever the default chain ended) are
-         * classified by chasing unconditional chains, so both lowering eras recover.
-         * Anything unmatched falls through to the comparison-chain or flat vanilla paths;
-         * recompilation verification stays the final gate.
+         * Recovers the @counter jump-table lowering of a switch: [optional op sub] + an
+         * equal-tolerance snap + two bounds guards + {@code op add @counter @counter idx} +
+         * span unconditional slot rows. Guards and hole slots share the default target; case
+         * slots point at body starts and group back into ascending case labels. Slot targets
+         * retargeted by jump threading (a hole that hops straight to wherever the default chain
+         * ended) are classified by chasing unconditional chains, so both lowering eras recover.
+         * A table saved before the snap (guards immediately after the optional sub) still
+         * matches; recompilation uses the current snap, and the verify gate decides.
+         * Anything unmatched falls through to the comparison-chain or flat vanilla paths.
+         */
+        private int matchEqualSnap(int cursor, int limit){
+            if(cursor + 7 >= limit) return -1;
+            Statement floor = program.statements.get(cursor);
+            if(!floor.kind().equals("op") || !"floor".equals(floor.token(1))) return -1;
+            String fl = floor.token(2);
+            if(!fl.startsWith("__ls_sw_fl_") || !"0".equals(floor.token(4))) return -1;
+            String src = floor.token(3);
+            if(src.isEmpty()) return -1;
+            Statement subDf = program.statements.get(cursor + 1);
+            if(!subDf.kind().equals("op") || !"sub".equals(subDf.token(1))) return -1;
+            String df = subDf.token(2);
+            if(!df.startsWith("__ls_sw_df_") || !src.equals(subDf.token(3)) || !fl.equals(subDf.token(4))) return -1;
+            Statement nearFloor = program.statements.get(cursor + 2);
+            if(!nearFloor.isConditional() || !"lessThan".equals(nearFloor.token(2))
+                || !df.equals(nearFloor.token(3)) || !isEqualTolerance(nearFloor.token(4))
+                || nearFloor.target != cursor + 7) return -1;
+            Statement subDc = program.statements.get(cursor + 3);
+            if(!subDc.kind().equals("op") || !"sub".equals(subDc.token(1))) return -1;
+            String dc = subDc.token(2);
+            if(!dc.startsWith("__ls_sw_dc_") || !"1".equals(subDc.token(3)) || !df.equals(subDc.token(4))) return -1;
+            Statement nearCeil = program.statements.get(cursor + 4);
+            if(!nearCeil.isConditional() || !"lessThan".equals(nearCeil.token(2))
+                || !dc.equals(nearCeil.token(3)) || !isEqualTolerance(nearCeil.token(4))
+                || nearCeil.target != cursor + 6) return -1;
+            if(!program.statements.get(cursor + 5).isAlways()) return -1;
+            Statement bump = program.statements.get(cursor + 6);
+            if(!bump.kind().equals("op") || !"add".equals(bump.token(1))
+                || !fl.equals(bump.token(2)) || !fl.equals(bump.token(3)) || !"1".equals(bump.token(4))) return -1;
+            return cursor + 7;
+        }
+
+        private static boolean isEqualTolerance(String token){
+            try{
+                return Double.parseDouble(token) == 0.000001d;
+            }catch(NumberFormatException e){
+                return false;
+            }
+        }
+
+        /**
+         * Recovers a packed stride {@code @counter} switch. Each full slot is one case of
+         * {@code stride} instructions; a short final slot is the last case. Jumps to the
+         * instruction after the table become {@code break}.
+         */
+        private Frame tryStrideSwitch(int at, int limit){
+            StrideHit hit = recognizeStride(program.statements, at, limit);
+            if(hit == null) return null;
+            int full = 0;
+            int cursor = hit.tableStart;
+            while(cursor + hit.stride <= hit.exit){
+                full++;
+                cursor += hit.stride;
+            }
+            int caseCount = full + (cursor < hit.exit ? 1 : 0);
+            if(caseCount < 2 || caseCount > SugarFunctions.MAX_TABLE_SPAN) return null;
+
+            Frame frame = new Frame();
+            frame.kind = Frame.Kind.SWITCH;
+            frame.strideTable = true;
+            frame.strideLen = hit.stride;
+            frame.strideTemp = hit.temp;
+            frame.strideRelative = hit.relative;
+            frame.switchValue = hit.index;
+            frame.start = at;
+            frame.exit = hit.exit;
+            frame.resume = hit.exit;
+            frame.breakTarget = hit.exit;
+            frame.caseTargets = new ArrayList<>();
+            frame.caseValues = new ArrayList<>();
+            int slot = hit.tableStart;
+            for(int i = 0; i < caseCount; i++){
+                frame.caseTargets.add(slot);
+                frame.caseValues.add(Long.toString(hit.firstCase + i));
+                if(i + 1 >= caseCount) break;
+                slot += hit.stride;
+                if(slot >= hit.exit) return null;
+            }
+            return frame;
+        }
+
+        /**
+         * Recovers the @counter jump-table lowering of a switch. See {@link #matchEqualSnap}.
          */
         private List<Frame> trySwitchTable(int at, int limit){
             if(at >= limit) return List.of();
@@ -1479,6 +1697,21 @@ public final class SugarDecompiler{
                 switchValue = null;
             }
 
+            int floorAt = cursor;
+            int boundsAt = matchEqualSnap(cursor, limit);
+            boolean snapped = boundsAt >= 0;
+            if(snapped){
+                Statement floor = program.statements.get(floorAt);
+                if(hasSub){
+                    if(!floor.token(3).equals(first.token(2))) return List.of();
+                }else if(floor.token(3).isEmpty()){
+                    return List.of();
+                }else{
+                    switchValue = floor.token(3);
+                }
+                cursor = boundsAt;
+            }
+
             // lower bound: jump D lessThan <idx> 0
             if(cursor + 2 >= limit) return List.of();
             Statement guardLow = program.statements.get(cursor);
@@ -1486,9 +1719,13 @@ public final class SugarDecompiler{
                 || !(guardLow.isConditional() && "lessThan".equals(guardLow.token(2)) && "0".equals(guardLow.token(4)))) return List.of();
             String idx = guardLow.token(3);
             if(idx.isEmpty()) return List.of();
-            if(hasSub){
+            if(snapped){
+                if(!idx.equals(program.statements.get(floorAt).token(2))) return List.of();
+            }else if(hasSub){
                 if(!idx.equals(first.token(2))) return List.of();
             }else{
+                // The snap's own bounds use __ls_sw_fl_; that is not a second table.
+                if(idx.startsWith("__ls_sw_fl_")) return List.of();
                 switchValue = idx;
             }
 
@@ -1553,7 +1790,9 @@ public final class SugarDecompiler{
             // Repeated case values which targeted the same first label are invisible after
             // label folding. Reinsert only zero-length labels (same target, before its body)
             // until a recompilation still selects the table; they add no executable lines.
-            int tableCost = (min != 0 ? 1 : 0) + 3 + span;
+            int tableCost = snapped
+                ? SugarFunctions.guardedJumpTableCost(hasSub, span)
+                : (min != 0 ? 1 : 0) + 3 + span;
             int requiredCases = tableCost - 1;
             int additions = Math.max(0, requiredCases - frame.caseValues.size());
             if(additions > 0){
@@ -1794,7 +2033,8 @@ public final class SugarDecompiler{
                         structured++;
                         break;
                     }
-                    SwitchItem header = new SwitchItem(frame.start, frame.switchValue, false);
+                    SwitchItem header = new SwitchItem(frame.start, frame.switchValue, false,
+                        frame.strideLen, frame.strideTemp, frame.strideRelative);
                     items.add(header);
                     Context context = new Context(frame.breakTarget >= 0 ? frame.breakTarget : frame.exit, -1, parent);
                     for(int i = 0; i < frame.caseTargets.size(); i++){

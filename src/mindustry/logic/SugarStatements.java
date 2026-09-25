@@ -500,6 +500,17 @@ public final class SugarStatements{
          * switch card starts guarded and the mode button on the card switches it.</p>
          */
         public boolean rawTable;
+        /**
+         * Packed stride table: the case bodies themselves are the slots, each exactly
+         * {@code stride} instructions long (the last may be shorter when the program ends
+         * there). {@code strideTemp} is the scratch variable the dispatch multiplies into.
+         * {@code strideRelative} selects the position-independent form
+         * ({@code mul} / {@code add tmp @counter tmp} / {@code add|sub @counter}) over the
+         * absolute form ({@code mul} / {@code add @counter tmp K}).
+         */
+        public int stride;
+        public String strideTemp = "counter";
+        public boolean strideRelative;
 
         @Override
         public void build(Table table){
@@ -523,6 +534,10 @@ public final class SugarStatements{
             table.clearChildren();
             table.left();
             table.update(() -> table.setColor(elem == null ? Pal.logicControl : elem.color));
+            if(stride > 0){
+                table.add(text("switch.stride", "stride " + stride)).self(c -> hint(c, "switch.stride"));
+                return;
+            }
             table.button(b -> {
                 b.add(text(rawTable ? "switch.raw.on" : "switch.raw.off", rawTable ? "raw" : "bounds"));
                 b.clicked(() -> {
@@ -537,7 +552,10 @@ public final class SugarStatements{
         @Override public String typeName(){ return "SwitchBegin"; }
         @Override public void write(StringBuilder out){
             out.append(collapsed ? "switchbeginc " : "switchbegin ").append(value).append(' ').append(destIndex);
-            if(rawTable) out.append(" raw");
+            if(stride > 0){
+                out.append(" stride ").append(stride).append(' ').append(strideTemp)
+                    .append(strideRelative ? " rel" : " abs");
+            }else if(rawTable) out.append(" raw");
         }
     }
 
@@ -981,6 +999,12 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
         result.destIndex = parseDestIndex(tokens[2]);
         // Optional trailing mode token; absent (every save before this mode existed) stays guarded.
         if(tokens.length > 3 && "raw".equals(tokens[3])) result.rawTable = true;
+        else if(tokens.length > 6 && "stride".equals(tokens[3])){
+            try{ result.stride = Integer.parseInt(tokens[4]); }
+            catch(NumberFormatException ignored){ result.stride = 0; }
+            result.strideTemp = tokens[5];
+            result.strideRelative = "rel".equals(tokens[6]);
+        }
         result.collapsed = collapsed;
         return result;
     }

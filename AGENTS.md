@@ -188,6 +188,19 @@ program, so the shape is carried in the source:
   as candidates — a body jumping past the switch is indistinguishable from a default at that
   level — and the gate decides, the same way the rest of the recovery resolves ambiguity.
 
+### Packed stride tables (`switchbegin … stride`)
+
+Hand-written unit controllers often dispatch with a multiply instead of one jump row per
+slot: `op mul <tmp> <idx> <stride>` then either `op add @counter <tmp> <K>` (absolute: case
+`v` is instruction `v*stride+K`) or `op add <tmp> @counter <tmp>` plus `op add|sub @counter`
+(relative: the first case is the instruction after the three-op dispatch). The case bodies
+*are* the slots, each exactly `stride` instructions; a final short slot is allowed only when
+it runs to the end of the region. Recovery writes `switchbegin <idx> <dest> stride <n> <tmp> abs|rel`.
+The constant `K` is recomputed at compile time from the instruction index of the first body,
+so the product stays byte-identical without storing a stale address. Anything that is not two
+full slots with a shared `end` or shared unconditional-jump trailer stays vanilla. The
+dynamic-`@counter` triage treats only a dispatch `recognizeStride` accepts as known-safe.
+
 **Checklist for any change that touches the compiled product:**
 
 - Update the carrier path so the new card/feature survives `compile → save → restore → verifyRestore`.

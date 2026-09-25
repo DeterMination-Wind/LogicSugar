@@ -1,0 +1,188 @@
+sensor ts @this @timescale
+set ctrlcc 4
+jump 6 lessThanEq ts 1
+set ctrlcc 5
+jump 6 lessThanEq ts 2
+set ctrlcc 8
+op mod un un ctrlcc
+op add un un 1
+op mul counter un 5
+op add @counter counter 5
+set myCarrier mC1
+set carryType @silicon
+set scanFac scan1
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC2
+set carryType @plastanium
+set scanFac scan2
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC3
+set carryType @phase-fabric
+set scanFac scan3
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC4
+set carryType @surge-alloy
+set scanFac scan4
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC5
+set carryType @silicon
+set scanFac scan5
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC6
+set carryType @plastanium
+set scanFac scan6
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC7
+set carryType @surge-alloy
+set scanFac scan7
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC8
+set carryType @silicon
+set scanFac scan8
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC9
+set carryType @silicon
+set scanFac scan9
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC10
+set carryType @silicon
+set scanFac scan10
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC11
+set carryType @silicon
+set scanFac scan11
+set toCore 0
+jump 69 always 0 0
+set myCarrier mC12
+set carryType @silicon
+set scanFac scan12
+set toCore 0
+jump 69 always 0 0
+sensor hp myCarrier @health
+jump 150 lessThanEq hp 0
+op mul checkUn un 100000000
+op add checkFlag checkUn falgMI2theOnlyGodxy
+sensor flag myCarrier @flag
+jump 150 notEqual flag checkFlag
+ubind myCarrier
+ulocate building core 0 @copper cx cy found core
+getlink factory scanFac
+jump 106 strictEqual factory null
+sensor uItemType @unit @firstItem
+jump 95 equal toCore 1
+jump 87 strictEqual uItemType carryType
+ucontrol approach cx cy 5 0 0
+ucontrol itemDrop core 999 5 0 0
+ucontrol itemTake core carryType 999 0 0
+end
+print "运工厂，判定是否运入工厂"
+sensor fx factory @x
+sensor fy factory @y
+ucontrol itemDrop factory 999 5 0 0
+ucontrol approach fx fy 4 0 0
+ucontrol within fx fy 4.5 worked 0
+jump 107 equal worked 1
+end
+print "运核心，判定是否运入核心"
+jump 101 strictEqual uItemType null
+ucontrol approach cx cy 5 0 0
+ucontrol itemDrop core 999 5 0 0
+sensor worked @unit @totalItems
+jump 107 equal worked 1
+end
+sensor fx factory @x
+sensor fy factory @y
+ucontrol itemTake factory carryType 999 0 0
+ucontrol approach fx fy 4 0 0
+end
+ucontrol move @thisx @thisy 5 0 0
+op mul counter un 3
+op add counter @counter counter
+op sub @counter counter 2
+op add scan1 scan1 1
+op mod scan1 scan1 @links
+end
+op add scan2 scan2 1
+op mod scan2 scan2 @links
+end
+op add scan3 scan3 1
+op mod scan3 scan3 @links
+end
+op add scan4 scan4 1
+op mod scan4 scan4 @links
+end
+op add scan5 scan5 1
+op mod scan5 scan5 @links
+end
+op add scan6 scan6 1
+op mod scan6 scan6 @links
+end
+op add scan7 scan7 1
+op mod scan7 scan7 @links
+end
+op add scan8 scan8 1
+op mod scan8 scan8 @links
+end
+op add scan9 scan9 1
+op mod scan9 scan9 @links
+end
+op add scan10 scan10 1
+op mod scan10 scan10 @links
+end
+op add scan11 scan11 1
+op mod scan11 scan11 @links
+end
+op add scan12 scan12 1
+op mod scan12 scan12 @links
+end
+print "六六大顺 究极一控n搬运豆1.6 by 我的工业2<CN-ARC>"
+print "指定物品，依link多容器遍历/单个容器，指定是否运回核心"
+print "温和鸽派抓取，仅在抓取时添加flag，请任何鹰派抓取即刻爬走"
+end
+ubind @flare
+sensor flag @unit @flag
+jump 155 equal flag 0
+sensor ctrl @unit @controlled
+jump 150 greaterThanEq ctrl 1
+op floor falgMI2theOnlyGodxy @thisx 10000
+op mul falgMI2theOnlyGodxy falgMI2theOnlyGodxy 10000
+op add falgMI2theOnlyGodxy falgMI2theOnlyGodxy @thisy
+op mul falgUn un 100000000
+op add falgMI2theOnlyGod falgMI2theOnlyGodxy falgUn
+ucontrol flag falgMI2theOnlyGod 0 0 0 0
+op mul counter un 2
+op add counter @counter counter
+op sub @counter counter 1
+set mC1 @unit
+end
+set mC2 @unit
+end
+set mC3 @unit
+end
+set mC4 @unit
+end
+set mC5 @unit
+end
+set mC6 @unit
+end
+set mC7 @unit
+end
+set mC8 @unit
+end
+set mC9 @unit
+end
+set mC10 @unit
+end
+set mC11 @unit
+end
+set mC12 @unit

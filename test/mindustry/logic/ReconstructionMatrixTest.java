@@ -107,6 +107,8 @@ public final class ReconstructionMatrixTest{
         // Raw (guard-less) jump table: the mode token, its slot rows and the default body all
         // have to survive the carrier, and the card has to stay the shape that reproduces them.
         addInfer("switch.raw", "set v 0\nswitchbegin v 999 raw\ncase 0\nset y 1\nbreak\ncase 2\nset y 2\nbreak\ndefault\nset y 3\nbreak\nblockend\nprint y\n", "switchbegin v 11 raw", "raw");
+        addInferred("switch.stride.rel", "set un 1\nswitchbegin un 999 stride 2 counter rel\ncase 1\nset a 1\nend\ncase 2\nset a 2\nend\nblockend\nprint a\n", "stride 2 counter rel", "stride 2 counter rel");
+        addInferred("switch.stride.abs", "set un 1\nswitchbegin un 999 stride 2 counter abs\ncase 1\nset a 1\nend\ncase 2\nset a 2\nend\nblockend\nprint a\n", "stride 2 counter abs", "stride 2 counter abs");
 
         addInfer("func.returnconst", "funcdef f ~ 999\nreturn \"1\"\nblockend\nset x 0\nfunccall f \"\" out\nprint out\n", "funcdef f", "funcdef");
         addInfer("func.returnparam", "funcdef f a 999\nreturn \"a + 1\"\nblockend\nset x 3\nfunccall f \"x\" out\nprint out\n", "return \"a + 1\"", "funcdef");

@@ -762,6 +762,14 @@ public final class SugarCompiler{
                 String hint = mode == FuncMode.inline ? " Switch to normal mode to share function bodies." : "";
                 throw new IllegalArgumentException("Compiled program has " + instructionCount + " instructions; maximum is " + LExecutor.maxInstructions + "." + hint);
             }
+            // LParser errors on the 501st label ("Too many jump locations. Max jumps: 500")
+            // before it ever looks at the 1000-instruction cap. A structured loop used to emit
+            // enough labels to fail that parse while still fitting in 1000 instructions.
+            int jumpLocations = countJumpLocations(lowered);
+            if(jumpLocations > MAX_JUMP_LOCATIONS){
+                throw new IllegalArgumentException("Compiled program has " + jumpLocations
+                    + " jump locations; vanilla parsers allow at most " + MAX_JUMP_LOCATIONS + ".");
+            }
 
             StringBuilder result = new StringBuilder(lowered);
             appendMarker(result, source);
@@ -1451,6 +1459,22 @@ public final class SugarCompiler{
             if(statements.get(i) instanceof FuncDefStatement) stack.push(i);
         }
         return result;
+    }
+
+    /** Vanilla {@code LParser} refuses the 501st jump label. Not an instruction-budget override. */
+    public static final int MAX_JUMP_LOCATIONS = 500;
+
+    private static int countJumpLocations(String text){
+        int count = 0;
+        int index = 0;
+        while(index < text.length()){
+            int end = text.indexOf('\n', index);
+            if(end < 0) end = text.length();
+            String line = text.substring(index, end).trim();
+            if(line.length() >= 2 && line.endsWith(":") && line.indexOf(' ') < 0) count++;
+            index = end + 1;
+        }
+        return count;
     }
 
     private static int countInstructions(StringBuilder out){

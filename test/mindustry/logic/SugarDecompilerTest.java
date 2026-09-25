@@ -22,6 +22,8 @@ public final class SugarDecompilerTest{
         threadedSwitchTableRoundTrip();
         switchDefaultCaseRoundTrip();
         rawJumpTableRoundTrip();
+        strideSwitchRoundTrip();
+        handWrittenStrideSwitchRecovers();
         handWrittenProgramWithoutEntrySkipRecovers();
         numericJumpChainIsThreadedForTheGate();
         realWorldJumpTableRecovers();
@@ -102,7 +104,7 @@ public final class SugarDecompilerTest{
         String source = tableSource(false);
         String compiled = SugarCompiler.compile(source);
         String raw = stripGenerated(compiled);
-        check(raw.contains("op add @counter @counter x"), "table source did not compile to a jump table");
+        check(raw.contains("op add @counter @counter __ls_sw_fl_"), "table source did not compile to a jump table:\n" + raw);
         SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
         check(result.verified, "jump-table candidate did not recompile identically: " + result.notes);
         check(result.structured > 0 && result.sugar.contains("switchbegin")
@@ -159,11 +161,11 @@ public final class SugarDecompilerTest{
         StringBuilder body = new StringBuilder();
         body.append("case 0\nprint zero\nbreak\n");
         body.append("default\nprint other\nbreak\n");
-        for(int i = 0; i < 4; i++) body.append("case 0\n");
+        for(int i = 0; i < 12; i++) body.append("case 0\n");
         int bodyLines = body.toString().split("\\n", -1).length - 1;
         String sugar = "switchbegin x " + (1 + bodyLines) + "\n" + body + "blockend\n";
         String raw = stripGenerated(SugarCompiler.compile(sugar));
-        check(raw.contains("op add @counter @counter x"),
+        check(raw.contains("op add @counter @counter __ls_sw_fl_"),
             "default-case fixture did not lower to a jump table:\n" + raw);
         check(raw.contains("__ls_default_"), "default case got no label of its own:\n" + raw);
         SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
@@ -194,6 +196,56 @@ public final class SugarDecompilerTest{
             "raw jump table did not recover as a raw switch: " + result.sugar);
         check(result.sugar.contains("\ndefault\n"),
             "the holes' shared target did not recover as the default case: " + result.sugar);
+        check(productStream(result.sugar).equals(inputStream(raw)),
+            "the recovered raw table does not recompile to the original program:\n"
+                + productStream(result.sugar));
+    }
+
+    /** Packed stride tables (absolute and relative) compile back to the mul/add dispatch. */
+    private static void strideSwitchRoundTrip(){
+        String relative = "set un 1\n"
+            + "switchbegin un 9 stride 2 counter rel\n"
+            + "case 1\nset a 1\nend\n"
+            + "case 2\nset a 2\nend\n"
+            + "blockend\nprint a\n";
+        String relativeRaw = stripGenerated(SugarCompiler.compile(relative));
+        check(relativeRaw.contains("op mul counter un 2\nop add counter @counter counter\nop sub @counter counter 1\n"),
+            "relative stride dispatch was not emitted:\n" + relativeRaw);
+        SugarDecompiler.Result relativeResult = SugarDecompiler.decompile(relativeRaw);
+        check(relativeResult.verified, "relative stride table was not verified: " + relativeResult.notes);
+        check(relativeResult.sugar.contains("stride 2 counter rel"),
+            "relative stride table was not recovered: " + relativeResult.sugar);
+
+        String absolute = "set un 1\n"
+            + "switchbegin un 9 stride 2 counter abs\n"
+            + "case 1\nset a 1\nend\n"
+            + "case 2\nset a 2\nend\n"
+            + "blockend\nprint a\n";
+        String absoluteRaw = stripGenerated(SugarCompiler.compile(absolute));
+        check(absoluteRaw.contains("op mul counter un 2\nop add @counter counter 1\n"),
+            "absolute stride dispatch was not emitted:\n" + absoluteRaw);
+        SugarDecompiler.Result absoluteResult = SugarDecompiler.decompile(absoluteRaw);
+        check(absoluteResult.verified, "absolute stride table was not verified: " + absoluteResult.notes);
+        check(absoluteResult.sugar.contains("stride 2 counter abs"),
+            "absolute stride table was not recovered: " + absoluteResult.sugar);
+    }
+
+    /** The reported one-processor-many-units program: three packed @counter switches. */
+    private static void handWrittenStrideSwitchRecovers(){
+        String raw;
+        try{
+            raw = logicsugar.SourceNails.readSource("test/fixtures/counter-stride-switch.mlog");
+        }catch(java.io.IOException exception){
+            throw new AssertionError("stride fixture could not be read: " + exception.getMessage());
+        }
+        SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
+        check(result.verified, "stride program was not verified: " + result.notes + "\n" + result.sugar);
+        check(result.sugar.contains("stride 5 counter abs"),
+            "the carrier dispatch was not recovered as an absolute stride switch:\n" + result.sugar);
+        check(result.sugar.contains("stride 3 counter rel"),
+            "the scan dispatch was not recovered as a relative stride switch:\n" + result.sugar);
+        check(result.sugar.contains("stride 2 counter rel"),
+            "the bind dispatch was not recovered as a relative stride switch:\n" + result.sugar);
         // The card has to reproduce the program, not rewrite it: compiling the recovered source
         // yields the same instruction stream once jump chains are normalized.
         check(productStream(result.sugar).equals(inputStream(raw)),

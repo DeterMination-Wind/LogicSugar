@@ -130,6 +130,9 @@ public class ExprCompiler{
     static final Map<String, Integer> OP_PRECEDENCE = new HashMap<>();
     static{
         put2("or", "||", PREC_OR);
+        // `||` lowers to logical-or (nonzero is true), not bitwise `or`. `lor` is not a
+        // vanilla opcode; compile emits land/land/or and rebuild folds that shape back.
+        put2("lor", "||", PREC_OR);
         put2("land", "&&", PREC_AND);
         put2("equal", "==", PREC_EQ);
         put2("notEqual", "!=", PREC_EQ);
@@ -435,7 +438,7 @@ public class ExprCompiler{
 
         Node parseOr(){
             Node left = parseAnd();
-            while(isOp("||")){ next(); left = new Binary("or", left, parseAnd()); }
+            while(isOp("||")){ next(); left = new Binary("lor", left, parseAnd()); }
             return left;
         }
 
@@ -863,6 +866,8 @@ public class ExprCompiler{
             case "max": return Math.max(a, b);
             case "min": return Math.min(a, b);
             case "logn": return Math.log(a) / Math.log(b);
+            // Dual of LogicOp.land: only an exact 0 is false. -0 matches 0; NaN is not folded.
+            case "lor": return (a != 0d || b != 0d) ? 1d : 0d;
             default: return null;
         }
     }
@@ -1199,6 +1204,7 @@ public class ExprCompiler{
             Binary bn = (Binary)node;
             String left = compileNode(bn.l, ops, temps);
             String right = compileNode(bn.r, ops, temps);
+            if("lor".equals(bn.op)) return compileLogicalOr(left, right, ops, temps);
             if(foldCounterConstants){
                 // 整棵子树的实参都是字面量时算出常量：`5*2` → `10`。折叠路径不分配临时量、
                 // 不发射 op，直接返回字面量（两个操作数本来就只是字面量文本，没有临时量可回收）。
@@ -1211,6 +1217,63 @@ public class ExprCompiler{
         }
 
         throw new ParseException(msg("la.err.unknown_node"));
+    }
+
+    /**
+     * Logical or, the dual of {@code land}: a value is true when it is not an exact 0.
+     * Vanilla has no {@code lor} opcode, so this is {@code land(a,a) | land(b,b)} — bitwise
+     * or of two 0/1 truth values. Bitwise {@code op or} on the original operands is not used,
+     * because that truncates to {@code long} and treats every fraction in (-1, 1) as false.
+     */
+    private static String compileLogicalOr(String left, String right, List<Line> ops, TempStack temps){
+        if(foldCounterConstants){
+            String folded = foldBinaryConstant("lor", left, right);
+            if(folded != null) return folded;
+        }
+        String leftTruthy = temps.fresh();
+        ops.add(new OpLine("land", leftTruthy, left, left));
+        String rightTruthy = temps.fresh();
+        ops.add(new OpLine("land", rightTruthy, right, right));
+        String dest = temps.fresh();
+        ops.add(new OpLine("or", dest, leftTruthy, rightTruthy));
+        return dest;
+    }
+
+    /** Folds {@code (a && a) || (b && b)} back into {@code a || b} after temp substitution. */
+    private static Node foldLogicalOr(Node node){
+        if(node instanceof Unary){
+            Unary unary = (Unary)node;
+            Node inner = foldLogicalOr(unary.operand);
+            return inner == unary.operand ? unary : new Unary(unary.op, inner);
+        }
+        if(!(node instanceof Binary)) return node;
+        Binary binary = (Binary)node;
+        Node left = foldLogicalOr(binary.l);
+        Node right = foldLogicalOr(binary.r);
+        if("or".equals(binary.op) && isSelfLand(left) && isSelfLand(right)){
+            return new Binary("lor", ((Binary)left).l, ((Binary)right).l);
+        }
+        if(left == binary.l && right == binary.r) return binary;
+        return new Binary(binary.op, left, right);
+    }
+
+    private static boolean isSelfLand(Node node){
+        return node instanceof Binary && "land".equals(((Binary)node).op) && sameNode(((Binary)node).l, ((Binary)node).r);
+    }
+
+    private static boolean sameNode(Node a, Node b){
+        if(a == b) return true;
+        if(a == null || b == null || a.getClass() != b.getClass()) return false;
+        if(a instanceof Var) return ((Var)a).name.equals(((Var)b).name);
+        if(a instanceof Num) return Double.doubleToLongBits(((Num)a).val) == Double.doubleToLongBits(((Num)b).val);
+        if(a instanceof Unary) return ((Unary)a).op.equals(((Unary)b).op) && sameNode(((Unary)a).operand, ((Unary)b).operand);
+        if(a instanceof Binary){
+            return ((Binary)a).op.equals(((Binary)b).op)
+                && sameNode(((Binary)a).l, ((Binary)b).l)
+                && sameNode(((Binary)a).r, ((Binary)b).r);
+        }
+        if(a instanceof Member) return ((Member)a).prop.equals(((Member)b).prop) && sameNode(((Member)a).base, ((Member)b).base);
+        return false;
     }
 
     // ===== 逆向重建：op 链 → 表达式 =====
@@ -1242,7 +1305,7 @@ public class ExprCompiler{
             }
         }
 
-        return nodeToString(expr);
+        return nodeToString(foldLogicalOr(expr));
     }
 
     /**
@@ -1270,7 +1333,7 @@ public class ExprCompiler{
                 value = substituteTemp(value, temp, sub);
             }
         }
-        return new String[]{nodeToString(dest), nodeToString(value)};
+        return new String[]{nodeToString(foldLogicalOr(dest)), nodeToString(foldLogicalOr(value))};
     }
 
     /** 一条 read/write 行折叠时解析到的数组/矩阵归属。CONSUMED 标记被消费的地址计算行

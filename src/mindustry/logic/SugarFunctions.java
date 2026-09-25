@@ -1878,11 +1878,7 @@ public final class SugarFunctions{
                         out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
                     }
                 }else{
-                    ConditionOp negated = negate(begin.op);
-                    if(negated != null){
-                        out.append("jump ").append(target).append(' ').append(negated.name()).append(' ')
-                            .append(begin.value).append(' ').append(begin.compare).append('\n');
-                    }
+                    emitComparisonSkip(begin.op, begin.value, begin.compare, target, label(prefix, "if_body_", i), out);
                 }
             }else if(statement instanceof ElseIfStatement item){
                 int owner = ifOwner[i];
@@ -1903,11 +1899,7 @@ public final class SugarFunctions{
                         out.append("jump ").append(target).append(" equal ").append(condition).append(" 0\n");
                     }
                 }else{
-                    ConditionOp negated = negate(item.op);
-                    if(negated != null){
-                        out.append("jump ").append(target).append(' ').append(negated.name()).append(' ')
-                            .append(item.value).append(' ').append(item.compare).append('\n');
-                    }
+                    emitComparisonSkip(item.op, item.value, item.compare, target, label(prefix, "if_body_", i), out);
                 }
             }else if(statement instanceof ElseStatement){
                 int owner = ifOwner[i];
@@ -1932,7 +1924,11 @@ public final class SugarFunctions{
                 int beginIndex = findOwner(statements, i);
                 LStatement owner = statements.get(beginIndex);
                 if(owner instanceof ForBeginStatement begin){
-                    out.append(label(prefix, "for_continue_", beginIndex)).append(":\n");
+                    // The continue label is a jump location. Vanilla LParser allows 500 of those,
+                    // so a loop with no continue does not spend one on an unreferenced label.
+                    if(loopHasContinue(statements, beginIndex, continueOwner)){
+                        out.append(label(prefix, "for_continue_", beginIndex)).append(":\n");
+                    }
                     if(!begin.step.isEmpty()) out.append("op add ").append(begin.variable).append(' ').append(begin.variable).append(' ').append(begin.step).append('\n');
                     out.append("jump ").append(label(prefix, "for_check_", beginIndex)).append(" always x false\n");
                 }else if(owner instanceof WhileBeginStatement){
@@ -2372,12 +2368,24 @@ public final class SugarFunctions{
         int span(){ return slots.length; }
 
         int cost(){
-            return (min != 0 ? 1 : 0) // op sub normalization
-                + 2                    // bounds guards
-                + 1                    // @counter dispatch
-                + slots.length;        // slot rows
+            return guardedJumpTableCost(min != 0, slots.length);
         }
     }
+
+    /**
+     * Instruction count of a guarded jump table: optional {@code op sub}, the equal-tolerance
+     * snap, two bounds guards, the {@code @counter} dispatch, and one row per slot.
+     * The decompiler reinserts duplicate cases until this cost still wins, so the two stay equal.
+     */
+    static int guardedJumpTableCost(boolean normalized, int span){
+        return (normalized ? 1 : 0) + GUARDED_TABLE_FIXED + span;
+    }
+
+    /** floor/sub/jumps that snap to an integer, plus the two bounds guards and the dispatch. */
+    private static final int GUARDED_TABLE_FIXED = 10;
+
+    /** {@code ConditionOp.equal} is {@code abs(a-b) < 1e-6}. The snap uses the same cutoff. */
+    private static final String EQUAL_TOLERANCE = "0.000001";
 
     /**
      * Emits the switch dispatch header. Two shapes (labels are free; only real instructions
@@ -2401,6 +2409,13 @@ public final class SugarFunctions{
             if(switchOwner[at] == index && statements.get(at) instanceof CaseStatement item){
                 cases.add(new SwitchCase(at, item.value, finiteNumber(item.value)));
             }
+        }
+
+        // A stride table is a property of the program, like the raw table: the bodies are the
+        // slots, and the dispatch is the mul/add sequence hand-written mlog actually uses.
+        if(begin.stride > 0){
+            emitStrideDispatch(statements, index, begin, cases, out);
+            return;
         }
 
         SwitchTable table = switchTable(cases);
@@ -2454,6 +2469,25 @@ public final class SugarFunctions{
             idxVar = begin.value; // min == 0: the source value indexes the table directly
         }
         if(guarded){
+            // Snap onto the one integer inside ConditionOp.equal's tolerance, otherwise default.
+            // A raw @counter add truncates, so 0.5 would enter slot 0 while the comparison
+            // chain (jump equal) would take default.
+            String id = prefix + index;
+            String fl = "__ls_sw_fl_" + id;
+            String df = "__ls_sw_df_" + id;
+            String dc = "__ls_sw_dc_" + id;
+            String ceilLabel = "__ls_sw_ceil_" + id;
+            String boundsLabel = "__ls_sw_bounds_" + id;
+            out.append("op floor ").append(fl).append(' ').append(idxVar).append(" 0\n");
+            out.append("op sub ").append(df).append(' ').append(idxVar).append(' ').append(fl).append('\n');
+            out.append("jump ").append(boundsLabel).append(" lessThan ").append(df).append(' ').append(EQUAL_TOLERANCE).append('\n');
+            out.append("op sub ").append(dc).append(" 1 ").append(df).append('\n');
+            out.append("jump ").append(ceilLabel).append(" lessThan ").append(dc).append(' ').append(EQUAL_TOLERANCE).append('\n');
+            out.append("jump ").append(defaultLabel).append(" always x false\n");
+            out.append(ceilLabel).append(":\n");
+            out.append("op add ").append(fl).append(' ').append(fl).append(" 1\n");
+            out.append(boundsLabel).append(":\n");
+            idxVar = fl;
             out.append("jump ").append(defaultLabel).append(" lessThan ").append(idxVar).append(" 0\n");
             out.append("jump ").append(defaultLabel).append(" greaterThan ").append(idxVar).append(' ').append(span - 1).append('\n');
         }
@@ -2463,6 +2497,97 @@ public final class SugarFunctions{
             out.append("jump ").append(caseIndex < 0 ? defaultLabel : label(prefix, "case_", caseIndex))
                 .append(" always x false\n");
         }
+    }
+
+    /**
+     * Emits the packed-stride dispatch and nothing else. Case bodies follow in source order
+     * from the normal statement walk, so each case must already be exactly {@code stride}
+     * instructions (the last case may be shorter). The absolute form's constant is the
+     * instruction index of the first body minus {@code firstCase * stride}, recomputed from
+     * what has already been emitted so a prefix of a different length still lands on case 1's
+     * slot. The relative form's offset is {@code 1 - firstCase * stride}, which is what makes
+     * case {@code firstCase} the instruction immediately after the three-op dispatch.
+     */
+    private static void emitStrideDispatch(Seq<LStatement> statements, int index, SwitchBeginStatement begin,
+                                           List<SwitchCase> cases, StringBuilder out){
+        if(begin.stride < 1 || begin.stride > MAX_TABLE_SPAN){
+            throw error("switchbegin", index, "stride must be an integer from 1 to " + MAX_TABLE_SPAN);
+        }
+        if(begin.strideTemp == null || begin.strideTemp.isEmpty() || begin.strideTemp.charAt(0) == '@'
+            || begin.strideTemp.indexOf(' ') >= 0){
+            throw error("switchbegin", index, "stride table needs a scratch variable that is not @counter");
+        }
+        if(cases.size() < 2){
+            throw error("switchbegin", index, "stride table needs at least two cases");
+        }
+        long first = strideCaseValue(cases.get(0));
+        for(int i = 0; i < cases.size(); i++){
+            SwitchCase item = cases.get(i);
+            long value = strideCaseValue(item);
+            if(value != first + i){
+                throw error("case", item.index, "stride cases must be the consecutive integers "
+                    + first + ".." + (first + cases.size() - 1));
+            }
+            int from = item.index + 1;
+            int to = i + 1 < cases.size() ? cases.get(i + 1).index : begin.destIndex;
+            int solid = 0;
+            for(int j = from; j < to; j++){
+                if(strideWeight(statements.get(j)) < 0){
+                    throw error("case", item.index, "a stride case can only hold flat instructions");
+                }
+                solid++;
+            }
+            boolean last = i + 1 == cases.size();
+            if(solid < 1 || solid > begin.stride || (!last && solid != begin.stride)){
+                throw error("case", item.index, "must be exactly " + begin.stride
+                    + " instructions so the next case stays on its slot");
+            }
+        }
+        String tmp = begin.strideTemp;
+        if(begin.strideRelative){
+            long signed = 1 - first * begin.stride;
+            out.append("op mul ").append(tmp).append(' ').append(begin.value).append(' ').append(begin.stride).append('\n');
+            out.append("op add ").append(tmp).append(" @counter ").append(tmp).append('\n');
+            if(signed >= 0){
+                out.append("op add @counter ").append(tmp).append(' ').append(signed).append('\n');
+            }else{
+                out.append("op sub @counter ").append(tmp).append(' ').append(-signed).append('\n');
+            }
+        }else{
+            long constant = countInstructions(out) + 2L - first * begin.stride;
+            out.append("op mul ").append(tmp).append(' ').append(begin.value).append(' ').append(begin.stride).append('\n');
+            out.append("op add @counter ").append(tmp).append(' ').append(constant).append('\n');
+        }
+    }
+
+    /** Integral case value, or a compile error when the stride table cannot index by it. */
+    private static long strideCaseValue(SwitchCase item){
+        Double value = item.value;
+        if(value == null || value != Math.rint(value) || Math.abs(value) > 9007199254740992d){
+            throw error("case", item.index, "a stride table only accepts integer case values");
+        }
+        return (long)(double)value;
+    }
+
+    /** 1 when the statement lowers to one instruction, -1 when it lowers to anything else. */
+    private static int strideWeight(LStatement statement){
+        if(statement instanceof BreakStatement) return 1;
+        if(statement instanceof SugarStatements.SugarStatement) return -1;
+        if(statement instanceof logicsugar.assist.expr.ExprStatement) return -1;
+        return 1;
+    }
+
+    /** Executable instructions in {@code text}: label lines ({@code name:}) do not count. */
+    static int countInstructions(CharSequence text){
+        int total = 0;
+        int start = 0;
+        int n = text.length();
+        for(int i = 0; i <= n; i++){
+            if(i != n && text.charAt(i) != '\n') continue;
+            if(i > start && text.charAt(i - 1) != ':') total++;
+            start = i + 1;
+        }
+        return total;
     }
 
     /** The label a slot with no case jumps to, and the target of the chain lowering's trailing
@@ -2595,8 +2720,29 @@ public final class SugarFunctions{
         return next;
     }
 
-    /** Returns the op whose truth is the negation of {@code op}, or null for {@code always}
-     *  (a condition that is always true never needs its false branch taken). */
+    /**
+     * Skips {@code skipTarget} when {@code op} is false. Comparisons with an exact inverse become
+     * one negated jump. {@code strictEqual} has none: {@code notEqual} uses a 1e-6 tolerance and
+     * treats every non-null object's {@code num()} as 1, so {@code "hello" strictEqual 1} would
+     * enter the branch. That case jumps into the body on strictEqual and skips with always.
+     */
+    private static void emitComparisonSkip(ConditionOp op, String value, String compare,
+                                           String skipTarget, String bodyLabel, StringBuilder out){
+        if(op == ConditionOp.strictEqual){
+            out.append("jump ").append(bodyLabel).append(" strictEqual ")
+                .append(value).append(' ').append(compare).append('\n');
+            out.append("jump ").append(skipTarget).append(" always x false\n");
+            out.append(bodyLabel).append(":\n");
+            return;
+        }
+        ConditionOp negated = negate(op);
+        if(negated != null){
+            out.append("jump ").append(skipTarget).append(' ').append(negated.name()).append(' ')
+                .append(value).append(' ').append(compare).append('\n');
+        }
+    }
+
+    /** Returns the op whose truth is the negation of {@code op}, or null when vanilla has no exact inverse. */
     private static ConditionOp negate(ConditionOp op){
         switch(op){
             case equal: return ConditionOp.notEqual;
@@ -2605,15 +2751,15 @@ public final class SugarFunctions{
             case lessThanEq: return ConditionOp.greaterThan;
             case greaterThan: return ConditionOp.lessThanEq;
             case greaterThanEq: return ConditionOp.lessThan;
-            case strictEqual:
-                // Mindustry has no strict-not-equal op, so negating strictEqual falls back to
-                // notEqual. This is exact for same-typed operands but only approximate for
-                // cross-type comparisons (e.g. "a" strictEqual 1 is false, so its negation should
-                // be true, whereas "a" notEqual 1 is also true in mlog — coincidentally matching;
-                // the divergence is confined to values that coercion makes equal, such as 1 vs "1").
-                return ConditionOp.notEqual;
-            default: return null; // always
+            default: return null; // always, strictEqual
         }
+    }
+
+    private static boolean loopHasContinue(Seq<LStatement> statements, int beginIndex, int[] continueOwner){
+        for(int i = 0; i < statements.size; i++){
+            if(statements.get(i) instanceof ContinueStatement && continueOwner[i] == beginIndex) return true;
+        }
+        return false;
     }
 
     /** Returns the innermost enclosing structure that accepts a break statement. */
