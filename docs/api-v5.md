@@ -1,6 +1,6 @@
 # v5 API 契约（logic-sugar-v2）
 
-本文是 LogicSugar **v5 API** 的权威说明：持久化标记、值语义、失败信号、无结果卡与函数返回声明，以及老存档如何继续通过恢复验证门。实现结构见[架构总览](architecture.md)，玩家向改动见 [`release_notes_v5.0.0.md`](../release_notes_v5.0.0.md)。
+本文是 LogicSugar **v5 API** 的权威说明：持久化标记、值语义、失败信号、无结果卡与函数返回声明，以及老存档如何继续通过恢复验证门。实现结构见[架构总览](architecture.md)，玩家向改动见 [GitHub Releases](https://github.com/DeterMination-Wind/LogicSugar/releases) 上对应版本的发布正文。
 
 ## 1. 持久化标记：`logic-sugar-v2`
 

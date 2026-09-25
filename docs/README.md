@@ -35,7 +35,7 @@ docs/
 - [AGENTS.md](../AGENTS.md)：仓库维护约束，重点是**跨类加载器访问陷阱**、**反编译恢复安全门**与**重建（每加功能都要考虑）**。
 - [mod.json](../mod.json)：模组描述符（入口 `logicsugar.LogicSugarMod`、最低 Mindustry `v160.1`）。
 - [build.gradle](../build.gradle)：编译依赖、四十二个自测任务与 Android 打包管线的唯一事实来源。
-- `release_notes_v<版本>.md`：每个版本的双语（中文/English）发布说明，见 [版本与发布](release.md)。
+- 发布说明：每个版本的双语（中文/English）正文随 GitHub Release 发布，仓库不再保留副本；写作范式见 [版本与发布](release.md)。
 
 ## 维护约定
 

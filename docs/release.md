@@ -7,7 +7,7 @@ LogicSugar 的版本号体系、本地构建产物链与发布资产规则。原
 - 版本号写在 `build.gradle` 的 `version = "…"`（当前链上的值以该文件为准），产物文件名由它派生：`LogicSugar-v<version>.jar` 等。
 - `mod.json` 是运行时身份：发布态为 `name: "LogicSugar"`、`version` 与 build.gradle 一致。
 - **本地开发态**（工作区默认约定，见上级 `codex/AGENTS.md` 的 Mod Task Default Mode）：`mod.json` 临时改为 `name: "LogicSugar-dev"`、`version: "0.0.0"`，只出 `构建/LogicSugar/LogicSugar-dev.jar` 本地测试产物，不做发布打包。切回发布身份时两处要同步改回。
-- 历史版本沿 `v<主>.<次>.<补丁>` 线演进（`release_notes_v2.1.4.md` 起到 `release_notes_v3.0.1.md`），每个已发布版本配一份双语 `release_notes_v<版本>.md`（中文 + English）。`release_notes_v2.3.1-dev.md` 属于本地开发验证说明，未对应 Release。
+- 历史版本沿 `v<主>.<次>.<补丁>` 线演进；每个已发布版本在 GitHub Release 上有一份双语（中文 + English）正文，Release 正文即历史事实来源。仓库不保留 `release_notes_*.md` 副本：发布当次可临时生成，发布后删除（`release_notes_v2.3.1-dev.md` 一类的本地开发说明从未对应 Release）。
 - 要求 **Mindustry v160.1+**（`mod.json` 的 `minGameVersion: "160.1"`）。v160 已去掉 `LCanvas.useRows()` 并把越界 `read` 改为 null，本仓库已按 v160 API 做兼容。
 
 ## 构建产物链
@@ -39,12 +39,12 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 1. 确认版本号：`build.gradle` 与 `mod.json` 同步为发布身份（`LogicSugar` / `<version>`）。
 2. 全量自测绿：`./gradlew check`（四十二个任务全过，见 [testing.md](testing.md)）。
 3. 本地完整构建：`./gradlew.bat clean deploy`（需要 Android SDK 的 D8 + `android.jar`）。
-4. 撰写 `release_notes_v<version>.md`：中英对照、只写当前版本，格式见下节「发布正文风格」。
+4. 撰写发布正文（初稿可存为 `release_notes_v<version>.md`）：中英对照、只写当前版本，格式见下节「发布正文风格」；发布后删除该文件，正文以 GitHub Release 为准。
 5. 核实产物：`build/libs/LogicSugar-v<version>.jar` 存在且含 `classes.dex`；`-desktop.jar` / `-android.jar` / d8-input jar 不进入发布流程。
 
 ## 发布正文风格（Release body）
 
-`release_notes_v<version>.md` 就是 GitHub Release 的正文原文（Neon 聚合侧对应 `RELEASE_NOTES.md`），**只写当前版本**、中英对照。当前范式于 2026-09-25 定稿（出自 v5.3.1，用户改写）：
+发布正文就是 GitHub Release 的正文原文（Neon 聚合侧对应 `RELEASE_NOTES.md`），**只写当前版本**、中英对照；仓库只在发布当次临时保留草稿文件。当前范式于 2026-09-25 定稿（出自 v5.3.1，随 Release 发布，用户改写）：
 
 ````markdown
 > [!NOTE]
@@ -73,7 +73,7 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 3. **条目**：每条以 `**粗体短标题**：` 开头（英文 `**Bold lead-in**:`），一句话讲**用户能感知到的结果**；不写类名、方法名、测试名与内部实现——那些留在 commit message 与 `docs/`。
 4. **粒度**：一条一件事，同主题合并；宁可少写，也不堆细节。
 5. **语言**：中文用中文标点与引号，英文用半角标点；两边各自通顺，不逐字直译。
-6. **历史不回填**：新版本一律按本范式写；旧版本的 `release_notes_*.md` 保持原样（v5.3.1 是定稿依据，其正文已与线上对齐）。
+6. **历史不回填**：新版本一律按本范式写；历史正文以各版本的 GitHub Release 为准（v5.3.1 是格式定稿依据，其正文已随 Release 上线）。
 
 ## Release 资产安全规则
 
