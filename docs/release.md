@@ -44,7 +44,7 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 
 ## 发布正文风格（Release body）
 
-发布正文就是 GitHub Release 的正文原文（Neon 聚合侧对应 `RELEASE_NOTES.md`），**只写当前版本**、中英对照；仓库只在发布当次临时保留草稿文件。当前范式于 2026-09-25 定稿（出自 v5.3.1，随 Release 发布，用户改写）：
+发布正文就是 GitHub Release 的正文原文（Neon 聚合侧对应 `RELEASE_NOTES.md`），**只写当前版本**、中英对照；仓库只在发布当次临时保留草稿文件。当前范式于 2026-09-25 二次收敛（v5.4.0 范例，用户改写）：正文只保留一行式用户条目，开发期反馈与未发布功能的内部问题不写进 Release。
 
 ````markdown
 > [!NOTE]
@@ -53,27 +53,27 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 
 ## 中文
 
-### 本次修复
+### 本次新增
 
-- **修复手机底栏按钮溢出屏幕**：手机上底栏七个操作按钮不再被挤成一行、不再左右溢出。最左的“返回”和最右的“添加”现在都完整可见、可点击。
-- **按真实屏幕宽度自动分行**：底栏现在会按 UI 缩放后的实际宽度分行。例如在 1260px / 2.5 倍缩放的手机上，按钮会排成 **3/3/2** 三行：返回·编辑·内置变量 / 函数库·撤销·重做 / 添加 + 指令预算标签。
+- **支持从原版 Mlog 中解析为 LogicSugar 特有的高级控制流**（例如 Switch / If）
+- **使用 OP / Expr 对 @counter 进行常量操作时，可以在积木左侧预览类 Jump 跳转线的 @counter 跳转线**
 
 ## English
 
-### Fixed
+### Added
 
-- **Fixed the phone bottom bar overflowing the screen**: on phones, the seven bottom-bar buttons are no longer squeezed into one oversized row. The leftmost “back” and rightmost “add” buttons are now fully visible and tappable.
-- **Automatic wrapping by real screen width**: the bar now wraps using UI-scaled widths. On a 1260px / 2.5x phone, for example, it packs as **3/3/2** — back / edit / variables, function library / undo / redo, add + instruction-budget label.
+- **Parse vanilla mlog back into LogicSugar's structured control flow** (Switch / If, for example)
+- **Constant @counter writes from OP / Expr cards preview a Jump-like @counter line on the left of the block**
 ````
 
 写作规则：
-
 1. **结构固定**：顶部只有一个 `> [!NOTE]` 两行引用块（中文一行 + 英文一行）写版本要求，然后 `## 中文`、`## English`。不再用 `> [!IMPORTANT]`，也不写构建命令、产物路径、测试数量与 commit 细节。
 2. **小节**：`### 本次新增` / `### 本次修复` / `### 本次改动` / `### 已知问题`，英文对应 `### Added` / `### Fixed` / `### Changed` / `### Known issues`；只保留本版真正涉及的小节，中英小节一一对应。
-3. **条目**：每条以 `**粗体短标题**：` 开头（英文 `**Bold lead-in**:`），一句话讲**用户能感知到的结果**；不写类名、方法名、测试名与内部实现——那些留在 commit message 与 `docs/`。
-4. **粒度**：一条一件事，同主题合并；宁可少写，也不堆细节。
-5. **语言**：中文用中文标点与引号，英文用半角标点；两边各自通顺，不逐字直译。
-6. **历史不回填**：新版本一律按本范式写；历史正文以各版本的 GitHub Release 为准（v5.3.1 是格式定稿依据，其正文已随 Release 上线）。
+3. **条目只写一行**：以 `**粗体短标题**` 开头（英文 `**Bold lead-in**`），必要时用括号补一个例子，一句话讲**用户能感知到的结果**；不解释技术细节（类名、方法名、测试名、内部机制与实现原因都不写，留在 commit message 与 `docs/`）。
+4. **「本次修复」只写上一个已发布版本里用户能碰到的问题**：开发过程中用户反馈的问题、同一版本内新功能的内部缺陷，用户从未在任何已发布版本里见过，不构成「修复」，不写进 Release；功能首次发布只写它新增的能力。没有上一版真实缺陷时，整个「本次修复」小节省略。
+5. **粒度**：一条一件事，同主题合并；宁可少写，也不堆细节。
+6. **语言**：中文用中文标点与引号，英文用半角标点；两边各自通顺，不逐字直译。
+7. **历史不回填**：新版本一律按本范式写；历史正文以各版本的 GitHub Release 为准（v5.3.1 是格式定稿依据，其正文已随 Release 上线）。
 
 ## Release 资产安全规则
 
