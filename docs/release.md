@@ -39,8 +39,41 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 1. 确认版本号：`build.gradle` 与 `mod.json` 同步为发布身份（`LogicSugar` / `<version>`）。
 2. 全量自测绿：`./gradlew check`（四十个任务全过，见 [testing.md](testing.md)）。
 3. 本地完整构建：`./gradlew.bat clean deploy`（需要 Android SDK 的 D8 + `android.jar`）。
-4. 撰写 `release_notes_v<version>.md`（中文 + English 双语，沿用现有格式）。
+4. 撰写 `release_notes_v<version>.md`：中英对照、只写当前版本，格式见下节「发布正文风格」。
 5. 核实产物：`build/libs/LogicSugar-v<version>.jar` 存在且含 `classes.dex`；`-desktop.jar` / `-android.jar` / d8-input jar 不进入发布流程。
+
+## 发布正文风格（Release body）
+
+`release_notes_v<version>.md` 就是 GitHub Release 的正文原文（Neon 聚合侧对应 `RELEASE_NOTES.md`），**只写当前版本**、中英对照。当前范式于 2026-09-25 定稿（出自 v5.3.1，用户改写）：
+
+````markdown
+> [!NOTE]
+> 需要 **Mindustry v160.1+**（桌面 / Android）
+> Requires **Mindustry v160.1+** (Desktop / Android)
+
+## 中文
+
+### 本次修复
+
+- **修复手机底栏按钮溢出屏幕**：手机上底栏七个操作按钮不再被挤成一行、不再左右溢出。最左的“返回”和最右的“添加”现在都完整可见、可点击。
+- **按真实屏幕宽度自动分行**：底栏现在会按 UI 缩放后的实际宽度分行。例如在 1260px / 2.5 倍缩放的手机上，按钮会排成 **3/3/2** 三行：返回·编辑·内置变量 / 函数库·撤销·重做 / 添加 + 指令预算标签。
+
+## English
+
+### Fixed
+
+- **Fixed the phone bottom bar overflowing the screen**: on phones, the seven bottom-bar buttons are no longer squeezed into one oversized row. The leftmost “back” and rightmost “add” buttons are now fully visible and tappable.
+- **Automatic wrapping by real screen width**: the bar now wraps using UI-scaled widths. On a 1260px / 2.5x phone, for example, it packs as **3/3/2** — back / edit / variables, function library / undo / redo, add + instruction-budget label.
+````
+
+写作规则：
+
+1. **结构固定**：顶部只有一个 `> [!NOTE]` 两行引用块（中文一行 + 英文一行）写版本要求，然后 `## 中文`、`## English`。不再用 `> [!IMPORTANT]`，也不写构建命令、产物路径、测试数量与 commit 细节。
+2. **小节**：`### 本次新增` / `### 本次修复` / `### 本次改动` / `### 已知问题`，英文对应 `### Added` / `### Fixed` / `### Changed` / `### Known issues`；只保留本版真正涉及的小节，中英小节一一对应。
+3. **条目**：每条以 `**粗体短标题**：` 开头（英文 `**Bold lead-in**:`），一句话讲**用户能感知到的结果**；不写类名、方法名、测试名与内部实现——那些留在 commit message 与 `docs/`。
+4. **粒度**：一条一件事，同主题合并；宁可少写，也不堆细节。
+5. **语言**：中文用中文标点与引号，英文用半角标点；两边各自通顺，不逐字直译。
+6. **历史不回填**：新版本一律按本范式写；旧版本的 `release_notes_*.md` 保持原样（v5.3.1 是定稿依据，其正文已与线上对齐）。
 
 ## Release 资产安全规则
 
