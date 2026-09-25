@@ -5,7 +5,7 @@
 ## 项目形态
 
 ### Sugar / Sugar 语句
-LogicSugar 提供的结构化编辑语言：`ifbegin`/`elif`/`else`、`forbegin`、`whilebegin`、`switchbegin`/`case`、`break`/`continue`、`blockend`、`funcdef`/`funccall`/`return`。它们以卡片形式出现在编辑器里，`build()` 返回 `NoopI`（自身不产生指令），语义由编译器 lowering 成普通 mlog。
+LogicSugar 提供的结构化编辑语言：`ifbegin`/`elif`/`else`、`forbegin`、`whilebegin`、`switchbegin`/`case`/`default`、`break`/`continue`、`blockend`、`funcdef`/`funccall`/`return`。它们以卡片形式出现在编辑器里，`build()` 返回 `NoopI`（自身不产生指令），语义由编译器 lowering 成普通 mlog。
 
 ### mlog
 Mindustry 原生逻辑指令集（`set` / `op` / `jump` / `read` / …）。LogicSugar 的硬约束是保存结果必须是原版兼容的 mlog：无模组客户端能运行、能重开。
@@ -28,7 +28,7 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 函数展开方式。`normal` = 共享 `@counter` 子程序（函数体上提到程序尾部，一次定义多处跳转）；`inline` = 每个调用点展开一份副本，编译器临时名带 `__ls_i_<callId>_`。设置项 `logicsugar.funcMode`。
 
 ### SwitchStrategy（分派策略）
-`switch` 的下降形态。`auto` = 整数 case 且值域跨度 ≤255 时按可执行指令成本在比较链与跳转表间二选一；`chainOnly` = 恒用比较链（与 2.3.1 之前输出逐字节一致）。设置项 `logicsugar.switchStrategy`。
+`switch` 的下降形态。`auto` = 整数 case 且值域跨度 ≤255 时按可执行指令成本在比较链与跳转表间二选一；`chainOnly` = 恒用比较链（与 2.3.1 之前输出逐字节一致）。设置项 `logicsugar.switchStrategy`。带 `raw` 的裸表不受它影响。
 
 ### AssertEmit（调试断言构建）
 断言卡片的编译开关（设置项 `logicsugar.assertEmit`）。`strip`（默认）把断言编译掉，mlog 保持原版可解析；`emit` 把断言写回为真实自定义指令——原版客户端会把这些行降级为 InvalidStatement 占位（断言静默失效）。**仅单机/编辑器生效**：联机会话强制 `strip`（见"单机门禁"）。
@@ -48,8 +48,14 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 ### 跳转表（jump table）
 `switch` 的一种下降结果：先做上下界守卫，再用 `op add @counter @counter` 按槽位分派；越界与空洞槽走默认路径。非整数或跨度过大的 case 集合自动回退比较链。
 
+### 裸表（raw table）
+`switchbegin … raw`：手写/第三方工具生成的无边界守卫跳转表，只发 `op add @counter @counter <切换值>` 加每条槽位一条跳转行，且无视 `SwitchStrategy`。恢复出来的表用它保持产物逐条不变；越界值不再被夹回默认分支（只有跨度内的空槽走 `default`）。
+
+### 默认分支（default）
+`default:` 卡片：没有 case 命中时执行的分支。比较链里它是末尾跳转的目标；跳转表里是所有空槽行的目标，带守卫形态下越界值也落到这里。每个 switch 至多一张。
+
 ### 跳转链穿线（jump threading）
-lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗余指令；带环检测保证循环与自跳转安全（`SugarCompiler.threadAlwaysJumpTargets`）。
+lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗余指令；带环检测保证循环与自跳转安全（`SugarCompiler.threadAlwaysJumpTargets`）。按标签读链的那一趟对手写 mlog（无标签、用指令下标寻址）是空操作，因此验证门另有 `threadNumericJumpTargets` 在语句下标上做同一套不动点。
 
 ### `__ls_` 前缀
 编译器保留命名空间：函数返回变量、临时守卫、内联编号等都用它。用户函数/参数名不得使用；`VarDisplayFilter` 会把它们从 MindustryX 变量浏览器里隐藏。

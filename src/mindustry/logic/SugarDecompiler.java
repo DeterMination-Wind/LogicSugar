@@ -58,6 +58,71 @@ public final class SugarDecompiler{
         }
     }
 
+    /** Where the source the editor opens with came from. Backed by {@link Opening#source}. */
+    public enum OpeningMode{
+        /** Stored sugar this mod saved (carrier, or the v2.0.0 marker block) — and library text,
+         *  which is sugar source rather than a program. Loaded as-is. */
+        stored,
+        /** Verified inference from vanilla mlog: the editor shows a structure the program never
+         *  stored, so the original view stays reachable and the user is told. */
+        inferred,
+        /** Neither: the code is loaded unchanged (the "edited outside Logic Sugar" path). */
+        raw
+    }
+
+    /** The source the logic editor should open with. */
+    public static final class Opening{
+        public final String source;
+        public final OpeningMode mode;
+
+        Opening(String source, OpeningMode mode){
+            this.source = source;
+            this.mode = mode;
+        }
+    }
+
+    /**
+     * Decides what the logic editor opens with, for a stored program or a library file.
+     *
+     * <p>Stored sugar wins when it verifies. The subtle case is a program this mod never saved:
+     * it has no carrier, so {@link SugarCompiler#verifyRestore} answers "true" vacuously
+     * (there is nothing to verify), and treating that as "trusted stored sugar" is what used to
+     * load hand-written and third-party programs as their own source text — the decompiler was
+     * never asked, so the editor stayed on flat vanilla cards no matter how well inference
+     * understood the program (reported 2026-09-25: a 655-instruction jump-table program opened
+     * with 251 raw jump cards even though inference recovers it as a switch). Inference is the
+     * only way into a Sugar view for those, so it runs whenever no carrier is present.</p>
+     *
+     * <p>Extracted from {@code SugarLogicDialog.show} so the decision is testable without a UI:
+     * the reported bug lived exactly here, in code no headless test could reach.</p>
+     *
+     * @param librarySession the input is a function-library file (sugar source, not a program)
+     */
+    public static Opening openingSource(String code, boolean privileged, boolean librarySession){
+        String restored = SugarCompiler.restore(code, librarySession);
+        boolean verified;
+        try{
+            verified = SugarCompiler.verifyRestore(code, restored);
+        }catch(Throwable exception){
+            // Stored code that cannot even be parsed (e.g. written by a newer mod version):
+            // trust the carrier's sugar and let the next save regenerate clean code.
+            verified = true;
+        }
+        boolean storedSugar = SugarCompiler.isSugarProgram(code);
+        if(verified && (storedSugar || librarySession)){
+            return new Opening(restored, OpeningMode.stored);
+        }
+
+        // Nothing stored to trust: only a verified inference may replace the code, and only for
+        // a processor program (library text has no control flow to infer).
+        Result recovered = librarySession ? null : decompile(code, privileged);
+        if(recovered != null && recovered.verified && recovered.matchedMode != null
+            && !"flat".equals(recovered.matchedMode) && recovered.structured > 0){
+            return new Opening(recovered.sugar, OpeningMode.inferred);
+        }
+        return new Opening(code, OpeningMode.raw);
+    }
+
     private static Result decompileLocked(String code, boolean privileged){
         String input = normalizeLineEndings(code == null ? "" : code);
         List<String> notes = new ArrayList<>();
@@ -406,8 +471,10 @@ public final class SugarDecompiler{
             String target = normalize(original, privileged);
             // Jump threading (2.3.1+) retargets unconditional jumps inside lowered output,
             // so candidates compiled today may only match older artifacts after applying the
-            // same idempotent pass to them.
-            String threadedTarget = normalize(SugarCompiler.threadAlwaysJumpTargets(original), privileged);
+            // same idempotent pass to them. A program this compiler never lowered addresses its
+            // jumps by instruction index and carries no labels, so the label-based pass is a
+            // no-op on it; threadNumericJumpTargets applies the same rule on those indices.
+            String threadedTarget = normalize(SugarCompiler.threadNumericJumpTargets(original), privileged);
             // The lowering also depends on the switch strategy and the assert-emit shape,
             // which are user settings: a program saved under different settings must still
             // verify, so the gate compiles every candidate across the full matrix instead of
@@ -417,17 +484,27 @@ public final class SugarDecompiler{
                 || SugarAsserts.containsAssertStatements(original);
             SugarCompiler.AssertEmit[] emitShapes = hasAsserts
                 ? SugarCompiler.AssertEmit.values() : new SugarCompiler.AssertEmit[]{SugarCompiler.AssertEmit.strip};
-            for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
-                for(SugarCompiler.SwitchStrategy strategy : SugarCompiler.SwitchStrategy.values()){
-                    for(SugarCompiler.AssertEmit emit : emitShapes){
-                        try{
-                            String compiled = SugarCompiler.compile(candidate, mode, SugarFunctions.library(), null, strategy, emit, privileged);
-                            String stripped = normalize(stripGeneratedMetadata(compiled), privileged);
-                            if(stripped.equals(target) || stripped.equals(threadedTarget)){
-                                return new Verification(true, mode.name() + "/" + strategy.name() + "/" + emit.name());
+            // Two lowering eras of the trailing entry skip, exactly like
+            // SugarCompiler.verifyLowering: a program Logic Sugar never saved (hand-written mlog,
+            // or another tool's output) does not end with `set @counter 0`, so only the
+            // append-off lowering reproduces its instruction stream. Without this dimension the
+            // gate rejected every such program as soon as the candidate contained one structure,
+            // and the whole vanilla view stayed flat.
+            for(boolean entrySkip : new boolean[]{true, false}){
+                for(SugarCompiler.FuncMode mode : SugarCompiler.FuncMode.values()){
+                    for(SugarCompiler.SwitchStrategy strategy : SugarCompiler.SwitchStrategy.values()){
+                        for(SugarCompiler.AssertEmit emit : emitShapes){
+                            try{
+                                String compiled = entrySkip
+                                    ? SugarCompiler.compile(candidate, mode, SugarFunctions.library(), null, strategy, emit, privileged)
+                                    : SugarCompiler.compileWithoutEntrySkip(candidate, mode, SugarFunctions.library(), null, strategy, emit, privileged);
+                                String stripped = normalize(stripGeneratedMetadata(compiled), privileged);
+                                if(stripped.equals(target) || stripped.equals(threadedTarget)){
+                                    return new Verification(true, mode.name() + "/" + strategy.name() + "/" + emit.name());
+                                }
+                            }catch(Throwable ignored){
+                                // Try the next matrix combination.
                             }
-                        }catch(Throwable ignored){
-                            // Try the next matrix combination.
                         }
                     }
                 }
@@ -779,13 +856,28 @@ public final class SugarDecompiler{
 
     private static final class SwitchItem extends Item{
         final String value;
+        final boolean rawTable;
         BlockEndItem end;
-        SwitchItem(int origin, String value){ super(origin, origin); this.value = value; }
+        SwitchItem(int origin, String value, boolean rawTable){
+            super(origin, origin);
+            this.value = value;
+            this.rawTable = rawTable;
+        }
         @Override void write(StringBuilder out, Emitter emitter){
             out.append("switchbegin ").append(value).append(' ')
-                .append(emitter.itemSlot(end)).append('\n');
+                .append(emitter.itemSlot(end));
+            // The mode token has to survive into the carrier: it is what reproduces a
+            // guard-less table instead of the bounds-checked one.
+            if(rawTable) out.append(" raw");
+            out.append('\n');
         }
         @Override int priority(){ return 20; }
+    }
+
+    private static final class DefaultItem extends Item{
+        DefaultItem(int origin){ super(origin, origin); }
+        @Override void write(StringBuilder out, Emitter emitter){ out.append("default\n"); }
+        @Override int priority(){ return 100; }
     }
 
     private static final class CaseItem extends Item{
@@ -875,6 +967,20 @@ public final class SugarDecompiler{
         IfFrame ifFrame;
         List<Integer> caseTargets;
         List<String> caseValues;
+        /**
+         * Raw (guard-less) jump table: the card's own lowering is the dispatch plus its slot
+         * rows, so the body region starts after them and one body can own several slot values.
+         * These fields are only set by {@link Candidate#tryBareSwitchTable}.
+         */
+        boolean rawTable;
+        int rowsEnd = -1;
+        /** Slot values per {@link #caseTargets} entry, ascending. */
+        List<List<Long>> caseSlotValues;
+        /** Extra case values emitted on the default label to pin the table's span (see
+         *  {@link Candidate#tryBareSwitchTable}); the compiled row is the same either way. */
+        List<Long> defaultCaseValues = new ArrayList<>();
+        /** Statement the {@code default} card sits on, or -1 when the switch declares none. */
+        int defaultStart = -1;
 
         double recoveryLoss(){
             // A confirmed short-circuit layout is preferable to a coincidentally valid native
@@ -1301,10 +1407,13 @@ public final class SugarDecompiler{
          *  caught by recompilation verification. */
         private Frame tryFrames(int at, int limit){
             List<Frame> candidates = new ArrayList<>();
-            Frame frame = trySwitchTable(at, limit);
+            // A guard-less table carries its rows straight after the dispatch; the guarded
+            // lowering puts two bounds guards there instead, so the two never match the same
+            // position and the order between them only decides which is tried first.
+            Frame frame = tryBareSwitchTable(at, limit);
             if(frame != null) candidates.add(frame);
-            frame = trySwitch(at, limit);
-            if(frame != null) candidates.add(frame);
+            candidates.addAll(trySwitchTable(at, limit));
+            candidates.addAll(trySwitch(at, limit));
             candidates.addAll(tryShortCircuitFrames(at, limit));
             frame = tryWhile(at, limit);
             if(frame != null) candidates.add(frame);
@@ -1348,8 +1457,8 @@ public final class SugarDecompiler{
          * Anything unmatched falls through to the comparison-chain or flat vanilla paths;
          * recompilation verification stays the final gate.
          */
-        private Frame trySwitchTable(int at, int limit){
-            if(at >= limit) return null;
+        private List<Frame> trySwitchTable(int at, int limit){
+            if(at >= limit) return List.of();
             double min = 0;
             int cursor = at;
             String switchValue;
@@ -1359,7 +1468,7 @@ public final class SugarDecompiler{
             if(hasSub){
                 Double parsed = integerLiteral(first.token(4));
                 if(parsed == null || parsed != Math.rint(parsed) || Math.abs(parsed) > 9007199254740992d
-                    || first.token(3).isEmpty()) return null;
+                    || first.token(3).isEmpty()) return List.of();
                 min = parsed;
                 switchValue = first.token(3);
                 cursor++;
@@ -1368,14 +1477,14 @@ public final class SugarDecompiler{
             }
 
             // lower bound: jump D lessThan <idx> 0
-            if(cursor + 2 >= limit) return null;
+            if(cursor + 2 >= limit) return List.of();
             Statement guardLow = program.statements.get(cursor);
             if(guardLow.target < 0
-                || !(guardLow.isConditional() && "lessThan".equals(guardLow.token(2)) && "0".equals(guardLow.token(4)))) return null;
+                || !(guardLow.isConditional() && "lessThan".equals(guardLow.token(2)) && "0".equals(guardLow.token(4)))) return List.of();
             String idx = guardLow.token(3);
-            if(idx.isEmpty()) return null;
+            if(idx.isEmpty()) return List.of();
             if(hasSub){
-                if(!idx.equals(first.token(2))) return null;
+                if(!idx.equals(first.token(2))) return List.of();
             }else{
                 switchValue = idx;
             }
@@ -1383,49 +1492,52 @@ public final class SugarDecompiler{
             // upper bound: jump D greaterThan <idx> <span-1>
             Statement guardHigh = program.statements.get(cursor + 1);
             if(!(guardHigh.isConditional() && "greaterThan".equals(guardHigh.token(2))
-                && guardHigh.token(3).equals(idx) && guardHigh.target == guardLow.target)) return null;
+                && guardHigh.token(3).equals(idx) && guardHigh.target == guardLow.target)) return List.of();
             Double spanMinusOne = integerLiteral(guardHigh.token(4));
-            if(spanMinusOne == null || spanMinusOne < 0 || spanMinusOne > SugarFunctions.MAX_TABLE_SPAN - 1) return null;
+            if(spanMinusOne == null || spanMinusOne < 0 || spanMinusOne > SugarFunctions.MAX_TABLE_SPAN - 1) return List.of();
             int span = (int)(double)spanMinusOne + 1;
 
             // dispatch: op add @counter @counter <idx>
             Statement dispatch = program.statements.get(cursor + 2);
             if(!(dispatch.kind().equals("op") && dispatch.tokens.length >= 5
                 && "add".equals(dispatch.token(1)) && "@counter".equals(dispatch.token(2))
-                && "@counter".equals(dispatch.token(3)) && dispatch.token(4).equals(idx))) return null;
+                && "@counter".equals(dispatch.token(3)) && dispatch.token(4).equals(idx))) return List.of();
 
             int rowsStart = cursor + 3;
             int lastRow = rowsStart + span - 1;
-            if(lastRow >= limit) return null;
+            if(lastRow >= limit) return List.of();
             int[] rowTargets = new int[span];
             for(int k = 0; k < span; k++){
                 Statement row = program.statements.get(rowsStart + k);
-                if(!row.isAlways() || row.target < 0) return null;
+                if(!row.isAlways() || row.target < 0) return List.of();
                 rowTargets[k] = row.target;
             }
 
-            int exit = guardLow.target;
-            if(exit <= lastRow || exit > limit) return null;
+            int exit = switchEndBeyond(guardLow.target, lastRow + 1, limit);
+            int defaultStart = exit == guardLow.target ? -1 : guardLow.target;
+            if(exit <= lastRow || exit > limit) return List.of();
             int terminalExit = followAlwaysChain(exit);
+            int guardTerminal = followAlwaysChain(guardLow.target);
 
-            // Group slot values by their body target. The direct default target and its
+            // Group slot values by their body target. The guards' own destination and its
             // terminal always-jump target are both default holes, which covers output from
             // before and after the compiler's jump-threading pass.
             TreeMap<Integer, TreeSet<Long>> interior = new TreeMap<>();
             for(int k = 0; k < span; k++){
                 long value = (long)min + k;
                 int target = rowTargets[k];
-                if(target == exit || target == terminalExit) continue;
-                if(target < lastRow + 1 || target >= exit) return null;
+                if(target == guardLow.target || target == guardTerminal) continue;
+                if(target < lastRow + 1 || target >= exit) return List.of();
                 interior.computeIfAbsent(target, key -> new TreeSet<>()).add(value);
             }
-            if(interior.isEmpty()) return null;
+            if(interior.isEmpty()) return List.of();
 
             Frame frame = new Frame();
             frame.kind = Frame.Kind.SWITCH;
             frame.start = at; frame.exit = exit; frame.resume = exit;
             frame.breakTarget = terminalExit != exit ? terminalExit : exit;
             frame.switchValue = switchValue;
+            frame.defaultStart = defaultStart;
             frame.caseTargets = new ArrayList<>();
             frame.caseValues = new ArrayList<>();
             for(Map.Entry<Integer, TreeSet<Long>> entry : interior.entrySet()){
@@ -1449,7 +1561,10 @@ public final class SugarDecompiler{
                     frame.caseValues.add(0, value);
                 }
             }
-            return frame;
+            List<Frame> frames = new ArrayList<>();
+            frames.add(frame);
+            if(defaultStart >= 0) frames.add(withoutDefault(frame));
+            return frames;
         }
 
         /** Follows an unconditional-jump chain from a folded label position to its end. */
@@ -1462,6 +1577,164 @@ public final class SugarDecompiler{
                 current = s.target;
             }
             return current;
+        }
+
+        /**
+         * The end of a switch whose guards (or whose chain lowering's trailing jump) land on
+         * {@code guardTarget}.
+         *
+         * <p>Without a {@code default} case that destination <em>is</em> the end. With one, the
+         * compiler points the guards and every hole row at the default case's body, which sits
+         * inside the switch; the switch's real end is then the destination the case bodies'
+         * {@code break} jumps use — the only unconditional-jump target beyond that body.</p>
+         */
+        private int switchEndBeyond(int guardTarget, int from, int limit){
+            for(int i = Math.max(from, 0); i < limit; i++){
+                Statement s = program.statements.get(i);
+                if(s.isAlways() && s.target > guardTarget && s.target <= limit) return s.target;
+            }
+            return guardTarget;
+        }
+
+        /**
+         * The same switch read <em>without</em> a {@code default} case: the guards' destination is
+         * then the switch's own end, and the destination the breaks use is an escape target past
+         * it. Offered next to the default-bearing reading because a body that jumps beyond the
+         * switch is indistinguishable from a default case at this level — the recompilation gate
+         * decides, which is the same split the rest of the recovery makes.
+         */
+        private Frame withoutDefault(Frame frame){
+            Frame plain = new Frame();
+            plain.kind = frame.kind;
+            plain.start = frame.start;
+            plain.exit = frame.defaultStart;
+            plain.resume = frame.defaultStart;
+            plain.breakTarget = frame.exit;
+            plain.switchValue = frame.switchValue;
+            plain.caseTargets = frame.caseTargets;
+            plain.caseValues = frame.caseValues;
+            return plain;
+        }
+
+        /**
+         * Recovers a hand-written (or third-party-tool) {@code @counter} jump table as a
+         * <em>raw</em> switch: {@code op add @counter @counter <value>} immediately followed by
+         * one unconditional row per slot, no bounds guards. That is the shape a bare table
+         * compiles to, and it is the only one that reproduces such a program exactly — this
+         * compiler's guarded table adds two instructions and clamps out-of-range values, so
+         * recovering the guarded lowering instead would silently rewrite the program.
+         *
+         * <p>Slot {@code k} addresses row {@code k} directly (the dispatch adds the value to
+         * {@code @counter}), so the slot's case value is its row index and the span starts at 0.
+         * A row's destination is read through unconditional-jump chains — the author's own
+         * threading — so a row that hops onto another row and a row naming the final instruction
+         * read alike. Rows that leave the body region are holes: they must all share one
+         * destination, which becomes the switch's {@code default} case, placed on an existing
+         * instruction inside the region whose own chain ends on that same destination (its jump
+         * is what the regenerated hole rows will resolve to). Anything that does not fit — a row
+         * pointing into the table, several distinct hole destinations, no default body, no body
+         * at all — returns null and leaves the flat vanilla view.</p>
+         */
+        private Frame tryBareSwitchTable(int at, int limit){
+            if(at >= limit) return null;
+            Statement dispatch = program.statements.get(at);
+            if(!(dispatch.kind().equals("op") && dispatch.tokens.length >= 5
+                && "add".equals(dispatch.token(1)) && "@counter".equals(dispatch.token(2))
+                && "@counter".equals(dispatch.token(3)))) return null;
+            String idxVar = dispatch.token(4);
+            // Compiler normalization temps belong to the guarded lowering (op sub + guards).
+            if(idxVar.isEmpty() || idxVar.startsWith("__ls_")) return null;
+
+            int rowsStart = at + 1;
+            int rows = 0;
+            while(rowsStart + rows < limit){
+                Statement row = program.statements.get(rowsStart + rows);
+                if(!row.isAlways() || row.target < 0) break;
+                rows++;
+            }
+            // One row is not a table, and the compiler cannot re-emit a span past its cap.
+            if(rows < 2 || rows > SugarFunctions.MAX_TABLE_SPAN) return null;
+            int rowsEnd = rowsStart + rows;
+
+            int holes = -1;
+            TreeMap<Integer, List<Long>> bodies = new TreeMap<>();
+            for(int slot = 0; slot < rows; slot++){
+                int target = program.statements.get(rowsStart + slot).target;
+                int end = followAlwaysChain(target);
+                if(end >= rowsEnd && end < limit){
+                    bodies.computeIfAbsent(end, key -> new ArrayList<>()).add((long)slot);
+                    continue;
+                }
+                if(end < 0) return null;
+                if(holes >= 0 && holes != end) return null; // one default can name one destination
+                holes = end;
+            }
+            if(bodies.isEmpty()) return null;
+
+            int defaultStart = -1;
+            if(holes >= 0){
+                // The default's body has to be an instruction that already exists, otherwise the
+                // regenerated hole rows would land on a jump this program never had.
+                for(int i = rowsEnd; i < limit; i++){
+                    if(followAlwaysChain(i) == holes){
+                        defaultStart = i;
+                        break;
+                    }
+                }
+                if(defaultStart < 0) return null;
+            }
+
+            List<Integer> starts = new ArrayList<>(bodies.keySet());
+            int exit = rawBodyEnd(starts.get(starts.size() - 1), limit);
+            if(exit <= starts.get(starts.size() - 1)) return null;
+
+            // The table's span is rebuilt from the case values (min..max), so a hole on either
+            // end would shorten it: a slot past the highest case never gets a row, and a leading
+            // hole would move the whole table behind an `op sub` normalization. Both ends are
+            // pinned with an extra case label on the default body, which compiles to exactly the
+            // row the hole had (the label and the default share one position).
+            long minCase = Long.MAX_VALUE, maxCase = Long.MIN_VALUE;
+            for(List<Long> values : bodies.values()){
+                if(values.isEmpty()) continue;
+                minCase = Math.min(minCase, values.get(0));
+                maxCase = Math.max(maxCase, values.get(values.size() - 1));
+            }
+            List<Long> anchors = new ArrayList<>();
+            if(minCase != 0 || maxCase != rows - 1){
+                if(defaultStart < 0) return null; // no body for the default: nothing to pin it to
+                if(minCase != 0) anchors.add(0L);
+                if(maxCase != rows - 1) anchors.add((long)(rows - 1));
+            }
+
+            Frame frame = new Frame();
+            frame.kind = Frame.Kind.SWITCH;
+            frame.start = at; frame.exit = exit; frame.resume = exit;
+            frame.breakTarget = exit;
+            frame.switchValue = idxVar;
+            frame.rawTable = true;
+            frame.rowsEnd = rowsEnd;
+            frame.defaultStart = defaultStart;
+            frame.caseTargets = new ArrayList<>(starts);
+            frame.caseValues = new ArrayList<>();
+            frame.caseSlotValues = new ArrayList<>();
+            for(int start : starts){
+                List<Long> values = bodies.get(start);
+                frame.caseSlotValues.add(values);
+                for(long value : values) frame.caseValues.add(Long.toString(value));
+            }
+            frame.defaultCaseValues = anchors;
+            return frame;
+        }
+
+        /** End of the basic block starting at {@code start}: just past its first unconditional
+         *  jump, or the region limit when the block never jumps away. Bounds the last case body
+         *  of a raw table (and with it the switch's exit). */
+        private int rawBodyEnd(int start, int limit){
+            for(int i = start; i < limit; i++){
+                Statement s = program.statements.get(i);
+                if(s.isAlways() && s.target >= 0) return i + 1;
+            }
+            return limit;
         }
 
         private FunctionInfo functionAt(int index){
@@ -1513,14 +1786,26 @@ public final class SugarDecompiler{
                     structured++;
                 }
                 case SWITCH -> {
-                    SwitchItem header = new SwitchItem(frame.start, frame.switchValue);
+                    if(frame.rawTable){
+                        emitRawSwitch(frame, parent);
+                        structured++;
+                        break;
+                    }
+                    SwitchItem header = new SwitchItem(frame.start, frame.switchValue, false);
                     items.add(header);
+                    Context context = new Context(frame.breakTarget >= 0 ? frame.breakTarget : frame.exit, -1, parent);
                     for(int i = 0; i < frame.caseTargets.size(); i++){
                         int start = frame.caseTargets.get(i);
                         int end = i + 1 < frame.caseTargets.size() ? frame.caseTargets.get(i + 1) : frame.exit;
                         items.add(new CaseItem(start, frame.caseValues.get(i)));
-                        int breakTarget = frame.breakTarget >= 0 ? frame.breakTarget : frame.exit;
-                        parseRange(start, end, new Context(breakTarget, -1, parent));
+                        // A declared default case has its own label inside the body region.
+                        if(frame.defaultStart > start && frame.defaultStart < end){
+                            parseRange(start, frame.defaultStart, context);
+                            emitDefault(frame);
+                            parseRange(frame.defaultStart, end, context);
+                        }else{
+                            parseRange(start, end, context);
+                        }
                         structured++;
                     }
                     BlockEndItem end = new BlockEndItem(frame.exit);
@@ -1558,6 +1843,59 @@ public final class SugarDecompiler{
         /** Maximum number of [conditional, fallback] atom pairs accepted in one lowered guard.
          *  Bounds the tree search; realistic conditions stay far below it. */
         private static final int MAX_GUARD_PAIRS = 8;
+
+        /**
+         * Emits a recovered raw jump table: the switch card's own lowering is the dispatch and
+         * every slot row, so only the region behind the rows is written out — plain statements
+         * first, then each case's slot labels and body, all in instruction order. The
+         * {@code default} card, when the table has holes, is placed on the existing instruction
+         * its slots jump to, so the rows the compiler regenerates land there.
+         */
+        private void emitRawSwitch(Frame frame, Context parent){
+            SwitchItem header = new SwitchItem(frame.start, frame.switchValue, true);
+            items.add(header);
+            Context context = new Context(frame.breakTarget >= 0 ? frame.breakTarget : frame.exit, -1, parent);
+            int cursor = frame.rowsEnd;
+            boolean defaultEmitted = false;
+            for(int i = 0; i < frame.caseTargets.size(); i++){
+                int start = frame.caseTargets.get(i);
+                if(!defaultEmitted && frame.defaultStart >= 0 && frame.defaultStart < start
+                    && frame.defaultStart >= cursor){
+                    parseRange(cursor, frame.defaultStart, context);
+                    cursor = frame.defaultStart;
+                    emitDefault(frame);
+                    defaultEmitted = true;
+                }
+                if(start > cursor) parseRange(cursor, start, context);
+                for(long value : frame.caseSlotValues.get(i)){
+                    items.add(new CaseItem(start, Long.toString(value)));
+                }
+                structured++;
+                cursor = start;
+            }
+            if(!defaultEmitted && frame.defaultStart >= cursor){
+                parseRange(cursor, frame.defaultStart, context);
+                cursor = frame.defaultStart;
+                emitDefault(frame);
+                defaultEmitted = true;
+            }
+            if(frame.exit > cursor) parseRange(cursor, frame.exit, context);
+            BlockEndItem end = new BlockEndItem(frame.exit);
+            items.add(end);
+            header.end = end;
+        }
+
+        /** The default case's label, written where its body starts — the regenerated hole rows
+         *  point here, so the position is what makes them resolve to the original instruction.
+         *  The span-anchor case labels share the position: for a slot they compile to exactly
+         *  the row that slot had. */
+        private void emitDefault(Frame frame){
+            for(long value : frame.defaultCaseValues){
+                items.add(new CaseItem(frame.defaultStart, Long.toString(value)));
+            }
+            items.add(new DefaultItem(frame.defaultStart));
+            structured++;
+        }
 
         /**
          * Recovers every structure shape a lowered short-circuit guard can support.  The
@@ -1799,10 +2137,10 @@ public final class SugarDecompiler{
             return frame;
         }
 
-        private Frame trySwitch(int at, int limit){
-            if(at >= limit) return null;
+        private List<Frame> trySwitch(int at, int limit){
+            if(at >= limit) return List.of();
             Statement first = program.statements.get(at);
-            if(!first.isConditional() || !first.token(2).equals("equal")) return null;
+            if(!first.isConditional() || !first.token(2).equals("equal")) return List.of();
             String value = first.token(3);
             List<Integer> targets = new ArrayList<>();
             List<String> values = new ArrayList<>();
@@ -1815,22 +2153,28 @@ public final class SugarDecompiler{
                 values.add(dispatch.token(4));
                 cursor++;
             }
-            if(targets.isEmpty() || cursor >= limit) return null;
+            if(targets.isEmpty() || cursor >= limit) return List.of();
             Statement defaultJump = program.statements.get(cursor);
-            if(!defaultJump.isAlways()) return null;
-            int exit = defaultJump.target;
-            if(exit <= cursor || exit > limit || targets.get(0) != cursor + 1) return null;
+            if(!defaultJump.isAlways()) return List.of();
+            // With a `default` case the trailing jump lands on that body (inside the switch) and
+            // the real end is where its breaks go; without one the two are the same position.
+            int exit = switchEndBeyond(defaultJump.target, cursor + 1, limit);
+            if(exit <= cursor || exit > limit || targets.get(0) != cursor + 1) return List.of();
             // Case targets may repeat: adjacent zero-length labels (case 5 / case 6 sharing a
             // body) lower to consecutive chain entries with the same target, and recover as
             // empty-bodied case labels. Trailing empty cases collapse onto the exit position
             // itself, so only a strictly-later target is unstructured.
-            for(int i = 0; i + 1 < targets.size(); i++) if(targets.get(i) > targets.get(i + 1)) return null;
-            for(int target : targets) if(target <= cursor || target > exit) return null;
+            for(int i = 0; i + 1 < targets.size(); i++) if(targets.get(i) > targets.get(i + 1)) return List.of();
+            for(int target : targets) if(target <= cursor || target > exit) return List.of();
             Frame frame = new Frame();
             frame.kind = Frame.Kind.SWITCH;
             frame.start = at; frame.exit = exit; frame.resume = exit;
             frame.switchValue = value; frame.caseTargets = targets; frame.caseValues = values;
-            return frame;
+            frame.defaultStart = exit == defaultJump.target ? -1 : defaultJump.target;
+            List<Frame> frames = new ArrayList<>();
+            frames.add(frame);
+            if(frame.defaultStart >= 0) frames.add(withoutDefault(frame));
+            return frames;
         }
 
         private Frame tryFor(int at, int limit){

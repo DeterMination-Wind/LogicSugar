@@ -68,6 +68,7 @@ public final class LogicSugarSettings{
         addHideVarsPref(table);
         addBoxSelectPrefs(table);
         addCompactCardsPref(table);
+        addCounterJumpPrefs(table);
         if(includeJumpLines){
             logicsugar.assist.JumpLineColor.buildSettings(table);
         }
@@ -133,6 +134,16 @@ public final class LogicSugarSettings{
         table.checkPref(logicsugar.assist.BoxSelect.settingCtrlDragCopy, true);
         // 拖动时是否临时把积木间距扩到 10f。关闭可根治视野/虚拟块偏移，但往折叠语句拖语句会更"随机"。
         table.checkPref(logicsugar.assist.BoxSelect.settingDragExpandSpacing, false);
+    }
+
+    /** Checkbox for the @counter indicator line: whether hovering a card whose target is not
+     *  statically unique draws the candidate targets as phantom lines. The badge itself is not
+     *  optional — it is the only signal that a card writes @counter at all.
+     *  <p>Registered in <b>both</b> {@link #setup} and {@code LogicSugarMod.bekBuildSettings}:
+     *  under {@code bekBundled} this page never runs, so a row missing there does not exist for a
+     *  bundled user (the project's recorded bug class, see AGENTS.md).</p> */
+    static void addCounterJumpPrefs(SettingsMenuDialog.SettingsTable table){
+        table.checkPref(mindustry.logic.CounterJumpOverlay.settingCandidateLines, true);
     }
 
     /** Sliders for the processor status overlay (wait threshold, scan rate, warn effects)

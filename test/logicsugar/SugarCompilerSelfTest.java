@@ -43,6 +43,8 @@ public class SugarCompilerSelfTest{
         generatedCodeIsOptimized();
         counterOperationsAreNotOptimized();
         switchStrategyFormulasAndShapes();
+        switchDefaultCaseShape();
+        rawSwitchTableShape();
         switchTableExecutesSemantics();
         switchRegressionGrid();
         chainOnlyPreservesLegacySwitchOutput();
@@ -414,6 +416,67 @@ public class SugarCompilerSelfTest{
         check(negAuto.contains("jump __ls_stmt_27 lessThan __ls_sw_0 0"), "normalized lower guard wrong");
         check(negAuto.contains("jump __ls_stmt_27 greaterThan __ls_sw_0 5"), "normalized upper guard wrong");
         check(!negAuto.contains("lessThan x 0"), "guards compared the un-normalized source value");
+    }
+
+    /**
+     * A {@code default} case owns the holes: the guarded table's bounds guards and every slot
+     * without a case point at its label, and the comparison chain's trailing jump names it
+     * instead of the exit. One default per switch, inside a switch only.
+     */
+    private static void switchDefaultCaseShape(){
+        StringBuilder body = new StringBuilder();
+        body.append("case 0\nprint zero\nbreak\n");
+        body.append("default\nprint other\nbreak\n");
+        for(int i = 0; i < 4; i++) body.append("case 0\n");
+        int dest = 1 + body.toString().split("\n", -1).length - 1;
+        String sugar = "switchbegin x " + dest + "\n" + body + "blockend\nend\n";
+
+        String table = loweredCode(SugarCompiler.compile(sugar));
+        check(table.contains("jump __ls_default_4 lessThan x 0"), "guard lost the default body:\n" + table);
+        check(table.contains("jump __ls_default_4 greaterThan x 0"), "upper guard lost the default body");
+        check(!table.contains("lessThan x 0\n") || !table.contains("jump __ls_stmt_12 lessThan x 0"),
+            "guards still aimed at the switch exit:\n" + table);
+
+        // A chain-eligible switch names the default in its trailing jump, not the exit.
+        String tiny = "switchbegin x 6\ncase 1\nprint one\nbreak\ndefault\nprint other\nbreak\nblockend\nend\n";
+        String chain = loweredCode(SugarCompiler.compile(tiny, SugarCompiler.FuncMode.normal, null, null,
+            SugarCompiler.SwitchStrategy.chainOnly));
+        check(chain.contains("jump __ls_default_4 always x false"),
+            "chain lowering did not end on the default case:\n" + chain);
+
+        // Validation: a second default of the same switch, and one outside any switch.
+        expectFailure("switchbegin x 8\ncase 1\nbreak\ndefault\nprint a\ndefault\nprint b\nblockend\nend\n", "a second default of the same switch");
+        expectFailure("switchbegin x 4\ncase 1\nbreak\nblockend\ndefault\nprint a\nend\n", "a default outside a switch");
+    }
+
+    /**
+     * Raw (guard-less) tables are a property of the program, not a strategy: they lower to the
+     * dispatch plus their rows under every setting — that is what lets the decompiler's gate
+     * accept a hand-written table as a {@code switchbegin ... raw} card — and an impossible raw
+     * table is refused instead of silently becoming a chain.
+     */
+    private static void rawSwitchTableShape(){
+        String raw = "set v 0\nswitchbegin v 8 raw\ncase 0\nprint zero\nbreak\ncase 2\nprint two\nbreak\n"
+            + "default\nprint other\nbreak\nblockend\nend\n";
+        String auto = loweredCode(SugarCompiler.compile(raw));
+        String chainOnly = loweredCode(SugarCompiler.compile(raw, SugarCompiler.FuncMode.normal, null, null,
+            SugarCompiler.SwitchStrategy.chainOnly));
+        check(auto.equals(chainOnly), "the switch strategy changed a raw table's lowering");
+        check(auto.contains("op add @counter @counter v"), "raw dispatch missing:\n" + auto);
+        check(auto.contains("jump __ls_case_2 always x false") && auto.contains("jump __ls_default_8 always x false"),
+            "raw slot rows lost their case/default targets:\n" + auto);
+        check(auto.indexOf("op add @counter @counter v") < auto.indexOf("jump __ls_case_2 always x false"),
+            "raw rows must follow the dispatch immediately");
+        check(!auto.contains("lessThan v 0") && !auto.contains("greaterThan v 2"),
+            "raw table gained bounds guards:\n" + auto);
+        check(!auto.contains("__ls_sw_"), "raw table normalized its index (no bounds check to protect)");
+
+        // Span and value rules are shared with the guarded form: no integer span, no table.
+        expectFailure("set v 0\nswitchbegin v 8 raw\ncase 0.5\nprint a\nbreak\nblockend\nend\n", "a raw table without integer case values");
+        StringBuilder wide = new StringBuilder("set v 0\nswitchbegin v 8 raw\n");
+        for(int i = 0; i < 4; i++) wide.append("case 0\ncase 400\nprint a\nbreak\n");
+        wide.append("blockend\nend\n");
+        expectFailure(wide.toString(), "a raw table past the span cap");
     }
 
     /** Compiled tables behave exactly like chains at runtime: slots run their first-declared
@@ -2500,6 +2563,7 @@ public class SugarCompilerSelfTest{
         LAssembler.customParsers.put("ifbegin", SugarStatements::parseIfBegin);
         LAssembler.customParsers.put("ifbeginc", tokens -> SugarStatements.parseIfBegin(tokens, true));
         LAssembler.customParsers.put("case", SugarStatements::parseCase);
+        LAssembler.customParsers.put("default", tokens -> new SugarStatements.DefaultStatement());
         LAssembler.customParsers.put("elif", SugarStatements::parseElseIf);
         LAssembler.customParsers.put("else", SugarStatements::parseElse);
         LAssembler.customParsers.put("break", tokens -> new BreakStatement());

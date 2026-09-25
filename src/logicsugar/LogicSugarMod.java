@@ -513,6 +513,7 @@ public class LogicSugarMod extends Mod{
         LogicIO.allStatements.add(SugarStatements.SwitchBeginStatement::new);
         LogicIO.allStatements.add(SugarStatements.IfBeginStatement::new);
         LogicIO.allStatements.add(SugarStatements.CaseStatement::new);
+        LogicIO.allStatements.add(SugarStatements.DefaultStatement::new);
         LogicIO.allStatements.add(SugarStatements.ElseIfStatement::new);
         LogicIO.allStatements.add(SugarStatements.ElseStatement::new);
         LogicIO.allStatements.add(SugarStatements.BreakStatement::new);
@@ -568,6 +569,7 @@ public class LogicSugarMod extends Mod{
         LogicSugarSettings.addHideVarsPref(table);
         LogicSugarSettings.addBoxSelectPrefs(table);
         LogicSugarSettings.addCompactCardsPref(table);
+        LogicSugarSettings.addCounterJumpPrefs(table);
         JumpLineColor.buildSettings(table);
     }
 }

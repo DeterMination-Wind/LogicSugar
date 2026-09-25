@@ -54,6 +54,7 @@ public class ExprCardSelfTest{
         markerRoundTripsThroughTextImport();
         carrierRoundTripKeepsTheCard();
         textIsIdenticalWithAndWithoutUnfold();
+        counterConstantsAreFolded();
 
         System.out.println("LogicSugar expression card self-test passed.");
     }
@@ -273,6 +274,52 @@ public class ExprCardSelfTest{
                     + "\n  card:     " + written.replace("\n", " | ")
                     + "\n  unfolded: " + unfolded.trim().replace("\n", " | "));
         }
+    }
+
+    /**
+     * {@code @counter} 目标的纯常量折叠（2026-09 报告）：{@code @counter = 5*2} 必须只产出一条
+     * {@code set @counter 10}。否则产物是 {@code op mul _0 5 2} + {@code set @counter _0}，
+     * 编辑器看到的目标是个变量，左侧指示线只能报"目标取决于运行期值"。
+     *
+     * <p>范围刻意收窄：只有 {@code @counter} 目标折叠。普通目标的产物逐字保持原样 ——
+     * 折叠它们会改动既有存档的产物，让载体校验失败。</p>
+     *
+     * <p>注意断言的是"没有 op 行 + 值是字面量"，不是行数：表达式层本来就会把最后一条 op 的
+     * 目标改成 dest、把简单值并成一条 {@code set}，所以行数在两种形态间都会变。</p>
+     */
+    private static void counterConstantsAreFolded(){
+        // 折叠：产物里不再有 op，值直接是算出来的字面量
+        String folded = text(compile(counterCard("5*2")));
+        check(folded.equals("set @counter 10"),
+            "@counter = 5*2 must fold to set @counter 10, got: " + folded);
+
+        String nested = text(compile(counterCard("(1 + 2) * (3 + 1)")));
+        check(nested.equals("set @counter 12"), "expected set @counter 12, got: " + nested);
+
+        // 不折叠：含变量时 op 行必须留着，目标仍取决于运行期值
+        String dynamic = text(compile(counterCard("a + 1")));
+        check(dynamic.contains("op") && !dynamic.contains("set "),
+            "a non-constant expression must stay a runtime op, got: " + dynamic);
+
+        // 不折叠：非 @counter 目标一律保持原样（产物兼容性硬要求）
+        String other = text(compile(newExprCard("result", "5*2")));
+        check(other.contains("op mul"), "a non-counter destination must keep its op, got: " + other);
+        check(!other.contains("set result 10"), "a non-counter destination must not be folded, got: " + other);
+
+        // 不折叠：算不出有限值（除以零）时回落到运行时计算，而不是折叠成 Infinity
+        String zero = text(compile(counterCard("1/0")));
+        check(zero.contains("op"), "a non-finite constant must not fold, got: " + zero);
+    }
+
+    private static ExprStatement counterCard(String expr){
+        return newExprCard("@counter", expr);
+    }
+
+    private static ExprStatement newExprCard(String dest, String expr){
+        ExprStatement card = new ExprStatement();
+        card.dest = dest;
+        card.expr = expr;
+        return card;
     }
 
     /** 去掉自描述标记行后的指令文本（标记是注释元数据，不属于可执行程序）。 */

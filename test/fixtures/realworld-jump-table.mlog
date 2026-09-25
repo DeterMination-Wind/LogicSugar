@@ -1,0 +1,660 @@
+# Real-world hand-written (third-party tool) processor program: 655 instructions, no LogicSugar
+# carrier, no entry skip, and a 251-slot `@counter` jump table whose unhandled slots jump back to
+# the loop head at instruction 45. Pinned by SugarDecompilerTest.realWorldJumpTableRecovers.
+# Statement indices are load-bearing in this file (the table rows address instructions by index),
+# so do not add or remove program lines here.
+print "巅峰算力智能质驱-缓存专用"
+print "by [cyan]Nihil[white] 2024/4/7\n"
+print "连接所有有容量建筑及选料的分类器装卸器"
+print "适用光速搬入料质驱（四类仓库缓存）"
+printflush message1
+set item.need 100
+set links @links
+set unitcost 2
+set buildcost 2
+set copper 0
+set lead 0
+set lead.unit 0
+set metaglass 0
+set metaglass.unit 0
+set graphite 0
+set graphite.unit 0
+set sand 0
+set coal 0
+set coal.unit 0
+set titanium 0
+set titanium.unit 0
+set thorium 0
+set thorium.unit 0
+set thorium.build 0
+set scrap 0
+set silicon 0
+set silicon.unit 0
+set plastanium 0
+set plastanium.unit 0
+set phase-fabric 0
+set phase-fabric.unit 0
+set surge-alloy 0
+set surge-alloy.unit 0
+set spore-pod 0
+set blast-compound 0
+set pyratite 0
+set beryllium 0
+set beryllium.unit 0
+set beryllium.build 0
+set tungsten 0
+set tungsten.unit 0
+set tungsten.build 0
+set carbide 0
+set carbide.build 0
+set i 0
+getlink block i
+jump 444 equal block null
+op add i i 1
+sensor blocktype block @type
+sensor id blocktype @id
+op add @counter @counter id
+jump 306 always x false
+jump 306 always x false
+jump 308 always x false
+jump 311 always x false
+jump 315 always x false
+jump 318 always x false
+jump 320 always x false
+jump 318 always x false
+jump 326 always x false
+jump 330 always x false
+jump 333 always x false
+jump 45 always x false
+jump 333 always x false
+jump 336 always x false
+jump 333 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 439 always x false
+jump 348 always x false
+jump 348 always x false
+jump 441 always x false
+jump 348 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 363 always x false
+jump 45 always x false
+jump 45 always x false
+jump 361 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 304 always x false
+jump 304 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 365 always x false
+jump 377 always x false
+jump 384 always x false
+jump 393 always x false
+jump 396 always x false
+jump 400 always x false
+jump 404 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 430 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 343 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 350 always x false
+jump 45 always x false
+jump 45 always x false
+jump 350 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 359 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 346 always x false
+jump 338 always x false
+jump 355 always x false
+jump 45 always x false
+jump 45 always x false
+jump 357 always x false
+jump 353 always x false
+jump 45 always x false
+jump 45 always x false
+jump 323 always x false
+jump 45 always x false
+jump 304 always x false
+jump 304 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 348 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 348 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 409 always x false
+jump 412 always x false
+jump 415 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 427 always x false
+jump 45 always x false
+jump 45 always x false
+jump 418 always x false
+jump 421 always x false
+jump 424 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+jump 348 always x false
+jump 45 always x false
+jump 45 always x false
+jump 45 always x false
+set bufferblock block
+jump 45 always x false
+op add coal coal 10
+jump 45 always x false
+op add coal coal 5
+op add sand sand 10
+jump 45 always x false
+op add coal coal 20
+op add sand sand 30
+op add pyratite pyratite 5
+jump 45 always x false
+op add lead lead 10
+op add sand sand 10
+jump 45 always x false
+op add titanium titanium 10
+jump 45 always x false
+op add sand sand 20
+op add thorium thorium 8
+jump 45 always x false
+op add sand sand 36
+op add thorium thorium 12
+jump 45 always x false
+op add coal coal 5
+op add lead lead 10
+op add sand sand 10
+jump 45 always x false
+op add spore-pod spore-pod 10
+op add pyratite pyratite 10
+jump 45 always x false
+sensor ic block @itemCapacity
+op add scrap scrap ic
+jump 45 always x false
+op add spore-pod spore-pod 10
+jump 45 always x false
+op add copper copper 15
+op add lead lead 20
+op add titanium titanium 10
+op add silicon silicon 15
+jump 45 always x false
+op add graphite graphite 7
+op add sand sand 28
+jump 45 always x false
+op add beryllium beryllium 10
+jump 45 always x false
+op add phase-fabric phase-fabric 10
+jump 45 always x false
+op add graphite graphite 18
+op add tungsten tungsten 12
+jump 45 always x false
+op add sand sand 10
+jump 45 always x false
+op add silicon silicon 20
+jump 45 always x false
+op add graphite graphite 10
+jump 45 always x false
+op add thorium thorium 20
+jump 45 always x false
+op add thorium thorium 30
+jump 45 always x false
+op add thorium thorium 10
+jump 45 always x false
+sensor config block @config
+jump 369 notEqual config @dagger
+op add lead.unit lead.unit 10
+op add silicon.unit silicon.unit 10
+jump 373 notEqual config @nova
+op add silicon.unit silicon.unit 30
+op add lead.unit lead.unit 20
+op add titanium.unit titanium.unit 20
+jump 376 notEqual config @crawler
+op add silicon.unit silicon.unit 8
+op add coal.unit coal.unit 10
+jump 45 always x false
+sensor config block @config
+jump 380 notEqual config @flare
+op add silicon.unit silicon.unit 15
+jump 383 notEqual config @mono
+op add lead.unit lead.unit 15
+op add silicon.unit silicon.unit 30
+jump 45 always x false
+sensor config block @config
+jump 388 notEqual config @risso
+op add metaglass.unit metaglass.unit 35
+op add silicon.unit silicon.unit 20
+jump 392 notEqual config @retusa
+op add metaglass.unit metaglass.unit 25
+op add silicon.unit silicon.unit 15
+op add titanium.unit titanium.unit 20
+jump 45 always x false
+op add silicon.unit silicon.unit 40
+op add graphite.unit graphite.unit 40
+jump 45 always x false
+op add silicon.unit silicon.unit 130
+op add titanium.unit titanium.unit 80
+op add metaglass.unit metaglass.unit 40
+jump 45 always x false
+op add silicon.unit silicon.unit 850
+op add titanium.unit titanium.unit 750
+op add plastanium.unit plastanium.unit 650
+jump 45 always x false
+op add silicon.unit silicon.unit 1000
+op add plastanium.unit plastanium.unit 600
+op add phase-fabric.unit phase-fabric.unit 350
+op add surge-alloy.unit surge-alloy.unit 500
+jump 45 always x false
+op add beryllium.unit beryllium.unit 40
+op add silicon.unit silicon.unit 50
+jump 45 always x false
+op add beryllium.unit beryllium.unit 50
+op add silicon.unit silicon.unit 70
+jump 45 always x false
+op add graphite.unit graphite.unit 50
+op add silicon.unit silicon.unit 70
+jump 45 always x false
+op add tungsten.unit tungsten.unit 30
+op add silicon.unit silicon.unit 40
+jump 45 always x false
+op add tungsten.unit tungsten.unit 40
+op add silicon.unit silicon.unit 50
+jump 45 always x false
+op add tungsten.unit tungsten.unit 40
+op add silicon.unit silicon.unit 60
+jump 45 always x false
+op add silicon.unit silicon.unit 100
+op add thorium.unit thorium.unit 80
+jump 45 always x false
+sensor config block @config
+jump 433 notEqual config @beryllium-wall-large
+op add beryllium.build beryllium.build 24
+jump 435 notEqual config @tungsten-wall-large
+op add tungsten.build tungsten.build 24
+jump 438 notEqual config @carbide-wall-large
+op add carbide.build carbide.build 24
+op add thorium.build thorium.build 24
+jump 45 always x false
+op add silicon silicon 10
+jump 45 always x false
+op add silicon silicon 10
+op add phase-fabric phase-fabric 10
+jump 45 always x false
+jump 5 notEqual links @links
+op mul lead.unit lead.unit unitcost
+op mul metaglass.unit metaglass.unit unitcost
+op mul graphite.unit graphite.unit unitcost
+op mul coal.unit coal.unit unitcost
+op mul titanium.unit titanium.unit unitcost
+op mul thorium.unit thorium.unit unitcost
+op mul silicon.unit silicon.unit unitcost
+op mul plastanium.unit plastanium.unit unitcost
+op mul surge-alloy.unit surge-alloy.unit unitcost
+op mul phase-fabric.unit phase-fabric.unit unitcost
+op mul beryllium.unit beryllium.unit unitcost
+op mul tungsten.unit tungsten.unit unitcost
+op mul carbide.build carbide.build buildcost
+op mul tungsten.build tungsten.build buildcost
+op mul beryllium.build beryllium.build buildcost
+op mul thorium.build thorium.build buildcost
+op add lead lead lead.unit
+op add metaglass metaglass metaglass.unit
+op add graphite graphite graphite.unit
+op add coal coal coal.unit
+op add titanium titanium titanium.unit
+op add thorium thorium thorium.unit
+op add thorium thorium thorium.build
+op add silicon silicon silicon.unit
+op add plastanium plastanium plastanium.unit
+op add phase-fabric phase-fabric phase-fabric.unit
+op add surge-alloy surge-alloy surge-alloy.unit
+op add beryllium beryllium beryllium.unit
+op add beryllium beryllium beryllium.build
+op add tungsten tungsten tungsten.unit
+op add tungsten tungsten tungsten.build
+op add carbide carbide carbide.build
+set j -1
+set l -1
+op add j j 1
+jump 580 greaterThanEq j 19
+op mul k j 3
+op add @counter @counter k
+jump 479 lessThanEq copper 0
+set item @copper
+jump 539 always x false
+jump 479 lessThanEq lead 0
+set item @lead
+jump 539 always x false
+jump 479 lessThanEq metaglass 0
+set item @metaglass
+jump 539 always x false
+jump 479 lessThanEq graphite 0
+set item @graphite
+jump 539 always x false
+jump 479 lessThanEq sand 0
+set item @sand
+jump 539 always x false
+jump 479 lessThanEq coal 0
+set item @coal
+jump 539 always x false
+jump 479 lessThanEq titanium 0
+set item @titanium
+jump 539 always x false
+jump 479 lessThanEq thorium 0
+set item @thorium
+jump 539 always x false
+jump 479 lessThanEq scrap 0
+set item @scrap
+jump 539 always x false
+jump 479 lessThanEq silicon 0
+set item @silicon
+jump 539 always x false
+jump 479 lessThanEq plastanium 0
+set item @plastanium
+jump 539 always x false
+jump 479 lessThanEq phase-fabric 0
+set item @phase-fabric
+jump 539 always x false
+jump 479 lessThanEq surge-alloy 0
+set item @surge-alloy
+jump 539 always x false
+jump 479 lessThanEq spore-pod 0
+set item @spore-pod
+jump 539 always x false
+jump 479 lessThanEq blast-compound 0
+set item @blast-compound
+jump 539 always x false
+jump 479 lessThanEq pyratite 0
+set item @pyratite
+jump 539 always x false
+jump 479 lessThanEq beryllium 0
+set item @beryllium
+jump 539 always x false
+jump 479 lessThanEq tungsten 0
+set item @tungsten
+jump 539 always x false
+jump 479 lessThanEq carbide 0
+set item @carbide
+op add l l 1
+op mul m l 2
+op add @counter @counter m
+set item1 item
+jump 479 always x false
+set item2 item
+jump 479 always x false
+set item3 item
+jump 479 always x false
+set item4 item
+jump 479 always x false
+set item5 item
+jump 479 always x false
+set item6 item
+jump 479 always x false
+set item7 item
+jump 479 always x false
+set item8 item
+jump 479 always x false
+set item9 item
+jump 479 always x false
+set item10 item
+jump 479 always x false
+set item11 item
+jump 479 always x false
+set item12 item
+jump 479 always x false
+set item13 item
+jump 479 always x false
+set item14 item
+jump 479 always x false
+set item15 item
+jump 479 always x false
+set item16 item
+jump 479 always x false
+set item17 item
+jump 479 always x false
+set item18 item
+jump 479 always x false
+set item19 item
+jump 479 always x false
+op add l l 1
+set use.item item1
+set item.num l
+op add p p 1
+jump 0 notEqual links @links
+op mod p p item.num
+op mul t p 2
+op add @counter @counter t
+set try.item item1
+jump 625 always x false
+set try.item item2
+jump 625 always x false
+set try.item item3
+jump 625 always x false
+set try.item item4
+jump 625 always x false
+set try.item item5
+jump 625 always x false
+set try.item item6
+jump 625 always x false
+set try.item item7
+jump 625 always x false
+set try.item item8
+jump 625 always x false
+set try.item item9
+jump 625 always x false
+set try.item item10
+jump 625 always x false
+set try.item item11
+jump 625 always x false
+set try.item item12
+jump 625 always x false
+set try.item item13
+jump 625 always x false
+set try.item item14
+jump 625 always x false
+set try.item item15
+jump 625 always x false
+set try.item item16
+jump 625 always x false
+set try.item item17
+jump 625 always x false
+set try.item item18
+jump 625 always x false
+set try.item item19
+jump 625 always x false
+sensor try bufferblock try.item
+sensor use bufferblock use.item
+jump 630 greaterThanEq try use
+set use.item try.item
+set use try
+op lessThan mod use item.need
+control enabled unloader1 mod 0 0 0
+control config unloader1 use.item 0 0 0
+control enabled unloader2 mod 0 0 0
+control config unloader2 use.item 0 0 0
+control enabled unloader3 mod 0 0 0
+control config unloader3 use.item 0 0 0
+control enabled unloader4 mod 0 0 0
+control config unloader4 use.item 0 0 0
+control enabled unloader5 mod 0 0 0
+control config unloader5 use.item 0 0 0
+control enabled unloader6 mod 0 0 0
+control config unloader6 use.item 0 0 0
+control enabled unloader7 mod 0 0 0
+control config unloader7 use.item 0 0 0
+control enabled unloader8 mod 0 0 0
+control config unloader8 use.item 0 0 0
+control enabled unloader9 mod 0 0 0
+control config unloader9 use.item 0 0 0
+control enabled unloader10 mod 0 0 0
+control config unloader10 use.item 0 0 0
+control enabled unloader11 mod 0 0 0
+control config unloader11 use.item 0 0 0
+control enabled unloader12 mod 0 0 0
+control config unloader12 use.item 0 0 0
+jump 583 always x false

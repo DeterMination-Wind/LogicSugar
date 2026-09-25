@@ -41,7 +41,7 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
                                       # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, editHistoryTest,
                                       # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, exprTextImportTest,
                                       # exprCardTest,
-                                       # funclibLimitTest
+                                       # funclibLimitTest, originTest, counterJumpIndexTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 
@@ -111,6 +111,80 @@ stripping carriers/markers, not the Base64 metadata):
    executable control-flow shape must either be recoverable by inference (with fixture) or
    explicitly recorded as carrier-only in this section.
 
+### The gate's two normalizations (so hand-written programs open as Sugar, not vanilla)
+
+A program Logic Sugar never saved — hand-written mlog or another tool's output — carries
+neither the carrier nor the two things this compiler's own output always has. Both were
+missing from the gate, and together they made *every* such program fall back to flat
+vanilla no matter how well it was understood (reported 2026-09-25 with a 655-instruction
+jump-table program; fixture `test/fixtures/realworld-jump-table.mlog`):
+
+- **Entry-skip era.** `compile` appends `set @counter 0` (`entrySkipLine`), so any candidate
+  containing sugar gained one instruction the input never had. `verify` now compiles each
+  candidate in *both* eras, exactly like `SugarCompiler.verifyLowering` does for stored
+  saves (that is where the pattern comes from; `compileWithoutEntrySkip` is the public
+  entry, used only by the gate). Saving a recovered view still adds the skip — documented,
+  intended, and semantics-preserving (running off the end wraps to 0 either way).
+- **Jump threading.** `compile` runs `threadAlwaysJumpTargets`, which rewrites
+  `jump A always` to the end of A's chain. That pass reads chains off *labels*, and a
+  hand-written program addresses jumps by instruction index with no labels at all, so the
+  old `threadAlwaysJumpTargets(original)` comparison target was a no-op on exactly the
+  programs that needed it. `SugarCompiler.threadNumericJumpTargets` applies the same fixed
+  point on statement indices (unconditional jumps only, cycles keep their targets, line
+  structure and instruction count unchanged) and that is what `verify` compares against.
+
+Neither normalization weakens the gate: both yield streams behaviorally identical to the
+input, and both are transformations the compiler already applies to its own output.
+
+### The editor must ask the decompiler at all (`SugarDecompiler.openingSource`)
+
+The gate fix above made recovery *possible*; it did not make it *reachable*. `verifyRestore`
+starts with `if(!hasSugarCarrier(code)) return true;` — for a program with no carrier there is
+nothing to verify, so it answers "true", and `SugarLogicDialog.show` read that as "trusted
+stored sugar" and loaded the vanilla text. The decompiler was only consulted when a carrier
+existed but failed verification, i.e. never for hand-written/third-party programs. The
+reported program therefore still opened as 251 raw jump cards after the gate fix.
+
+The decision now lives in `SugarDecompiler.openingSource(code, privileged, librarySession)`,
+returning the source to load plus a mode: `stored` (carrier, legacy marker block, or library
+text — load as-is), `inferred` (verified inference: show the recovered notice and keep the
+original view reachable), `raw` (load the code unchanged). Inference runs whenever there is no
+carrier to trust, and only for a processor program — library text is sugar source, not a
+program. It is a plain static method on purpose: the bug sat in UI code that no headless test
+could reach, and `decompileTest`'s `editorOpensHandWrittenProgramsAsSugar` now pins the
+decision for both editor privilege levels (an ordinary processor edits with `privileged ==
+false`, while recovery tests tend to pass `true`).
+
+### Raw leap tables (`switchbegin … raw`) and the `default` case
+
+A hand-written `@counter` jump table has no bounds guards — `op add @counter @counter <v>`
+followed by one unconditional row per slot. Recovering it as the compiler's *guarded*
+table would add two instructions and clamp out-of-range values, i.e. silently rewrite the
+program, so the shape is carried in the source:
+
+- `switchbegin <value> <dest> raw` (optional 4th token; absent = guarded) lowers to
+  dispatch + `span` rows and nothing else. It ignores `SwitchStrategy` — the mode is a
+  property of the program, which is also what lets the gate's strategy matrix accept it.
+  Invalid raw tables (non-integer values, span > `MAX_TABLE_SPAN`) are a compile error.
+- `default:` is the switch's own card for "no case matched". In the chain lowering it is
+  the trailing jump's target; in a table it is the target of every hole row, and in the
+  guarded form of the bounds guards too (an out-of-range value lands there). At most one per
+  switch, inside a switch only; `defaultViolations` is the single rule shared by the
+  compiler, the editor's red marking and the library builder.
+- Inference (`tryBareSwitchTable`): slot *k* addresses row *k*, so a case value is its row
+  index and the span starts at 0. A row's destination is read through unconditional-jump
+  chains (the author's own threading). Rows that leave the body region are holes and must
+  all share one destination, which becomes the `default` case — placed on an *existing*
+  instruction inside the region whose own chain ends there, so the regenerated rows resolve
+  to it. The table's span is pinned with a case on either end slot when a hole sits there
+  (the label and the default share a position, so the row is identical). Anything that does
+  not fit returns null and the view stays vanilla.
+- Inference of the *guarded* table now also recovers a `default`: the guards and hole rows
+  land on a body inside the switch instead of at its exit, and the switch's real end is then
+  the destination the case bodies' breaks use (`switchEndBeyond`). Both readings are offered
+  as candidates — a body jumping past the switch is indistinguishable from a default at that
+  level — and the gate decides, the same way the rest of the recovery resolves ambiguity.
+
 **Checklist for any change that touches the compiled product:**
 
 - Update the carrier path so the new card/feature survives `compile → save → restore → verifyRestore`.
@@ -159,6 +233,108 @@ appeared to do nothing):
   `list[1]]`). The same rule applies to the card's error label. `selfTest`'s
   `highlightTextIsUnchanged` case strips the markup and asserts the visible text equals what the
   user typed — keep new display code on that rule.
+
+## @counter indicator line (left-side mirrored jump line)
+
+`set @counter N` / `@counter += k` / `@counter -= k` (set / op / Expr cards) are jumps at runtime:
+`LExecutor.runOnce()` reads then post-increments (`instructions[(int)(counter.numval++)].run(this)`),
+so execution continues at instruction N. `mindustry.logic.CounterJumpOverlay` draws a mirrored
+jump line on the **left** of the writing card, pointing at the target card. Purely presentational —
+it never changes the saved product, so it is **not** subject to the multiplayer gate, and it must
+stay that way.
+
+Three load-bearing properties and one recorded bug; each fails silently:
+
+- **`Write.targets` holds instruction indices; `elementAt(i)` takes a statement index — never mix them.**
+  That mixup is the 2026-09 misalignment report: `set @counter 3` drew its line to the 4th card
+  because 3 was used as a statement index. Every target must go through
+  `provenance.originOf(...)` before it can name a card, and a target whose origin is `-1` (function
+  body, compiler-generated instruction) is unresolvable — badge only, never a guessed line.
+  `originTest`'s `counterTargetsResolveThroughProvenance` pins the conversion, and step 17 of
+  `docs/testing.md`'s manual checklist exists because no automated check can see *where* a line was
+  drawn. Generalisation worth carrying to other features: whenever an `int` could be two of
+  "instruction index / statement index / line number", say which in the name or the comment —
+  the same trap appears as `originOfLine`'s line numbers vs `origins`' instruction indices.
+- **The compile-time origin channel must not touch the product.**
+  `SugarFunctions.OriginRecording` records `[from, to)` line ranges per statement from *outside*
+  the emission code (`countLines(out)` before/after each statement in `lower`). It is deliberately
+  not an `Appendable`/`StringBuilder` wrapper — `StringBuilder` cannot be subclassed under
+  `--release 17`. `originTest` asserts `compileRecorded(...)` and `compile(...)` return
+  **byte-identical** products across every fixture and both FuncModes; keep that assertion green
+  for any change to `lower()`. Do not add per-emission-site bookkeeping: the range measurement is
+  the whole point.
+- **`markSynthetic` must not pre-allocate.** `synthetic.length` feeds the line-count ceiling in
+  `flatten`, so padding the array makes phantom lines real; `lineCount()` then exceeds the actual
+  text and `compileRecorded` returns null for *every* program. Same reason `flatten(totalLines)`
+  takes the body's true line count from the caller: the range table only knows how far the
+  *productive* statements reach, and the trailing label plus the entry skip are in no range.
+- **Statement attribution comes from `CompileProvenance`, not from `CounterJumpIndex.Write.statement`.**
+  The resolver treats negative provenance slots (`sugar-functions` `syntheticOrigin`) as unknown and
+  re-fills them from `__ls_stmt_<N>:` label heuristics — correct when provenance is absent, wrong
+  when it is present. The overlay uses `provenance.originOf(write.instruction)`.
+
+Never guess a target: one target ⇒ solid line, several candidates ⇒ badge only (phantom lines on
+hover, `logicsugar.counterJump.candidates`), unresolvable ⇒ grey badge. Writes that belong to no
+card (function bodies, compiler-generated `@counter` shapes) get a grey chip under the statement
+area instead of silently disappearing.
+
+**It must look like the vanilla jump line, mirrored — including the rail allocation.** Anchor both
+endpoints at the cards' own **left edge** (local `x = 0` through `localToAscendantCoordinates` — the
+same coordinate discipline as `StructureGuideLayer`), use `Lines.stroke(Scl.scl(4f), color)` and the
+`Tex.logicNode` arrow at the target end: copy `JumpCurve.draw` / `drawCurve` and mirror the lateral
+direction (`x - rail` instead of `x + uiHeight`). Do not invent geometry — an early version put the
+endpoints on an "outside rail" (`-Scl.scl(5f)`), used a 3.2f stroke and a `Fill.circle`, which
+produced a line hanging off the cards that looked nothing like a jump line (2026-09 report). When a
+request says "like X", read X's code first and mirror it item by item.
+
+**The lateral distance is per-curve, from the lane allocator — never a fixed `bow`.** Vanilla's
+`uiHeight` is `Scl.scl(40) + Scl.scl(10) * predHeight` (portrait `20`/`8`), and `predHeight` comes
+from `StatementsTable.setJumpHeights` + `getJumpHeight`: an interval colouring that gives every
+overlapping jump its own rail and keeps nested spans closer to the cards. Copying only `drawCurve`
+and hard-coding `bow = 18f` therefore drew every `@counter` line on the *same* vertical rail, so
+they ran over one another (2026-09-25 report: "加一个类似 jump 的轨道算法让线不交叉"). The
+algorithm now lives in `logicsugar.assist.JumpLanes.assign(begin, end, flipped)` — a faithful mirror
+including the `reprBefore`/`reprAfter` representative merge, extracted as a pure function so it *is*
+testable headlessly (`counterJumpIndexTest`'s `jumpLanesSeparateOverlappingCurves`: disjoint spans
+share the innermost rail, touching spans may share, overlapping ones must not, nesting keeps the
+inner span closer, identical spans merge). `originTest.overlayRailsFollowLanes` pins that the overlay
+actually consults it. Vanilla smooths a rail change with `Mathf.lerp(target, current, pow(0.9,
+delta))`; keep that, or switching rails snaps. The arrow size must not be derived from `|tx - sx|`:
+both anchors sit on the same edge, so that is 0 and the arrow would never be drawn.
+
+**The target arrow is a double mirror — flip the x offset and the width together.** Vanilla draws
+`Tex.logicNode.draw(t.x + 0.75f * s, t.y - s / 2f, -s, s)`: libGDX normalises a negative width into
+`[t.x - 0.25s, t.x + 0.75s]` **and** mirrors the texture, so the arrow straddles the card's right
+edge and points into the card. Mirroring to our left edge means the x offset becomes `-0.75f * s`
+*and* the width becomes `+s` (the two mirrors cancel) — rect `[tx - 0.75s, tx + 0.25s]`, pointing
+into the card. Flipping only the x offset left the arrow floating 15–35 px outside the card with its
+texture still reversed, i.e. pointing *away* from the target (2026-09-25 report: "这个箭头位置对吗").
+`originTest.overlayRailsFollowLanes` pins the exact call.
+
+**Both axes of an anchor are element-local coordinates.** `localToAscendantCoordinates` adds the
+element's `x`/`y` (its offset inside the parent table) itself, so an anchor must not include them —
+`anchorY` returning `elem.y + getHeight()/2f` counted that offset twice and lifted each anchor by
+its own `elem.y`. The statements table is top-aligned, so the write card (late in the program, small
+`y`) stayed roughly put while the target card (earlier, large `y`) was thrown above the top of the
+screen: a line that leaves the cards and points at nothing (2026-09-25 report). Vanilla takes
+`hover.getHeight()/2f` for exactly this reason and `StructureGuideLayer` takes `0` / `getHeight()`.
+Only the X axis hid the mistake, because it wants no offset — which a local `0` already is.
+`originTest`'s `anchorsAreLocalCoordinates` nails the code (comments stripped, since the method's own
+comment names the wrong expression) so it cannot come back unnoticed.
+
+**The per-frame path must use `SugarCanvas.readonlyText()`, never `save()`.** The overlay polls the
+canvas text every frame for its compile cache, and the undo history polls it every few frames.
+`SugarCanvas.save()` is a *persisting* API: it runs `structure.refresh()` plus
+`ExprHook.unfoldAll`/`foldAll`, which remove/add statement elements and hand back the **unfolded**
+text — while `elementAt(i)` indexes the canvas as it is on screen (folded). `LCanvas.save()` on the
+read-only path is no better: it calls `saveUI()` on every statement and `JumpStatement.saveUI()`
+throws NPE when its target element is detached (that is what `SugarCanvas.normalizeJumpUI` exists
+for). Called from an `update()` callback, either one turns "one bad frame" into "the callback dies
+and the line never comes back" — the reported symptom was a long program drawing nothing, with a
+single flash right after an edit (2026-09-25). So: per-frame text ⇒ `readonlyText()` (null-safe,
+no folding), history snapshots ⇒ the same, and the callback wraps both the snapshot and the drawing
+in `catch(Throwable)` with `noteOnce` logging, because a purely visual feature that dies silently is
+undiagnosable by design. `originTest`'s `overlayUsesReadonlySnapshot` pins all three.
 
 ## Data subsystem (arrays / matrix / record / containers / bitset / map / list / heap / chain)
 
@@ -233,8 +409,8 @@ the Neon main repo's docs:
   pipelines, expression subsystem, cross-loader constraint, decompiler gate, layout map.
 - `docs/development.md` — environment, Gradle commands, artifact chain, style rules.
 - `docs/release.md` — version scheme, `deploy`/D8 pipeline, Release asset safety rules.
-- `docs/testing.md` — the thirty-seven JavaExec self-test tasks, new-test conventions, manual
-  checklist.
+- `docs/testing.md` — the JavaExec self-test tasks (see `check.dependsOn` for the current list;
+  count kept in sync there), new-test conventions, manual checklist.
 - `docs/glossary.md` — project terminology (carrier, FuncMode, SwitchStrategy, gate, …).
 
 Keep task names and version rules in sync with `build.gradle`; keep cross-loader and gate

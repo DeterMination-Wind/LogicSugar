@@ -51,6 +51,7 @@ public final class EditorConflictTest{
         coexistRefusesTheOpenEditor();
         coexistRebindsForeignPanels();
         coexistKeepsTheForeignPanelClickable();
+        switchCardModeToggleRebuildsItsRow();
 
         System.out.println("EditorConflictTest: all checks passed");
     }
@@ -485,6 +486,38 @@ public final class EditorConflictTest{
         check(source.contains("catch(Throwable ignored)")
                 && source.contains("Class.forName(className, false"),
             "MindustryX is optional, so a missing class must be tolerated");
+    }
+
+    /**
+     * The switch card's table-shape button must rebuild its own row when it is clicked.
+     *
+     * <p>Its label <em>is</em> the current shape ({@code 带边界} / {@code 裸表}), and a card's
+     * {@code build(Table)} runs once — {@code SugarCanvas.refreshCurrent()} only re-lays out the
+     * widgets that already exist, so the first version left the old word on screen and the only
+     * visible reaction to a click was its colour. That is what got reported
+     * ("点击裸表按钮后切换颜色意义不明", 2026-09-25).</p>
+     *
+     * <p>Colour is pinned too, because both plausible tints are already spoken for in this mod:
+     * red marks invalid statements, and amber is {@code CounterJumpOverlay}'s "several candidate
+     * targets". A mode toggle shows its state in words, like {@code condition.expr} and the fold
+     * buttons do.</p>
+     */
+    private static void switchCardModeToggleRebuildsItsRow() throws IOException{
+        String source = SourceNails.readSource("src/mindustry/logic/SugarStatements.java");
+        String body = SourceNails.methodBody(source, "private void rebuildMode(Table table){");
+
+        check(body.contains("rawTable = !rawTable;") && body.contains("rebuildMode(table);"),
+            "clicking the table-shape button must rebuild the row, not only refresh the canvas: the "
+                + "label is the state, and a stale label plus a colour change is unreadable");
+        check(body.indexOf("rebuildMode(table);") < body.indexOf("SugarCanvas.refreshCurrent();"),
+            "the row must be rebuilt before the canvas refresh, so the new width is laid out once");
+        check(body.contains("elem == null ? Pal.logicControl : elem.color"),
+            "the mode button must follow the card's own colour, so invalid-statement marking still shows");
+        check(!body.contains("Pal.accent") && !body.contains("Pal.remove"),
+            "no state tint: red means invalid and amber means several candidate targets elsewhere in "
+                + "this mod, so a third meaning here reads as a warning that the tooltip does not back up");
+        check(source.contains("table.table(this::rebuildMode)"),
+            "build() must route the mode button through rebuildMode, or the rebuild above has no cell to own");
     }
 
     /**

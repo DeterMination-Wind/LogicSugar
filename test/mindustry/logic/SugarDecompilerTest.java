@@ -20,6 +20,12 @@ public final class SugarDecompilerTest{
         switchFallthroughRoundTrip();
         switchTableRoundTrip();
         threadedSwitchTableRoundTrip();
+        switchDefaultCaseRoundTrip();
+        rawJumpTableRoundTrip();
+        handWrittenProgramWithoutEntrySkipRecovers();
+        numericJumpChainIsThreadedForTheGate();
+        realWorldJumpTableRecovers();
+        editorOpensHandWrittenProgramsAsSugar();
         nestedRoundTrip();
         metadataAndLineEndings();
         malformedInputIsPreserved();
@@ -144,6 +150,192 @@ public final class SugarDecompilerTest{
      *  generated body has 22 statements, so its blockend is 27 and the label is stmt_28. */
     private static int switchDestForThreadedSource(){
         return 28;
+    }
+
+    /** A {@code default} case is the target of the table's hole rows (and of the bounds guards),
+     *  so the same source round-trips through the gate with the default card intact. The repeated
+     *  case labels keep the table the cheaper lowering, like {@link #tableSource}. */
+    private static void switchDefaultCaseRoundTrip(){
+        StringBuilder body = new StringBuilder();
+        body.append("case 0\nprint zero\nbreak\n");
+        body.append("default\nprint other\nbreak\n");
+        for(int i = 0; i < 4; i++) body.append("case 0\n");
+        int bodyLines = body.toString().split("\\n", -1).length - 1;
+        String sugar = "switchbegin x " + (1 + bodyLines) + "\n" + body + "blockend\n";
+        String raw = stripGenerated(SugarCompiler.compile(sugar));
+        check(raw.contains("op add @counter @counter x"),
+            "default-case fixture did not lower to a jump table:\n" + raw);
+        check(raw.contains("__ls_default_"), "default case got no label of its own:\n" + raw);
+        SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
+        check(result.verified, "default-case candidate did not recompile identically: " + result.notes);
+        check(result.structured > 0 && result.sugar.contains("switchbegin")
+            && result.sugar.contains("default"),
+            "default case was not recovered: " + result.sugar);
+    }
+
+    /**
+     * A guard-less {@code @counter} jump table — the shape hand-written and third-party programs
+     * use — recovers as a raw-table switch: the dispatch, the slot rows and the holes' shared
+     * target all have to come back, which is what makes the card a lossless replacement for the
+     * rows. The program deliberately has no entry skip and no carrier.
+     */
+    private static void rawJumpTableRoundTrip(){
+        String raw = "set v 0\n"
+            + "op add @counter @counter v\n"
+            + "jump 5 always x false\n"
+            + "jump 4 always x false\n"
+            + "jump 0 always x false\n"
+            + "print \"a\"\n"
+            + "jump 0 always x false\n"
+            + "print \"end\"\n";
+        SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
+        check(result.verified, "raw jump table was not verified: " + result.notes);
+        check(result.structured > 0 && result.sugar.contains("switchbegin v") && result.sugar.contains("raw"),
+            "raw jump table did not recover as a raw switch: " + result.sugar);
+        check(result.sugar.contains("\ndefault\n"),
+            "the holes' shared target did not recover as the default case: " + result.sugar);
+        // The card has to reproduce the program, not rewrite it: compiling the recovered source
+        // yields the same instruction stream once jump chains are normalized.
+        check(productStream(result.sugar).equals(inputStream(raw)),
+            "the recovered raw table does not recompile to the original program:\n"
+                + productStream(result.sugar));
+    }
+
+    /** The recovered source's product in the gate's comparison space: carriers and marker blocks
+     *  stripped, then parsed and written back by the vanilla assembler (labels dropped, jumps
+     *  resolved to instruction indices). */
+    private static String productStream(String sugar){
+        String produced = SugarCompiler.compileWithoutEntrySkip(sugar, SugarCompiler.FuncMode.normal,
+            SugarFunctions.library(), null, SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip, true);
+        return LAssembler.write(LAssembler.read(stripGenerated(produced), true));
+    }
+
+    /** A vanilla input in the same space, threaded first: the compiler threads its own output,
+     *  so unconditional-jump chains collapse on the product but not on the input. */
+    private static String inputStream(String vanilla){
+        return LAssembler.write(LAssembler.read(
+            stripGenerated(SugarCompiler.threadNumericJumpTargets(vanilla)), true));
+    }
+
+    /**
+     * What the editor actually opens with, decided by {@code SugarDecompiler.openingSource}.
+     *
+     * <p>This is the reported bug's address: {@code verifyRestore} answers "true" for a program
+     * with no carrier (nothing to verify), and the dialog read that as "trusted stored sugar", so
+     * it loaded hand-written and third-party programs as their own source text and never asked
+     * the decompiler — the Sugar view existed in tests but no user could reach it. The real-world
+     * fixture is asserted here for both editor privilege levels, since an ordinary processor
+     * edits with {@code privileged == false} while the earlier tests decompile privileged.</p>
+     */
+    private static void editorOpensHandWrittenProgramsAsSugar(){
+        String raw;
+        try{
+            raw = logicsugar.SourceNails.readSource("test/fixtures/realworld-jump-table.mlog");
+        }catch(java.io.IOException exception){
+            throw new AssertionError("real-world fixture could not be read: " + exception.getMessage());
+        }
+        for(boolean privileged : new boolean[]{true, false}){
+            SugarDecompiler.Opening opening = SugarDecompiler.openingSource(raw, privileged, false);
+            check(opening.mode == SugarDecompiler.OpeningMode.inferred,
+                "the editor opened a hand-written program as " + opening.mode
+                    + " (privileged=" + privileged + ") instead of an inferred Sugar view");
+            check(opening.source.contains("switchbegin id") && opening.source.contains(" raw"),
+                "the opened source lost the recovered raw switch (privileged=" + privileged + ")");
+            check(!opening.source.equals(raw), "the opened source is still the vanilla program");
+        }
+
+        // Sugar this mod saved keeps its stored source, and a library file keeps its text.
+        String stored = SugarCompiler.compile("ifbegin x greaterThan 0 4\nset y 1\nelse\nset y 2\nblockend\nprint y\n");
+        SugarDecompiler.Opening storedOpening = SugarDecompiler.openingSource(stored, true, false);
+        check(storedOpening.mode == SugarDecompiler.OpeningMode.stored,
+            "a saved program stopped using its stored sugar: " + storedOpening.mode);
+        check(storedOpening.source.contains("ifbegin x greaterThan 0"),
+            "the stored sugar source was not restored: " + storedOpening.source);
+
+        String library = "funcdef f a 3\nreturn \"a + 1\"\nblockend\n";
+        SugarDecompiler.Opening libraryOpening = SugarDecompiler.openingSource(library, false, true);
+        check(libraryOpening.mode == SugarDecompiler.OpeningMode.stored,
+            "library text was routed through inference: " + libraryOpening.mode);
+        check(libraryOpening.source.contains("funcdef f"), "library text was rewritten");
+
+        // Genuinely unstructured vanilla keeps the old raw behavior (and its notice).
+        String plain = "set x 1\nprint x\n";
+        check(SugarDecompiler.openingSource(plain, true, false).mode == SugarDecompiler.OpeningMode.raw,
+            "an unstructured vanilla program should open as raw code");
+    }
+
+    /** Hand-written mlog is not produced by this compiler, so it carries neither the persistence
+     *  carrier nor the trailing entry skip. Recovery must still accept it: the gate compiles the
+     *  candidate in both skip eras exactly like {@code SugarCompiler.verifyLowering} does for
+     *  stored saves. Before that, every structured candidate gained the skip and was rejected. */
+    private static void handWrittenProgramWithoutEntrySkipRecovers(){
+        String raw = "jump 3 lessThanEq x 0\nset y 1\nset z 2\nprint y\n";
+        check(!raw.contains(SugarCompiler.entrySkipLine), "fixture unexpectedly carries the entry skip");
+        SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
+        check(result.verified, "hand-written program was not verified: " + result.notes);
+        check(result.structured > 0 && !"flat".equals(result.matchedMode),
+            "hand-written program stayed flat: mode=" + result.matchedMode + " " + result.sugar);
+        check(result.sugar.contains("ifbegin x greaterThan 0"),
+            "hand-written if was not recovered: " + result.sugar);
+    }
+
+    /** Numeric jump targets are what hand-written programs use, and the compiler's lowering
+     *  threads unconditional-jump chains. The gate has to compare in that same normal form, so a
+     *  row that hops onto another unconditional jump reads as the jump it ends on. */
+    private static void numericJumpChainIsThreadedForTheGate(){
+        String chain = "set x 0\njump 3 always x false\nprint a\njump 4 always x false\nprint b\n";
+        check("set x 0\njump 4 always x false\nprint a\njump 4 always x false\nprint b\n"
+            .equals(SugarCompiler.threadNumericJumpTargets(chain)),
+            "unconditional jump chain was not threaded: " + SugarCompiler.threadNumericJumpTargets(chain));
+        // A cycle keeps its targets, exactly like the label-based pass.
+        String cycle = "jump 1 always x false\njump 0 always x false\n";
+        check(cycle.equals(SugarCompiler.threadNumericJumpTargets(cycle)), "cyclic chain was rewritten");
+        // Conditional jumps are neither chain nodes nor rewritten lines.
+        String conditional = "set x 0\njump 2 lessThan x 1\njump 0 always x false\n";
+        check(conditional.equals(SugarCompiler.threadNumericJumpTargets(conditional)),
+            "conditional jump was rewritten");
+        // A destination outside the program is left alone rather than clamped.
+        String outside = "set x 0\njump 9 always x false\nprint a\n";
+        check(outside.equals(SugarCompiler.threadNumericJumpTargets(outside)),
+            "out-of-range destination was rewritten");
+
+        // End to end: the body's last statement hops onto another unconditional jump, so the
+        // recovered candidate's product only matches the input through the threaded comparison.
+        String raw = "set x 0\njump 4 lessThanEq x 0\nset y 1\njump 5 always x false\nprint y\njump 1 always x false\n";
+        SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
+        check(result.verified, "jump-chain program was not verified: " + result.notes);
+    }
+
+    /**
+     * The reported real-world program (655 instructions, third-party tool output, 251-slot
+     * {@code @counter} jump table, no carrier and no entry skip): it must open as Sugar with the
+     * table recovered as a raw switch instead of the flat vanilla view.
+     */
+    private static void realWorldJumpTableRecovers(){
+        String raw;
+        try{
+            raw = logicsugar.SourceNails.readSource("test/fixtures/realworld-jump-table.mlog");
+        }catch(java.io.IOException exception){
+            throw new AssertionError("real-world fixture could not be read: " + exception.getMessage());
+        }
+        check(!raw.contains(SugarCompiler.entrySkipLine), "fixture unexpectedly carries the entry skip");
+        check(raw.contains("op add @counter @counter id"), "fixture lost its jump-table dispatch");
+
+        SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
+        check(result.verified, "real-world program was not verified: " + result.notes);
+        check(result.structured > 0 && !"flat".equals(result.matchedMode),
+            "real-world program opened as flat vanilla: mode=" + result.matchedMode
+                + " structured=" + result.structured);
+        check(result.sugar.contains("switchbegin id") && result.sugar.contains(" raw"),
+            "the 251-slot jump table was not recovered as a raw switch");
+        check(result.sugar.contains("\ndefault\n"),
+            "the table's holes did not recover as the default case");
+        check(result.sugar.contains("ifbegin block notEqual null"),
+            "the enclosing link loop guard was not recovered");
+        // The recovered source has to be a faithful replacement: its product must match the
+        // threaded input stream exactly (the gate already proved it, this pins it independently).
+        check(productStream(result.sugar).equals(inputStream(raw)),
+            "the recovered raw table does not recompile to the original program");
     }
 
     private static void nestedRoundTrip(){

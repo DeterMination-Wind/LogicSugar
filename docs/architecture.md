@@ -25,7 +25,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 入口类 `logicsugar.LogicSugarMod`（`mod.json` 的 `main`），初始化流程：
 
-1. **注册语句**：`registerStatements()` 把 16 种 `SugarStatements` 卡片（`ForBegin` / `WhileBegin` / `SwitchBegin` / `IfBegin` / `Case` / `ElseIf` / `Else` / `Break` / `Continue` / `BlockEnd` / `FuncDef` / `FuncCall` / `Return` / `Array` / `Matrix` / `ArrayInit`）加入 `LogicIO.allStatements`；随后注册数据子系统模块（`DataModules.register(new ArrayBulkModule/RecordModule/ContainerModule/BitsetModule/MapModule/SetModule/ListHeapModule/ChainModule())`，同时注册表达式 intrinsic provider），再调用 `SugarStatements.installParsers()` 与 `DataModules.registerParsers()` 向 `LAssembler.customParsers` 注册全部 token 解析器（含 `forend` / `whileend` / `switchend` 三个旧开发版本标记的只读兼容，以及 `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 十张数据声明卡）。整个 `registerStatements()` 由静态 `registered` 守卫，重复 `init()` 不会重复添加卡片或解析器。这是与反编译器、自测共享的唯一注册点。
+1. **注册语句**：`registerStatements()` 把 17 种 `SugarStatements` 卡片（`ForBegin` / `WhileBegin` / `SwitchBegin` / `IfBegin` / `Case` / `Default` / `ElseIf` / `Else` / `Break` / `Continue` / `BlockEnd` / `FuncDef` / `FuncCall` / `Return` / `Array` / `Matrix` / `ArrayInit`）加入 `LogicIO.allStatements`；随后注册数据子系统模块（`DataModules.register(new ArrayBulkModule/RecordModule/ContainerModule/BitsetModule/MapModule/SetModule/ListHeapModule/ChainModule())`，同时注册表达式 intrinsic provider），再调用 `SugarStatements.installParsers()` 与 `DataModules.registerParsers()` 向 `LAssembler.customParsers` 注册全部 token 解析器（含 `forend` / `whileend` / `switchend` 三个旧开发版本标记的只读兼容，以及 `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 十张数据声明卡）。整个 `registerStatements()` 由静态 `registered` 守卫，重复 `init()` 不会重复添加卡片或解析器。这是与反编译器、自测共享的唯一注册点。
 2. **接管编辑器**：`ClientLoadEvent` 后把 `Vars.ui.logic` 换成 `SugarLogicDialog`（构造函数内使用 `SugarCanvas`）。替换前把旧对话框上除 canvas/buttons 外的子元素（如 MindustryX 的逻辑辅助浮层）按 z 顺序迁移到新对话框。
 3. **挂辅助功能**：`BoxSelect.init()`（框选）、`ExprHook.init()`（表达式语句）、`VarDisplayFilter.init()`（隐藏 `__ls_*` 内部变量）、`ProcessorStatus.init()`（处理器状态指示）、`UnitFlags.init()`（单位 flag 叠加），并注册关闭对话框时清空跳转线着色缓存。
 
@@ -35,7 +35,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - 结构语句（`ifbegin` / `forbegin` / … / `blockend`）被 lowering 成 `jump` / `op` / 标签注释组合；`SugarStatement.build()` 返回 `NoopI`，结构语句本身不产生指令。
 - 函数由 `SugarFunctions.analyze` + `lower` 处理：本地函数（处理器内定义）与库函数走同一条管线。`FuncMode.normal` 生成共享 `@counter` 子程序（函数体 hoist 到程序尾部）；`FuncMode.inline` 按调用点展开副本，编译器临时名带 `__ls_i_<callId>_` 前缀。
-- `SwitchStrategy` 决定 `switch` 的下降形态：`auto` 在整数 case、值域跨度 ≤255 时按实际可执行指令成本在比较链与 `@counter` 跳转表之间二选一；`chainOnly` 恒用比较链（与 2.3.1 之前输出逐字节一致）。lowering 之后还有无条件跳转链穿线（`threadAlwaysJumpTargets`，带环检测）。
+- `SwitchStrategy` 决定 `switch` 的下降形态：`auto` 在整数 case、值域跨度 ≤255 时按实际可执行指令成本在比较链与 `@counter` 跳转表之间二选一；`chainOnly` 恒用比较链（与 2.3.1 之前输出逐字节一致）。lowering 之后还有无条件跳转链穿线（`threadAlwaysJumpTargets`，带环检测）。**例外是裸表**：`switchbegin … raw`（恢复出来的手写跳转表）无视策略恒发跳转表，因为它是程序属性而非本机偏好。**`default:`** 卡片是"没有 case 命中"的目标：比较链里是末尾跳转的目标，跳转表里是所有空槽行（带守卫形态下还有两条边界守卫）的目标；每个 switch 至多一张，validation 与标红共用 `SugarFunctions.defaultViolations`。
 - **持久化载体（carrier）**：Sugar 源码以 `set __ls_sugar "<base64>"` 载体行存回程序末尾，程序用到的库函数子集以 `set __ls_lib "<base64>"` 一并嵌入（跨机器可重编译）。载体是真实 `set` 语句，能挺过原版 parse/save 往返；单条载体不超过 60000 字符（LParser 字符串 token 上限 65535 UTF 字节以下）。**载体分片**：编码后超限的载荷自动切分为连续编号的多条语句 `set __ls_sugar_1/2/…`（`__ls_lib_N` 同理），每片 ≤60000 字符，restore 侧按"从末尾锚定、向前连续递减到 1"重拼后一次 decode（避免劈开 UTF-8 序列）；≤ 阈值时保持单条形状字节不变。分片行计入指令预算，极端超限时重现旧行为（丢弃超限载体并告警）。v2.0.0 旧程序回退到注释标记块 `# @logic-sugar-v1 begin` / `# @logic-sugar-line ` / `# @logic-sugar-v1 end`。
 - 编译器保留前缀 `__ls_` 是用户不可用的命名空间；表达式临时变量用 `_0, _1, …` 栈式编号。
 - **载体不执行（entry skip）**：编译产物在 main 末尾统一多一条 `set @counter 0`（`SugarCompiler.entrySkipLine`，配 `hasEntrySkip()` / `withEntrySkip()` / `withoutEntrySkip()`），让紧随其后的几 KB 载体 `set __ls_sugar` 永不执行——否则 MDTX 逻辑面板的值列会把载体当成一条运行中的赋值显示出来。等价性依据：`runOnce()` 在 `@counter` 越界时本就「置 0 执行指令 0」，跳过条不改变任何语义。**这条 skip 是被存储的糖源码的一部分**（随 `# @logic-sugar-line` 一起进载体，编译期不额外 append），因此旧版本重编译这段文本能原样复现，`verifyRestore` 仍然通过；代价是旧版编辑器多显示一行 `set @counter 0`（显示层，不影响数据与再保存），以及**有效指令上限变成 `maxInstructions - 1`**（skip 与载体一起计入末尾的上限检查，顶格程序会抛 `IllegalArgumentException`）。反编译侧 `isEntrySkip` 带位置约束：跳过至多一条 hoist `jump` 之后必须只剩载体行——既不能简化成「必须是最后一条」，也不能要求「其后一定有载体」（`stripGenerated()` 会剥掉载体的程序里它照样在）。设计取舍与跨版本双向实测结论记在 `entrySkipLine` 的 javadoc。**解析上限（源文本超窗口）与现状**：skip 是「拼到糖源码末尾再交给 `LAssembler.read` 解析」，而原版 `LParser` 只解析前 `LExecutor.maxInstructions`(1000) 条语句、其余**静默丢弃**（上限按**语句数**计，注释与空行免费——实测 1000 行注释 + 3 条语句仍解析出 3 条）。糖源码的语句数可以在指令数 ≤1000 的前提下突破 1000（例如 500 个空 `if` 块 = 1000 条语句、只编译出 500 条指令）。窗口一旦关闭就有两种丢失，`compile` 都在 `containsSugar` 早返回**之前**拦住并抛 `IllegalArgumentException`（消息说明是解析上限）：① 头部带糖却没有 skip 落地 —— 载体重新每周期执行，正是 skip 要防的那个 bug；② 头部无糖而整份源码在提升上限下含糖 —— 糖整体落在窗口之后，原实现会把糖文本当成「产物」原样存下，存进处理器的代码原版解析器根本读不了。判 ② 要拿提升到 `libraryInstructionLimit` 的上限重解析整份源码（丢尾巴的正是同一个窗口，不重解析看不见）。**纯 vanilla 的长程序不拦**：那是原版解析器自己的截断，且没有载体需要保活。
@@ -163,9 +163,27 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 4. 结构恢复：`recoverFunctions()` + `parseMain()` 生成候选 Sugar 源。函数区先过静态验证（区间外 jump 不得跳入、区间内 jump 不得跳出；嵌套调用前导跳向其他函数入口的 always 跳转豁免）。同一位置可能有多个候选帧（`tryFrames`），按 `RecoveryPredicate` 的 loss 排序取最优；贪心选择验证失败时，`backtrack()` 会在记录的决策点上逐个提升次优候选重试（有次数预算），每次仍走同一道门。
 5. **安全门（必须保留）**：候选先重新编译，再与输入的规范化指令流比对，比对通过才允许返回恢复结果。验证矩阵覆盖 FuncMode × SwitchStrategy 全部组合（`verify`）——程序可能在另一台机器、另一个 switch 策略设置下保存，不能因本机设置不同而误判。任何识别不了的内容回退为原样保留的 vanilla 语句（`matchedMode = "flat"`）。
 
+**门的两次归一化（手写/第三方程序能开成 Sugar 的前提）**：LogicSugar 从未保存过的程序既没有载体，也没有本编译器产物必然带的两样东西；两者原先都缺，导致这类程序无论识别得多好都只能回落 vanilla（2026-09-25 报的 655 条跳转表程序；夹具 `test/fixtures/realworld-jump-table.mlog`）：
+
+- **入口 skip 的两个纪元**：`compile` 会在末尾补 `set @counter 0`，于是任何含糖的候选都比输入多一条指令。`verify` 现在对每个候选按"有无 skip"各编译一次，与 `SugarCompiler.verifyLowering` 对存量存档的做法完全一致（公开入口 `compileWithoutEntrySkip`，只有门用它）。恢复后的视图保存时仍会补上 skip —— 这是既定行为，且语义等价（跑出末尾本来就回到 0）。
+- **跳转穿线**：`compile` 会跑 `threadAlwaysJumpTargets`，把 `jump A always` 改写到 A 的链尾。那一趟是**按标签**读链的，而手写 mlog 用指令下标寻址、一个标签都没有，于是旧的比对目标 `threadAlwaysJumpTargets(original)` 恰恰在需要它的程序上是空操作。`SugarCompiler.threadNumericJumpTargets` 把同一套不动点搬到语句下标上（只认无条件跳转、成环保持原目标、行结构与指令数不变），`verify` 用它作为比对目标。
+
+两次归一化都不放松门：它们产出的指令流与输入行为完全一致，且都是编译器本来就会对自己产物做的变换。
+
+**但门修好不等于能被调用**：`verifyRestore` 开头就是 `if(!hasSugarCarrier(code)) return true;`——没有载体就没有"待验证的载体"，于是它对从未被 LogicSugar 保存过的程序**恒返回 true**；`SugarLogicDialog.show` 把这当成"载体可信"，直接载入原版本体，反编译器只在"有载体但验证失败"时才被叫到，也就是**对这类程序永远不会被叫到**。所以门修好后用户看到的仍是 251 张裸 jump 卡。
+
+因此开屏决策被抽成 `SugarDecompiler.openingSource(code, privileged, librarySession)`，返回要载入的源码与来源模式：`stored`（载体/旧标记块/函数库文本，原样载入）、`inferred`（验证过的推断：弹恢复提示并保留 Original 视图）、`raw`（原样载入代码）。没有可信载体时一律先跑推断，且只对处理器程序跑（函数库文本是糖源码，不是程序）。它是**纯粹静态方法**：这个 bug 就长在无头测试够不到的 UI 代码里，现在 `decompileTest` 的 `editorOpensHandWrittenProgramsAsSugar` 在两种编辑器权限下都钉住该决策（普通处理器编辑时 `privileged == false`，而恢复测试习惯传 `true`）。
+
 失败方向永远是"多显示原版代码"，绝不改写未知程序。新增恢复模式（跳转表、短路谓词、新数据结构）一律放在这道门之后；新功能若既不能进载体、也不能被推断，就要在文档写明「重开只显示原版」。
 
-`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 174 个 fixture / 710 个 gate 断言覆盖当前全部控制积木、全部声明卡、全部 68 个 `datacall` 操作和 8 张断言/调试卡：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且必须保持 100+，不得只改数字。
+`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 179 个 fixture / 1106 个 gate 断言覆盖当前全部控制积木、全部声明卡、全部 `datacall` 操作和断言/调试卡：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且必须保持 100+，不得只改数字。
+
+**无边界跳转表（`switchbegin … raw`）与 `default` 分支**：手写 `@counter` 跳转表没有边界守卫，就是 `op add @counter @counter <v>` 后跟每条槽位一条无条件跳转行。用编译器的*带守卫*跳转表去还原它会多出两条指令并夹紧越界值，等于偷偷改写程序，所以形态写进源码：
+
+- `switchbegin <切换值> <dest> raw`（可选第 4 个 token；缺省即带守卫）只发射派发 + `span` 条槽位行，且**忽略 `SwitchStrategy`**——形态是程序属性，这也正是门的策略矩阵能接受它的原因。非法裸表（非整数 case、跨度超 `MAX_TABLE_SPAN`）直接编译报错。
+- `default:` 是 switch 自己的"没有 case 命中"卡片：比较链里它是末尾跳转的目标；跳转表里它是所有空槽行的目标，带守卫形态下边界守卫也指向它（越界值落在这里）。每个 switch 至多一个、必须在 switch 内；`defaultViolations` 是编译器、编辑器标红与函数库构建共用的一条规则。
+- 裸表推断（`tryBareSwitchTable`）：槽位 *k* 直接寻址第 *k* 行，所以 case 值就是行号、跨度从 0 开始；行的目标按无条件跳转链（作者自己的穿线）读取。目标落在体区之外的行是空槽，它们必须同指一处，该处成为 `default`——并且必须落在**已存在**的指令上（其自身跳转链终于同一处），否则重编译出的空槽行会落到程序从未有过的跳转上。跨度两端若正好是空槽，就用一个 case 标签钉住（标签与 default 共位，编译出的行完全相同）。任何不吻合都返回 null，视图保持 vanilla。
+- 带守卫跳转表的推断同样恢复 `default`：守卫与空槽行落在 switch *内部*的体上而不是出口，此时 switch 真正的结尾是各 case 体 break 跳转的目标（`switchEndBeyond`）。两种读法都作为候选给出——体里跳出 switch 的跳转在这一层与 default 无法区分——由门裁决，与其余恢复逻辑同一套做法。
 
 短路守卫恢复（`tryShortCircuitFrames`）是这套机制的核心用户：`ShortCircuitCompiler` 的 lowering 是若干 `[条件 jump, fallback jump]` 原子对的连续拼接（内部续接标签都落在原子对起点），守卫解析器从对的目标关系重建布尔树（`parseGuardTree`，带换目标环检测的备忘递归），为同一片守卫区域同时给出 `if` / `while` / `for` 候选。由此单原子守卫、顶层 `!`、任意嵌套 `&&`/`||` 树以及 `whilebegin`/`forbegin` 的 `exprsc` 条件都能恢复，不再限于固定四指令布局。体内跳回 while 守卫头的 always 跳转就是 `continue` 的 lowering 形状，由循环上下文恢复为 `continue` 语句。
 
@@ -200,6 +218,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 跨处理器剪贴板 | `assist.StatementClipboard` | 编辑菜单「复制选区 / 粘贴选区」，Ctrl+C/V 驱动同一实现。**剪贴板放糖源码而不是编译后的 mlog**，片段落进另一个处理器后仍可继续编辑；唯一必须区别对待的是 `jump`——跨程序时旧的数字目标是另一程序的指令下标，因此复制与粘贴**双侧拒绝**。块配对由 `pairBlockEnds` 在插入前校验，之后每帧 `syncStatementIndices` 自愈。全程只有语句与字符串，无画布依赖（`statementClipboardTest` 无头跑）。快捷键只能轮询不能事件驱动：`UI.update()` 会把焦点清成 `null`，挂在对话框上的 capture 监听器再也收不到，而 arc 的 `handle()` 不停止冒泡、`TextField` 也保护不了自己；两件事由 `Core.scene.hasField()` 一次问清（原版无 Ctrl+C/V 键位） |
 | 提示折行 | `assist.TextWrap` + `assist.SugarTooltip` | arc 的 `Tooltip` 只把容器**位置**夹进舞台，比屏幕宽的容器仍会两边溢出 ⇒ 提前把**文字**折行（按 `min(屏宽×0.5, 560 design)` 预折、resize 时重折）。规则是纯函数（测量函数可替换，`textWrapTest` 用字符数精确断言）：只在空格断、超长单词硬断不丢字符、markup 标签绝不拆开、幂等 |
 | 跳转线着色 | `assist.JumpLineColor` | 按目标着色三模式：关闭 / 分散色 / 积木色 |
+| @counter 指示线 | `mindustry.logic.CounterJumpOverlay` + `assist.CounterJumpIndex` + `SugarCompiler.compileRecorded` | 写入 `@counter` 的积木（set 的 `@counter = N`、op 的 `+=` / `-=`、Expr 卡）在**左侧**画类 Jump 的镜像跳转线指向目标积木，位置在结构引导线**更外侧**。纯展示，不改保存产物，因此不受联机门禁限制。见下节 |
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
 | 复制变量/打印缓冲 | `assist.VarClipboard` | 全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示入口。**入口在编辑菜单，不在底部按钮行**——原先两个固定宽按钮正是把底栏顶出窄窗口的原因，能力由 `SugarLogicDialog.installInspectionCopy()` 装配（旧的 public `VarClipboard.addButtons(Table, LogicDialog)` 已移除，能力迁到私有装配点） |
 | 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器（`Groups.build`，视野外按 hitbox 裁剪）：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；扫描预算按帧时长换算（`min(delta*60,5) × 每帧扫描数`，低帧率不爆发）；设置三滑杆（阈值 0 关闭 / 每帧扫描数 1–5000 档位 / 警告特效）+ 断点三开关（禁用断点 / 断言失败即断点 / 断点分离视角） |
@@ -207,6 +226,43 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 | 编辑期标红 | `SugarCanvas.invalidSignature()` | 标红刷新走**签名门控**：`SugarCanvas` 比较语句的 `invalidSignature()` 是否变化来决定重标，不再按 `if`/`while`/`for` 显式列 `conditionExpr`——原实现漏掉声明卡与运算卡，改字段后不重标红；新增卡种从此不需要再改 `SugarCanvas` |
 | 撤销/重做 | `assist.EditHistory` + `SugarLogicDialog` | 快照栈（最多 80 层）记录 `canvas.save()`；桌面 Ctrl+Z / Ctrl+Y，移动端底部 Undo/Redo 按钮。纯编辑器状态，不改保存产物 |
+
+### @counter 指示线（左侧镜像跳转线）
+
+原版 `jump` 卡片的跳转按钮在卡片**最右侧**（`StatementElem` 顶行：语句名 → `add().growX()` → 地址标签 → 操作按钮 → `JumpStatement` 的 `JumpButton`），`LCanvas.JumpCurve` 的曲线从目标积木折回源积木，所以原版跳转线整体在右侧。写 `@counter` 与 `jump` 在运行时是同一件事（`LExecutor.runOnce()` 先读后自增：`instructions[(int)(counter.numval++)].run(this)`，越界或负数在下一轮被重置为 0 ⇒ `set @counter N` 之后从指令 N 继续执行），因此本功能在**左侧**画出镜像的指示线。
+
+**画法照抄原版 `JumpCurve`，只把方向镜像**，两处都必须是原版格式（2026-09 报告：早期版本自创了"外侧轨道 + 细线 + 圆点"，既不在积木上、也不是 Jump 的样子）：
+
+- **端点 = 积木的正左侧**（元素局部坐标 `x = 0`，即左边缘的垂直中点），与结构引导线（`SugarCanvas.StructureGuideLayer` 取 `elem.inset + 6`）同一套坐标做法 —— 用一个 `Vec2` 交给 `localToAscendantCoordinates` 换算，缩进与 scroll 都由那一步带出来。**不要**取"所有卡片最左边缘"这类全局量：它只由最外层卡片决定，嵌套卡片右移后会错位，轨道还可能被推出 pane 左边界而被裁掉。
+- **线宽 `Scl.scl(4f)`、目标端画 `Tex.logicNode` 箭头**，与 `JumpCurve.drawCurve` / `JumpCurve.draw` 一致。唯一差别是背包方向：原版按钮贴右缘、曲线朝右凸（`x + uiHeight`），本功能贴左缘、朝左凸（`x - bow`）。多候选时线更细更淡，表示"目标不唯一"。
+
+**难点是"目标积木是哪一张"，而它不是积木序号。** `@counter` 的值是**最终产物**的指令下标，产物与画布积木不是一一对应：声明卡产出 0 条指令、`for` 的 step 与回跳落在 `blockend` 卡上、normal 模式函数体整体后置到 main 之后还要加尾部 `jump __ls_end`。所以链路分三层：
+
+1. **`SugarFunctions.OriginRecording`（编译期来源通道）** — `lower()` 在每条语句前后量一次 `out` 的长度，只把 `[from, to)` 区间记进旁路；函数体与编译器自己发射的指令（入口 skip、hoist 前导跳、返回跳板）标成 `syntheticOrigin = -2`。**它绝不包装也不改写产物**（`StringBuilder` 在 `--release 17` 下无法被继承，因此不是 `Appendable` 包装），带记录与不带记录的编译产物逐字节相同 —— `originTest` 用逐字节比较钉住这一点。两个易踩的坑：`markSynthetic` **不能**预留数组容量（`synthetic.length` 参与行数计算，预留的空洞会被当成真实行，曾让 `compileRecorded` 因行数不匹配整体返回 null）；`flatten(totalLines)` 必须由调用方给出正文总行数（区间表只知道"有产出的语句"覆盖到哪里，末尾的收尾标签与入口 skip 不在任何区间里）。
+2. **`SugarCompiler.compileRecorded(...)`** — 与 `compile(...)` 同一个 private 实现（`lastOriginRecording` 紧邻赋值，嵌套编译只会覆盖"来源"、不影响产物），产出 `CompileProvenance{code, origins[]}`；`origins[i]` 是产物第 i 条指令的发射语句下标，口径与 `stripMarkers(code)` 的指令流一致（不含标签行、标记块与载体）。纯原版程序走 `containsSugar` 的提前返回，那条路径逐行 1:1 直接给出来源，且**没有入口 skip**（skip 只为让 `__ls_*` 载体不执行，纯原版程序没有载体）。
+3. **`assist.CounterJumpIndex`** — 纯文本工作，无画布依赖（`counterJumpIndexTest` 无头跑）：去标记块与载体行 → `LAssembler.read/write` 让标签变成数字目标 → 按 `MlogCFG.writes()` 的位置读 `@counter` 写入 → 算出目标。`set @counter <literal>` 给绝对目标，`op add/sub @counter @counter <k>` 给相对目标（`instruction + 1 ± k`，`+1` 是执行器的后自增），`op add @counter @counter <var>` 是 switch 跳转表、`set @counter __ls_*` 是函数返回跳板、末尾的 `set @counter 0` 是入口 skip，这三类只报形态不报目标。
+
+**归属一律走来源通道，不用解析器的标签启发式。** `CounterJumpIndex` 拿到 `provenance` 时会把负值槽位当作"未知"再用 `__ls_stmt_<N>:` 标签补（没有来源时是唯一可用手段），但编辑器这边已经有确切答案，因此 `CounterJumpOverlay` 用 `provenance.originOf(write.instruction)` 定位卡片。
+
+**`targets` 是指令下标，`elementAt(i)` 要的是语句下标 —— 两者绝不能混用。** 2026-09 的错位报告就是这里：`set @counter 3` 的线画到了第 4 张卡上，因为 3 被直接当语句下标用了。每个目标都必须先过一遍 `provenance.originOf(...)` 才能落到积木上；来源为 `-1`（函数体、编译器自己发射的指令）就是不可解析 —— 只画角标，绝不猜一条线。`originTest` 的 `counterTargetsResolveThroughProvenance` 钉住这条换算。
+
+**绝不猜。** 目标唯一 ⇒ 实线（绿）；多候选 ⇒ 只画角标（琥珀），悬停该卡片时按候选画虚影线（`logicsugar.counterJump.candidates` 设置，默认开）；不可解析 ⇒ 灰色角标。角标本身可以点两下（悬停浮层），它回答"这张卡会改 `@counter`、执行将继续在指令 N"。**归属不到的写入不会消失**：函数体内部与编译器发射的 `@counter` 写出现在画布底部一列灰色小标（最多 6 行）上，悬停给出原因 —— 函数体里的下标只有在 hoisting 之后的产物里才有意义，指到调用方的某张卡上是错的。
+
+**已知限制（明说，不装作支持）**：
+
+- **函数体内部的 `@counter` 写只有底部小标，没有线。** normal 模式下函数体是所有调用点共享的一份、整体后置，`set @counter N` 的 N 是"后置后产物"里的下标；同一个函数在不同调用顺序下 N 的含义不变但"从哪进来"不可表达。`SugarDecompiler.firstDynamicCounterWrite` 正是把这类写（除三种已知形状外）当作 dynamic counter write 并放弃整个程序的结构化还原 —— 本功能与反编译器口径一致：认得出、标出来，但不假装能指到卡片。
+- **`@counter` 写在 `for`/`while`/`if` 体内是可以画线的**（目标按产物下标解析，`originOf` 能给出正确的卡片），但那是"跳进/跳出结构"，会绕过循环条件或 exit 标签 —— 线本身不判断这是不是用户想要的，属于作者意图问题。
+- **相对写入在 Expr 卡展开成多行时目标是一组候选**：卡片的指令区间有多个可能起点，因此按候选处理（琥珀 + 悬停列虚影线）。
+- 目标落在折叠块内部时不画线（端点不可见 ⇒ 该曲线不绘制）。
+
+#### 已踩过的坑（本功能实现过程中真实发生，别重犯）
+
+1. **指令下标当语句下标用 → 线画到完全无关的积木上（2026-09 错位报告）。** `CounterJumpIndex.Write.targets` 是**产物指令下标**，`elementAt(i)` 要的是 `statements.getChildren()` 的**积木序号**。第一版把 `targets[0]` 直接塞进曲线的 `targetStatement`，于是 `set @counter 3` 的线指到第 4 张卡；两条线一起错位后，其中一条横跨整个程序，画面上就是一根贯穿全高的竖线。**修法**：目标解析只在 `rebuild()` 里做一次，且必须经 `provenance.originOf(target)` 换算；`originOf` 为 `-1` 就是不可解析（函数体、编译器自己发射的指令）⇒ 只留角标，绝不猜一条线。
+   *为什么没被自测抓住*：静态检查、编译、归属断言全绿 —— 两个 int 空间在类型上无从区分，而"线画在哪张卡上"只有画出来才看得见。所以除了 `originTest` 的换算断言，这条还进了 [testing.md](testing.md) 的手测清单。
+   *同源教训*：只要一个 `int` 可能同时是"指令下标／语句下标／行号"中的两种，就必须在变量名或注释里写清是哪一种。本功能里同时存在三种口径，是同一个陷阱的三个面：`originOfLine(line)` 收**正文行号**（标签行也占一行）、`CompileProvenance.origins[i]` 是**指令下标**（跳过标签行）、`Write.targets` 也是**指令下标**（但与语句下标空间不同）。混用任意两种都不会编译报错。
+2. **`markSynthetic` 预留数组容量 → `compileRecorded` 对所有程序返回 null。** `synthetic.length` 参与 `flatten` 的行数上限计算，`Arrays.copyOf(..., length * 2 + 8)` 预留出来的空洞被当成真实行，`lineCount()` 于是大于正文行数，编译入口的一致性检查直接失败。**修法**：数组按需增长到 `high`，绝不预留。排查方式是打印 `flatten` 的三个输入（`totalLines` / 区间上界 / `synthetic.length`）—— 光看产物与归属断言的输出猜不出来。
+3. **纯原版程序没有入口 skip。** `entrySkipLine` 只是为了让 `__ls_*` 载体不执行，而纯原版程序没有载体，`compile()` 因此原样返回源码。第一版按"sugar 路径也有 skip"的假设把最后一条指令标成 synthetic，导致纯原版程序最下面那张卡的角标消失。**教训**：`withEntrySkip` 是否真的落地取决于 `containsSugar` 走哪条分支，两条路径要各自断言（`originTest` 的 `vanillaProgramIsOneToOne`）。
+4. **自创了"外侧轨道 + 细线 + 圆点"，而不是 Jump 的格式。** 第一版把端点外移到积木之外的 `-Scl.scl(5f)`（一列独立的"轨道"），线宽用 3.2f，目标端画 `Fill.circle`。结果是线悬在积木外面、既不像 Jump 也不贴在积木上（2026-09 报告："不应该是从积木的正左侧指向目标积木吗？不应该是 Jump 跳转线格式吗？"）。**教训**：这类"照原版的样子做"的需求，先去读原版那段代码（`JumpCurve.draw` / `drawCurve`），把 `Lines.stroke(Scl.scl(4f), color)`、`Tex.logicNode` 箭头、端点取法逐项抄下来再改方向；不要凭"看起来差不多"自己发明一套几何。
 
 ### 底部按钮行布局
 
@@ -229,7 +285,7 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 
 | 分类 id | 文案 | 卡片 |
 | --- | --- | --- |
-| `advcontrol` | Advanced Flow Control | For / While / Switch / If / Case / Elif / Else / Break / Continue / BlockEnd / FuncDef / FuncCall / Return |
+| `advcontrol` | Advanced Flow Control | For / While / Switch / If / Case / Default / Elif / Else / Break / Continue / BlockEnd / FuncDef / FuncCall / Return |
 | `datastruct` | Data Structures | record / stack / queue / deque / bitset / map / uset / list / heap / chain |
 | `arrayalgo` | Array Algorithms | array / matrix，以及**一张**批量运算卡（卡内按钮切换求和、平均值、最小值、最大值等 14 个运算）；旧 `arrayinit` 仅兼容读取 |
 | `asserts` | Assertions | 既有断言卡 |

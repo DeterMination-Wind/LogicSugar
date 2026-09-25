@@ -264,6 +264,11 @@ public final class SugarCompiler{
 
     private SugarCompiler(){}
 
+    /** 最近一次完成的 {@link SugarFunctions.OriginRecording} 与它记录的 lowered 正文，只给
+     *  {@link #compileRecorded} 用。与编译器其它编译期上下文一样是单线程状态，且不参与产物。 */
+    private static SugarFunctions.OriginRecording lastOriginRecording;
+    private static String lastLoweredText;
+
     /** Extracts the sugar source from stored code. The persistence carrier is authoritative;
      *  without one (v2.0.0 legacy programs) the comment marker block is used. Scanning from
      *  the end, a sharded carrier is assembled first (continuous {@code __ls_sugar_N}
@@ -526,6 +531,23 @@ public final class SugarCompiler{
         return compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged, librarySource, true);
     }
 
+    /**
+     * Compiles with the trailing {@link #entrySkipLine} append disabled, i.e. exactly the
+     * lowering of every version before that line existed.
+     *
+     * <p>Only the decompiler's verification gate needs this publicly. A program that was never
+     * saved by Logic Sugar — hand-written mlog, or output of another tool — does not end with
+     * the skip, so a recovered candidate only reproduces its instruction stream when the append
+     * is off; verifying against the appending lowering alone would reject every such program and
+     * leave the whole vanilla view flat. {@link #verifyLowering} applies the same two-era
+     * comparison to stored saves.</p>
+     */
+    public static String compileWithoutEntrySkip(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library,
+                                                 String libraryText, SwitchStrategy switchStrategy, AssertEmit assertEmit,
+                                                 boolean privileged){
+        return compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged, false, false);
+    }
+
     /** {@code entrySkip} off reproduces the lowering of every version before
      *  {@link #entrySkipLine} existed. Only {@link #verifyLowering} uses it, to accept a save
      *  written before the skip instead of reporting it as edited outside Logic Sugar. */
@@ -628,26 +650,46 @@ public final class SugarCompiler{
 
             StringBuilder out = new StringBuilder();
             SugarFunctions.CallIds ids = new SugarFunctions.CallIds();
-            if(mode == FuncMode.normal){
-                SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
-                java.util.List<SugarFunctions.Function> hoisted = functions.hoistOrder();
-                if(!hoisted.isEmpty()){
-                    // Normal-mode function bodies sit right after the main program. A call site's
-                    // return point (the `set <result> <retName>` after its jump) is inside main;
-                    // once main runs past it, the instruction stream would fall through into the
-                    // shared function body and re-execute it every tick (caller variables like
-                    // <result> keep incrementing). Jump past all bodies at the end of main.
-                    out.append("jump __ls_end always x false\n");
-                    for(SugarFunctions.Function function : hoisted){
-                        out.append(function.entryName()).append(":\n");
-                        SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name, switchStrategy, assertEmit);
-                        out.append(function.exitName()).append(":\n");
-                        out.append("set @counter ").append(function.retName()).append('\n');
+            // 来源通道在 lower 之前装（lower 进入时读这个静态通道）；finally 弹出，异常路径与
+            // 嵌套编译都不会把通道留给下一次编译。记录只往旁路写数据，产物逐字节不变。
+            SugarFunctions.OriginRecording origin = SugarFunctions.pushOriginRecording();
+            try{
+                if(mode == FuncMode.normal){
+                    SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
+                    java.util.List<SugarFunctions.Function> hoisted = functions.hoistOrder();
+                    if(!hoisted.isEmpty()){
+                        // Normal-mode function bodies sit right after the main program. A call site's
+                        // return point (the `set <result> <retName>` after its jump) is inside main;
+                        // once main runs past it, the instruction stream would fall through into the
+                        // shared function body and re-execute it every tick (caller variables like
+                        // <result> keep incrementing). Jump past all bodies at the end of main.
+                        // 从这里往后的每一行都是编译器自己产生的（前导跳、函数体、返回跳板）：
+                        // 整段标成 synthetic，@counter 指示线才不会把函数体的下标指到调用方积木上。
+                        // lower() 自己已经把函数体标过了，这里是幂等的兜底，覆盖入口标签行等
+                        // lower() 不负责的行。
+                        int tail = SugarFunctions.countLines(out);
+                        out.append("jump __ls_end always x false\n");
+                        for(SugarFunctions.Function function : hoisted){
+                            out.append(function.entryName()).append(":\n");
+                            SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name, switchStrategy, assertEmit);
+                            out.append(function.exitName()).append(":\n");
+                            out.append("set @counter ").append(function.retName()).append('\n');
+                        }
+                        out.append("__ls_end:\n");
+                        origin.markSynthetic(tail, SugarFunctions.countLines(out));
                     }
-                    out.append("__ls_end:\n");
+                }else{
+                    SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
                 }
-            }else{
-                SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
+                // 循环里逐条语句 close 过区间，但末尾的收尾标签与入口 skip 不在任何区间里，
+                // 所以正文总行数由调用方给出（否则记录会比正文少一行，compileRecorded 只能返回 null）。
+                // 入口 skip 是编译器自己追加的语句（用户没写过它），@counter = 0 指向程序开头
+                // 这件事对用户没有信息量：整行标成 synthetic，指示线不会为它在最后一张卡上画线。
+                if(!librarySource && entrySkip) origin.markSynthetic(SugarFunctions.countLines(out) - 1, SugarFunctions.countLines(out));
+                // 扁平化放在这里：所有语句区间与 synthetic 标记都已写完，之后不再新增正文。
+                origin.flatten(SugarFunctions.countLines(out));
+            }finally{
+                SugarFunctions.popOriginRecording();
             }
 
             // Jump-thread the lowered label text (before marker/carriers): a jump whose target
@@ -655,6 +697,12 @@ public final class SugarCompiler{
             // final destination directly. Semantics-preserving; merges stacked structure-exit
             // defaults and jump-table hole rows that would otherwise hop twice at runtime.
             String lowered = threadAlwaysJumpTargets(out.toString());
+            // 记录通道经 pop 已不可达，这里留住刚完成的那一份给 compileRecorded 取用。
+            // 嵌套编译会覆盖它们，所以紧邻赋值、compileRecorded 立即读取；覆盖只丢掉"来源"，
+            // 产物与异常行为都不受影响。lowtext 是穿线后的正文，行号与记录口径一致
+            //（threadAlwaysJumpTargets 只改 jump 的操作数，不增删行）。
+            lastOriginRecording = origin;
+            lastLoweredText = lowered;
 
             // Persistence carriers: real "set" statements appended after the marker block. They
             // survive the vanilla parse/save round trip that drops the comment markers, and are
@@ -718,6 +766,99 @@ public final class SugarCompiler{
             ExprIntrinsics.restoreUserFunctions(previousUserFunctions);
             ExprIntrinsics.restoreDeclaredKinds(previousDeclaredKinds);
         }
+    }
+
+    /**
+     * 一次编译的产物加上"来源通道"：产物正文的每一条指令对应画布上哪条语句。
+     *
+     * <p>给 {@code @counter} 指示线用。{@code @counter = N} 的 N 是最终产物的指令下标（见
+     * {@link LExecutor} 的"先读后自增"语义），要把它指回一张积木卡就必须知道这个对应关系，
+     * 而它无法从积木顺序推出来：声明卡产出 0 条指令、{@code for} 的 step 与回跳落在
+     * {@code blockend} 卡上、normal 模式函数体整体后置到 main 之后。</p>
+     *
+     * <p>{@code origins[i]} 是产物第 i 条指令（与 {@code stripMarkers(code)} 的指令流同一
+     * 口径，不含标签行、注释标记块与载体行）的发射语句下标。
+     * {@link SugarFunctions#syntheticOrigin} 表示这条指令由编译器自己产生（入口 skip、函数
+     * 返回跳板、hoist 前导跳、函数体），不属于任何画布积木。来源未知时为 -1。</p>
+     */
+    public static final class CompileProvenance{
+        public final String code;
+        public final int[] origins;
+
+        CompileProvenance(String code, int[] origins){
+            this.code = code;
+            this.origins = origins;
+        }
+
+        /** {@code origins} 的长度，即产物正文的指令条数（不含标签、标记块与载体）。 */
+        public int instructions(){ return origins.length; }
+
+        /** 该指令由画布上哪条语句发射；越界返回 -1。 */
+        public int originOf(int instruction){
+            return instruction < 0 || instruction >= origins.length ? -1 : origins[instruction];
+        }
+    }
+
+    /** {@link #compile(String, FuncMode, SugarFunctions.LibraryIndex, String, SwitchStrategy, AssertEmit)}
+     *  的带来源版本：产物本身完全相同（同一个 private compile 调用，逐字节一致），额外返回
+     *  逐条指令的来源。产物超过指令上限时与普通路径一样抛 {@link IllegalArgumentException}。 */
+    public static CompileProvenance compileRecorded(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library,
+                                                    String libraryText, SwitchStrategy switchStrategy, AssertEmit assertEmit,
+                                                    boolean privileged){
+        String source = withEntrySkip(sugar);
+        // 纯原版程序（编辑器里最常见的形态）走 compile() 的 containsSugar 提前返回：产物就是
+        // 源码本身，逐行对应，因此来源可以在这里直接算出来，不必进 lower。少了这条路径，
+        // @counter 指示线在纯原版程序上就只剩角标。
+        //
+        // 注意这条路径没有入口 skip：{@link #entrySkipLine} 只是为了让 __ls_* 载体不执行，
+        // 而纯原版程序根本没有载体，compile() 因此原样返回源码 —— 每条指令都对应一条用户语句，
+        // 逐行 1:1 映射即可，不需要把任何一行标成 synthetic。
+        if(!containsSugar(SugarFunctions.readLibrary(source, privileged))){
+            String code = compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged);
+            String[] lines = code.split("\n", -1);
+            int[] origins = new int[countInstructions(new StringBuilder(code))];
+            int at = 0;
+            for(int line = 0; line < lines.length && at < origins.length; line++){
+                if(isLabelLine(lines[line])) continue;
+                origins[at++] = line;
+            }
+            return new CompileProvenance(code, origins);
+        }
+
+        String code = compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged);
+        SugarFunctions.OriginRecording recording = lastOriginRecording;
+        String text = lastLoweredText;
+        // 通道没能建立、或记录与产物对不上（理论上不会：push/pop 配对，穿线不增删行）时宁可
+        // 没有来源，也不能让编辑器崩：返回 null 由调用方退化成"只显示角标、不画线"。
+        if(recording == null || text == null || recording.lineCount() != countLines(text)) return null;
+
+        // 行号 -> 指令下标：跳过标签行（标签占行号不占指令下标）。得到的数组与
+        // stripMarkers(code) 的指令流逐条对齐，载体行追加在正文之后所以不影响前缀。
+        String[] lines = text.split("\n", -1);
+        int[] origins = new int[countInstructions(new StringBuilder(text))];
+        int at = 0;
+        for(int line = 0; line < lines.length && at < origins.length; line++){
+            if(isLabelLine(lines[line])) continue;
+            origins[at++] = recording.originOfLine(line);
+        }
+        return new CompileProvenance(code, origins);
+    }
+
+    /** 标签行判定：去掉首尾空白后以 {@code ':'} 结尾、无空格、长度 >= 2 的单 token 行，
+     *  与 {@link #threadAlwaysJumpTargets} 收集标签时用的是同一条规则。 */
+    private static boolean isLabelLine(String line){
+        String bare = line == null ? "" : line.trim();
+        return bare.length() >= 2 && bare.endsWith(":") && !bare.contains(" ");
+    }
+
+    /** {@code text} 的行数，与 {@link SugarFunctions.OriginRecording} 的记录口径一致
+     *  （每个 {@code '\n'} 结束一行）。 */
+    private static int countLines(CharSequence text){
+        int total = 0;
+        for(int i = 0; i < text.length(); i++){
+            if(text.charAt(i) == '\n') total++;
+        }
+        return total;
     }
 
     /** The merged library for editing a stored program: embedded functions first, then
@@ -962,8 +1103,14 @@ public final class SugarCompiler{
         int[] continueOwner = continueOwners(statements);
         int[] ifOwner = ifOwners(statements);
         int[] funcOwner = funcOwners(statements);
+        boolean[] defaultBad = SugarFunctions.defaultViolations(statements, switchOwner);
         for(int i = 0; i < statements.size; i++){
             if(statements.get(i) instanceof CaseStatement && switchOwner[i] < 0){
+                invalid[i] = true;
+            }
+            // a default outside a switch, or a second default of the same switch: the compile
+            // path refuses both, so the card has to be red before the save is attempted
+            if(defaultBad[i]){
                 invalid[i] = true;
             }
             if(statements.get(i) instanceof BreakStatement && breakOwner[i] < 0){
@@ -1427,6 +1574,89 @@ public final class SugarCompiler{
             if(!(Character.isLetterOrDigit(c) || c == '_')) return false;
         }
         return true;
+    }
+
+    /**
+     * {@link #threadAlwaysJumpTargets} for a program that was never lowered by this compiler.
+     *
+     * <p>The label-based pass reads chains off the text's labels, so hand-written mlog and
+     * other tools' output — which address their jumps by instruction index and carry no
+     * labels — come out of it unchanged. The rule is otherwise the same fixed point: an
+     * unconditional {@code jump T always x false} whose destination is itself an unconditional
+     * jump is retargeted at the end of that chain, only unconditional jumps are chain nodes
+     * and rewritten lines, and a cyclic chain keeps its original targets. Resolution happens on
+     * statement indices, so no synthetic labels are needed and the {@code LParser} limit of 500
+     * jump locations cannot be tripped by a large program.</p>
+     *
+     * <p>Used by the decompiler's verification gate, so that a candidate whose product only
+     * differs from such a program by collapsed jump chains still verifies. Line structure,
+     * instruction count and every non-jump line are preserved.</p>
+     */
+    public static String threadNumericJumpTargets(String code){
+        if(code == null || code.isEmpty()) return code == null ? "" : code;
+        String normalized = code.replace("\r\n", "\n").replace('\r', '\n');
+        String[] lines = normalized.split("\n", -1);
+        int count = lines.length;
+        if(count > 0 && lines[count - 1].isEmpty()) count--;
+
+        int[] lineOf = new int[count];   // statement index -> line index (blank/comment/label skipped)
+        int[] dest = new int[count];     // statement index -> its unconditional jump target, else -1
+        int statements = 0;
+        Arrays.fill(dest, -1);
+        for(int i = 0; i < count; i++){
+            String bare = lines[i].trim();
+            if(bare.isEmpty() || bare.startsWith("#")
+                || (bare.endsWith(":") && !bare.contains(" ") && bare.length() >= 2)) continue;
+            lineOf[statements] = i;
+            String token = alwaysJumpTargetToken(bare);
+            if(token != null){
+                try{
+                    dest[statements] = Integer.parseInt(token);
+                }catch(NumberFormatException ignored){
+                    // A label destination: nothing to thread on the numeric side.
+                }
+            }
+            statements++;
+        }
+        for(int i = 0; i < statements; i++){
+            if(dest[i] < 0 || dest[i] >= statements) dest[i] = -1;
+        }
+
+        // -2 = not resolved yet; a resolved value is the chain's end statement.
+        int[] resolved = new int[statements];
+        Arrays.fill(resolved, -2);
+        boolean changed = false;
+        for(int i = 0; i < statements; i++){
+            if(dest[i] < 0) continue;
+            int end = chainEnd(dest[i], dest, resolved, new HashSet<>());
+            if(end >= 0 && end != dest[i]){
+                lines[lineOf[i]] = "jump " + end + " always x false";
+                changed = true;
+            }
+        }
+        if(!changed) return normalized;
+
+        StringBuilder out = new StringBuilder(code.length());
+        for(int i = 0; i < lines.length; i++){
+            out.append(lines[i]);
+            if(i < lines.length - 1) out.append('\n');
+        }
+        return out.toString();
+    }
+
+    /** The statement an unconditional-jump chain ends on, starting from {@code statement}
+     *  (which must itself be an unconditional jump). -1 when the chain is cyclic: every member
+     *  of a cycle then keeps its original target, exactly like the label-based pass. */
+    private static int chainEnd(int statement, int[] dest, int[] resolved, Set<Integer> path){
+        if(dest[statement] < 0) return statement;
+        if(resolved[statement] != -2) return resolved[statement];
+        if(!path.add(statement)) return -1;
+        int next = dest[statement];
+        int end = next >= 0 && next < dest.length ? chainEnd(next, dest, resolved, path) : -1;
+        path.remove(statement);
+        if(end < 0) return -1;
+        resolved[statement] = end;
+        return end;
     }
 
     /** Whether {@code compiled} matches the stored program under either lowering era:

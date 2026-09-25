@@ -274,6 +274,119 @@ public final class SugarFunctions{
         public int next(){ return next++; }
     }
 
+    // ===== 编译期来源通道（@counter 指示线用；绝不改变产物） ==============================
+
+    /** 一条指令由编译器自己产生（入口 skip、函数返回跳板、hoist 前导跳、函数体），
+     *  不是画布上任何积木的产物。{@link OriginRecording} 用它标记这类行。 */
+    public static final int syntheticOrigin = -2;
+
+    /**
+     * 逐行记录"产物正文的每一行是画布上第几条语句发射的"。
+     *
+     * <p>存在的理由：{@code @counter = N} 里的 N 是<b>最终产物</b>的指令下标，而产物与画布
+     * 积木不是一一对应的（声明卡产出 0 条、for 的 step/回跳落在 end 卡上、normal 模式函数体
+     * 整体后置），所以编辑器要在左侧画一条指向目标积木的线，就必须知道这个对应关系。</p>
+     *
+     * <p><b>它不是产物的一部分。</b>实现上不包装 {@code out}（{@code StringBuilder} 在
+     * {@code --release 17} 下无法被继承），而是在 {@link #lower} 的每条语句前后量一次
+     * {@code out} 的长度，只把区间记进本通道 —— 产物一个字符都不改。不变量：带记录的编译与
+     * 不带记录的编译产物逐字节相同，{@code originTest} 钉住这一点。</p>
+     */
+    public static final class OriginRecording{
+        /** 每条语句发射的正文区间，按语句下标索引；未发射任何行的语句为 null。 */
+        private final List<int[]> ranges = new ArrayList<>();
+        /** 编译器自己发射的正文行（入口 skip、函数体、返回跳板、hoist 前导跳）。 */
+        private boolean[] synthetic = new boolean[0];
+        /** 扁平化后的按行归属表。 */
+        private int[] lineOwner = new int[0];
+        private int lines;
+
+        /** 第 {@code line} 行由哪条语句发射；{@link #syntheticOrigin} 表示编译器自己发射的；
+         *  越界或未记录返回 -1。 */
+        public int originOfLine(int line){
+            return line < 0 || line >= lineOwner.length ? -1 : lineOwner[line];
+        }
+
+        /** 已记录的正文行数。 */
+        public int lineCount(){ return lines; }
+
+        /** 关闭一条语句的区间（左闭右开）。 */
+        private void close(int statement, int from, int to){
+            if(to <= from) return;
+            while(ranges.size() <= statement) ranges.add(null);
+            ranges.set(statement, new int[]{from, to});
+        }
+
+        /** 把 [{@code from}, {@code to}) 行标成编译器自己发射。可在 lower 之外调用（hoist 段），
+         *  幂等；区间越界会被裁到已记录的范围。
+         *  <p>数组按需增长，但<b>不能</b>预留容量：{@code synthetic.length} 参与
+         *  {@link #flatten} 的行数上限计算，预留出来的空洞会被当成真实行。</p> */
+        public void markSynthetic(int from, int to){
+            int low = Math.max(from, 0);
+            int high = Math.max(to, low);
+            if(high > synthetic.length) synthetic = Arrays.copyOf(synthetic, high);
+            for(int line = low; line < high; line++) synthetic[line] = true;
+        }
+
+        /**
+         * 所有语句关闭之后调一次：把区间表摊平成按行查询的形状。
+         *
+         * <p>{@code totalLines} 是<b>产物正文的完整行数</b>（{@code countLines(out)}），必须由
+         * 调用方给出：区间表只知道"有产出的语句"覆盖到哪里，末尾的收尾标签与入口 skip 不在
+         * 任何区间里，靠区间推会少算。synthetic 优先于语句区间 —— 函数体与入口 skip 即使落在
+         * 某条语句的区间内，也不能指到主程序的积木上。</p>
+         */
+        public void flatten(int totalLines){
+            lines = Math.max(totalLines, Math.max(countLinesOf(ranges), synthetic.length));
+            lineOwner = new int[lines];
+            Arrays.fill(lineOwner, -1);
+            for(int statement = 0; statement < ranges.size(); statement++){
+                int[] range = ranges.get(statement);
+                if(range == null) continue;
+                for(int line = range[0]; line < range[1] && line < lines; line++){
+                    if(!(line < synthetic.length && synthetic[line])) lineOwner[line] = statement;
+                }
+            }
+            for(int line = 0; line < lines && line < synthetic.length; line++){
+                if(synthetic[line]) lineOwner[line] = syntheticOrigin;
+            }
+        }
+
+        private int countLinesOf(List<int[]> source){
+            int total = 0;
+            for(int[] range : source){
+                if(range != null) total = Math.max(total, range[1]);
+            }
+            return total;
+        }
+    }
+
+    /** 记录通道的当前实例；编译器入口推入、finally 弹出，避免嵌套编译互相覆盖。
+     *  与编译器其它编译期上下文一样是单线程状态。 */
+    private static OriginRecording originRecording;
+
+    /** 推入一个新的记录通道并返回它。调用方必须用 {@link #popOriginRecording} 配对弹出。 */
+    public static OriginRecording pushOriginRecording(){
+        originRecording = new OriginRecording();
+        return originRecording;
+    }
+
+    /** 弹出当前记录通道并返回刚被弹出的那个（没有则返回 null）。 */
+    public static OriginRecording popOriginRecording(){
+        OriginRecording current = originRecording;
+        originRecording = null;
+        return current;
+    }
+
+    /** {@code text} 的行数（与记录口径一致：每个 {@code '\n'} 结束一行）。 */
+    static int countLines(CharSequence text){
+        int total = 0;
+        for(int i = 0; i < text.length(); i++){
+            if(text.charAt(i) == '\n') total++;
+        }
+        return total;
+    }
+
     /**
      * Validates the whole program and prepares function bodies. Mutates statement indices
      * (jump targets and structure ends are remapped to body-relative / main-relative space).
@@ -520,10 +633,15 @@ public final class SugarFunctions{
             int[] breakOwner = breakOwners(function.body);
             int[] ifOwner = ifOwners(function.body);
             boolean[] ifBad = ifChainViolations(function.body, ifOwner);
+            boolean[] defaultBad = defaultViolations(function.body, switchOwner);
             for(int i = 0; i < function.body.size; i++){
                 LStatement statement = function.body.get(i);
                 if(statement instanceof CaseStatement && switchOwner[i] < 0){
                     throw error("case", i, "in library function '" + function.name + "' is outside a switch");
+                }
+                if(defaultBad[i]){
+                    throw error("default", i, "in library function '" + function.name + "' is outside a switch"
+                        + " or is a second default of the same switch");
                 }
                 if(statement instanceof BreakStatement && breakOwner[i] < 0){
                     throw error("break", i, "in library function '" + function.name + "' is outside a loop or switch");
@@ -864,10 +982,12 @@ public final class SugarFunctions{
     private static boolean libraryBodyValid(Function function, Map<String, Function> survivors){
         int[] switchOwner = switchOwners(function.body);
         int[] breakOwner = breakOwners(function.body);
+        boolean[] defaultBad = defaultViolations(function.body, switchOwner);
         function.callees.clear();
         for(int i = 0; i < function.body.size; i++){
             LStatement statement = function.body.get(i);
             if(statement instanceof CaseStatement && switchOwner[i] < 0) return false;
+            if(defaultBad[i]) return false;
             if(statement instanceof BreakStatement && breakOwner[i] < 0) return false;
             if(statement instanceof FuncCallStatement call){
                 Function target = survivors.get(call.name);
@@ -1646,6 +1766,11 @@ public final class SugarFunctions{
     public static void lower(Seq<LStatement> statements, String prefix, FunctionSet functions, FuncMode mode,
                              StringBuilder out, CallIds ids, String funcName, SugarCompiler.SwitchStrategy strategy,
                              SugarCompiler.AssertEmit assertEmit){
+        // @counter 指示线用的来源通道。记录是旁路：下面每处新增代码只往通道里写数据，
+        // 产物一个字符都不改（originTest 用逐字节比较钉住这一点）。
+        OriginRecording recording = originRecording;
+        int recordedFrom = recording == null ? 0 : countLines(out);
+
         int[] switchOwner = switchOwners(statements);
         int[] breakOwner = breakOwners(statements);
         int[] continueOwner = continueOwners(statements);
@@ -1662,8 +1787,15 @@ public final class SugarFunctions{
                     "appears after else (or is a duplicate else) in the same if chain");
             }
         }
+        boolean[] defaultBad = defaultViolations(statements, switchOwner);
+        for(int i = 0; i < statements.size; i++){
+            if(defaultBad[i]){
+                throw error("default", i, "is outside a switch or is a second default of the same switch");
+            }
+        }
 
         for(int i = 0; i < statements.size; i++){
+            int statementFrom = recording == null ? 0 : countLines(out);
             if(statementLabels[i]) out.append(label(prefix, "stmt_", i)).append(":\n");
             if(optimizedOperations[i] != null){
                 out.append(optimizedOperations[i]);
@@ -1716,6 +1848,9 @@ public final class SugarFunctions{
             }else if(statement instanceof CaseStatement){
                 if(switchOwner[i] < 0) throw error("case", i, "is outside a switch");
                 out.append(label(prefix, "case_", i)).append(":\n");
+            }else if(statement instanceof SugarStatements.DefaultStatement){
+                if(switchOwner[i] < 0) throw error("default", i, "is outside a switch");
+                out.append(label(prefix, "default_", i)).append(":\n");
             }else if(statement instanceof IfBeginStatement begin){
                 String target = nextBranch[i] >= 0
                     ? label(prefix, "if_branch_", nextBranch[i])
@@ -1834,8 +1969,18 @@ public final class SugarFunctions{
                 statement.write(out);
                 out.append('\n');
             }
+            // 本语句（含它内联展开的调用、switch 分派等所有行）在此收口。区间按左闭右开记录，
+            // 未发射任何行的语句（声明卡、空 for 头……）不占区间，查询时归到前一语句之后。
+            if(recording != null) recording.close(i, statementFrom, countLines(out));
         }
+        // 收尾标签属于"块结束之前的那段结构"，不是编译器凭空产生的指令，所以先打完它：
+        // 此后从本方法返回的控制流（hoist 前导跳、函数体、返回跳板）一律由调用方自己按需覆盖，
+        // 默认都算编译器自身发射。
         if(statementLabels[statements.size]) out.append(label(prefix, "stmt_", statements.size)).append(":\n");
+        // 本条 lower 的尾部（收尾标签之后、函数返回跳板与入口 skip）不属于任何画布积木。
+        // 函数体整段也在这里标掉：它用的是自己的语句表，下标搬到主程序那边就是错的。
+        // 不调 flatten()：扁平化必须等所有区间与 synthetic 标记写完，由编译入口统一做。
+        if(recording != null && funcName != null) recording.markSynthetic(recordedFrom, countLines(out));
     }
 
     /** Lowers one persistent intrinsic card through the normal expression provider chain. */
@@ -2240,16 +2385,46 @@ public final class SugarFunctions{
         }
 
         SwitchTable table = switchTable(cases);
+        // Where a slot with no case goes: the switch's own default case when it declares one,
+        // otherwise the exit (the statement after the blockend).
+        String defaultLabel = defaultLabel(statements, index, begin, switchOwner, prefix);
+
+        // A raw-table switch is a property of the program, not a strategy choice: it is only
+        // ever produced by recovering a hand-written table, and it must keep that exact shape.
+        if(begin.rawTable){
+            if(table == null){
+                throw error("switchbegin", index, "is marked as a raw jump table, which needs integer "
+                    + "case values spanning at most " + MAX_TABLE_SPAN + " slots; use a plain switch instead");
+            }
+            emitTableRows(index, begin, table, prefix, out, defaultLabel, false);
+            return;
+        }
+
         int chainCost = cases.size() + 1;
         if(strategy == SugarCompiler.SwitchStrategy.chainOnly || table == null || table.cost() > chainCost){
             for(SwitchCase item : cases){
                 out.append("jump ").append(label(prefix, "case_", item.index)).append(" equal ")
                     .append(begin.value).append(' ').append(item.text).append('\n');
             }
-            out.append("jump ").append(label(prefix, "stmt_", begin.destIndex + 1)).append(" always x false\n");
+            out.append("jump ").append(defaultLabel).append(" always x false\n");
             return;
         }
 
+        emitTableRows(index, begin, table, prefix, out, defaultLabel, true);
+    }
+
+    /**
+     * Emits the {@code @counter} jump-table dispatch and its slot rows.
+     *
+     * <p>{@code guarded} adds the two bounds guards (and the {@code op sub} normalization when the
+     * case span does not start at 0) that keep an out-of-range value on the default path. A raw
+     * table emits neither: the dispatch is exactly {@code op add @counter @counter <value>} and the
+     * rows follow it immediately, so the value indexes the table directly. Every slot without a
+     * case — a hole inside the span, and (guarded only) an out-of-range value — lands on
+     * {@code defaultLabel}.</p>
+     */
+    private static void emitTableRows(int index, SwitchBeginStatement begin, SwitchTable table, String prefix,
+                                      StringBuilder out, String defaultLabel, boolean guarded){
         int span = table.span();
         String idxVar;
         if(table.min != 0){
@@ -2259,15 +2434,30 @@ public final class SugarFunctions{
         }else{
             idxVar = begin.value; // min == 0: the source value indexes the table directly
         }
-        String defaultLabel = label(prefix, "stmt_", begin.destIndex + 1);
-        out.append("jump ").append(defaultLabel).append(" lessThan ").append(idxVar).append(" 0\n");
-        out.append("jump ").append(defaultLabel).append(" greaterThan ").append(idxVar).append(' ').append(span - 1).append('\n');
+        if(guarded){
+            out.append("jump ").append(defaultLabel).append(" lessThan ").append(idxVar).append(" 0\n");
+            out.append("jump ").append(defaultLabel).append(" greaterThan ").append(idxVar).append(' ').append(span - 1).append('\n');
+        }
         out.append("op add @counter @counter ").append(idxVar).append('\n');
         for(int slot = 0; slot < span; slot++){
             int caseIndex = table.slots[slot];
             out.append("jump ").append(caseIndex < 0 ? defaultLabel : label(prefix, "case_", caseIndex))
                 .append(" always x false\n");
         }
+    }
+
+    /** The label a slot with no case jumps to, and the target of the chain lowering's trailing
+     *  jump: the {@code default} case declared directly inside this switch, else the exit label
+     *  ({@code label("stmt_", destIndex + 1)}). At most one default is accepted, so the first one
+     *  found is the only one ({@link #lower} rejects a second). */
+    private static String defaultLabel(Seq<LStatement> statements, int index, SwitchBeginStatement begin,
+                                       int[] switchOwner, String prefix){
+        for(int at = index + 1; at < begin.destIndex; at++){
+            if(switchOwner[at] == index && statements.get(at) instanceof SugarStatements.DefaultStatement){
+                return label(prefix, "default_", at);
+            }
+        }
+        return label(prefix, "stmt_", begin.destIndex + 1);
     }
 
     /**
@@ -2349,6 +2539,21 @@ public final class SugarFunctions{
                     seenElse = true;
                 }
             }
+        }
+        return bad;
+    }
+
+    /** Marks each {@code default} that cannot be lowered: one outside a switch, and every
+     *  default after the first of the same switch (the later body would be dead code — the
+     *  slot rows and the chain's trailing jump can only name one default). Shared by the compile
+     *  path, the editor's red marking and the library builder, so all three reject alike. */
+    static boolean[] defaultViolations(Seq<LStatement> statements, int[] switchOwner){
+        boolean[] bad = new boolean[statements.size];
+        Set<Integer> seen = new HashSet<>();
+        for(int i = 0; i < statements.size; i++){
+            if(!(statements.get(i) instanceof SugarStatements.DefaultStatement)) continue;
+            int owner = switchOwner[i];
+            if(owner < 0 || !seen.add(owner)) bad[i] = true;
         }
         return bad;
     }

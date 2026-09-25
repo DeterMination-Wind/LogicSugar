@@ -314,9 +314,26 @@ tasks.register("statementClipboardTest", JavaExec){
     mainClass = "logicsugar.assist.StatementClipboardSelfTest"
 }
 
+// The @counter indicator line needs "which canvas statement emitted instruction N". That mapping
+// comes from a side channel in the lowerer, so its two load-bearing properties are pinned here:
+// byte-identical products, and synthetic (compiler-generated) regions never attributed to a card.
+tasks.register("originTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.OriginRecordingTest"
+}
+
+// Resolving `@counter = N` to a canvas statement is pure text work (strip carriers, let the
+// assembler resolve labels, read the @counter write positions), so it is pinned without a canvas.
+tasks.register("counterJumpIndexTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.assist.CounterJumpIndexTest"
+}
+
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, statementClipboardTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, statementClipboardTest, originTest, counterJumpIndexTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

@@ -807,9 +807,74 @@ public class ExprCompiler{
 
         List<Line> ops = new ArrayList<>();
         TempStack temps = new TempStack();
-        String result = compileNode(ast, ops, temps);
+        boolean previousCounterFold = foldCounterConstants;
+        // 目标就是 @counter 时打开常量折叠：`@counter = 5*2` 必须编译成一条 `set @counter 10`，
+        // 否则产物是 `op mul _0 5 2` + `set @counter _0`，编辑器看到的目标是个变量，
+        // @counter 指示线只能报"取决于运行期值"（2026-09 报告）。范围刻意收窄到这一个目标：
+        // 其他表达式卡的产物保持原样，不动任何既有存档的载体校验。
+        foldCounterConstants = isCounterName(dest);
+        try{
+            String result = compileNode(ast, ops, temps);
+            return finishResult(dest, ops, result);
+        }finally{
+            foldCounterConstants = previousCounterFold;
+        }
+    }
 
-        return finishResult(dest, ops, result);
+    /** 本编译上下文中是否折叠纯常量算术（只有 {@code @counter} 目标会打开）。 */
+    private static boolean foldCounterConstants;
+
+    /** 目标是否是处理器计数器；mlog 变量名大小写不敏感，这里同样忽略大小写。 */
+    private static boolean isCounterName(String dest){
+        return dest != null && dest.equalsIgnoreCase("@counter");
+    }
+
+    /**
+     * 二元运算的纯常量折叠：两侧都是数字字面量且运算符是纯标量运算时，直接算出结果。
+     *
+     * <p>只在 {@link #foldCounterConstants} 打开时被调用。算不出有限值（NaN/Infinity）就返回
+     * null，交给原来的运行时计算 —— 与 {@code SugarFunctions.finiteNumber} 同一口径。</p>
+     *
+     * <p><b>不调用 {@code LogicOp} 的 lambda：</b>它的字段类型是包私有的嵌套接口，模组类加载器
+     * 调用会抛 {@code IllegalAccessError}（见 {@code SugarFunctions.constantOperation} 的注释）。
+     * 这里与那里是同一套运算，改动时两处要一起改；整数除法的向下取整、{@code emod} 的负数语义
+     * 都必须与原版 {@code LExecutor} 一致，不要另行"优化"。</p>
+     */
+    private static String foldBinaryConstant(String op, String left, String right){
+        Double a = finiteNumber(left);
+        Double b = finiteNumber(right);
+        if(a == null || b == null || op == null || op.isEmpty()) return null;
+        Double result = binaryConstant(op, a, b);
+        if(result == null || !Double.isFinite(result)) return null;
+        return formatNum(result);
+    }
+
+    /** 纯标量二元运算的常量求值；未知或不支持的运算符返回 null。 */
+    private static Double binaryConstant(String op, double a, double b){
+        switch(op){
+            case "add": return a + b;
+            case "sub": return a - b;
+            case "mul": return a * b;
+            case "div": return a / b;
+            case "idiv": return Math.floor(a / b);
+            case "mod": return a % b;
+            case "emod": return ((a % b) + b) % b;
+            case "pow": return Math.pow(a, b);
+            case "max": return Math.max(a, b);
+            case "min": return Math.min(a, b);
+            case "logn": return Math.log(a) / Math.log(b);
+            default: return null;
+        }
+    }
+
+    private static Double finiteNumber(String text){
+        if(text == null || text.isEmpty()) return null;
+        try{
+            double value = Double.parseDouble(text);
+            return Double.isFinite(value) ? value : null;
+        }catch(NumberFormatException e){
+            return null;
+        }
     }
 
     private static List<Line> finishResult(String dest, List<Line> ops, String result){
@@ -1134,6 +1199,12 @@ public class ExprCompiler{
             Binary bn = (Binary)node;
             String left = compileNode(bn.l, ops, temps);
             String right = compileNode(bn.r, ops, temps);
+            if(foldCounterConstants){
+                // 整棵子树的实参都是字面量时算出常量：`5*2` → `10`。折叠路径不分配临时量、
+                // 不发射 op，直接返回字面量（两个操作数本来就只是字面量文本，没有临时量可回收）。
+                String folded = foldBinaryConstant(bn.op, left, right);
+                if(folded != null) return folded;
+            }
             String temp = temps.alloc(left, right);
             ops.add(new OpLine(bn.op, temp, left, right));
             return temp;

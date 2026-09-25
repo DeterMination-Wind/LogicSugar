@@ -1,18 +1,18 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十二个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了四十个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了四十二个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
 | `selfTest` | `logicsugar.SugarCompilerSelfTest` | 编译器主回归：嵌套结构 round-trip、非法结构报错、语义错误定位、`break`/`continue` 就近退出、if/elif 链、注释往返、生成代码优化与 `@counter` 保护、`SwitchStrategy`（auto/chainOnly）公式与语义网格、跳转链穿线、表达式 `op` 链往返、函数（参数绑定、void/早退、返回值、嵌套/前向/循环内调用、临时名空间）、引号转义、载体分片（大源码 `__ls_sugar_N`/`__ls_lib_N` 分片还原、小程序单条形状回归）、`logic-sugar-v2` 标记与 `storedFormat`、`op add d s 0` ↔ `set d s` 拷贝归一化（v1 存档仍过验证）、函数返回声明（`~`/`value`/留空推断与调用点校验） |
 | `ifElseTest` | `mindustry.logic.IfElseCompileTest` | `if` / `elif` / `else` / `while` 三段式条件的 lowering 冒烟（负分支取反、标签、出口跳转） |
-| `decompileTest` | `mindustry.logic.SugarDecompilerTest` | 反编译恢复：vanilla 程序保持原样、各结构恢复 round-trip、跳转表识别、陈旧载体回退推断、短路守卫重建布尔树（单原子 / 顶层 `!` / 嵌套 `&&`\|\|` / 左深链 / `whilebegin`/`forbegin` 的 `exprsc` / `continue` 内部回边）、贪心候选失败后的回溯提升、验证矩阵（chainOnly 保存的程序在 auto 默认设置下仍验证）、动态 `@counter` 分诊保持 flat、函数区杂散跳转验证、不支持的模式保持 flat、引号/转义、坏输入不崩 |
+| `decompileTest` | `mindustry.logic.SugarDecompilerTest` | 反编译恢复：vanilla 程序保持原样、各结构恢复 round-trip、跳转表识别（含手写无守卫裸表 → `switchbegin … raw` + `default`）、手写程序无入口 skip 也能恢复、数字跳转链穿线归一化、真实 655 条跳转表程序夹具（`test/fixtures/realworld-jump-table.mlog`）、**编辑器开屏决策**（`openingSource`：无载体的处理器程序必须走推断、两种编辑器权限都要验证、载体程序与函数库文本保持原样）、陈旧载体回退推断、短路守卫重建布尔树（单原子 / 顶层 `!` / 嵌套 `&&`\|\|` / 左深链 / `whilebegin`/`forbegin` 的 `exprsc` / `continue` 内部回边）、贪心候选失败后的回溯提升、验证矩阵（chainOnly 保存的程序在 auto 默认设置下仍验证）、动态 `@counter` 分诊保持 flat、函数区杂散跳转验证、不支持的模式保持 flat、引号/转义、坏输入不崩 |
 | `reconstructionTest` | `mindustry.logic.ReconstructionFixtureTest` | 重建：过期 `destIndex` 按嵌套重配对后载体仍验证；两份世界处理器样例走载体还原出 `ifbegin`/`forbegin`；`array`/`stack`/`record` 声明卡随载体回来；剥掉载体后不发明声明卡、不把 `__ls_builtin_*` 恢复成用户函数 |
-| `reconstructionMatrixTest` | `mindustry.logic.ReconstructionMatrixTest` | 重建矩阵：175 个 fixture / 1078 个 gate 断言，覆盖当前全部控制积木（if/elif/else/for/while/switch/break/continue/函数/折叠变体）、全部数据积木（array/matrix/arrayinit/record/stack/queue/deque/bitset/map/uset/list/heap/chain）、68 个 `datacall` 操作卡与 8 张断言/调试卡；每个 fixture 都断言 compile → carrier restore → `verifyRestore` → 载体反编译链路，并自动检查每个已注册 `datacall` 操作都有 fixture；对 decompiler 可证明的控制流形状额外断言无载体推断路径 |
+| `reconstructionMatrixTest` | `mindustry.logic.ReconstructionMatrixTest` | 重建矩阵：179 个 fixture / 1106 个 gate 断言，覆盖当前全部控制积木（if/elif/else/for/while/switch/break/continue/函数/折叠变体）、全部数据积木（array/matrix/arrayinit/record/stack/queue/deque/bitset/map/uset/list/heap/chain）、68 个 `datacall` 操作卡与 8 张断言/调试卡；每个 fixture 都断言 compile → carrier restore → `verifyRestore` → 载体反编译链路，并自动检查每个已注册 `datacall` 操作都有 fixture；对 decompiler 可证明的控制流形状额外断言无载体推断路径 |
 
 | `recoveryPredicateTest` | `mindustry.logic.RecoveryPredicateTest` | 谓词树模型：比较运算精确取反、`strictEqual` 不做有损取反、德摩根、优先级打印、求值方式影响代价 |
 | `shortCircuitTest` | `logicsugar.ShortCircuitCompilerTest` | `&&` / `||` 下降为条件 `jump`：操作数顺序、OR 续接标签、嵌套括号、`===` 取反不丢精度、坏谓词拒绝 |
@@ -49,13 +49,15 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `editorConflictTest` | `logicsugar.EditorConflictTest` | 编辑器所有权与四档冲突策略：`classify` 把「尚未安装 / 游戏自带 `LogicDialog`」判为 native、自家对话框及其子类判为 sugar、别的模组的 `LogicDialog` 子类判为 foreign（不得误判成 sugar）、`EditorConflict.parse` 四档映射与大小写不敏感、缺失/空/垃圾值一律回落 `ask` 而绝不落到「编辑器被停用」、设置按钮 `next()` 一圈必须恰好访问全部状态并回到默认档（漏一个状态就是用户够不到的档）、设置键与四档标签在三份 bundle 里都存在、安装守卫无不对称、选板隐藏可逆、四档切换有接线、共存编译挂在对方关闭路径上且捕异常、退出共存还原对方画布、ask 弹窗三种答案齐全且不含接管分支的私有副本、聚合设置表单与独立设置项默认档一致、共存时重新绑定对方面板且对方面板仍可点击；源码钉子统一走共享的 `SourceNails.readSource()`（归一 CRLF） |
 | `textWrapTest` | `logicsugar.assist.TextWrapTest` | `SugarTooltip` 的折行规则（测量函数换成字符数，因此无需图形上下文即可精确断言）：放得下原样返回、空串与 null 安全、只在空格处断且每行不超限、超长单词硬断不丢字符、markup 标签绝不被拆开、已有换行保留、折行幂等 |
 | `statementClipboardTest` | `logicsugar.assist.StatementClipboardSelfTest` | 跨处理器剪贴板的片段格式（全程只有语句与字符串，无画布）：`write`/`parse` 对全部语句类型 round-trip、头部标记识别（无正文不算 payload）、接受 CRLF 文本与纯原版 mlog、拒绝不可读文本、`acceptable` 双向判定、`rebase` 把 jump 映射进片段局部下标、选区外跳转被识别为 escaping、无链接的 jump 既不映射也不报 escaping、`pairBlockEnds` 修复片段内 begin/end 配对并拒绝不成对的片段、越界目标计数 |
+| `originTest` | `logicsugar.OriginRecordingTest` | 编译期来源通道（`@counter` 指示线的地基）：**产物逐字节不变**（`compileRecorded` 与 `compile` 的返回值在全部 fixture × 两种 FuncMode 下完全相同）、直线语句逐条对应、`for` 的 step 与回跳归到 `blockend` 卡而条件跳转归到 `for` 头、纯原版程序跑 1:1 路径且没有入口 skip、hoist 段（前导跳 / 函数体 / 返回跳板）整段是 `syntheticOrigin`、入口 skip 是 `syntheticOrigin`、来源数组与正文指令流逐条对齐（口径 = 去标记块去载体去标签行） |
+| `counterJumpIndexTest` | `logicsugar.assist.CounterJumpIndexTest` | `@counter` 写入的解析（纯文本工作，无画布）：字面量绝对目标、`op add/sub` 的相对目标（含执行器后自增的 `+1`）、switch 跳转表 / 函数返回跳板 / 变量赋值的形态识别、越界字面量的 `wrap`、载体行不计入指令数、`__ls_stmt_<N>:` 标签归属与函数体内部归属为 `-1`、长度不匹配的 provenance 整体忽略并回落标签启发式 |
 
 ```powershell
 .\gradlew.bat check        # 全部
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前四十个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前四十二个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 
@@ -71,7 +73,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 发版或大改动前，至少覆盖：
 
 1. **加载**：模组在桌面客户端正常加载，打开逻辑处理器看到 Sugar 编辑器（`SugarLogicDialog` 接管），原编辑器上的外部浮层（如 MindustryX 面板）仍在。
-2. **编译往返 / 重建**：写一段含 `if` / `for` / `while` / `switch` / 函数调用的程序，保存后重开——结构自动折回；"复制编译后代码"按钮拿到的是纯原版 mlog，且无模组客户端也能打开该处理器。含 `array`/`stack` 等声明卡的程序重开后声明卡仍在。纯原版 mlog（无载体）只恢复能验证的 `if`/`for` 等控制流，不凭空长出数据结构卡。
+2. **编译往返 / 重建**：写一段含 `if` / `for` / `while` / `switch` / 函数调用的程序，保存后重开——结构自动折回；"复制编译后代码"按钮拿到的是纯原版 mlog，且无模组客户端也能打开该处理器。含 `array`/`stack` 等声明卡的程序重开后声明卡仍在。纯原版 mlog（无载体）只恢复能验证的 `if`/`for` 等控制流，不凭空长出数据结构卡；手写程序（没有入口 `set @counter 0`）同样要开成 Sugar 视图，带无守卫跳转表的程序要把表折成 `switchbegin … raw`（含 `default`），而不是留在 flat 原版视图——`test/fixtures/realworld-jump-table.mlog` 就是这条的手动夹具（贴进处理器后直接打开编辑器，应看到 switch 卡与 `default`，并弹出恢复提示而不是「外部编辑」）。
 3. **双视图**：Original / Sugar 视图切换正常，切换前未保存修改有保护。
 4. **函数库**：设置入口打开函数库编辑、保存；把 `functions.txt` 改坏后重进，确认按函数抢救且警告可见。
 5. **编辑器辅助**：框选（桌面 Ctrl+点击/拖动复制；移动端长按拖动）、跳转线着色、`__ls_*` 变量在 MindustryX 变量浏览器中隐藏、表达式语句错误标红；桌面 Ctrl+Z / Ctrl+Y 撤销重做，移动端底部 Undo/Redo 按钮。
@@ -86,3 +88,9 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 14. **数据子系统**：依次放置 `matrix` / `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 声明卡，再从各自分类放置 `array_fill(buf, value)`、`stack_push(s, 1)`、`queue_push(q, 1)`、`deque_push_front(d, 1)`、`bitset_test(bits, 0)`、`map_clear(map)` / `map_set(map, 1, 2)`、`set_clear(s)` / `set_add(s, 1)`、`vector_push_back(l, 1)`、`heap_push(h, 1)`、`chain_init(c)` / `chain_alloc(c)` 等操作积木。保存后重开：声明卡和 `datacall` 操作卡完整，产物只有原版指令且无模组客户端可运行；新增面板不再显示八槽 `arrayinit`，但载入旧 carrier 时仍能显示并正确编译旧卡。检查 `__ls_*` 隐藏变量过滤、记录字段变量可见，以及每类操作出现在对应分类而不是全部挤在 Data Structures。
 15. **单位 flag**：设置里打开「显示单位 flag」，给单位设非 0 的 `flag`，确认头顶正上方出现红色数字；再打开「为单位 flag 着色」，给多个单位设置不同 flag，确认同一 flag 颜色一致、不同 flag 优先使用不同鲜明颜色，超过 10 个后仍会分配鲜明随机色；flag 为 0 的单位不显示；关掉显示设置后数字消失。视野外与迷雾中的单位不绘制。
 16. **表达式语句文本导入**：清空处理器后把 `array buf cell1 0 8` + `x = buf[3]` 复制进剪贴板，用「加载剪贴板」导入——应得到一张数组声明卡和一张 `x = buf[3]` 的 Expr 卡（不是空的 `noop` 卡）；保存后产物只有 `read x cell1 3` + carrier，重开仍折回两张卡。同法验证 `x = (a + b) * 2`、`buf[i] = 5`，以及写错时（`x = (a +`）卡片标红且保存被拦截；确认普通 mlog（`set` / `op` / `read`）与 `x == 5` 这类比较行导入行为不变。
+17. **@counter 指示线**：按 `set @counter 3` / `wait 0.5` / `wait 0.5` / `set @counter 1` / `wait 0.5` 摆五张卡（`wait` 用 0.5 秒以上，便于观察）。左侧应出现两个角标（`3` 与 `1`），各画一条绿线指向对应目标卡：`3` 指向第 4 张（`set @counter 1`），`1` 指向第 2 张（第一个 `wait`）—— **线的两端必须分别落在写入卡与目标卡的左边缘**，绝不能落在别的卡上（2026-09 的错位报告就是指令下标被当成积木序号用）。
+    再补三种形状：① `op add @counter @counter 1`（相对跳转，目标应在下方）；② 卡片塞进 `for` 循环体内（目标按产物下标解析，仍应指向正确积木）；③ 函数体内写 `set @counter 1`（**只应有底部灰色小标 + 悬停说明，不应有线**）。最后确认：折叠目标所在块后线消失、框选拖动卡片时线跟随、关闭设置里的「@counter 候选跳转线」后不确定目标只剩角标。
+    **锚点是卡片局部坐标，两轴都不含 `elem.x`/`elem.y`**（`localToAscendantCoordinates` 自己会加，写重就是重复计入）。这条只有肉眼能查：摆一段**长程序**，让写入卡在**末尾**、目标卡在**开头**（例如第一张就是目标），线必须仍然贴着两张卡的左缘中点；若目标端被甩到屏幕上方、脱离积木，就是 Y 轴重复计入了 `elem.y`（2026-09-25 报告）。`originTest` 的 `anchorsAreLocalCoordinates` 只钉住代码写法，位置仍以肉眼为准。
+    **长程序必须一样能画**（2026-09-25「长逻辑里罢工、编辑一下只闪一帧」报告）：在上面那段长程序里，每张 `@counter` 写入卡都应同时有角标和线；随便点一张卡的按钮（复制/编辑/上下移）后线**不能**消失。查不到线时先看日志：这份功能任何失败都会打一行 `[LogicSugar] @counter indicator line disabled: <原因>`（`noteOnce` 去重），它就是"为什么没画"的答案 —— 静默失效是这条功能最贵的故障模式。每帧路径只允许走 `SugarCanvas.readonlyText()`（`originTest` 的 `overlayUsesReadonlySnapshot` 钉住），`save()` 每帧调会 unfold/fold 重建积木元素、文本还是展开态，且原版 `saveUI()` 对脱离的 jump 目标会抛 NPE。
+    **轨道不能重叠**：摆三段互相重叠的 `@counter` 跳转（例如第 1 张跳到第 9 张、第 3 张跳到第 7 张、第 5 张跳到第 6 张），三条线必须落在**不同横向距离**上，不能挤成同一条竖线互相穿插；嵌套那次（第 3→7 在 1→9 内部）应更贴近积木。横向距离来自 `logicsugar.assist.JumpLanes`（原版 `setJumpHeights` 区间着色的镜像），层号本身由 `counterJumpIndexTest` 的 `jumpLanesSeparateOverlappingCurves` 覆盖，这里只看"有没有真的分开"。
+    **箭头要咬住目标卡**：目标端的箭头必须**压在那张卡的左缘上**（跨缘约 3/4 在外、1/4 在内），并且**指向卡内**。若箭头整枚漂在卡片左侧、或箭头朝外，就是镜像只翻了 x 偏移没翻宽度（`Tex.logicNode.draw` 的负宽度同时管"跨缘"和"贴图翻转"），`originTest` 的 `overlayRailsFollowLanes` 钉住了这一行。

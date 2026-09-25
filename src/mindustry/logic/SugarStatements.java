@@ -61,6 +61,7 @@ public final class SugarStatements{
         LAssembler.customParsers.put("ifbegin", SugarStatements::parseIfBegin);
         LAssembler.customParsers.put("ifbeginc", tokens -> SugarStatements.parseIfBegin(tokens, true));
         LAssembler.customParsers.put("case", SugarStatements::parseCase);
+        LAssembler.customParsers.put("default", tokens -> new SugarStatements.DefaultStatement());
         LAssembler.customParsers.put("elif", SugarStatements::parseElseIf);
         LAssembler.customParsers.put("else", SugarStatements::parseElse);
         LAssembler.customParsers.put("break", tokens -> new SugarStatements.BreakStatement());
@@ -488,17 +489,56 @@ public final class SugarStatements{
 
     public static class SwitchBeginStatement extends BeginStatement{
         public String value = "i";
+        /**
+         * Lowers the switch as a bare {@code @counter} jump table: {@code op add @counter
+         * @counter <value>} plus one unconditional row per slot, with **no bounds guards**.
+         *
+         * <p>This is what a hand-written (or third-party-tool) table looks like, and it is the
+         * only form that reproduces one exactly: the guards this compiler normally emits are two
+         * extra instructions and clamp out-of-range values, so adding them would silently change
+         * the stored program. Recovery therefore carries the mode in the source; the palette's
+         * switch card starts guarded and the mode button on the card switches it.</p>
+         */
+        public boolean rawTable;
 
         @Override
         public void build(Table table){
             table.add(text("switch.value", "switch")).self(c -> hint(c, "switch.value"));
             field(table, value, result -> value = result).width(85f);
+            table.table(this::rebuildMode).pad(4f).left();
             foldControlRow(table);
+        }
+
+        /**
+         * The table-shape button. Its label <em>is</em> the current shape ({@code 带边界} /
+         * {@code 裸表}), so switching it has to rebuild this row — the first version only
+         * refreshed the canvas layout, which left the old word on screen and made the leftover
+         * colour change read as the whole signal ("点击裸表按钮后切换颜色意义不明", 2026-09-25).
+         * Colour stays the card's own, like every other mode toggle in this file
+         * ({@code condition.expr}, the fold buttons): a tint here would collide with meanings
+         * that are already taken — red is the invalid-statement marking, amber is the
+         * {@code @counter} overlay's "several candidate targets".
+         */
+        private void rebuildMode(Table table){
+            table.clearChildren();
+            table.left();
+            table.update(() -> table.setColor(elem == null ? Pal.logicControl : elem.color));
+            table.button(b -> {
+                b.add(text(rawTable ? "switch.raw.on" : "switch.raw.off", rawTable ? "raw" : "bounds"));
+                b.clicked(() -> {
+                    rawTable = !rawTable;
+                    rebuildMode(table);
+                    SugarCanvas.refreshCurrent();
+                });
+            }, Styles.logict, () -> {}).size(84f, 40f).self(c -> hint(c, "switch.raw"));
         }
 
         @Override public String name(){ return cardText("switch.begin", "Switch Start"); }
         @Override public String typeName(){ return "SwitchBegin"; }
-        @Override public void write(StringBuilder out){ out.append(collapsed ? "switchbeginc " : "switchbegin ").append(value).append(' ').append(destIndex); }
+        @Override public void write(StringBuilder out){
+            out.append(collapsed ? "switchbeginc " : "switchbegin ").append(value).append(' ').append(destIndex);
+            if(rawTable) out.append(" raw");
+        }
     }
 
     public static class CaseStatement extends SugarStatement{
@@ -510,6 +550,23 @@ public final class SugarStatements{
         @Override public String name(){ return cardText("case", "Case"); }
         @Override public String typeName(){ return "Case"; }
         @Override public void write(StringBuilder out){ out.append("case ").append(value); }
+    }
+
+    /**
+     * {@code default:} of a switch: the body every slot without a case jumps to.
+     *
+     * <p>In the comparison-chain lowering it is the target of the trailing always-jump; in a
+     * jump table it is the target of every hole row, and in the guarded form the bounds guards
+     * share it, so an out-of-range value lands on the same body. A bare (raw) table keeps no
+     * guards, so only the slots inside the case span reach it — documented on the switch card.</p>
+     */
+    public static class DefaultStatement extends SugarStatement{
+        @Override public void build(Table table){
+            table.add(text("default.label", "default")).padLeft(4).left().self(c -> hint(c, "default"));
+        }
+        @Override public String name(){ return cardText("default", "Default"); }
+        @Override public String typeName(){ return "Default"; }
+        @Override public void write(StringBuilder out){ out.append("default"); }
     }
 
     public static class IfBeginStatement extends BeginStatement{
@@ -922,6 +979,8 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
         SwitchBeginStatement result = new SwitchBeginStatement();
         result.value = tokens[1];
         result.destIndex = parseDestIndex(tokens[2]);
+        // Optional trailing mode token; absent (every save before this mode existed) stays guarded.
+        if(tokens.length > 3 && "raw".equals(tokens[3])) result.rawTable = true;
         result.collapsed = collapsed;
         return result;
     }

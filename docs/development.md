@@ -13,7 +13,7 @@
 ## 常用命令
 
 ```powershell
-# 全部自测（四十个 JavaExec 任务，接线见 testing.md）
+# 全部自测（四十二个 JavaExec 任务，接线见 testing.md）
 .\gradlew.bat check
 
 # 单跑某个自测任务
@@ -34,6 +34,7 @@
 注意：
 
 - `test` 任务被显式 `enabled = false`（本项目不用 JUnit runner）；真正的回归全部是 `main()` 式 JavaExec 任务，挂接在 `check.dependsOn` 上。
+- `test/fixtures/` 存"真实程序"夹具（当前只有 `realworld-jump-table.mlog`：第三方工具产出的 655 条无载体程序），测试通过 `SourceNails.readSource(...)` 按仓库相对路径读取。**这些文件里语句下标是有意义的**（跳转按指令下标寻址），增删行会改变程序本身，只能改注释。
 - `jar` 任务产物 `LogicSugar-v<版本>-desktop.jar` 是**桌面中间产物**（纯 class 字节码，安卓无法加载），不要分发；可分发形态只有 `deploy` 的合并 jar。
 - `releaseZip` 产出附 README/LICENSE/sample 的 zip，是可选的发布外包装。
 

@@ -103,6 +103,10 @@ public final class ReconstructionMatrixTest{
         addInfer("switch.fallthrough", "switchbegin x 999\ncase 1\nset y 1\ncase 2\nset y 2\nbreak\nblockend\nprint y\n", "case 2", "switchbegin");
         addInfer("switch.nestedif", "switchbegin x 999\ncase 1\nifbegin y equal 1 999\nset z 1\nblockend\nbreak\nblockend\nprint z\n", "ifbegin y equal 1", "switchbegin");
         addInfer("switch.while", "whilebegin x lessThan 10 999\nswitchbegin x 999\ncase 1\nbreak\nblockend\nset x 0\nblockend\n", "switchbegin x", "switchbegin");
+        addInfer("switch.default", "switchbegin x 999\ncase 1\nset y 1\nbreak\ndefault\nset y 9\nbreak\nblockend\nprint y\n", "default", "switchbegin");
+        // Raw (guard-less) jump table: the mode token, its slot rows and the default body all
+        // have to survive the carrier, and the card has to stay the shape that reproduces them.
+        addInfer("switch.raw", "set v 0\nswitchbegin v 999 raw\ncase 0\nset y 1\nbreak\ncase 2\nset y 2\nbreak\ndefault\nset y 3\nbreak\nblockend\nprint y\n", "switchbegin v 11 raw", "raw");
 
         addInfer("func.returnconst", "funcdef f ~ 999\nreturn \"1\"\nblockend\nset x 0\nfunccall f \"\" out\nprint out\n", "funcdef f", "funcdef");
         addInfer("func.returnparam", "funcdef f a 999\nreturn \"a + 1\"\nblockend\nset x 3\nfunccall f \"x\" out\nprint out\n", "return \"a + 1\"", "funcdef");
@@ -137,6 +141,14 @@ public final class ReconstructionMatrixTest{
         addInferred("infer.for.native", "forbegin i 0 1 lessThan 3 2\nset x i\nblockend\nprint x\n", "forbegin i 0 1 lessThan 3", "forbegin");
         addInferred("infer.for.exprsc", "forbegin i 0 1 exprsc \"i < 3\" 2\nprint i\nblockend\nprint x\n", "forbegin i 0 1 exprsc", "forbegin");
         addInferred("infer.switch", "switchbegin x 7\ncase 1\nset y 1\nbreak\ncase 2\nset y 2\nbreak\nblockend\nprint y\n", "switchbegin x", "switchbegin");
+        // The default case is recoverable from both lowerings: the guarded table's hole rows and
+        // bounds guards land on it, and the chain lowering's trailing jump names it.
+        addInferred("infer.switch.default", "switchbegin x 16\ncase 0\nprint zero\nbreak\ndefault\nprint other\nbreak\ncase 0\ncase 0\ncase 0\ncase 0\nblockend\n", "default", "default");
+        // A hand-written guard-less table (no carrier, no entry skip): raw mode, its hole slots
+        // and the loop-back jump all have to come back without rewriting the program.
+        addInferred("infer.switch.raw",
+            "set v 0\nswitchbegin v 5 raw\ncase 2\ndefault\njump 0 always x false\ncase 0\nprint \"a\"\njump 0 always x false\nblockend\nprint \"end\"\n",
+            "switchbegin v 8 raw", "switchbegin v");
         addInferred("infer.nested", "whilebegin x greaterThan 0 5\nifbegin y equal 1 3\nset z 1\nblockend\nset x 0\nblockend\nprint z\n", "whilebegin x greaterThan 0", "whilebegin");
         addInferred("infer.func.return", "funcdef f a 2\nreturn \"a + 1\"\nblockend\nset x 3\nfunccall f \"x\" out\nprint out\n", "funcdef f", "funcdef");
         addInferred("infer.func.void", "funcdef f ~ 2\nset flag 1\nblockend\nfunccall f \"\" ~\nprint flag\n", "funcdef f", "funcdef");

@@ -451,9 +451,22 @@ public class SugarLogicDialog extends LogicDialog{
         applyHistory(history.redo(canvasSnapshot()));
     }
 
+    /**
+     * 只读画布文本（历史/签名比较专用）。
+     *
+     * <p>{@code LogicDialog.canvas} 的静态类型是原版 {@link LCanvas}，所以这里做一次判定；
+     * 本对话框的字段装的始终是 {@link SugarCanvas}，非本实现的回退分支只为不抛异常。</p>
+     */
+    private String readonlyCanvasText(){
+        if(canvas == null) return "";
+        return canvas instanceof SugarCanvas sugar ? sugar.readonlyText() : canvas.save();
+    }
+
+    /** 历史快照一律走只读文本：{@code save()} 会 unfold/fold（重建积木元素）且给出的是展开态文本，
+     *  而画布停在折叠态；下面几条路径（尤其每帧轮询）用 save() 等于让编辑器自己反复改画布。 */
     private String canvasSnapshot(){
         try{
-            return canvas.save();
+            return readonlyCanvasText();
         }catch(Throwable ignored){
             return lastHistorySnap;
         }
@@ -461,7 +474,7 @@ public class SugarLogicDialog extends LogicDialog{
 
     private void recordCanvasHistory(){
         try{
-            String now = canvas.save();
+            String now = readonlyCanvasText();
             history.record(now);
             lastHistorySnap = now;
             historyIdle = 0f;
@@ -473,7 +486,7 @@ public class SugarLogicDialog extends LogicDialog{
     private void pollCanvasHistory(){
         if(history.isRestoring()) return;
         try{
-            String now = canvas.save();
+            String now = readonlyCanvasText();
             if(!now.equals(lastHistorySnap)){
                 lastHistorySnap = now;
                 historyIdle = 0f;
@@ -493,7 +506,7 @@ public class SugarLogicDialog extends LogicDialog{
         if(sugar == null) return;
         canvas.load(sugar);
         try{
-            String actual = canvas.save();
+            String actual = readonlyCanvasText();
             history.applied(actual);
             lastHistorySnap = actual;
         }catch(Throwable ignored){
@@ -506,7 +519,7 @@ public class SugarLogicDialog extends LogicDialog{
 
     private void resetEditHistory(){
         try{
-            String snap = canvas.save();
+            String snap = readonlyCanvasText();
             history.reset(snap);
             lastHistorySnap = snap;
         }catch(Throwable ignored){
@@ -983,35 +996,16 @@ public class SugarLogicDialog extends LogicDialog{
             // a failed compile kept the user's work; trust it over any stored code
             editable = drafts.get(key);
         }else{
-            String restored = SugarCompiler.restore(code, executor == null);
-            boolean verified;
-            try{
-                verified = SugarCompiler.verifyRestore(code, restored);
-            }catch(Throwable t){
-                // stored code cannot even be parsed (e.g. written by a newer mod version);
-                // trust the carrier's sugar and let the next save regenerate clean code
-                verified = true;
-            }
-            if(verified){
-                editable = restored;
-            }else{
-                // First try to infer a Sugar view from pure vanilla mlog. The result is only
-                // used when its normalized recompilation is verified; otherwise retain the
-                // existing raw-code behavior for externally edited programs.
-                SugarDecompiler.Result recovered = SugarDecompiler.decompile(code, privileged);
-                // structured > 0 also keeps the decompiler's carrier branch out of this view:
-                // carrier restoration is checked (and failed) above, so a "carrier" Result here
-                // would be unreachable; requiring at least one real structure is belt-and-braces.
-                if(recovered.verified && recovered.matchedMode != null && !"flat".equals(recovered.matchedMode)
-                    && recovered.structured > 0){
-                    editable = recovered.sugar;
-                    originalCode = code;
-                    recoveredSugar = recovered.sugar;
-                    Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.recovered"));
-                }else{
-                    editable = code;
-                    Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.external.edit"));
-                }
+            // What to open with is decided in SugarDecompiler.openingSource (headless-testable):
+            // trusted stored sugar as-is, a verified inference from vanilla mlog, or the code.
+            SugarDecompiler.Opening opening = SugarDecompiler.openingSource(code, privileged, executor == null);
+            editable = opening.source;
+            if(opening.mode == SugarDecompiler.OpeningMode.inferred){
+                originalCode = code;
+                recoveredSugar = opening.source;
+                Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.recovered"));
+            }else if(opening.mode == SugarDecompiler.OpeningMode.raw){
+                Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.external.edit"));
             }
         }
         effectiveLibrary = SugarCompiler.effectiveLibrary(code, SugarFunctions.library(), FunctionLibrary.loadText());
