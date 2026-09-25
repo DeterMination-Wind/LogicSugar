@@ -268,6 +268,8 @@ public final class SugarCompiler{
      *  {@link #compileRecorded} 用。与编译器其它编译期上下文一样是单线程状态，且不参与产物。 */
     private static SugarFunctions.OriginRecording lastOriginRecording;
     private static String lastLoweredText;
+    /** 最近一次编译的可见主程序下标到画布语句下标的映射；纯原版程序没有 __ls_stmt_ 标签，为 null。 */
+    private static int[] lastMainSource;
 
     /** Extracts the sugar source from stored code. The persistence carrier is authoritative;
      *  without one (v2.0.0 legacy programs) the comment marker block is used. Scanning from
@@ -681,11 +683,16 @@ public final class SugarCompiler{
                 }else{
                     SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
                 }
-                // 循环里逐条语句 close 过区间，但末尾的收尾标签与入口 skip 不在任何区间里，
-                // 所以正文总行数由调用方给出（否则记录会比正文少一行，compileRecorded 只能返回 null）。
+                // 循环里逐条语句 close 过区间，但末尾的收尾标签不在任何区间里，所以正文总行数由
+                // 调用方给出（否则记录会比正文少一行，compileRecorded 只能返回 null）。
                 // 入口 skip 是编译器自己追加的语句（用户没写过它），@counter = 0 指向程序开头
-                // 这件事对用户没有信息量：整行标成 synthetic，指示线不会为它在最后一张卡上画线。
-                if(!librarySource && entrySkip) origin.markSynthetic(SugarFunctions.countLines(out) - 1, SugarFunctions.countLines(out));
+                // 这件事对用户没有信息量：整段标成 synthetic，指示线不会为它画线。
+                // 不能按 “输出的最后一行” 推断：normal 模式 hoist 函数体时最后一行是 __ls_end 标签，
+                // 而 skip 是 main 的最后一条语句；用它自己记录的发射区间来标记。
+                if(!librarySource && entrySkip && !functions.main.isEmpty()){
+                    int skip = functions.main.size - 1;
+                    if(skip < functions.mainSource.length) origin.markSyntheticStatement(functions.mainSource[skip]);
+                }
                 // 扁平化放在这里：所有语句区间与 synthetic 标记都已写完，之后不再新增正文。
                 origin.flatten(SugarFunctions.countLines(out));
             }finally{
@@ -703,6 +710,7 @@ public final class SugarCompiler{
             //（threadAlwaysJumpTargets 只改 jump 的操作数，不增删行）。
             lastOriginRecording = origin;
             lastLoweredText = lowered;
+            lastMainSource = functions.mainSource;
 
             // Persistence carriers: real "set" statements appended after the marker block. They
             // survive the vanilla parse/save round trip that drops the comment markers, and are
@@ -784,10 +792,14 @@ public final class SugarCompiler{
     public static final class CompileProvenance{
         public final String code;
         public final int[] origins;
+        /** 可见主程序下标 -> 画布语句下标的映射，供 CounterJumpIndex 回填 __ls_stmt_&lt;N&gt; 标签；
+         *  纯原版程序没有这类标签，为 null。 */
+        public final int[] mainToCanvas;
 
-        CompileProvenance(String code, int[] origins){
+        CompileProvenance(String code, int[] origins, int[] mainToCanvas){
             this.code = code;
             this.origins = origins;
+            this.mainToCanvas = mainToCanvas;
         }
 
         /** {@code origins} 的长度，即产物正文的指令条数（不含标签、标记块与载体）。 */
@@ -820,9 +832,12 @@ public final class SugarCompiler{
             int at = 0;
             for(int line = 0; line < lines.length && at < origins.length; line++){
                 if(isLabelLine(lines[line])) continue;
-                origins[at++] = line;
+                // 画布语句 = 非标签行按顺序，第 i 条非标签行发射第 i 条指令；行号会被标签行
+                // 推后，不能拿来当语句下标（程序开头的标签会让整份来源全部偏位）。
+                origins[at] = at;
+                at++;
             }
-            return new CompileProvenance(code, origins);
+            return new CompileProvenance(code, origins, null);
         }
 
         String code = compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged);
@@ -841,7 +856,7 @@ public final class SugarCompiler{
             if(isLabelLine(lines[line])) continue;
             origins[at++] = recording.originOfLine(line);
         }
-        return new CompileProvenance(code, origins);
+        return new CompileProvenance(code, origins, lastMainSource);
     }
 
     /** 标签行判定：去掉首尾空白后以 {@code ':'} 结尾、无空格、长度 >= 2 的单 token 行，

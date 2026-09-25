@@ -474,7 +474,10 @@ public final class SugarDecompiler{
             // same idempotent pass to them. A program this compiler never lowered addresses its
             // jumps by instruction index and carries no labels, so the label-based pass is a
             // no-op on it; threadNumericJumpTargets applies the same rule on those indices.
-            String threadedTarget = normalize(SugarCompiler.threadNumericJumpTargets(original), privileged);
+            // 两次归一化互补且都语义保持：数字穿线覆盖手写/第三方程序，标签穿线覆盖存量产物
+            //（它们的 jump 目标还是 __ls_* 标签，数字那一趟是空操作）。串起来一起用。
+            String threadedTarget = normalize(SugarCompiler.threadAlwaysJumpTargets(
+                SugarCompiler.threadNumericJumpTargets(original)), privileged);
             // The lowering also depends on the switch strategy and the assert-emit shape,
             // which are user settings: a program saved under different settings must still
             // verify, so the gate compiles every candidate across the full matrix instead of

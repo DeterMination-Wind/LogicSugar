@@ -131,7 +131,10 @@ jump-table program; fixture `test/fixtures/realworld-jump-table.mlog`):
   old `threadAlwaysJumpTargets(original)` comparison target was a no-op on exactly the
   programs that needed it. `SugarCompiler.threadNumericJumpTargets` applies the same fixed
   point on statement indices (unconditional jumps only, cycles keep their targets, line
-  structure and instruction count unchanged) and that is what `verify` compares against.
+  structure and instruction count unchanged). `verify` applies **both** passes to the
+  comparison target (numeric first, then label threading): the numeric pass covers hand-written
+  index-addressed programs, the label pass covers stored/label-addressed outputs, which the
+  numeric pass leaves alone.
 
 Neither normalization weakens the gate: both yield streams behaviorally identical to the
 input, and both are transformations the compiler already applies to its own output.
@@ -267,11 +270,17 @@ Three load-bearing properties and one recorded bug; each fails silently:
   `flatten`, so padding the array makes phantom lines real; `lineCount()` then exceeds the actual
   text and `compileRecorded` returns null for *every* program. Same reason `flatten(totalLines)`
   takes the body's true line count from the caller: the range table only knows how far the
-  *productive* statements reach, and the trailing label plus the entry skip are in no range.
+  *productive* statements reach, and the trailing label is in no range. The entry skip *does* have
+  a range; it is marked through `markSyntheticStatement` on its recorded range, because
+  with hoisted function bodies it is no longer the last output line.
 - **Statement attribution comes from `CompileProvenance`, not from `CounterJumpIndex.Write.statement`.**
-  The resolver treats negative provenance slots (`sugar-functions` `syntheticOrigin`) as unknown and
-  re-fills them from `__ls_stmt_<N>:` label heuristics — correct when provenance is absent, wrong
-  when it is present. The overlay uses `provenance.originOf(write.instruction)`.
+  The provenance channel is canvas-space: `FunctionSet.main` is the compacted visible list and
+  `lower` translates each visible index back through `FunctionSet.mainSource`, so a program with
+  `funcdef` cards does not shift every origin. The resolver treats negative provenance slots
+  (`sugar-functions` `syntheticOrigin`) as unknown and re-fills them from `__ls_stmt_<N>:` label
+  heuristics — correct only when a `mainToCanvas` mapping is supplied, because the label number is
+  the visible-main index, not the canvas index. The overlay uses
+  `provenance.originOf(write.instruction)`.
 
 Never guess a target: one target ⇒ solid line, several candidates ⇒ badge only (phantom lines on
 hover, `logicsugar.counterJump.candidates`), unresolvable ⇒ grey badge. Writes that belong to no
@@ -322,8 +331,9 @@ Only the X axis hid the mistake, because it wants no offset — which a local `0
 `originTest`'s `anchorsAreLocalCoordinates` nails the code (comments stripped, since the method's own
 comment names the wrong expression) so it cannot come back unnoticed.
 
-**The per-frame path must use `SugarCanvas.readonlyText()`, never `save()`.** The overlay polls the
-canvas text every frame for its compile cache, and the undo history polls it every few frames.
+**The polling path must use `SugarCanvas.readonlyText()`, never `save()`.** The overlay polls the
+canvas text every third frame for its compile cache (`invalidate()` still forces an immediate rebuild), and the
+undo history polls it every few frames.
 `SugarCanvas.save()` is a *persisting* API: it runs `structure.refresh()` plus
 `ExprHook.unfoldAll`/`foldAll`, which remove/add statement elements and hand back the **unfolded**
 text — while `elementAt(i)` indexes the canvas as it is on screen (folded). `LCanvas.save()` on the
@@ -333,8 +343,11 @@ for). Called from an `update()` callback, either one turns "one bad frame" into 
 and the line never comes back" — the reported symptom was a long program drawing nothing, with a
 single flash right after an edit (2026-09-25). So: per-frame text ⇒ `readonlyText()` (null-safe,
 no folding), history snapshots ⇒ the same, and the callback wraps both the snapshot and the drawing
-in `catch(Throwable)` with `noteOnce` logging, because a purely visual feature that dies silently is
-undiagnosable by design. `originTest`'s `overlayUsesReadonlySnapshot` pins all three.
+in `catch(Throwable)` with `noteOnce` logging (the compile/rebuild path included), because a purely
+visual feature that dies silently is undiagnosable by design. `originTest`'s
+`overlayUsesReadonlySnapshot` pins the readonly snapshot; `overlayFailureAndCandidateWiring` pins
+the rebuild log and the `hideAll` close wiring, and `functionDefinitionsDoNotShiftOrigins` pins the
+canvas-index provenance behind funcdefs.
 
 ## Data subsystem (arrays / matrix / record / containers / bitset / map / list / heap / chain)
 

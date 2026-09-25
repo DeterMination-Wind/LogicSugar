@@ -43,6 +43,7 @@ public final class CounterJumpIndexTest{
         functionRegionIsUnknown();
         provenanceIsLengthChecked();
         recordedProvenanceIsHonored();
+        labelsMapThroughMainSource();
         jumpLanesSeparateOverlappingCurves();
         malformedInputDegrades();
         boundsAreSafe();
@@ -462,6 +463,32 @@ public final class CounterJumpIndexTest{
         check(index.writes() != null, "writes() is never null");
         check(index.describe(null) == null, "a null write has no tooltip");
         check(index.writes().size() == 1, "one write expected, got " + index.writes().size());
+    }
+
+    /**
+     * 带 funcdef 的程序里 __ls_stmt_&lt;N&gt; 的 N 是 lowering 的可见主程序下标，必须经
+     * mainToCanvas 换算回画布下标；provenance 通道是权威来源，这个映射只服务没有 provenance
+     * 或槽位为负的调用方。
+     */
+    private static void labelsMapThroughMainSource(){
+        String sugar = "funcdef f a 5\nreturn \"a + 1\"\nblockend\n"
+            + "whilebegin x lessThan 3 4\nset x x 1\nblockend\nfunccall f \"1\" out\n";
+        SugarCompiler.CompileProvenance p = SugarCompiler.compileRecorded(sugar,
+            SugarCompiler.FuncMode.normal, null, null, SugarCompiler.currentStrategy(),
+            SugarCompiler.AssertEmit.strip, true);
+        check(p != null && p.mainToCanvas != null, "compileRecorded must expose the main-to-canvas map");
+        if(p == null || p.mainToCanvas == null) return;
+        check(Arrays.equals(p.mainToCanvas, new int[]{3, 4, 5, 6, 7}),
+            "visible main statements must map to canvas 3/4/5/6/7, got " + Arrays.toString(p.mainToCanvas));
+        int at = labelInstructionIndex(p.code, "__ls_stmt_3");
+        check(at >= 0, "the while exit label __ls_stmt_3 must exist:\n" + p.code);
+        if(at < 0) return;
+        CounterJumpIndex withMap = new CounterJumpIndex(p.code, null, p.mainToCanvas);
+        CounterJumpIndex withoutMap = new CounterJumpIndex(p.code, null);
+        check(withMap.ownerOf(at) == 6,
+            "with the map the label must resolve to canvas statement 6 (funccall), got " + withMap.ownerOf(at));
+        check(withoutMap.ownerOf(at) == 3,
+            "without the map the raw lowering index is used, got " + withoutMap.ownerOf(at));
     }
 
     // ===== fixtures & helpers ==============================================================

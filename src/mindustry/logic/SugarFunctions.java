@@ -237,6 +237,8 @@ public final class SugarFunctions{
         public final LibraryIndex library;
         /** Main program statements with function definitions removed and indices remapped. */
         public Seq<LStatement> main = new Seq<>();
+        /** mainSource[i] 是 main[i] 在原始画布语句表里的下标（analyze 剥掉 funcdef 前后用）。 */
+        public int[] mainSource = new int[0];
         /** Resolved callee names of the main program. */
         public final List<String> mainCalls = new ArrayList<>();
         /** Names reachable from the main program (transitive closure). */
@@ -326,6 +328,14 @@ public final class SugarFunctions{
             int high = Math.max(to, low);
             if(high > synthetic.length) synthetic = Arrays.copyOf(synthetic, high);
             for(int line = low; line < high; line++) synthetic[line] = true;
+        }
+
+        /** 把某条语句发射过的所有行标成 synthetic（入口 skip 用）。语句下标与 close() 同一空间
+         *  （画布下标）；没有发射过行时不操作。必须在 flatten() 之前调用。 */
+        public void markSyntheticStatement(int statement){
+            if(statement < 0 || statement >= ranges.size()) return;
+            int[] range = ranges.get(statement);
+            if(range != null) markSynthetic(range[0], range[1]);
         }
 
         /**
@@ -516,12 +526,15 @@ public final class SugarFunctions{
 
         // --- 8. visible main list: strip definitions, remap indices ------------------------
         int[] visibleIndex = new int[n];
+        int[] mainSource = new int[n];
         Arrays.fill(visibleIndex, -1);
         for(int i = 0; i < n; i++){
             if(ownerBody[i] >= 0 || endOf[i] >= 0 || beginOf[i] >= 0) continue;
             visibleIndex[i] = set.main.size;
+            mainSource[set.main.size] = i;
             set.main.add(statements.get(i));
         }
+        set.mainSource = Arrays.copyOf(mainSource, set.main.size);
         for(int i = 0; i < n; i++){
             if(visibleIndex[i] < 0) continue;
             LStatement statement = statements.get(i);
@@ -1971,7 +1984,13 @@ public final class SugarFunctions{
             }
             // 本语句（含它内联展开的调用、switch 分派等所有行）在此收口。区间按左闭右开记录，
             // 未发射任何行的语句（声明卡、空 for 头……）不占区间，查询时归到前一语句之后。
-            if(recording != null) recording.close(i, statementFrom, countLines(out));
+            if(recording != null){
+                // 主程序列表是 analyze 压过的可见列表（funcdef 及其函数体已剥掉），来源通道必须
+                // 记录画布下标，否则带函数的程序会把指示线画到别的卡片上。函数体走自己的语句表，
+                // 整段随后标成 synthetic，下标无需换算。
+                int owner = funcName == null && i < functions.mainSource.length ? functions.mainSource[i] : i;
+                recording.close(owner, statementFrom, countLines(out));
+            }
         }
         // 收尾标签属于"块结束之前的那段结构"，不是编译器凭空产生的指令，所以先打完它：
         // 此后从本方法返回的控制流（hoist 前导跳、函数体、返回跳板）一律由调用方自己按需覆盖，

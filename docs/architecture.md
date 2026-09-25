@@ -166,7 +166,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 **门的两次归一化（手写/第三方程序能开成 Sugar 的前提）**：LogicSugar 从未保存过的程序既没有载体，也没有本编译器产物必然带的两样东西；两者原先都缺，导致这类程序无论识别得多好都只能回落 vanilla（2026-09-25 报的 655 条跳转表程序；夹具 `test/fixtures/realworld-jump-table.mlog`）：
 
 - **入口 skip 的两个纪元**：`compile` 会在末尾补 `set @counter 0`，于是任何含糖的候选都比输入多一条指令。`verify` 现在对每个候选按"有无 skip"各编译一次，与 `SugarCompiler.verifyLowering` 对存量存档的做法完全一致（公开入口 `compileWithoutEntrySkip`，只有门用它）。恢复后的视图保存时仍会补上 skip —— 这是既定行为，且语义等价（跑出末尾本来就回到 0）。
-- **跳转穿线**：`compile` 会跑 `threadAlwaysJumpTargets`，把 `jump A always` 改写到 A 的链尾。那一趟是**按标签**读链的，而手写 mlog 用指令下标寻址、一个标签都没有，于是旧的比对目标 `threadAlwaysJumpTargets(original)` 恰恰在需要它的程序上是空操作。`SugarCompiler.threadNumericJumpTargets` 把同一套不动点搬到语句下标上（只认无条件跳转、成环保持原目标、行结构与指令数不变），`verify` 用它作为比对目标。
+- **跳转穿线**：`compile` 会跑 `threadAlwaysJumpTargets`，把 `jump A always` 改写到 A 的链尾。那一趟是**按标签**读链的，而手写 mlog 用指令下标寻址、一个标签都没有，于是旧的比对目标 `threadAlwaysJumpTargets(original)` 恰恰在需要它的程序上是空操作。`SugarCompiler.threadNumericJumpTargets` 把同一套不动点搬到语句下标上（只认无条件跳转、成环保持原目标、行结构与指令数不变）；`verify` 对比较目标串联两趟归一化（先数字、后标签）：数字那趟覆盖手写/下标寻址程序，标签那趟覆盖存量产物（jump 目标还是 `__ls_*` 标签，数字那趟对它是空操作）。
 
 两次归一化都不放松门：它们产出的指令流与输入行为完全一致，且都是编译器本来就会对自己产物做的变换。
 
@@ -238,9 +238,9 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 **难点是"目标积木是哪一张"，而它不是积木序号。** `@counter` 的值是**最终产物**的指令下标，产物与画布积木不是一一对应：声明卡产出 0 条指令、`for` 的 step 与回跳落在 `blockend` 卡上、normal 模式函数体整体后置到 main 之后还要加尾部 `jump __ls_end`。所以链路分三层：
 
-1. **`SugarFunctions.OriginRecording`（编译期来源通道）** — `lower()` 在每条语句前后量一次 `out` 的长度，只把 `[from, to)` 区间记进旁路；函数体与编译器自己发射的指令（入口 skip、hoist 前导跳、返回跳板）标成 `syntheticOrigin = -2`。**它绝不包装也不改写产物**（`StringBuilder` 在 `--release 17` 下无法被继承，因此不是 `Appendable` 包装），带记录与不带记录的编译产物逐字节相同 —— `originTest` 用逐字节比较钉住这一点。两个易踩的坑：`markSynthetic` **不能**预留数组容量（`synthetic.length` 参与行数计算，预留的空洞会被当成真实行，曾让 `compileRecorded` 因行数不匹配整体返回 null）；`flatten(totalLines)` 必须由调用方给出正文总行数（区间表只知道"有产出的语句"覆盖到哪里，末尾的收尾标签与入口 skip 不在任何区间里）。
-2. **`SugarCompiler.compileRecorded(...)`** — 与 `compile(...)` 同一个 private 实现（`lastOriginRecording` 紧邻赋值，嵌套编译只会覆盖"来源"、不影响产物），产出 `CompileProvenance{code, origins[]}`；`origins[i]` 是产物第 i 条指令的发射语句下标，口径与 `stripMarkers(code)` 的指令流一致（不含标签行、标记块与载体）。纯原版程序走 `containsSugar` 的提前返回，那条路径逐行 1:1 直接给出来源，且**没有入口 skip**（skip 只为让 `__ls_*` 载体不执行，纯原版程序没有载体）。
-3. **`assist.CounterJumpIndex`** — 纯文本工作，无画布依赖（`counterJumpIndexTest` 无头跑）：去标记块与载体行 → `LAssembler.read/write` 让标签变成数字目标 → 按 `MlogCFG.writes()` 的位置读 `@counter` 写入 → 算出目标。`set @counter <literal>` 给绝对目标，`op add/sub @counter @counter <k>` 给相对目标（`instruction + 1 ± k`，`+1` 是执行器的后自增），`op add @counter @counter <var>` 是 switch 跳转表、`set @counter __ls_*` 是函数返回跳板、末尾的 `set @counter 0` 是入口 skip，这三类只报形态不报目标。
+1. **`SugarFunctions.OriginRecording`（编译期来源通道）** — `lower()` 在每条语句前后量一次 `out` 的长度，只把 `[from, to)` 区间记进旁路；函数体与编译器自己发射的指令（入口 skip、hoist 前导跳、返回跳板）标成 `syntheticOrigin = -2`。**它绝不包装也不改写产物**（`StringBuilder` 在 `--release 17` 下无法被继承，因此不是 `Appendable` 包装），带记录与不带记录的编译产物逐字节相同 —— `originTest` 用逐字节比较钉住这一点。两个易踩的坑：`markSynthetic` **不能**预留数组容量（`synthetic.length` 参与行数计算，预留的空洞会被当成真实行，曾让 `compileRecorded` 因行数不匹配整体返回 null）；`flatten(totalLines)` 必须由调用方给出正文总行数（区间表只知道"有产出的语句"覆盖到哪里；末尾的收尾标签不在任何区间里）。入口 skip 现在有区间，由 `markSyntheticStatement` 按它自己的记录区间标成 synthetic：normal 模式 hoist 函数体后它不是输出的最后一行，不能按"最后一行"猜。
+2. **`SugarCompiler.compileRecorded(...)`** — 与 `compile(...)` 同一个 private 实现（`lastOriginRecording` 紧邻赋值，嵌套编译只会覆盖"来源"、不影响产物），产出 `CompileProvenance{code, origins[], mainToCanvas}`；`origins[i]` 是产物第 i 条指令的画布语句下标（`analyze` 压过的可见主程序下标在 `lower` 里经 `mainSource` 换算回来），口径与 `stripMarkers(code)` 的指令流一致（不含标签行、标记块与载体）。纯原版程序走 `containsSugar` 的提前返回，那条路径逐行 1:1 直接给出来源，且**没有入口 skip**（skip 只为让 `__ls_*` 载体不执行，纯原版程序没有载体）。
+3. **`assist.CounterJumpIndex`** — 纯文本工作，无画布依赖（`counterJumpIndexTest` 无头跑）：去标记块与载体行 → `LAssembler.read/write` 让标签变成数字目标 → 按 `MlogCFG.writes()` 的位置读 `@counter` 写入 → 算出目标。`set @counter <literal>` 给绝对目标，`op add/sub @counter @counter <k>` 给相对目标（`instruction + 1 ± k`，`+1` 是执行器的后自增），`op add @counter @counter <var>` 是 switch 跳转表、`set @counter __ls_*` 是函数返回跳板、末尾的 `set @counter 0` 是入口 skip，这三类只报形态不报目标。标签回填需要可选的 `mainToCanvas` 映射：`__ls_stmt_<N>` 的 N 是 lowering 的可见主程序下标，带 funcdef 的程序里不等于画布下标。
 
 **归属一律走来源通道，不用解析器的标签启发式。** `CounterJumpIndex` 拿到 `provenance` 时会把负值槽位当作"未知"再用 `__ls_stmt_<N>:` 标签补（没有来源时是唯一可用手段），但编辑器这边已经有确切答案，因此 `CounterJumpOverlay` 用 `provenance.originOf(write.instruction)` 定位卡片。
 

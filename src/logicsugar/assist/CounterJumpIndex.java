@@ -25,7 +25,9 @@ import java.util.List;
  * （未定义标签等）不抛异常：退化成"按行计数、丢掉标签行与载体行"，宁可持续降级也不让编辑器崩。</p>
  *
  * <p><b>归属（owner）。</b>{@code SugarFunctions} 降低主程序时，结构标签的形状是
- * {@code __ls_stmt_<N>:}（{@code <N>} 是画布主程序里的语句下标）；函数体用别的前缀
+ * {@code __ls_stmt_<N>:}（{@code <N>} 是 lowering 的可见主程序下标：{@code analyze} 会把 funcdef
+ * 及其函数体从主程序剥掉，所以带函数的程序里 N 不等于画布语句下标；构造函数可选的
+ * {@code mainToCanvas} 映射负责换算）；函数体用别的前缀
  * （{@code __ls_func_<name>_...}、内联副本 {@code __ls_i_<id>_...}），因此标签能反推语句归属。
  * 归一化会把标签行整行删掉（{@code LAssembler.write} 只写数字目标），所以标签扫描在本类自己的
  * 语句切分结果上做（与 {@code LParser} 一致：一行可按 {@code ;} 拆成多条语句，引号内不拆，
@@ -91,6 +93,8 @@ public final class CounterJumpIndex{
     private final int count;
     private final String[] lines;
     private final int[] owner;
+    /** 可选：可见主程序下标 -> 画布语句下标；null 表示标签编号原样使用。 */
+    private final int[] mainToCanvas;
     private final List<Write> writes;
 
     /** 只有标签回填的索引；provenance 传 null。 */
@@ -103,6 +107,16 @@ public final class CounterJumpIndex{
      * @param provenance 归一化下标上的语句归属，未知填 -1；长度不匹配即忽略（见类注释）
      */
     public CounterJumpIndex(String code, int[] provenance){
+        this(code, provenance, null);
+    }
+
+    /**
+     * @param code 编译产物（允许带 marker/carrier）；null 或空文本得到空索引
+     * @param provenance 归一化下标上的语句归属，未知填 -1；长度不匹配即忽略（见类注释）
+     * @param mainToCanvas 可选映射：__ls_stmt_&lt;N&gt; 的 N 是 lowering 的可见主程序下标，
+     *                     用它换算成画布语句下标（带 funcdef 的程序两者不同）；null = 不换算
+     */
+    public CounterJumpIndex(String code, int[] provenance, int[] mainToCanvas){
         String[] instructionLines = new String[0];
         int[] owners = new int[0];
         List<Write> found = new ArrayList<>();
@@ -121,7 +135,7 @@ public final class CounterJumpIndex{
                 if(splitLines == null) splitLines = statementLines(statements);
 
                 instructionLines = splitLines.toArray(new String[0]);
-                owners = owners(statements, instructionLines.length, provenance);
+                owners = owners(statements, instructionLines.length, provenance, mainToCanvas);
                 for(int i = 0; i < instructionLines.length; i++){
                     String[] tokens = tokens(instructionLines[i]);
                     int dest = destinationIndex(kind(tokens));
@@ -138,6 +152,7 @@ public final class CounterJumpIndex{
         this.lines = instructionLines;
         this.count = instructionLines.length;
         this.owner = owners;
+        this.mainToCanvas = mainToCanvas;
         this.writes = Collections.unmodifiableList(found);
     }
 
@@ -285,8 +300,8 @@ public final class CounterJumpIndex{
 
     // ===== 归属 ==============================================================================
 
-    private static int[] owners(List<Statement> statements, int count, int[] provenance){
-        int[] fromLabels = labelOwners(statements, count);
+    private static int[] owners(List<Statement> statements, int count, int[] provenance, int[] mainToCanvas){
+        int[] fromLabels = labelOwners(statements, count, mainToCanvas);
         if(provenance == null || provenance.length != count){
             // 长度不匹配 = 调用方给的编号体系不是归一化后的流，整份忽略而不是错位采信。
             return fromLabels;
@@ -298,7 +313,7 @@ public final class CounterJumpIndex{
         return result;
     }
 
-    private static int[] labelOwners(List<Statement> statements, int count){
+    private static int[] labelOwners(List<Statement> statements, int count, int[] mainToCanvas){
         int[] result = new int[count];
         Arrays.fill(result, -1);
 
@@ -320,6 +335,11 @@ public final class CounterJumpIndex{
         for(int i = 0; i < count; i++){
             for(String label : labelsBefore.get(i)){
                 int statementIndex = mainStatementOf(label);
+                // __ls_stmt_<N> 的 N 是 lowering 的可见主程序下标；带 map 时换算回画布下标，
+                // 否则带 funcdef 的程序会整体偏位（函数体剥掉了几条，N 就小几）。
+                if(statementIndex >= 0 && mainToCanvas != null){
+                    statementIndex = statementIndex < mainToCanvas.length ? mainToCanvas[statementIndex] : -1;
+                }
                 if(statementIndex >= 0){
                     current = statementIndex;
                     unknown = false;

@@ -1099,6 +1099,8 @@ public class SugarLogicDialog extends LogicDialog{
         }
         clearCompiledCopyCache();
         clearOriginalViewCache();
+        // 快照回调在画布脱离舞台后不再运行，而悬停提示挂在 scene root 上，必须在这里主动收掉。
+        CounterJumpOverlay.hideAll(canvas);
         super.hide();
     }
 

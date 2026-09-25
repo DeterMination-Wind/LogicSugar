@@ -25,15 +25,18 @@ public class OriginRecordingTest{
         compileIsByteIdentical();
         straightLineOriginsAreExact();
         vanillaProgramIsOneToOne();
+        vanillaProgramWithLabelsKeepsStatementIndices();
         sugarBlockOriginsFollowTheirCards();
         functionBodiesAreSynthetic();
         entrySkipIsSynthetic();
+        functionDefinitionsDoNotShiftOrigins();
         recordedOriginsAlignWithStrippedStream();
         counterTargetsResolveThroughProvenance();
         anchorsAreLocalCoordinates();
         try{
             overlayUsesReadonlySnapshot();
             overlayRailsFollowLanes();
+            overlayFailureAndCandidateWiring();
         }catch(java.io.IOException exception){
             check(false, "overlay sources could not be read: " + exception.getMessage());
         }
@@ -363,6 +366,71 @@ public class OriginRecordingTest{
             "the target arrow must be the double mirror of vanilla's "
                 + "draw(t.x + 0.75f * s, t.y - s / 2f, -s, s): x offset negative *and* width positive, "
                 + "so it straddles the card's left edge pointing into the card; got " + arrow.lines().findFirst().orElse(""));
+    }
+
+    /** 纯原版且带标签：标签行占行号、不占语句，来源必须仍是第 i 条非标签行 = 第 i 张卡。 */
+    private static void vanillaProgramWithLabelsKeepsStatementIndices(){
+        System.out.println("== 纯原版 + 标签行 ==");
+        String source = "start:\nset @counter 3\nprint a\nprint b\nprint c\n";
+        SugarCompiler.CompileProvenance recorded = record(source, SugarCompiler.FuncMode.normal);
+        check(recorded != null, "no provenance for a labelled vanilla program");
+        if(recorded == null) return;
+        check(recorded.instructions() == 4, "expected 4 instructions, got " + recorded.instructions());
+        for(int i = 0; i < recorded.instructions(); i++){
+            check(recorded.originOf(i) == i, "instruction " + i + " should belong to canvas statement "
+                + i + ", got " + recorded.originOf(i));
+        }
+    }
+
+    /**
+     * analyze 会把 funcdef 及其函数体从主程序列表里剥掉，lower 用的语句下标因此比画布下标小。
+     * 来源通道必须换算回画布下标，否则带函数的程序整条指示线都指向别的卡。同一夹具也覆盖
+     * 入口 skip：normal 模式 hoist 函数体后它不再是输出的最后一行，必须仍是 synthetic。
+     */
+    private static void functionDefinitionsDoNotShiftOrigins(){
+        System.out.println("== 函数定义不打乱画布下标 ==");
+        String source = "funcdef f a 5\nreturn \"a + 1\"\nblockend\nset @counter 1\nprint out\n";
+        SugarCompiler.CompileProvenance recorded = record(source, SugarCompiler.FuncMode.normal);
+        check(recorded != null, "no provenance for a funcdef program");
+        if(recorded == null) return;
+        check(recorded.mainToCanvas != null && recorded.mainToCanvas.length == 3,
+            "mainToCanvas must map the 3 visible main statements, got "
+                + java.util.Arrays.toString(recorded.mainToCanvas));
+        if(recorded.mainToCanvas != null){
+            check(java.util.Arrays.equals(recorded.mainToCanvas, new int[]{3, 4, 5}),
+                "visible main statements must map to canvas 3/4/5, got "
+                    + java.util.Arrays.toString(recorded.mainToCanvas));
+        }
+        String[] lines = SugarCompiler.stripMarkers(recorded.code).split("\n", -1);
+        int setLine = indexOfPrefix(lines, "set @counter 1");
+        check(setLine >= 0, "no set @counter 1 instruction:\n" + SugarCompiler.stripMarkers(recorded.code));
+        if(setLine >= 0){
+            int owner = recorded.originOf(instructionIndexOf(lines, setLine));
+            check(owner == 3, "the write card must be canvas statement 3, got " + owner);
+        }
+        int skipLine = indexOfPrefix(lines, "set @counter 0");
+        check(skipLine >= 0, "no entry skip instruction");
+        if(skipLine >= 0){
+            int owner = recorded.originOf(instructionIndexOf(lines, skipLine));
+            check(owner == SugarFunctions.syntheticOrigin,
+                "the entry skip must be synthetic behind a hoisted body, got " + owner);
+        }
+    }
+
+    /** 候选虚影线、失败日志、关屏清理三条接线是源码钉子（无头测试看不见画布）。 */
+    private static void overlayFailureAndCandidateWiring() throws java.io.IOException{
+        System.out.println("== 指示线接线钉子 ==");
+        String overlay = SourceNails.readSource("src/mindustry/logic/CounterJumpOverlay.java");
+        String curve = withoutComments(SourceNails.methodBody(overlay,
+            "CounterCurve(int statement, Target target, int sourceInstruction, CounterJumpIndex.Write write){"));
+        check(curve.contains("this.shown = target.statement;"),
+            "a non-exact curve must still carry its shown statement, or candidate phantom lines never draw");
+        String rebuild = withoutComments(SourceNails.methodBody(overlay, "private void rebuild(String source){"));
+        check(rebuild.contains("noteOnce("),
+            "rebuild failures must leave the documented [LogicSugar] @counter indicator line disabled log line");
+        String dialog = SourceNails.readSource("src/mindustry/logic/SugarLogicDialog.java");
+        check(dialog.contains("CounterJumpOverlay.hideAll(canvas)"),
+            "closing the editor must call hideAll, or a hover hint can stay on the screen");
     }
 
     // ===== helpers ======================================================================

@@ -88,6 +88,9 @@ public final class CounterJumpOverlay{
     private final Seq<CounterCurve> curves = new Seq<>();
     /** 上次编译时的画布文本签名；变了才重新编译。 */
     private String signature;
+    /** 距上次文本快照的帧数；编辑引起的文本变化最迟 snapshotIntervalFrames 帧内被看到。 */
+    private int snapshotAge;
+    private static final int snapshotIntervalFrames = 3;
     /** 悬停提示的文本，每帧重算。 */
     private String hoverText;
 
@@ -142,16 +145,24 @@ public final class CounterJumpOverlay{
         // 快照而不是 save()：save() 会在取文本前后 unfold/fold（会 remove/addAt 积木元素，文本还是
         // 展开态），而本类的 elementAt() 索引的是屏幕上的折叠态；原版 saveUI() 还会因为 jump 目标
         // 已脱离而抛 NPE。这条回调每帧跑，一次抛出就会静默死掉 —— 指示线此后整场不画。
+        // 文本快照按帧节流：readonlyText() 会逐条 saveUI() 并重建整份文本，长程序每帧都付这笔
+        // 钱不值得。invalidate() 会把 signature 置空，编辑/粘贴/折叠仍立即重算；字段编辑等没有
+        // invalidate 的路径最迟 snapshotIntervalFrames 帧内被看到。
         String current;
-        try{
-            current = canvas.readonlyText();
-        }catch(Throwable exception){
-            noteOnce("snapshot", "cannot read the canvas text", exception);
-            return;
-        }
-        if(!current.equals(signature)){
-            signature = current;
-            rebuild(current);
+        if(signature != null && ++snapshotAge < snapshotIntervalFrames){
+            current = signature;
+        }else{
+            snapshotAge = 0;
+            try{
+                current = canvas.readonlyText();
+            }catch(Throwable exception){
+                noteOnce("snapshot", "cannot read the canvas text", exception);
+                return;
+            }
+            if(!current.equals(signature)){
+                signature = current;
+                rebuild(current);
+            }
         }
         try{
             layer.actCurves();
@@ -179,7 +190,7 @@ public final class CounterJumpOverlay{
     }
 
     /** 供对话框关闭时主动调用（不能只靠每帧回调发现画布已脱离舞台）。 */
-    public static void hideAll(SugarCanvas canvas){
+    public static void hideAll(LCanvas canvas){
         if(canvas == null || canvas.statements == null) return;
         Group jumps = SugarCanvas.getJumpLayer(canvas);
         if(jumps == null) return;
@@ -214,7 +225,7 @@ public final class CounterJumpOverlay{
                 firstInstruction.put(statement, instruction);
             }
 
-            CounterJumpIndex index = new CounterJumpIndex(provenance.code, provenance.origins);
+            CounterJumpIndex index = new CounterJumpIndex(provenance.code, provenance.origins, provenance.mainToCanvas);
             for(CounterJumpIndex.Write write : index.writes()){
                 // 归属一律走编译期来源通道，不用 CounterJumpIndex.Write.statement：解析器拿到
                 // provenance 时会把负值槽位（SugarFunctions.syntheticOrigin）当作"未知"再用标签
@@ -243,6 +254,7 @@ public final class CounterJumpOverlay{
                 curves.add(new CounterCurve(entry.key, resolved, first == null ? -1 : first, write));
             }
         }catch(Throwable t){
+            noteOnce("rebuild", "cannot compile the canvas text", t);
             writes.clear();
             unattributed.clear();
             firstInstruction.clear();
@@ -373,7 +385,7 @@ public final class CounterJumpOverlay{
             this.target = target;
             this.sourceInstruction = sourceInstruction;
             this.write = write;
-            this.shown = target.exact ? target.statement : -1;
+            this.shown = target.statement;
         }
 
         boolean exact(){ return target.exact; }

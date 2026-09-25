@@ -290,6 +290,11 @@ public final class SugarDecompilerTest{
         // A cycle keeps its targets, exactly like the label-based pass.
         String cycle = "jump 1 always x false\njump 0 always x false\n";
         check(cycle.equals(SugarCompiler.threadNumericJumpTargets(cycle)), "cyclic chain was rewritten");
+        // 门把两趟归一化串起来：数字穿线对标签链是空操作，标签穿线必须仍然生效。
+        String labelChain = "a:\njump b always x false\nb:\njump c always x false\nc:\nprint x\n";
+        String threadedLabels = SugarCompiler.threadAlwaysJumpTargets(SugarCompiler.threadNumericJumpTargets(labelChain));
+        check(threadedLabels.contains("jump c always x false") && !threadedLabels.contains("jump b always x false"),
+            "label-addressed chain was not threaded by the composed gate normalization:\n" + threadedLabels);
         // Conditional jumps are neither chain nodes nor rewritten lines.
         String conditional = "set x 0\njump 2 lessThan x 1\njump 0 always x false\n";
         check(conditional.equals(SugarCompiler.threadNumericJumpTargets(conditional)),
