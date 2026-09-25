@@ -3,6 +3,7 @@ package logicsugar.assist;
 import arc.Application;
 import arc.Core;
 import arc.scene.Element;
+import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Stack;
 import arc.scene.ui.layout.Table;
 
@@ -20,6 +21,12 @@ import java.util.Arrays;
  * its fixed-width children spill past it and the inspection group paints over the action
  * group. {@code SugarLogicDialog.layoutBottomButtons()} relaxes that inherited maximum before
  * adding its containers; this test fails if either half regresses.</p>
+ *
+ * <p>The third part pins the UI-scale trap: arc multiplies every declared Cell size by
+ * {@code Scl.scl}, so on a 2.5x phone the bar's 160px cells really occupy 400 scene units. Packing
+ * the declared numbers against the measured bar is what made seven cells share one 1260px phone
+ * row that truly needed 2800 scene units (the 2026-09 phone report); the packing half must be fed
+ * scaled widths.</p>
  *
  * <p>No fonts or OpenGL are involved, so this stays a headless JavaExec task.</p>
  */
@@ -46,6 +53,10 @@ public class BottomBarLayoutTest{
         wideBarKeepsItsSingleRow();
 
         installHeadlessApp();
+        unitScaleIsANoOp();
+        scaledPhoneRowsReallyFit();
+        phoneBarScalesCellWidthsBeforePacking();
+        phoneScaleMultipliesDeclaredCellWidths();
         vanillaDefaultClampsTheGroupContainer();
         relaxedDefaultSpansTheBar();
         wideBarKeepsGroupsApart();
@@ -211,6 +222,79 @@ public class BottomBarLayoutTest{
         return BottomBarLayout.rowWidth(widths, from, count);
     }
 
+    // ---------- UI scale (every phone, and any desktop UI-scale setting above 100%) ----------
+
+    /** Scale 1 (the desktop default) must be an exact no-op: the desktop layout stays as it was. */
+    private static void unitScaleIsANoOp(){
+        float[] declared = new float[]{button, budgetLabel, button};
+        float[] scaled = BottomBarLayout.scaledWidths(1f, declared);
+        check(Arrays.equals(scaled, declared), "scale 1 must keep declared widths unchanged");
+        check(Arrays.equals(BottomBarLayout.packRows(500f, declared), BottomBarLayout.packRows(500f, scaled)),
+            "scale 1 must not change the packing result");
+    }
+
+    /** Whatever the UI scale, rows packed from scaled widths must never overflow the bar. */
+    private static void scaledPhoneRowsReallyFit(){
+        float[] declared = new float[]{button, button, button, button, button, button, button, budgetLabel, button, button};
+        for(float scale : new float[]{1f, 1.5f, 2f, 2.5f, 3f}){
+            float[] scaled = BottomBarLayout.scaledWidths(scale, declared);
+            for(float available : new float[]{360f, 400f, 480f, 560f, 640f, 720f, 1260f}){
+                float rowSpace = available - rowPad * scale;
+                int[] rows = BottomBarLayout.packRows(rowSpace, scaled);
+                int index = 0;
+                for(int count : rows){
+                    float width = rowWidth(scaled, index, count);
+                    check(width <= rowSpace || count == 1,
+                        "row of " + count + " cells is " + width + " scene units at scale " + scale +
+                        " in a " + available + "px bar (row space " + rowSpace + ")");
+                    index += count;
+                }
+                check(index == declared.length,
+                    "every cell must be placed at scale " + scale + " in a " + available + "px bar");
+            }
+        }
+    }
+
+    /**
+     * The 2026-09 phone report in numbers: the seven mobile actions plus the budget label on a
+     * 1260px phone. Packed as declared widths all seven look like one 1120px row; that row really
+     * measures 2800 scene units, so it is centred, overflows both sides and leaves the back / add
+     * buttons off screen. Scaling the widths first must wrap it into 3/3/2 instead.
+     */
+    private static void phoneBarScalesCellWidthsBeforePacking(){
+        // 2.5x is the scale the report measured off the screenshot: a cell declared 160 wide
+        // rendered exactly 400px across on a 1260px-wide screen.
+        Scl.setProduct(2.5f);
+        try{
+            float available = 1260f;
+            float rowSpace = available - Scl.scl(rowPad);
+            float[] declared = new float[]{button, button, button, button, button, button, button, budgetLabel};
+
+            float[] scaled = BottomBarLayout.scaledWidths(Scl.scl(1f), declared);
+            int[] rows = BottomBarLayout.packRows(rowSpace, scaled);
+            check(rows.length == 3 && rows[0] == 3 && rows[1] == 3 && rows[2] == 2,
+                "the scaled phone bar must pack 3/3/2 (seven actions + label), got " + Arrays.toString(rows));
+
+            int index = 0;
+            for(int count : rows){
+                check(rowWidth(scaled, index, count) <= rowSpace || count == 1,
+                    "a phone row must fit its bar, got " + rowWidth(scaled, index, count) + " in " + rowSpace);
+                index += count;
+            }
+
+            // The trap, kept on purpose: in declared units those seven actions do look like a
+            // single row, and that row is 2800 scene units wide against a 1220-unit row space —
+            // the centred overflow the screenshot shows.
+            int[] unscaledRows = BottomBarLayout.packRows(rowSpace, declared);
+            check(unscaledRows.length == 2 && unscaledRows[0] == 7,
+                "declared units are what made the seven actions share one row, got " + Arrays.toString(unscaledRows));
+            check(rowWidth(scaled, 0, unscaledRows[0]) > rowSpace,
+                "that row really spans " + rowWidth(scaled, 0, unscaledRows[0]) + " scene units, past " + rowSpace);
+        }finally{
+            Scl.setProduct(1f);
+        }
+    }
+
     // ---------- real arc layout geometry ----------
 
     /** {@code Scl.scl} consults {@code Core.app} to pick the UI scale, so a headless run needs
@@ -223,6 +307,29 @@ public class BottomBarLayoutTest{
                 case "isWeb", "isMobile" -> Boolean.FALSE;
                 default -> null;
             });
+    }
+
+    /**
+     * Phone UI scale, measured: arc multiplies every declared Cell size by it, so the bar's
+     * "160px" button really occupies 400 scene units on a 2.5x phone. The packing above is only
+     * correct against those scene units, not against the declared numbers.
+     */
+    private static void phoneScaleMultipliesDeclaredCellWidths(){
+        Scl.setProduct(2.5f);
+        try{
+            check(Math.abs(Scl.scl(button) - 400f) < 0.01f,
+                "a declared 160px cell must measure 400 scene units at 2.5x, got " + Scl.scl(button));
+
+            Table row = new Table();
+            row.defaults().size(button, 64f);
+            row.center();
+            for(int i = 0; i < 3; i++) row.add(new Element());
+            row.validate();
+            check(Math.abs(row.getPrefWidth() - 1200f) < 0.01f,
+                "three declared cells must measure 1200 scene units at 2.5x, got " + row.getPrefWidth());
+        }finally{
+            Scl.setProduct(1f);
+        }
     }
 
     /** Vanilla's inherited fixed default cell is the trap this fix has to disarm. */

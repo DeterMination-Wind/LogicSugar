@@ -14,6 +14,7 @@ import arc.scene.ui.Dialog;
 import arc.scene.ui.Label;
 import arc.scene.ui.TextButton;
 import arc.scene.ui.TextButton.TextButtonStyle;
+import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Table;
 import arc.struct.Seq;
 import arc.util.Time;
@@ -107,7 +108,11 @@ public class SugarLogicDialog extends LogicDialog{
     /** Width used by the last desktop bottom-bar layout; changed after the dialog gets a real size. */
     private float bottomButtonsWidth = -1f;
 
-    /** Fixed size of one bottom-bar button cell; vanilla setup() uses the same 160x64. */
+    /** Fixed size of one bottom-bar button cell; vanilla setup() uses the same 160x64.
+     *  <p>These are <b>declared</b> units: arc multiplies every Cell size/pad/margin by
+     *  {@code Scl.scl}, so the live layout calls them 400px wide on a 2.5x phone. Anything
+     *  compared against a measured width must go through {@code Scl.scl} too — see
+     *  {@link #layoutBottomButtons()} and {@link BottomBarLayout#scaledWidths}.</p> */
     private static final float barButtonWidth = 160f;
     private static final float barButtonHeight = 64f;
     /** Side padding of every bottom-bar cell, and of every packed row's own edges. */
@@ -271,6 +276,13 @@ public class SugarLogicDialog extends LogicDialog{
      * the first and last controls — the back button and the function-library button — end up cut
      * off with no way to press them. Wrapping onto rows that really fit is the only layout that
      * keeps every control on screen at a usable size.</p>
+     *
+     * <p>Talking about "the width" is only meaningful once the units are fixed. The cells
+     * declared here are scaled by {@code Scl.scl} when arc stores them, so on a phone (scale
+     * 2.5) one button really occupies 400 scene units. The packer must therefore be handed the
+     * scaled widths together with the measured bar width: feeding it the declared 160s against
+     * the real bar is what let seven cells share one phone row that truly needed 2000 scene
+     * units, pushing the two end buttons off screen (2026-09 phone report).</p>
      */
     private void layoutBottomButtons(){
         // v160 names back/edit/variables but leaves the upstream Add button anonymous.
@@ -333,12 +345,20 @@ public class SugarLogicDialog extends LogicDialog{
         if(available <= 0f) available = Core.graphics.getWidth();
         bottomButtonsWidth = buttons.getWidth();
 
+        // Every Cell size/pad/margin below is multiplied by this scale when arc stores it, so a
+        // "160px" button is 160 * uiScale scene units wide (400px on a 2.5x phone). The widths
+        // measured off the live layout — available, getPrefWidth() — are already in those scene
+        // units, so every declared number used in the comparisons must be scaled the same way.
+        // Comparing the declared 160 against the real bar is what packed all seven phone cells
+        // into one row that was 2.5x wider than the screen (2026-09 phone report).
+        float uiScale = Scl.scl(1f);
+
         // 1) Everything on one row: actions centered, inspection controls anchored to the
         //    right edge.  Both groups are full-width layers of a stack, so they may only share
         //    the row while their footprints cannot touch.  This is the shape every wide window
         //    uses; the packing below is the fallback for everything narrower.
-        float sideWidth = debugTable.getPrefWidth() + 12f;
-        float wideEnough = centeredTable.getPrefWidth() + 2f * sideWidth + barRowPad;
+        float sideWidth = debugTable.getPrefWidth() + Scl.scl(12f);
+        float wideEnough = centeredTable.getPrefWidth() + 2f * sideWidth + Scl.scl(barRowPad);
         if(available >= wideEnough){
             Table debugRegion = new Table();
             debugRegion.right();
@@ -352,13 +372,13 @@ public class SugarLogicDialog extends LogicDialog{
         //    individual cells into rows that really fit, so nothing is squeezed into its
         //    neighbour.  A cell never shares a row unless that row can hold it; at worst a
         //    single cell keeps a row to itself rather than being dropped or overlapped.
-        float rowSpace = available - barRowPad;
+        float rowSpace = available - Scl.scl(barRowPad);
         // The instruction-budget label is not just the widest cell (196px), it is also the only
         // cell that may be given up: on a bar barely wider than the screen it costs a whole extra
         // row of height for a readout the over-budget toast already reports.  A control the user
         // cannot press is a real loss, a readout is not, so every pressable cell stays on the bar
         // whatever the width.  A row too narrow for the label itself never shows it.
-        boolean budgetLabelFits = rowSpace >= barBudgetWidth;
+        boolean budgetLabelFits = rowSpace >= Scl.scl(barBudgetWidth);
         ArrayList<Element> packed = new ArrayList<>();
         for(Element element : centered){
             if(element != null && element.visible) packed.add(element);
@@ -372,6 +392,10 @@ public class SugarLogicDialog extends LogicDialog{
         for(int i = 0; i < widths.length; i++){
             widths[i] = packed.get(i) == budgetLabel ? barBudgetWidth : barButtonWidth;
         }
+
+        // Declared units -> scene units; see uiScale above and addBarCell below (the label's cell
+        // is declared as 180 + 8 + 8, i.e. barBudgetWidth, so the two stay in step).
+        widths = BottomBarLayout.scaledWidths(uiScale, widths);
 
         int[] rows = BottomBarLayout.packRows(rowSpace, widths);
         int index = 0;
