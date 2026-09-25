@@ -181,7 +181,7 @@ Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[
 `logicsugar.editorConflict=coexist` 档的实现：保留对方整套编辑器界面，把 LogicSugar 的画布**跑在对方的编辑器里**，跨 classloader 反射读写 `LCanvas`/`LogicDialog` 的包级字段（统一走 `SugarCoexist.field(Class,String)`），并把 MDTX 的逻辑辅助面板重新绑定到新画布。`push` 挂在对方对话框关闭时的原版 `hidden(...)` 出口上，因此捕 `RuntimeException`、绝不逃逸；放置失败时退回接管（`logicsugar.conflict.coexistfailed`）。**已知限制**：会话中途切档、第三方在构造期缓存画布两种形状可能写回空程序，详见[架构总览](architecture.md)「编辑器接管与共存」。
 
 ### 跨逻辑剪贴板（StatementClipboard）
-编辑菜单「复制选区 / 粘贴选区」（Ctrl+C/V 驱动同一实现）。**剪贴板放糖源码而不是编译后的 mlog**，片段落进另一个处理器后仍可继续编辑；片段文本带自描述头 `# @ls-fragment`，粘贴侧据此识别并 `rebase`。跨程序时 `jump` 的数字目标是另一程序的指令下标，因此**双侧拒绝**；块配对由 `pairBlockEnds` 在插入前校验，之后每帧 `syncStatementIndices` 自愈。
+编辑菜单「复制选区 / 粘贴选区」（Ctrl+C/V 驱动同一实现）。**剪贴板放糖源码而不是编译后的 mlog**，片段落进另一个处理器后仍可继续编辑；片段文本带自描述头 `# @ls-fragment`，粘贴侧据此识别并 `rebase`。跨程序时 `jump` 的数字目标是另一程序的指令下标，因此**双侧拒绝**；块配对由 `pairBlockEnds` 在插入前校验，之后每帧 `syncStatementIndices` 自愈。入口是 `SelectionClipboardUi`：接管档挂在自家对话框，共存档挂在对方对话框里的画布上，不要求把冲突设置切成接管；让位档停用糖编辑器，没有这项功能。
 
 ## 构建与发布
 

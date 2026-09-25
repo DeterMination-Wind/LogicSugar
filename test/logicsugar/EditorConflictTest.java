@@ -51,6 +51,7 @@ public final class EditorConflictTest{
         coexistRefusesTheOpenEditor();
         coexistRebindsForeignPanels();
         coexistKeepsTheForeignPanelClickable();
+        coexistMountsCrossLogicCopy();
         switchCardModeToggleRebuildsItsRow();
 
         System.out.println("EditorConflictTest: all checks passed");
@@ -561,6 +562,31 @@ public final class EditorConflictTest{
                 .contains("if(!isDescendantOfCanvas(target, canvas)){"),
             "BoxSelect must keep letting clicks outside the canvas through, or a mis-layered panel is "
                 + "still unclickable even after the z-order is fixed");
+    }
+
+    /**
+     * Cross-processor copy used to live only in {@code SugarLogicDialog.update}. Coexist shows the
+     * other mod's dialog, so that update never runs and the feature was unreachable unless the
+     * user switched to takeover. The canvas is ours in coexist, so the same menu and shortcuts
+     * have to be ticked from there, and they have to stop once the canvas is parked.
+     */
+    private static void coexistMountsCrossLogicCopy() throws IOException{
+        String coexist = SourceNails.readSource("src/mindustry/logic/SugarCoexist.java");
+        String dialog = SourceNails.readSource("src/mindustry/logic/SugarLogicDialog.java");
+        String ui = SourceNails.readSource("src/logicsugar/assist/SelectionClipboardUi.java");
+
+        String ctor = SourceNails.methodBody(coexist, "CoexistCanvas(LogicDialog dialog, LCanvas original, int originalIndex)");
+        check(ctor.contains("clipboard.tick(this, dialog)"),
+            "the coexist canvas must tick the selection clipboard against the foreign dialog, "
+                + "or copy/paste stays takeover-only");
+        check(ctor.contains("if(!active) return;"),
+            "a parked coexist canvas must not keep installing clipboard buttons into the other editor");
+        check(dialog.contains("selectionClipboard.tick(canvas, this)"),
+            "takeover still has to tick the same clipboard UI on SugarLogicDialog");
+        check(ui.contains("BoxSelect.copySelection(canvas)") && ui.contains("BoxSelect.pasteClipboard(canvas)"),
+            "both entries must drive the shared clipboard operations");
+        check(ui.contains("isFront(editor)"),
+            "shortcuts must belong to the front dialog, or two open editors each paste once");
     }
 
     private static void require(Properties bundle, String where, String key){

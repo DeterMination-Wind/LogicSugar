@@ -6,6 +6,7 @@ import arc.scene.Element;
 import arc.scene.ui.layout.Cell;
 import arc.util.Log;
 import logicsugar.FunctionLibrary;
+import logicsugar.assist.SelectionClipboardUi;
 import mindustry.Vars;
 
 import java.lang.reflect.Field;
@@ -293,11 +294,20 @@ public final class SugarCoexist{
         /** 编译层替我们记住的下游（处理器自己的保存回调）。逻辑辅助器面板的"更新编辑的逻辑"
          *  需要绕过 {@link #compiled} 的"没改就不提交"判断直接落盘，所以单独存一份。 */
         private Cons<String> downstream;
+        /** 跨逻辑复制。对方对话框没有 SugarLogicDialog 的 update，不在这里挂的话，
+         *  共存档就没有「复制选区 / 粘贴选区」和 Ctrl+C/V。 */
+        private final SelectionClipboardUi clipboard = new SelectionClipboardUi();
 
         CoexistCanvas(LogicDialog dialog, LCanvas original, int originalIndex){
             this.dialog = dialog;
             this.original = original;
             this.originalIndex = originalIndex;
+            // 画布离开场景（对话框关掉，或退出共存被换下去）后 act 不再跑，tick 自然停。
+            // active 再挡一层：shown 监听注销不掉，画布若还留在树上也不能继续往对方菜单里装按钮。
+            update(() -> {
+                if(!active) return;
+                clipboard.tick(this, dialog);
+            });
         }
 
         @Override

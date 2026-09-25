@@ -32,10 +32,9 @@ import mindustry.world.blocks.logic.LogicBlock;
 import logicsugar.FunctionLibrary;
 import logicsugar.FunctionLibraryDialog;
 import logicsugar.assist.BottomBarLayout;
-import logicsugar.assist.BoxSelect;
 import logicsugar.assist.EditHistory;
 import logicsugar.assist.InstructionBudget;
-import logicsugar.assist.StatementClipboard;
+import logicsugar.assist.SelectionClipboardUi;
 import logicsugar.assist.SugarTooltip;
 import logicsugar.assist.VarClipboard;
 import logicsugar.assist.expr.ExprCompiler;
@@ -50,8 +49,6 @@ import java.util.Map;
 public class SugarLogicDialog extends LogicDialog{
     private static final String compiledCopyName = "logicsugar-copy-compiled";
     private static final String originalViewName = "logicsugar-view-original";
-    private static final String copySelectionName = "logicsugar-copy-selection";
-    private static final String pasteSelectionName = "logicsugar-paste-selection";
     private static final Field consumerField = field(LogicDialog.class, "consumer");
     /** LogicDialog.privileged is package-private and lives in the MindustryX mod class loader at
      *  runtime, so it must be read reflectively (cross-loader package access throws
@@ -92,8 +89,10 @@ public class SugarLogicDialog extends LogicDialog{
     private Button discardButton;
     private Element editButton;
     private float menuScanTimer;
-    /** Ctrl+Z/Y/C/V 的长按去抖：正在按住的键；物理松开后清空（见 {@link #pollEditorShortcuts}）。 */
+    /** Ctrl+Z/Y 的长按去抖：正在按住的键；物理松开后清空（见 {@link #pollEditorShortcuts}）。 */
     private KeyCode heldEditorShortcut;
+    /** 跨逻辑复制的菜单与 Ctrl+C/V。共存档在对方画布上另挂一份，见 {@link SelectionClipboardUi}。 */
+    private final SelectionClipboardUi selectionClipboard = new SelectionClipboardUi();
     /** Live compiled-size banner; rebuilt with the vanilla button row. */
     private Label budgetLabel;
     private float budgetTimer;
@@ -162,8 +161,8 @@ public class SugarLogicDialog extends LogicDialog{
                 installCompiledCopy();
                 installOriginalView();
                 installInspectionCopy();
-                installSelectionClipboard();
             }
+            selectionClipboard.tick(canvas, this);
             budgetTimer += Time.delta;
             if(budgetTimer >= 24f){
                 budgetTimer = 0f;
@@ -179,7 +178,7 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     /**
-     * 编辑器级快捷键：Ctrl+Z / Ctrl+Y 撤销重做，Ctrl+C / Ctrl+V 复制粘贴选区。
+     * 编辑器级快捷键：Ctrl+Z / Ctrl+Y 撤销重做。Ctrl+C / Ctrl+V 在 {@link SelectionClipboardUi}。
      *
      * <p>轮询而不是事件驱动，因为事件派发有两个坑，而轮询对两者都不敏感：</p>
      * <ul>
@@ -214,26 +213,7 @@ public class SugarLogicDialog extends LogicDialog{
         }else if(Core.input.keyTap(KeyCode.y)){
             heldEditorShortcut = KeyCode.y;
             performRedo();
-        }else if(Core.input.keyTap(KeyCode.c)){
-            heldEditorShortcut = KeyCode.c;
-            // 没有可复制的选区时静默：Ctrl+C 是大家的快捷键，用户也可能想复制别的东西。
-            // （EMPTY 也覆盖了跨会话残留的旧选区，那种情况下提示只是噪音。）
-            StatementClipboard.Result result = BoxSelect.copySelection(canvas);
-            if(result != StatementClipboard.Result.EMPTY) finishClipboardShortcut(result, true);
-        }else if(Core.input.keyTap(KeyCode.v)){
-            heldEditorShortcut = KeyCode.v;
-            // 剪贴板里不是逻辑代码时同样静默 —— 快捷键没有解释自己的机会，
-            // 「粘贴选区」菜单项才是那种情形该走的显式入口。
-            if(!StatementClipboard.isAcceptable(Core.app.getClipboardText())) return;
-            StatementClipboard.Result result = BoxSelect.pasteClipboard(canvas);
-            if(result != StatementClipboard.Result.EMPTY) finishClipboardShortcut(result, false);
         }
-    }
-
-    /** 与编辑菜单里的两项同路：菜单若开着先收起，否则粘贴的结果会被菜单挡住看不见。 */
-    private void finishClipboardShortcut(StatementClipboard.Result result, boolean copying){
-        if(cachedCopyDialog != null && cachedCopyDialog.isShown()) cachedCopyDialog.hide();
-        showClipboardResult(result, copying);
     }
 
     /** Re-appends the Sugar-owned buttons after vanilla {@code setup()} has rebuilt the row. */
@@ -635,57 +615,6 @@ public class SugarLogicDialog extends LogicDialog{
         Core.app.setClipboardText(dump.get(current));
         if(cachedCopyDialog != null) cachedCopyDialog.hide();
         Vars.ui.showInfoFade("@logicsugar.copied");
-    }
-
-    /**
-     * Mounts the cross-processor copy/paste entries, so a selection can be carried to another
-     * processor rather than only across the canvas it came from.
-     *
-     * <p>They live in the edit menu because that is where the rest of the clipboard actions
-     * already are, and because the bottom bar has no room left (see
-     * {@link #installInspectionCopy}).</p>
-     */
-    private void installSelectionClipboard(){
-        if(cachedCopyMenu == null || cachedCopyDialog == null || canvas == null) return;
-        Dialog dialog = cachedCopyDialog;
-
-        if(cachedCopyMenu.find(copySelectionName) == null){
-            installMenuButton(cachedCopyMenu, copySelectionName, "@logicsugar.copyselection",
-                Icon.copy, () -> {
-                    StatementClipboard.Result result = BoxSelect.copySelection(canvas);
-                    dialog.hide();
-                    showClipboardResult(result, true);
-                });
-        }
-        if(cachedCopyMenu.find(pasteSelectionName) == null){
-            installMenuButton(cachedCopyMenu, pasteSelectionName, "@logicsugar.pasteselection",
-                Icon.paste, () -> {
-                    StatementClipboard.Result result = BoxSelect.pasteClipboard(canvas);
-                    dialog.hide();
-                    showClipboardResult(result, false);
-                });
-        }
-    }
-
-    /** Turns a clipboard outcome into a message. Success of a paste reports the count, since a
-     *  paste that lands off-screen otherwise looks like nothing happened. */
-    private void showClipboardResult(StatementClipboard.Result result, boolean copying){
-        switch(result){
-            case OK -> Vars.ui.showInfoFade(copying
-                ? "@logicsugar.copyselection.done"
-                : Core.bundle.format("logicsugar.pasteselection.done", BoxSelect.lastPasteCount()));
-            case EMPTY -> Vars.ui.showInfoFade(copying
-                ? "@logicsugar.copyselection.empty"
-                : "@logicsugar.pasteselection.empty");
-            case INCOMPLETE_STRUCTURE -> Vars.ui.showInfoFade(copying
-                ? "@logicsugar.copyselection.incomplete"
-                : "@logicsugar.pasteselection.incomplete");
-            case ESCAPING_JUMP -> Vars.ui.showInfoFade(copying
-                ? "@logicsugar.copyselection.escaping"
-                : "@logicsugar.pasteselection.escaping");
-            case NOT_LOGIC -> Vars.ui.showInfoFade("@logicsugar.pasteselection.notlogic");
-            case TOO_BIG -> Vars.ui.showInfoFade("@logicsugar.pasteselection.toobig");
-        }
     }
 
     /** Adds a menu action for switching between an inferred Sugar view and the stored mlog. */
