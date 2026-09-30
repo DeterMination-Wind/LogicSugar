@@ -133,6 +133,16 @@ Parts of the design and implementation of Logic Sugar benefit from the following
 - [logic-assist](https://github.com/nosbhghggg/logic-assist) (GPL-3.0) — Source of the idea of coloring jump lines by destination; this project was initially developed based on this mod.
 - [MI2-Utilities](https://github.com/BlackDeluxeCat/MI2-Utilities) (GPL-3.0) — logic-assist's acknowledgments include Mi2U ~though I don't know why either~
 
+## Using AI Responsibly
+
+Apart from the README and some docs, this project is almost entirely AI-generated. Following the principle of *using AI responsibly*, I’ll briefly explain the project’s history:
+
+1. This project was first developed with Claude Opus 4.6. At the time, Claude subscriptions had a bug, so Opus 4.6 was free to use, and I took that opportunity to turn my idea into this demo.
+2. During later development, I kept looking through my Mlog-writing experience for places where a Mod could make writing Mlog easier. On the display side, current QoL Mods are already close to mature, but on the compiler side, there still seems to be no in-game compiler that can be viewed in real time.
+3. Alongside this project came `MlogStudio`, `MlogSugar`, and other currently unmaintained projects. Take `MlogStudio` as an example: while making it, I realized that achieving real-time preview in an *out-of-game* Mlog editor is very difficult, which pushed me toward developing an in-game compiler.
+4. This project originally only aimed to implement `For` / `While` loops, and at the time the ultimate goal was just `Func`. But later, because I found it extremely convenient for writing logic, I started making some more advanced and commonly used blocks / small features.
+5. For those who are curious: this project was developed successively with `Opus 4.6` -> `GPT-5.5` -> `GPT-5.6-Sol / Luna` -> `DeepSeek V4(.1) Flash`. After `DeepSeek Harness` was released, I studied its excellent Doc architecture and revamped `LogicSugar`, so that the capabilities of `DeepSeek V4.1 Flash` were enough to meet the project’s development needs. If you also want to use AI in development, that’s great. But always remember to **use AI responsibly**; you need to be responsible for your code. For this reason, I suggest maintainers Review your code with a separate Subagent before you Push it, as it may uncover many dumb issues.
+
 ## License
 
 This project is open source under the [GNU GPL v3](LICENSE) license.
