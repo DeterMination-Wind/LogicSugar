@@ -235,6 +235,9 @@ public final class SugarFunctions{
         public boolean damaged;
         /** Problems that were repaired while loading a damaged library file. */
         public List<String> warnings = new ArrayList<>();
+        /** True when no user library source existed at all: the index holds injected builtins
+         *  only. An unresolved call must then blame the missing file instead of the call. */
+        public boolean userMissing;
     }
 
     /** Local functions plus the resolved main statement list. */
@@ -723,6 +726,12 @@ public final class SugarFunctions{
             merged.functions.putAll(user.functions);
             merged.damaged = user.damaged;
             merged.warnings = new ArrayList<>(user.warnings);
+            merged.userMissing = user.userMissing;
+        }else{
+            // The injected builtins must not turn "no library file" into "library is fine":
+            // otherwise a program that calls a user function would report a plain
+            // "undefined function" and never point at Settings -> Function Library.
+            merged.userMissing = true;
         }
         for(String part : builtinSugar){
             if(part == null || part.trim().isEmpty()) continue;
@@ -1284,7 +1293,7 @@ public final class SugarFunctions{
      *  An otherwise-valid library keeps the plain message (a function really does not
      *  exist); a missing or damaged library points the user at the repair path. */
     private static String libraryProblemHint(LibraryIndex library){
-        if(library == null){
+        if(library == null || library.userMissing){
             return ". The global function library is unavailable; check Settings -> Function Library";
         }
         if(library.damaged){

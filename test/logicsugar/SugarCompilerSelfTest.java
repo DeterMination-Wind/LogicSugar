@@ -2527,6 +2527,17 @@ public class SugarCompilerSelfTest{
                     check(e.getMessage().contains("library is unavailable; check Settings -> Function Library"),
                         "R5: library cause is not explained");
                 }
+                // injected builtins are always merged into the compile-time index, so a merged
+                // builtins-only index must still read as "no user library" instead of "available
+                // and the function simply does not exist".
+                SugarFunctions.LibraryIndex builtinsOnly = SugarFunctions.withBuiltins(null,
+                    List.of(logicsugar.assist.expr.SpanAccess.readBuiltin()));
+                String builtinHint = errorText("funccall nope \"1\" ~\nend\n", builtinsOnly);
+                System.out.println("R5 builtins-only hint: " + builtinHint);
+                check(builtinHint != null && builtinHint.startsWith("funccall at statement 0 calls undefined function 'nope'.")
+                    && builtinHint.contains("library is unavailable; check Settings -> Function Library"),
+                    "R5: injected builtins must not mask a missing library");
+
                 // a function that truly does not exist against a valid library keeps the plain text
                 if(q1Index != null){
                     String plain = errorText("funccall nope \"1\" ~\nend\n", q1Index);
