@@ -338,9 +338,16 @@ tasks.register("unitControlTest", JavaExec){
     mainClass = "logicsugar.UnitControlTest"
 }
 
+// Multi-cell span: headless cellN capacity, constant fold, variable addressing, carrier restore.
+tasks.register("spanTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "mindustry.logic.SpanTest"
+}
+
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, statementClipboardTest, originTest, counterJumpIndexTest, unitControlTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, statementClipboardTest, originTest, counterJumpIndexTest, unitControlTest, spanTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

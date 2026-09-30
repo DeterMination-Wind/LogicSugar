@@ -262,6 +262,38 @@ public class ExprCompiler{
         }
     }
 
+    /**
+     * {@code select result op comp0 comp1 a b}。span 寻址用它在多个内存块之间挑一个建筑。
+     * 继承 {@link RawLine} 只是为了未知下游原样输出；发射点必须先按本类型改名，
+     * 否则条件/返回表达式里的 {@code _0} 不会进对应命名空间。
+     */
+    public static class SelectLine extends RawLine{
+        public final String result, op, comp0, comp1, a, b;
+
+        public SelectLine(String result, String op, String comp0, String comp1, String a, String b){
+            super(format(result, op, comp0, comp1, a, b));
+            this.result = result;
+            this.op = op;
+            this.comp0 = comp0;
+            this.comp1 = comp1;
+            this.a = a;
+            this.b = b;
+        }
+
+        public SelectLine rename(java.util.function.UnaryOperator<String> renamer){
+            return new SelectLine(renamer.apply(result), op, renamer.apply(comp0), renamer.apply(comp1),
+                renamer.apply(a), renamer.apply(b));
+        }
+
+        @Override public String toText(){
+            return format(result, op, comp0, comp1, a, b);
+        }
+
+        private static String format(String result, String op, String comp0, String comp1, String a, String b){
+            return "select " + result + " " + op + " " + comp0 + " " + comp1 + " " + a + " " + b;
+        }
+    }
+
     /** write 指令行：write <value> <memory> <address>（数组下标赋值）。没有 dest：
      *  作为赋值链的终结行，逆向走 {@link #rebuildAssignment}。 */
     public static class WriteLine extends Line{
@@ -992,15 +1024,21 @@ public class ExprCompiler{
             if(info != null && !info.inRange(literal))
                 throw new ParseException(msg("la.err.array_index_oob", name, formatNum(literal), info.size));
             long address = info == null ? literal : info.addressOf(literal);
-            return new String[]{info == null ? name : info.memory, formatNum(address)};
+            return finishAddress(ops, info == null ? name : info.memory, formatNum(address));
         }
         String subscript = compileNode(ix.index, ops, temps);
         if(info != null) emitBoundsAssert(ops, "array '" + name + "' index", subscript, 0, info.size - 1);
         int base = info == null ? 0 : info.base;
-        if(base == 0) return new String[]{info == null ? name : info.memory, subscript};
+        if(base == 0) return finishAddress(ops, info == null ? name : info.memory, subscript);
         String temp = temps.alloc(subscript);
         ops.add(new OpLine("add", temp, String.valueOf(base), subscript));
-        return new String[]{info == null ? name : info.memory, temp};
+        return finishAddress(ops, info == null ? name : info.memory, temp);
+    }
+
+    /** 内存名是 span 时，把逻辑地址换成成员建筑 + 格内槽；常量折叠不再追加指令。 */
+    private static String[] finishAddress(List<Line> ops, String memory, String address){
+        if(SpanAccess.isSpan(memory)) return SpanAccess.relocate(ops, memory, address);
+        return new String[]{memory, address};
     }
 
     /**
@@ -1018,7 +1056,7 @@ public class ExprCompiler{
             throw new ParseException(msg("la.err.matrix_col_oob", matrix.name, formatNum(colLit), matrix.cols));
 
         if(rowLit != null && colLit != null){
-            return new String[]{matrix.memory, formatNum(matrix.addressOf(rowLit, colLit))};
+            return finishAddress(ops, matrix.memory, formatNum(matrix.addressOf(rowLit, colLit)));
         }
 
         if(rowLit != null){
@@ -1026,10 +1064,10 @@ public class ExprCompiler{
             String col = compileNode(colNode, ops, temps);
             emitBoundsAssert(ops, "matrix '" + matrix.name + "' column", col, 0, matrix.cols - 1);
             long offset = matrix.base + rowLit * (long)matrix.cols;
-            if(offset == 0) return new String[]{matrix.memory, col};
+            if(offset == 0) return finishAddress(ops, matrix.memory, col);
             String dest = temps.alloc(col);
             ops.add(new OpLine("add", dest, formatNum(offset), col));
-            return new String[]{matrix.memory, dest};
+            return finishAddress(ops, matrix.memory, dest);
         }
 
         if(colLit != null){
@@ -1042,10 +1080,10 @@ public class ExprCompiler{
                 ops.add(new OpLine("mul", product, row, String.valueOf(matrix.cols)));
             }
             long offset = matrix.base + colLit;
-            if(offset == 0) return new String[]{matrix.memory, product};
+            if(offset == 0) return finishAddress(ops, matrix.memory, product);
             String dest = temps.alloc(product);
             ops.add(new OpLine("add", dest, formatNum(offset), product));
-            return new String[]{matrix.memory, dest};
+            return finishAddress(ops, matrix.memory, dest);
         }
 
         // 行列都是变量：product = row*cols, sum = product + col, address = base + sum
@@ -1063,10 +1101,10 @@ public class ExprCompiler{
         }
         String sum = temps.alloc(product, col);
         ops.add(new OpLine("add", sum, product, col));
-        if(matrix.base == 0) return new String[]{matrix.memory, sum};
+        if(matrix.base == 0) return finishAddress(ops, matrix.memory, sum);
         String dest = temps.alloc(sum);
         ops.add(new OpLine("add", dest, String.valueOf(matrix.base), sum));
-        return new String[]{matrix.memory, dest};
+        return finishAddress(ops, matrix.memory, dest);
     }
 
     /** emit 调试构建下发射一条越界断言行（strip 模式与编辑器路径恒不发射）。 */

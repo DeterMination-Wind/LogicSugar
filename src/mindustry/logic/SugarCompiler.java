@@ -25,7 +25,6 @@ import logicsugar.assist.data.DataModules;
 import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprIntrinsics;
-
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -619,7 +618,12 @@ public final class SugarCompiler{
         boolean previousPrivilegedSensors = ExprCompiler.enterPrivilegedSensors(privileged);
         // F2: 数据模块注入的内置函数库并入本次编译使用的 LibraryIndex（只影响本次编译；
         // extractLibrarySource 仍只作用于纯用户库文本，内置函数不会进入 __ls_lib 载体）。
-        SugarFunctions.LibraryIndex compileLibrary = SugarFunctions.withBuiltins(library, DataModules.builtinSugar());
+        // Span addressing builtins are new functions. Existing __ls_builtin_* bodies stay
+        // byte-identical; a call that still names a span is a compile error in SugarFunctions.
+        java.util.List<String> builtinSugar = new java.util.ArrayList<>(DataModules.builtinSugar());
+        builtinSugar.add(logicsugar.assist.expr.SpanAccess.readBuiltin());
+        builtinSugar.add(logicsugar.assist.expr.SpanAccess.writeBuiltin());
+        SugarFunctions.LibraryIndex compileLibrary = SugarFunctions.withBuiltins(library, builtinSugar);
         // analyze 之前安装轻量声明表：collectCalls 需要按声明类型把方法/下标糖解析成 intrinsic
         //（包含注入函数可达性登记），而 DataModules.collectAll 要等 analyze 之后才执行。
         java.util.List<LStatement> statementList = new java.util.ArrayList<>(statements.size);

@@ -8,6 +8,7 @@ import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprIntrinsics;
 import logicsugar.assist.expr.ShortCircuitCompiler;
+import logicsugar.assist.expr.SpanAccess;
 import mindustry.logic.LStatements.GetLinkStatement;
 import mindustry.logic.LStatements.InvalidStatement;
 import mindustry.logic.LStatements.JumpStatement;
@@ -16,6 +17,7 @@ import mindustry.logic.LStatements.PackColorStatement;
 import mindustry.logic.LStatements.ReadStatement;
 import mindustry.logic.LStatements.SensorStatement;
 import mindustry.logic.LStatements.SetStatement;
+import mindustry.logic.LStatements.WriteStatement;
 import mindustry.logic.SugarCompiler.FuncMode;
 import mindustry.logic.SugarStatements.BeginStatement;
 import mindustry.logic.SugarStatements.BlockEndStatement;
@@ -1995,6 +1997,12 @@ public final class SugarFunctions{
             }else if(statement instanceof logicsugar.assist.data.DataDeclaration){
                 // F2: 数据子系统的声明卡（record/stack/queue/...）是纯编译期元数据：
                 // 不产出任何 mlog 行，注册表元数据由 DataModules.collectAll 在 lower 前建立
+            }else if(statement instanceof SugarStatements.SpanStatement){
+                // span 声明卡同样不产指令。读写在下面的 read/write 分支和表达式发射点展开。
+            }else if(statement instanceof ReadStatement read && SpanAccess.isSpan(read.target)){
+                SpanAccess.appendRead(out, read.output, read.target, read.address);
+            }else if(statement instanceof WriteStatement write && SpanAccess.isSpan(write.target)){
+                SpanAccess.appendWrite(out, write.input, write.target, write.address);
             }else if(statement instanceof SugarAsserts.AssertCard){
                 // debug builds (emit) pass assertion instructions through as real custom
                 // instructions; the default (strip) compiles them away so the saved mlog
@@ -2087,6 +2095,8 @@ public final class SugarFunctions{
             }else if(line instanceof ExprCompiler.CopyLine copy){
                 out.append("set ").append(renameDataTemp(copy.dest, prefix)).append(' ')
                     .append(renameDataTemp(copy.src, prefix)).append('\n');
+            }else if(line instanceof ExprCompiler.SelectLine sel){
+                out.append(sel.rename(token -> renameDataTemp(token, prefix)).toText()).append('\n');
             }else if(line instanceof ExprCompiler.RawLine raw){
                 out.append(raw.toText()).append('\n');
             }else if(line instanceof ExprCompiler.SensorLine sensor){
@@ -2094,13 +2104,11 @@ public final class SugarFunctions{
                     .append(renameDataTemp(sensor.a, prefix)).append(' ')
                     .append(renameDataTemp(sensor.b, prefix)).append('\n');
             }else if(line instanceof ExprCompiler.ReadLine read){
-                out.append("read ").append(renameDataTemp(read.dest, prefix)).append(' ')
-                    .append(renameDataTemp(read.a, prefix)).append(' ')
-                    .append(renameDataTemp(read.b, prefix)).append('\n');
+                SpanAccess.appendRead(out, renameDataTemp(read.dest, prefix),
+                    renameDataTemp(read.a, prefix), renameDataTemp(read.b, prefix));
             }else if(line instanceof ExprCompiler.WriteLine write){
-                out.append("write ").append(renameDataTemp(write.value, prefix)).append(' ')
-                    .append(renameDataTemp(write.memory, prefix)).append(' ')
-                    .append(renameDataTemp(write.address, prefix)).append('\n');
+                SpanAccess.appendWrite(out, renameDataTemp(write.value, prefix),
+                    renameDataTemp(write.memory, prefix), renameDataTemp(write.address, prefix));
             }else{
                 ExprCompiler.OpLine op = (ExprCompiler.OpLine)line;
                 out.append("op ").append(op.op).append(' ')
@@ -2137,7 +2145,7 @@ public final class SugarFunctions{
         for(int k = 0; k < init.values.length; k++){
             String value = init.values[k];
             if(value == null || value.isEmpty() || value.equals("~")) continue;
-            out.append("write ").append(value).append(' ').append(info.memory).append(' ').append((long)info.base + k).append('\n');
+            SpanAccess.appendWrite(out, value, info.memory, Long.toString((long)info.base + k));
         }
     }
 
@@ -2175,11 +2183,13 @@ public final class SugarFunctions{
                 out.append("sensor ").append(d).append(' ').append(a).append(' ').append(b).append('\n');
             }else if(line instanceof ExprCompiler.ReadLine read){
                 // 数组下标读：read 是 3 操作数指令（不是 op），dest 与地址里的 temp
-                // 都要进入条件命名空间（memory 变量名不重命名）
+                // 都要进入条件命名空间（memory 变量名不重命名）。span 在改名之后展开。
                 String a = renameConditionTemp(read.a, prefix, statementIndex);
                 String b = renameConditionTemp(read.b, prefix, statementIndex);
                 String d = renameConditionTemp(read.dest, prefix, statementIndex);
-                out.append("read ").append(d).append(' ').append(a).append(' ').append(b).append('\n');
+                SpanAccess.appendRead(out, d, a, b);
+            }else if(line instanceof ExprCompiler.SelectLine sel){
+                out.append(sel.rename(token -> renameConditionTemp(token, prefix, statementIndex)).toText()).append('\n');
             }else if(line instanceof ExprCompiler.CallLine call){
                 // 函数调用展开：实参与结果 temp 都要进入条件命名空间
                 FuncCallStatement stmt = new FuncCallStatement();
@@ -2245,9 +2255,10 @@ public final class SugarFunctions{
                             .append(renameReturnTemp(sensor.b, funcName)).append('\n');
                     }else if(line instanceof ExprCompiler.ReadLine read){
                         // 数组下标读是 3 操作数指令（不是 op）：dest/地址 temp 进入函数命名空间
-                        out.append("read ").append(renameReturnTemp(read.dest, funcName)).append(' ')
-                            .append(renameReturnTemp(read.a, funcName)).append(' ')
-                            .append(renameReturnTemp(read.b, funcName)).append('\n');
+                        SpanAccess.appendRead(out, renameReturnTemp(read.dest, funcName),
+                            renameReturnTemp(read.a, funcName), renameReturnTemp(read.b, funcName));
+                    }else if(line instanceof ExprCompiler.SelectLine sel){
+                        out.append(sel.rename(token -> renameReturnTemp(token, funcName)).toText()).append('\n');
                     }else if(line instanceof ExprCompiler.AssertBoundsLine bounds){
                         // emit 调试构建的越界断言：断言操作数同样进入函数临时变量命名空间
                         out.append(bounds.withValue(renameReturnTemp(bounds.value, funcName)).toText()).append('\n');
@@ -2296,6 +2307,7 @@ public final class SugarFunctions{
             throw new IllegalArgumentException("call to undefined function '" + call.name + "'");
         }
         List<String> args = splitArgs(call.args);
+        rejectSpanBuiltin(call.name, args);
         if(mode == FuncMode.inline){
             int id = ids.next();
             String prefix = "i_" + id + "_";
@@ -2321,6 +2333,23 @@ public final class SugarFunctions{
             // stale value; only value-returning functions hand something back.
             if(!call.result.isEmpty() && target.hasValueReturn){
                 out.append("set ").append(call.result).append(' ').append(target.resultName()).append('\n');
+            }
+        }
+    }
+
+    /**
+     * 旧内置函数体只对一块内存做 read/write。参数里出现 span 名时不能静默打到第一格。
+     * spanread/spanwrite 自己就是跨格展开，不在此列。
+     */
+    private static void rejectSpanBuiltin(String name, List<String> args){
+        if(name == null || !name.startsWith("__ls_builtin_") || SpanAccess.isSpanBuiltin(name)) return;
+        if(args == null) return;
+        for(String arg : args){
+            if(arg == null) continue;
+            String token = arg.trim();
+            if(SpanAccess.isSpan(token)){
+                throw new IllegalArgumentException("builtin '" + name
+                    + "' would read only the first cell of span '" + token + "'");
             }
         }
     }
@@ -2359,6 +2388,10 @@ public final class SugarFunctions{
         for(ExprCompiler.Line line : ops){
             if(line instanceof ExprCompiler.CallLine call){
                 expandCallLine(call, functions, mode, out, ids, strategy, assertEmit);
+            }else if(line instanceof ExprCompiler.ReadLine read){
+                SpanAccess.appendRead(out, read.dest, read.a, read.b);
+            }else if(line instanceof ExprCompiler.WriteLine write){
+                SpanAccess.appendWrite(out, write.value, write.memory, write.address);
             }else{
                 out.append(line.toText()).append('\n');
             }
