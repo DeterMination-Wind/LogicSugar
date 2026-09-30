@@ -28,6 +28,30 @@ public final class EscapePreview{
      */
     public record Result(Status status, String text, boolean escapes, boolean icons){}
 
+    /** The `preview` label's two flavours: icon markup alone is not an escape preview. */
+    enum Prefix{
+        escape("logicsugar.escape.preview", "escape preview"),
+        icon("logicsugar.icons.preview", "icon preview");
+
+        final String key;
+        final String fallback;
+
+        Prefix(String key, String fallback){
+            this.key = key;
+            this.fallback = fallback;
+        }
+    }
+
+    /**
+     * Which prefix a `preview` result gets: any decoded escape keeps the escape wording, and only
+     * a result whose sole hit is `:name:` markup gets the icon wording.  Extracted as a pure
+     * function so the rule (and the key it selects) is pinned by the self-test instead of living
+     * only in the label code.
+     */
+    static Prefix previewPrefix(Result result){
+        return result.icons() && !result.escapes() ? Prefix.icon : Prefix.escape;
+    }
+
     private static final Method unescapeMethod = findUnescape();
     /** True only after invoking the runtime method and checking all four v160 behaviours. */
     private static final boolean modernEscapes = probeModernUnescape();
@@ -61,9 +85,8 @@ public final class EscapePreview{
 
         String prefix;
         if(result.status == Status.preview){
-            boolean iconsOnly = result.icons() && !result.escapes();
-            prefix = Core.bundle.get(iconsOnly ? "logicsugar.icons.preview" : "logicsugar.escape.preview",
-                iconsOnly ? "icon preview" : "escape preview") + ": ";
+            Prefix flavour = previewPrefix(result);
+            prefix = Core.bundle.get(flavour.key, flavour.fallback) + ": ";
             label.setColor(Color.lightGray);
         }else if(result.status == Status.unsupported){
             prefix = Core.bundle.get("logicsugar.escape.unsupported", "unsupported by this game build") + ": ";
@@ -236,12 +259,12 @@ public final class EscapePreview{
     }
 
     /**
-     * The game's own `:name:` substitution — exactly what a logic display or a message block
-     * renders, because both call this.  Names no icon table knows stay untouched, and the walk is
-     * deliberately the game's rather than a stricter re-implementation: `x:duo` resolves in game
-     * just like `:duo:` does, so the preview agrees with the game instead of with its own idea of
-     * the grammar.  In a headless test the tables are empty, so a case has to register a name
-     * itself for anything to resolve.
+     * The game's own `:name:` substitution — exactly what print output (`LExecutor`) or a message
+     * block renders, because both call this.  Names no icon table knows stay untouched, and the
+     * walk is deliberately the game's rather than a stricter re-implementation: `x:duo` resolves
+     * in game just like `:duo:` does, so the preview agrees with the game instead of with its own
+     * idea of the grammar.  In a headless test the tables are empty, so a case has to register a
+     * name itself for anything to resolve.
      */
     static String formatIcons(String text){
         return UI.formatIcons(text);

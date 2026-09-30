@@ -349,7 +349,7 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 - **解码规则**：严格匹配上游的 `\\n`、`\\"`、`\\\\`、`\\uXXXX`；未知转义原样保留，坏的四位 Unicode 转义显示错误，Unicode 按 UTF-16 code unit 追加。现代能力通过反射实际调用运行时 `LAssembler.unescape` 探测，而不是只检测方法存在。
 - **图标替换**：直接调游戏自己的 `UI.formatIcons`（`LExecutor` 打印、`MessageBlock` 渲染用的同一条），所以 `:name:` 的解析宽度与游戏一致（只认前导冒号，`x:duo` 也命中），不做更严的语法；图标名不存在时游戏原样保留，预览也就不弹层。
 - **必须去引号后再替换**：外层引号只是源 token 的外壳（预览显示时才加回去），游戏拿到的是内部正文。头一版实现把带引号的 token 交给 `formatIcons`，末尾图标名会多出一个闭引号而解不出来（`"x:duo"` 在游戏里正常、预览里不显示），与游戏渲染不一致——自测的 `x:name` 用例就是这条。
-- **前缀与状态**：只有图标命中时用 `logicsugar.icons.preview`（“图标预览”），含转义时用 `logicsugar.escape.preview`；`\\uXXXX` 在当前版本不支持时仍是橙色的 unsupported 提示，但文本里已替换出的图标照常显示。图标字形来自游戏字体，无需 mod 侧绘制。
+- **前缀与状态**：只有图标命中时用 `logicsugar.icons.preview`（“图标预览”），含转义时用 `logicsugar.escape.preview`（键与回退文案由 `EscapePreview.previewPrefix` 这个纯函数给出，`escapePreviewTest` 连同两个键一起钉住，而不是只活在标签代码里）；`\\uXXXX` 在当前版本不支持时仍是橙色的 unsupported 提示，但文本里已替换出的图标照常显示。图标字形来自游戏字体，无需 mod 侧绘制。
 - **浮层限制**：预览不改写源文本、不参与卡片布局；单行显示且超 48 字符截断；滚动窗内无完整位置时隐藏，失焦、字段/画布不可见或画布销毁时清理。
 
 ### 无新 opcode 与逻辑显示器修复

@@ -43,6 +43,17 @@ public final class EscapePreviewSelfTest{
             // 图标命中但现代转义不支持：状态仍是 unsupported，文本里图标照样替换
             expect(EscapePreview.Status.unsupported, quoted(icon + "你"), true, true,
                 EscapePreview.analyze(quoted(":" + NAME + ":\\u4F60"), false));
+
+            // ===== 前缀选择（docs/architecture.md「前缀与状态」）：只有图标命中才是“图标预览” =====
+            expectPrefix(EscapePreview.Prefix.icon, "logicsugar.icons.preview", "icon preview",
+                EscapePreview.analyze(quoted("hello :" + NAME + ":"), true));
+            // 转义与图标同时命中、以及 unsupported：都保持转义前缀
+            expectPrefix(EscapePreview.Prefix.escape, "logicsugar.escape.preview", "escape preview",
+                EscapePreview.analyze(quoted(":" + NAME + ":\\n!"), true));
+            expectPrefix(EscapePreview.Prefix.escape, "logicsugar.escape.preview", "escape preview",
+                EscapePreview.analyze(quoted(":" + NAME + ":\\u4F60"), false));
+            expectPrefix(EscapePreview.Prefix.escape, "logicsugar.escape.preview", "escape preview",
+                EscapePreview.analyze(quoted("\\n"), true));
         }finally{
             if(added) Iconc.codes.remove(NAME);
         }
@@ -66,6 +77,16 @@ public final class EscapePreviewSelfTest{
             || actual.escapes() != escapes || actual.icons() != icons){
             throw new AssertionError("expected " + status + " / " + text + " / escapes=" + escapes
                 + " icons=" + icons + ", got " + actual);
+        }
+    }
+
+    /** 前缀规则（键 + 回退文案）必须与文档一致，且由 analyze 的两个布尔量决定。 */
+    private static void expectPrefix(EscapePreview.Prefix prefix, String key, String fallback,
+                                     EscapePreview.Result actual){
+        EscapePreview.Prefix chosen = EscapePreview.previewPrefix(actual);
+        if(chosen != prefix || !chosen.key.equals(key) || !chosen.fallback.equals(fallback)){
+            throw new AssertionError("expected " + prefix + " / " + key + " / " + fallback + ", got "
+                + chosen + " / " + chosen.key + " / " + chosen.fallback + " for " + actual);
         }
     }
 }
