@@ -135,6 +135,15 @@ Notes:
 - Index sugar is read-only: `l[i] = v` is a compile error. Use `vector_set(l, i, v)` / `bitset_set(b, i)` / `chain_set(c, i, v)`.
 - The map / uset method sugar receiver must match the declaration card name; for `uset s ...` write `s.has(v)`.
 
+### Text preview in the editor
+
+While a text field in the editor is focused, a read-only preview floats next to it and shows the text the game will render (your input is never rewritten):
+
+- Escapes: `\n`, `\"`, `\\`, `\uXXXX` — `"\u4F60\u597D"` previews as `"你好"`.
+- Icons: `:name:` entries of the game's own icon table, substituted by the game itself — `":duo:"` previews with that unit's icon (`print` output and message blocks use the same substitution).
+
+The preview only applies to a complete quoted string. An unknown icon name is kept verbatim by the game, so no preview appears for it; if `\uXXXX` is unsupported by the running game build, the preview says so while `\n` still previews.
+
 ## Selection guide
 
 | You want | Use |

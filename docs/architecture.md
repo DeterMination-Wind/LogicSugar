@@ -343,11 +343,14 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 - **影响/风险**：`WrapTable` 不保证显式 `row()`、`grow` 或 `colspan` 与普通 `Table` 相同。LogicSugar 的结构化卡片统一继承 `SugarStatement.useWrapping() == false`，保留自有行布局；`ExprStatement` 同样 opt-out。`ForBegin` 在自身普通表格内部按新版 `isCompact()`/旧版 `useRows()` 选择布局，两个方法均通过反射探测，失败时按上游宽度阈值回退。
 - **适配动作**：新卡片默认继承 opt-out；只有完全由原子控件组成并验证过 `WrapTable` 行为的卡片才显式 opt-in。
 
-### 字符串转义预览
+### 字符串转义与图标预览
 
-- **适用范围**：`EscapePreview` 是只读浮层，只观察当前聚焦且仍在 Sugar 画布内的 `TextField`；仅接受完整 quoted mlog token，因此不会把变量名或表达式误报为字符串。
+- **适用范围**：`EscapePreview` 是只读浮层，只观察当前聚焦且仍在 Sugar 画布内的 `TextField`；仅接受完整 quoted mlog token，因此不会把变量名或表达式误报为字符串。浮层显示的是游戏要渲染的那段文本，`print` 输出与留言板走的正是同样两步（转义 → 图标）。
 - **解码规则**：严格匹配上游的 `\\n`、`\\"`、`\\\\`、`\\uXXXX`；未知转义原样保留，坏的四位 Unicode 转义显示错误，Unicode 按 UTF-16 code unit 追加。现代能力通过反射实际调用运行时 `LAssembler.unescape` 探测，而不是只检测方法存在。
-- **浮层限制**：预览不改写源文本、不参与卡片布局；滚动窗内无完整位置时隐藏，失焦、字段/画布不可见或画布销毁时清理。
+- **图标替换**：直接调游戏自己的 `UI.formatIcons`（`LExecutor` 打印、`MessageBlock` 渲染用的同一条），所以 `:name:` 的解析宽度与游戏一致（只认前导冒号，`x:duo` 也命中），不做更严的语法；图标名不存在时游戏原样保留，预览也就不弹层。
+- **必须去引号后再替换**：外层引号只是源 token 的外壳（预览显示时才加回去），游戏拿到的是内部正文。头一版实现把带引号的 token 交给 `formatIcons`，末尾图标名会多出一个闭引号而解不出来（`"x:duo"` 在游戏里正常、预览里不显示），与游戏渲染不一致——自测的 `x:name` 用例就是这条。
+- **前缀与状态**：只有图标命中时用 `logicsugar.icons.preview`（“图标预览”），含转义时用 `logicsugar.escape.preview`；`\\uXXXX` 在当前版本不支持时仍是橙色的 unsupported 提示，但文本里已替换出的图标照常显示。图标字形来自游戏字体，无需 mod 侧绘制。
+- **浮层限制**：预览不改写源文本、不参与卡片布局；单行显示且超 48 字符截断；滚动窗内无完整位置时隐藏，失焦、字段/画布不可见或画布销毁时清理。
 
 ### 无新 opcode 与逻辑显示器修复
 

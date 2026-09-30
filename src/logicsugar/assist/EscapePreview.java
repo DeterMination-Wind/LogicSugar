@@ -8,18 +8,25 @@ import arc.scene.event.Touchable;
 import arc.scene.ui.Label;
 import arc.scene.ui.TextField;
 import arc.scene.ui.ScrollPane;
+import mindustry.core.UI;
 import mindustry.logic.LAssembler;
 import mindustry.logic.SugarCanvas;
 import mindustry.ui.Styles;
 
 import java.lang.reflect.Method;
 
-/** A display-only preview for mlog string escapes in the currently focused logic field.
- *  The source field is never rewritten, so saving/copying retains the exact wire text. */
+/** A display-only preview for the string the game will render: mlog escapes (`\n`, `\"`, `\\`,
+ *  `\\uXXXX`) and `:name:` icon markup, the two substitutions the game applies when it prints text
+ *  (`LExecutor` output and message blocks run the same pair).  The source field is never
+ *  rewritten, so saving/copying retains the exact wire text. */
 public final class EscapePreview{
     public enum Status{ none, preview, unsupported, invalid }
 
-    public record Result(Status status, String text){}
+    /**
+     * @param escapes at least one escape was decoded
+     * @param icons the game would substitute an icon for `:name:` markup (also picks the prefix)
+     */
+    public record Result(Status status, String text, boolean escapes, boolean icons){}
 
     private static final Method unescapeMethod = findUnescape();
     /** True only after invoking the runtime method and checking all four v160 behaviours. */
@@ -54,7 +61,9 @@ public final class EscapePreview{
 
         String prefix;
         if(result.status == Status.preview){
-            prefix = Core.bundle.get("logicsugar.escape.preview", "escape preview") + ": ";
+            boolean iconsOnly = result.icons() && !result.escapes();
+            prefix = Core.bundle.get(iconsOnly ? "logicsugar.icons.preview" : "logicsugar.escape.preview",
+                iconsOnly ? "icon preview" : "escape preview") + ": ";
             label.setColor(Color.lightGray);
         }else if(result.status == Status.unsupported){
             prefix = Core.bundle.get("logicsugar.escape.unsupported", "unsupported by this game build") + ": ";
@@ -167,16 +176,17 @@ public final class EscapePreview{
     }
 
     /**
-     * Decodes the exact quoted mlog string grammar.  The outer quotes are deliberately retained
-     * in the result because the preview is a view of the complete source token.  Unknown
-     * escapes remain byte-for-byte unchanged; a four-digit Unicode escape appends one Java char,
-     * matching the
-     * upstream decoder's UTF-16 code-unit semantics.
+     * Decodes the exact quoted mlog string grammar and then applies the game's own `:name:` icon
+     * substitution.  The outer quotes are deliberately retained in the result because the preview
+     * is a view of the complete source token.  Unknown escapes remain byte-for-byte unchanged; a
+     * four-digit Unicode escape appends one Java char, matching the upstream decoder's UTF-16
+     * code-unit semantics.
      */
     public static Result analyze(String source, boolean modern){
-        if(!isCompleteQuotedString(source)) return new Result(Status.none, "");
+        if(!isCompleteQuotedString(source)) return new Result(Status.none, "", false, false);
         String body = source.substring(1, source.length() - 1);
-        if(body.indexOf('\\') < 0) return new Result(Status.none, "");
+        // The two things this preview can show anything about.
+        if(body.indexOf('\\') < 0 && body.indexOf(':') < 0) return new Result(Status.none, "", false, false);
 
         StringBuilder out = new StringBuilder(source.length());
         out.append('"');
@@ -199,11 +209,11 @@ public final class EscapePreview{
             }else if(escaped == 'u'){
                 recognized = true;
                 needsModern = true;
-                if(i + 4 >= body.length()) return new Result(Status.invalid, "\\u requires four hex digits");
+                if(i + 4 >= body.length()) return new Result(Status.invalid, "\\u requires four hex digits", false, false);
                 int value = 0;
                 for(int digit = 1; digit <= 4; digit++){
                     int hex = Character.digit(body.charAt(i + digit), 16);
-                    if(hex < 0) return new Result(Status.invalid, "\\u requires four hex digits");
+                    if(hex < 0) return new Result(Status.invalid, "\\u requires four hex digits", false, false);
                     value = value * 16 + hex;
                 }
                 out.append((char)value);
@@ -213,8 +223,28 @@ public final class EscapePreview{
             }
         }
         out.append('"');
-        if(!recognized) return new Result(Status.none, "");
-        return new Result(needsModern && !modern ? Status.unsupported : Status.preview, out.toString());
+
+        String decoded = out.substring(1, out.length() - 1);
+        // The game formats the *unquoted* text (`LExecutor` print output), so the preview has to
+        // do the same: a name at the very end (`"x:duo"`) is only a clean token there, while the
+        // closing quote would make it unresolvable if it were part of the input.
+        String rendered = formatIcons(decoded);
+        boolean icons = !rendered.equals(decoded);
+        if(!recognized && !icons) return new Result(Status.none, "", false, false);
+        return new Result(needsModern && !modern ? Status.unsupported : Status.preview,
+            '"' + rendered + '"', recognized, icons);
+    }
+
+    /**
+     * The game's own `:name:` substitution — exactly what a logic display or a message block
+     * renders, because both call this.  Names no icon table knows stay untouched, and the walk is
+     * deliberately the game's rather than a stricter re-implementation: `x:duo` resolves in game
+     * just like `:duo:` does, so the preview agrees with the game instead of with its own idea of
+     * the grammar.  In a headless test the tables are empty, so a case has to register a name
+     * itself for anything to resolve.
+     */
+    static String formatIcons(String text){
+        return UI.formatIcons(text);
     }
 
     /** Rejects a token that only happens to start/end with quotes but cannot be one mlog string. */
