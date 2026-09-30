@@ -97,6 +97,13 @@ public final class ReconstructionMatrixTest{
         addInfer("for.nested", "forbegin i 0 1 lessThan 3 999\nforbegin j 0 1 lessThan 3 999\nset x i\nblockend\nblockend\n", "forbegin j 0 1 lessThan 3", "forbegin");
         addInfer("for.nestedwhile", "forbegin i 0 1 lessThan 3 999\nwhilebegin j lessThan 3 999\nset j 3\nblockend\nblockend\n", "whilebegin j lessThan 3", "whilebegin");
 
+        // Unit-control cards lower to vanilla ubind/flag code. The sugar only lives in the carrier.
+        addCarrier("unit.bind", "unitbind @poly unit\nprint unit\n", "unitbind @poly unit");
+        addCarrier("unit.next", "unitnext @poly unit\nprint unit\n", "unitnext @poly unit");
+        addCarrier("unit.free", "unitfree unit\nprint unit\n", "unitfree unit");
+        addCarrier("unit.for", "unitfor 4 @poly unit 999\nprint unit\nblockend\n", "unitfor 4 @poly unit");
+        addCarrier("unit.for.break", "unitfor n @mega unit 999\nbreak\nblockend\n", "break");
+
         addInfer("switch.one", "switchbegin x 999\ncase 1\nset y 1\nbreak\nblockend\nprint y\n", "switchbegin x", "switchbegin");
         addInfer("switch.two", "switchbegin x 999\ncase 1\nset y 1\nbreak\ncase 2\nset y 2\nbreak\nblockend\nprint y\n", "case 2", "switchbegin");
         addInfer("switch.three", "switchbegin x 999\ncase 1\nset y 1\nbreak\ncase 2\nset y 2\nbreak\ncase 3\nset y 3\nbreak\nblockend\nprint y\n", "case 3", "switchbegin");

@@ -19,6 +19,7 @@ import mindustry.logic.SugarStatements.FuncDefStatement;
 import mindustry.logic.SugarStatements.IfBeginStatement;
 import mindustry.logic.SugarStatements.ReturnStatement;
 import mindustry.logic.SugarStatements.SwitchBeginStatement;
+import mindustry.logic.SugarStatements.UnitForBeginStatement;
 import mindustry.logic.SugarStatements.WhileBeginStatement;
 import logicsugar.assist.data.DataModules;
 import logicsugar.assist.expr.ArrayRegistry;
@@ -1428,7 +1429,7 @@ public final class SugarCompiler{
             while(!stack.isEmpty() && ((BeginStatement)statements.get(stack.peek())).destIndex < i) stack.pop();
             if(!stack.isEmpty()) result[i] = stack.peek();
             if(statements.get(i) instanceof WhileBeginStatement || statements.get(i) instanceof SwitchBeginStatement
-                || statements.get(i) instanceof ForBeginStatement) stack.push(i);
+                || statements.get(i) instanceof ForBeginStatement || statements.get(i) instanceof UnitForBeginStatement) stack.push(i);
         }
         return result;
     }
@@ -1441,7 +1442,8 @@ public final class SugarCompiler{
         for(int i = 0; i < statements.size; i++){
             while(!stack.isEmpty() && ((BeginStatement)statements.get(stack.peek())).destIndex < i) stack.pop();
             if(!stack.isEmpty()) result[i] = stack.peek();
-            if(statements.get(i) instanceof WhileBeginStatement || statements.get(i) instanceof ForBeginStatement) stack.push(i);
+            if(statements.get(i) instanceof WhileBeginStatement || statements.get(i) instanceof ForBeginStatement
+                || statements.get(i) instanceof UnitForBeginStatement) stack.push(i);
         }
         return result;
     }

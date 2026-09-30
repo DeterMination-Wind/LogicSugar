@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十二个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十三个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了四十二个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了四十三个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -12,7 +12,8 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `ifElseTest` | `mindustry.logic.IfElseCompileTest` | `if` / `elif` / `else` / `while` 三段式条件的 lowering 冒烟（负分支取反、标签、出口跳转） |
 | `decompileTest` | `mindustry.logic.SugarDecompilerTest` | 反编译恢复：vanilla 程序保持原样、各结构恢复 round-trip、跳转表识别（含手写无守卫裸表 → `switchbegin … raw` + `default`，以及步长表 `switchbegin … stride`：`test/fixtures/counter-stride-switch.mlog`）、手写程序无入口 skip 也能恢复、数字跳转链穿线归一化、真实 655 条跳转表程序夹具（`test/fixtures/realworld-jump-table.mlog`）、**编辑器开屏决策**（`openingSource`：无载体的处理器程序必须走推断、两种编辑器权限都要验证、载体程序与函数库文本保持原样）、陈旧载体回退推断、短路守卫重建布尔树（单原子 / 顶层 `!` / 嵌套 `&&`\|\|` / 左深链 / `whilebegin`/`forbegin` 的 `exprsc` / `continue` 内部回边）、贪心候选失败后的回溯提升、验证矩阵（chainOnly 保存的程序在 auto 默认设置下仍验证）、动态 `@counter` 分诊保持 flat、函数区杂散跳转验证、不支持的模式保持 flat、引号/转义、坏输入不崩 |
 | `reconstructionTest` | `mindustry.logic.ReconstructionFixtureTest` | 重建：过期 `destIndex` 按嵌套重配对后载体仍验证；两份世界处理器样例走载体还原出 `ifbegin`/`forbegin`；`array`/`stack`/`record` 声明卡随载体回来；剥掉载体后不发明声明卡、不把 `__ls_builtin_*` 恢复成用户函数 |
-| `reconstructionMatrixTest` | `mindustry.logic.ReconstructionMatrixTest` | 重建矩阵：181 个 fixture / 1122 个 gate 断言，覆盖当前全部控制积木（if/elif/else/for/while/switch/break/continue/函数/折叠变体，含步长表）、全部数据积木（array/matrix/arrayinit/record/stack/queue/deque/bitset/map/uset/list/heap/chain）、68 个 `datacall` 操作卡与 8 张断言/调试卡；每个 fixture 都断言 compile → carrier restore → `verifyRestore` → 载体反编译链路，并自动检查每个已注册 `datacall` 操作都有 fixture；对 decompiler 可证明的控制流形状额外断言无载体推断路径 |
+| `reconstructionMatrixTest` | `mindustry.logic.ReconstructionMatrixTest` | 重建矩阵：186 个 fixture / 1152 个 gate 断言，覆盖当前全部控制积木（if/elif/else/for/while/switch/break/continue/函数/折叠变体，含步长表与单位控制卡 `unitbind`/`unitnext`/`unitfor`/`unitfree`）、全部数据积木（array/matrix/arrayinit/record/stack/queue/deque/bitset/map/uset/list/heap/chain）、68 个 `datacall` 操作卡与 8 张断言/调试卡；每个 fixture 都断言 compile → carrier restore → `verifyRestore` → 载体反编译链路，并自动检查每个已注册 `datacall` 操作都有 fixture；对 decompiler 可证明的控制流形状额外断言无载体推断路径。单位控制卡只走载体，不发明推断。 |
+| `unitControlTest` | `logicsugar.UnitControlTest` | 单位控制卡：flag 由 `@thisx/@thisy` 拼出且不为 0；认领写入 flag 后连续 `end` 四拍再复核；`unitnext` 不把已有 flag 当成空闲单位；`unitfree` 只清自己的 flag 并 `unbind`；`unitfor` 的循环体、`break`/`continue` 与名额上限；产物可被原版 assembler 解析；载体往返 |
 
 | `recoveryPredicateTest` | `mindustry.logic.RecoveryPredicateTest` | 谓词树模型：比较运算精确取反、`strictEqual` 不做有损取反、德摩根、优先级打印、求值方式影响代价 |
 | `shortCircuitTest` | `logicsugar.ShortCircuitCompilerTest` | `&&` / `||` 下降为条件 `jump`：操作数顺序、OR 续接标签、嵌套括号、`===` 取反不丢精度、坏谓词拒绝 |

@@ -150,6 +150,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - 有载体且验证通过 → 声明卡和表达式一并回来（编辑器再 `foldAll` 折回 `buf[i]` / `stack_push` 等）。
 - 没有载体（别人用手写 mlog、或载体被删）→ **不猜测**声明卡，只显示 `read`/`write`/`op`/`jump`。注入函数 `__ls_builtin_*` 的蹦床也不得恢复成用户 `funcdef`。
+- 单位控制卡（`unitbind` / `unitnext` / `unitfor` / `unitfree`）同样只活在载体里。lowering 是普通 `ubind` / `sensor` / `ucontrol flag` / `end`，和手写的抢旗代码分不开，推断路径不恢复这些卡。
 
 反编译预检必须走 `LogicSugarMod.registerStatements()`（模块 + 解析器），否则载体里的声明卡会被当成未知行。
 

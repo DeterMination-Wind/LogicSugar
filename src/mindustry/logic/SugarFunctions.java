@@ -25,6 +25,10 @@ import mindustry.logic.SugarStatements.CaseStatement;
 import mindustry.logic.SugarStatements.ElseIfStatement;
 import mindustry.logic.SugarStatements.ElseStatement;
 import mindustry.logic.SugarStatements.ForBeginStatement;
+import mindustry.logic.SugarStatements.UnitBindStatement;
+import mindustry.logic.SugarStatements.UnitForBeginStatement;
+import mindustry.logic.SugarStatements.UnitFreeStatement;
+import mindustry.logic.SugarStatements.UnitNextStatement;
 import mindustry.logic.SugarStatements.FuncCallStatement;
 import mindustry.logic.SugarStatements.FuncDefStatement;
 import mindustry.logic.SugarStatements.IfBeginStatement;
@@ -1550,6 +1554,14 @@ public final class SugarFunctions{
                 if(!call.destination.isEmpty()) result.add(call.destination);
             }else if(statement instanceof ForBeginStatement forBegin){
                 result.add(forBegin.variable);
+            }else if(statement instanceof UnitBindStatement bind){
+                result.add(bind.variable);
+            }else if(statement instanceof UnitNextStatement next){
+                result.add(next.variable);
+            }else if(statement instanceof UnitForBeginStatement loop){
+                result.add(loop.variable);
+            }else if(statement instanceof UnitFreeStatement free){
+                result.add(free.variable);
             }
         }
         return result;
@@ -1816,7 +1828,15 @@ public final class SugarFunctions{
             }
             LStatement statement = statements.get(i);
 
-            if(statement instanceof ForBeginStatement begin){
+            if(statement instanceof UnitBindStatement bind){
+                emitUnitBind(bind, prefix, i, out);
+            }else if(statement instanceof UnitNextStatement next){
+                emitUnitNext(next, prefix, i, out);
+            }else if(statement instanceof UnitForBeginStatement begin){
+                emitUnitFor(begin, prefix, i, out);
+            }else if(statement instanceof UnitFreeStatement free){
+                emitUnitFree(free, prefix, i, out);
+            }else if(statement instanceof ForBeginStatement begin){
                 if(!begin.initial.isEmpty()) out.append("set ").append(begin.variable).append(' ').append(begin.initial).append('\n');
                 out.append(label(prefix, "for_check_", i)).append(":\n");
                 if(begin.expressionMode){
@@ -1917,6 +1937,8 @@ public final class SugarFunctions{
                 LStatement ownerStmt = statements.get(owner);
                 if(ownerStmt instanceof ForBeginStatement){
                     out.append("jump ").append(label(prefix, "for_continue_", owner)).append(" always x false\n");
+                }else if(ownerStmt instanceof UnitForBeginStatement){
+                    out.append("jump ").append(label(prefix, "ub_step_", owner)).append(" always x false\n");
                 }else if(ownerStmt instanceof WhileBeginStatement){
                     out.append("jump ").append(label(prefix, "stmt_", owner)).append(" always x false\n");
                 }
@@ -1931,6 +1953,13 @@ public final class SugarFunctions{
                     }
                     if(!begin.step.isEmpty()) out.append("op add ").append(begin.variable).append(' ').append(begin.variable).append(' ').append(begin.step).append('\n');
                     out.append("jump ").append(label(prefix, "for_check_", beginIndex)).append(" always x false\n");
+                }else if(owner instanceof UnitForBeginStatement){
+                    if(loopHasContinue(statements, beginIndex, continueOwner)){
+                        out.append(label(prefix, "ub_step_", beginIndex)).append(":\n");
+                    }
+                    out.append("op add ").append(ub(prefix, "n", beginIndex)).append(' ')
+                        .append(ub(prefix, "n", beginIndex)).append(" 1\n");
+                    out.append("jump ").append(label(prefix, "ub_scan_", beginIndex)).append(" always x false\n");
                 }else if(owner instanceof WhileBeginStatement){
                     out.append("jump ").append(label(prefix, "stmt_", beginIndex)).append(" always x false\n");
                 }
@@ -2783,13 +2812,15 @@ public final class SugarFunctions{
         for(int i = 0; i < statements.size; i++){
             while(!stack.isEmpty() && ((BeginStatement)statements.get(stack.peek())).destIndex < i) stack.pop();
             if(!stack.isEmpty()) result[i] = stack.peek();
-            if(statements.get(i) instanceof ForBeginStatement || statements.get(i) instanceof WhileBeginStatement) stack.push(i);
+            if(statements.get(i) instanceof ForBeginStatement || statements.get(i) instanceof WhileBeginStatement
+                || statements.get(i) instanceof UnitForBeginStatement) stack.push(i);
         }
         return result;
     }
 
     private static boolean isBreakable(LStatement statement){
-        return statement instanceof ForBeginStatement || statement instanceof WhileBeginStatement || statement instanceof SwitchBeginStatement;
+        return statement instanceof ForBeginStatement || statement instanceof WhileBeginStatement
+            || statement instanceof UnitForBeginStatement || statement instanceof SwitchBeginStatement;
     }
 
     /** Marks only labels that are actual jump destinations; the remaining labels add no control-flow value. */
@@ -3004,6 +3035,220 @@ public final class SugarFunctions{
             this.dest = dest;
             this.removable = removable;
         }
+    }
+
+    /**
+     * Processor-owned unit flag: tile position, never 0, exact in a double.
+     * Every unit-control card on one processor shares this value, so they are one fleet.
+     */
+    private static void emitUnitId(StringBuilder out){
+        out.append("op mul __ls_ub_uid @thisx 100000\n");
+        out.append("op add __ls_ub_uid __ls_ub_uid @thisy\n");
+        out.append("op add __ls_ub_uid __ls_ub_uid 1\n");
+    }
+
+    /**
+     * Yields long enough that a peer processor which observed flag 0 just before our write
+     * still performs its own write before we read the flag back. {@code ipt} may be 1, so
+     * each {@code end} is one tick of every other processor. The gap matches the instructions
+     * between a fresh flag read and {@code ucontrol flag} in {@link #emitClaim}.
+     */
+    private static void emitClaimYield(StringBuilder out){
+        out.append("end\nend\nend\nend\n");
+    }
+
+    private static String ub(String prefix, String kind, int index){
+        return "__ls_ub_" + kind + "_" + prefix + index;
+    }
+
+    /** Writes the flag, yields, and jumps to {@code reject} unless the flag is still ours. */
+    private static void emitClaim(String prefix, int index, String reject, StringBuilder out){
+        String hold = ub(prefix, "h", index);
+        String flag = ub(prefix, "f", index);
+        out.append("set ").append(hold).append(" @unit\n");
+        out.append("ucontrol flag __ls_ub_uid 0 0 0 0\n");
+        emitClaimYield(out);
+        out.append("ubind ").append(hold).append('\n');
+        out.append("jump ").append(reject).append(" equal @unit null\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(reject).append(" notEqual ").append(flag).append(" __ls_ub_uid\n");
+    }
+
+    private static void emitUnitBind(UnitBindStatement bind, String prefix, int index, StringBuilder out){
+        String hold = ub(prefix, "h", index);
+        String flag = ub(prefix, "f", index);
+        String dead = ub(prefix, "d", index);
+        String ctrl = ub(prefix, "c", index);
+        String anchor = ub(prefix, "a", index);
+        String steps = ub(prefix, "s", index);
+        String scan = label(prefix, "ub_scan_", index);
+        String keep = label(prefix, "ub_keep_", index);
+        String take = label(prefix, "ub_take_", index);
+        String lost = label(prefix, "ub_lost_", index);
+        String fail = label(prefix, "ub_fail_", index);
+        String ok = label(prefix, "ub_ok_", index);
+        emitUnitId(out);
+        out.append("jump ").append(scan).append(" equal ").append(hold).append(" null\n");
+        out.append("ubind ").append(hold).append('\n');
+        out.append("jump ").append(lost).append(" equal @unit null\n");
+        out.append("sensor ").append(dead).append(" @unit @dead\n");
+        out.append("jump ").append(lost).append(" notEqual ").append(dead).append(" 0\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(take).append(" equal ").append(flag).append(" __ls_ub_uid\n");
+        out.append(lost).append(":\n");
+        out.append("set ").append(hold).append(" null\n");
+        out.append(scan).append(":\n");
+        out.append("set ").append(steps).append(" 0\n");
+        out.append("set ").append(anchor).append(" null\n");
+        out.append(label(prefix, "ub_loop_", index)).append(":\n");
+        out.append("op add ").append(steps).append(' ').append(steps).append(" 1\n");
+        out.append("jump ").append(fail).append(" greaterThan ").append(steps).append(" 8192\n");
+        out.append("ubind ").append(bind.type).append('\n');
+        out.append("jump ").append(fail).append(" equal @unit null\n");
+        out.append("jump ").append(fail).append(" equal @unit ").append(anchor).append('\n');
+        out.append("jump ").append(keep).append(" notEqual ").append(anchor).append(" null\n");
+        out.append("set ").append(anchor).append(" @unit\n");
+        out.append(keep).append(":\n");
+        out.append("sensor ").append(dead).append(" @unit @dead\n");
+        out.append("jump ").append(label(prefix, "ub_loop_", index)).append(" notEqual ").append(dead).append(" 0\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(take).append(" equal ").append(flag).append(" __ls_ub_uid\n");
+        out.append("jump ").append(label(prefix, "ub_loop_", index)).append(" notEqual ").append(flag).append(" 0\n");
+        out.append("sensor ").append(ctrl).append(" @unit @controlled\n");
+        out.append("jump ").append(label(prefix, "ub_loop_", index)).append(" notEqual ").append(ctrl).append(" 0\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(label(prefix, "ub_loop_", index)).append(" notEqual ").append(flag).append(" 0\n");
+        emitClaim(prefix, index, label(prefix, "ub_loop_", index), out);
+        out.append(take).append(":\n");
+        out.append("set ").append(bind.variable).append(" @unit\n");
+        out.append("set ").append(hold).append(" @unit\n");
+        out.append("jump ").append(ok).append(" always x false\n");
+        out.append(fail).append(":\n");
+        out.append("set ").append(bind.variable).append(" null\n");
+        out.append("set ").append(hold).append(" null\n");
+        out.append(ok).append(":\n");
+    }
+
+    private static void emitUnitNext(UnitNextStatement next, String prefix, int index, StringBuilder out){
+        String flag = ub(prefix, "f", index);
+        String dead = ub(prefix, "d", index);
+        String ctrl = ub(prefix, "c", index);
+        String anchor = ub(prefix, "a", index);
+        String steps = ub(prefix, "s", index);
+        String loop = label(prefix, "ub_loop_", index);
+        String keep = label(prefix, "ub_keep_", index);
+        String fail = label(prefix, "ub_fail_", index);
+        String ok = label(prefix, "ub_ok_", index);
+        emitUnitId(out);
+        out.append("set ").append(steps).append(" 0\n");
+        out.append("set ").append(anchor).append(" null\n");
+        out.append(loop).append(":\n");
+        out.append("op add ").append(steps).append(' ').append(steps).append(" 1\n");
+        out.append("jump ").append(fail).append(" greaterThan ").append(steps).append(" 8192\n");
+        out.append("ubind ").append(next.type).append('\n');
+        out.append("jump ").append(fail).append(" equal @unit null\n");
+        out.append("jump ").append(fail).append(" equal @unit ").append(anchor).append('\n');
+        out.append("jump ").append(keep).append(" notEqual ").append(anchor).append(" null\n");
+        out.append("set ").append(anchor).append(" @unit\n");
+        out.append(keep).append(":\n");
+        out.append("sensor ").append(dead).append(" @unit @dead\n");
+        out.append("jump ").append(loop).append(" notEqual ").append(dead).append(" 0\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(loop).append(" notEqual ").append(flag).append(" 0\n");
+        out.append("sensor ").append(ctrl).append(" @unit @controlled\n");
+        out.append("jump ").append(loop).append(" notEqual ").append(ctrl).append(" 0\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(loop).append(" notEqual ").append(flag).append(" 0\n");
+        emitClaim(prefix, index, loop, out);
+        out.append("set ").append(next.variable).append(" @unit\n");
+        out.append("jump ").append(ok).append(" always x false\n");
+        out.append(fail).append(":\n");
+        out.append("set ").append(next.variable).append(" null\n");
+        out.append(ok).append(":\n");
+    }
+
+    private static void emitUnitFree(UnitFreeStatement free, String prefix, int index, StringBuilder out){
+        String skip = label(prefix, "ub_free_", index);
+        String dead = ub(prefix, "d", index);
+        String flag = ub(prefix, "f", index);
+        emitUnitId(out);
+        out.append("ubind ").append(free.variable).append('\n');
+        out.append("jump ").append(skip).append(" equal @unit null\n");
+        out.append("sensor ").append(dead).append(" @unit @dead\n");
+        out.append("jump ").append(skip).append(" notEqual ").append(dead).append(" 0\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(skip).append(" notEqual ").append(flag).append(" __ls_ub_uid\n");
+        out.append("ucontrol flag 0 0 0 0 0\n");
+        out.append("ucontrol unbind 0 0 0 0 0\n");
+        out.append("set ").append(free.variable).append(" null\n");
+        out.append(skip).append(":\n");
+    }
+
+    private static void emitUnitFor(UnitForBeginStatement begin, String prefix, int index, StringBuilder out){
+        String seen = ub(prefix, "n", index);
+        String phase = ub(prefix, "p", index);
+        String owned = ub(prefix, "o", index);
+        String room = ub(prefix, "r", index);
+        String anchor = ub(prefix, "a", index);
+        String steps = ub(prefix, "s", index);
+        String flag = ub(prefix, "f", index);
+        String dead = ub(prefix, "d", index);
+        String ctrl = ub(prefix, "c", index);
+        String scan = label(prefix, "ub_scan_", index);
+        String keep = label(prefix, "ub_keep_", index);
+        String ours = label(prefix, "ub_ours_", index);
+        String deliver = label(prefix, "ub_give_", index);
+        String wrap = label(prefix, "ub_wrap_", index);
+        String after = label(prefix, "stmt_", begin.destIndex + 1);
+        emitUnitId(out);
+        out.append("set ").append(seen).append(" 0\n");
+        out.append("set ").append(phase).append(" 0\n");
+        out.append("set ").append(owned).append(" 0\n");
+        out.append("set ").append(anchor).append(" null\n");
+        out.append("set ").append(steps).append(" 0\n");
+        out.append(scan).append(":\n");
+        out.append("op add ").append(steps).append(' ').append(steps).append(" 1\n");
+        out.append("jump ").append(after).append(" greaterThan ").append(steps).append(" 8192\n");
+        out.append("ubind ").append(begin.type).append('\n');
+        out.append("jump ").append(wrap).append(" equal @unit null\n");
+        out.append("jump ").append(label(prefix, "ub_mark_", index)).append(" equal ").append(anchor).append(" null\n");
+        out.append("jump ").append(wrap).append(" equal @unit ").append(anchor).append('\n');
+        out.append("jump ").append(keep).append(" always x false\n");
+        out.append(label(prefix, "ub_mark_", index)).append(":\n");
+        out.append("set ").append(anchor).append(" @unit\n");
+        out.append(keep).append(":\n");
+        out.append("sensor ").append(dead).append(" @unit @dead\n");
+        out.append("jump ").append(scan).append(" notEqual ").append(dead).append(" 0\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(ours).append(" equal ").append(flag).append(" __ls_ub_uid\n");
+        out.append("jump ").append(scan).append(" equal ").append(phase).append(" 0\n");
+        out.append("jump ").append(scan).append(" notEqual ").append(flag).append(" 0\n");
+        out.append("sensor ").append(ctrl).append(" @unit @controlled\n");
+        out.append("jump ").append(scan).append(" notEqual ").append(ctrl).append(" 0\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(scan).append(" notEqual ").append(flag).append(" 0\n");
+        out.append("jump ").append(scan).append(" greaterThanEq ").append(seen).append(' ').append(begin.count).append('\n');
+        out.append("jump ").append(scan).append(" lessThanEq ").append(room).append(" 0\n");
+        emitClaim(prefix, index, scan, out);
+        out.append("op sub ").append(room).append(' ').append(room).append(" 1\n");
+        out.append("jump ").append(deliver).append(" always x false\n");
+        out.append(ours).append(":\n");
+        out.append("jump ").append(label(prefix, "ub_count_", index)).append(" equal ").append(phase).append(" 0\n");
+        out.append("jump ").append(scan).append(" greaterThanEq ").append(seen).append(' ').append(begin.count).append('\n');
+        out.append("jump ").append(deliver).append(" always x false\n");
+        out.append(label(prefix, "ub_count_", index)).append(":\n");
+        out.append("op add ").append(owned).append(' ').append(owned).append(" 1\n");
+        out.append("jump ").append(scan).append(" always x false\n");
+        out.append(wrap).append(":\n");
+        out.append("jump ").append(after).append(" notEqual ").append(phase).append(" 0\n");
+        out.append("set ").append(phase).append(" 1\n");
+        out.append("set ").append(seen).append(" 0\n");
+        out.append("set ").append(steps).append(" 0\n");
+        out.append("op sub ").append(room).append(' ').append(begin.count).append(' ').append(owned).append('\n');
+        out.append("jump ").append(scan).append(" equal @unit null\n");
+        out.append("jump ").append(keep).append(" always x false\n");
+        out.append(deliver).append(":\n");
+        out.append("set ").append(begin.variable).append(" @unit\n");
     }
 
     private static int findOwner(Seq<LStatement> statements, int end){

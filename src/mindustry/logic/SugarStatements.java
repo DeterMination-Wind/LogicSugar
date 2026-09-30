@@ -54,6 +54,11 @@ public final class SugarStatements{
 
         LAssembler.customParsers.put("forbegin", SugarStatements::parseForBegin);
         LAssembler.customParsers.put("forbeginc", tokens -> SugarStatements.parseForBegin(tokens, true));
+        LAssembler.customParsers.put("unitbind", SugarStatements::parseUnitBind);
+        LAssembler.customParsers.put("unitnext", SugarStatements::parseUnitNext);
+        LAssembler.customParsers.put("unitfree", SugarStatements::parseUnitFree);
+        LAssembler.customParsers.put("unitfor", SugarStatements::parseUnitFor);
+        LAssembler.customParsers.put("unitforc", tokens -> SugarStatements.parseUnitFor(tokens, true));
         LAssembler.customParsers.put("whilebegin", SugarStatements::parseWhileBegin);
         LAssembler.customParsers.put("whilebeginc", tokens -> SugarStatements.parseWhileBegin(tokens, true));
         LAssembler.customParsers.put("switchbegin", SugarStatements::parseSwitchBegin);
@@ -905,6 +910,112 @@ public final class SugarStatements{
         }
     }
 
+    /**
+     * Claims one unit of {@code type} and stores it in {@code variable}.
+     * The processor's flag is {@code @thisx * 100000 + @thisy + 1}. A unit already
+     * wearing that flag is rebound; otherwise the next free unit (flag 0, not
+     * player/command/logic controlled, alive) is claimed. The claim writes the flag
+     * and then yields before trusting it, so copies of this processor built in the
+     * same tick cannot keep the same unit.
+     */
+    public static class UnitBindStatement extends SugarStatement{
+        public String type = "@poly";
+        public String variable = "unit";
+
+        @Override
+        public void build(Table table){
+            table.add(text("unit.bind", "control one")).self(c -> hint(c, "unit.bind"));
+            field(table, type, value -> type = value).width(90f);
+            table.add(text("unit.as", "as")).padLeft(6f).self(c -> hint(c, "unit.as"));
+            field(table, variable, value -> variable = value).width(80f);
+        }
+
+        @Override public String name(){ return cardText("unit.bind", "Control One Unit"); }
+        @Override public String typeName(){ return "UnitBind"; }
+        @Override public String searchTerms(){ return "ubind flag unit poly"; }
+        @Override public void write(StringBuilder out){
+            out.append("unitbind ").append(type).append(' ').append(variable);
+        }
+    }
+
+    /**
+     * Claims the next free unit of {@code type} (flag 0, uncontrolled) and stores it
+     * in {@code variable}. Does not stick to a unit this processor already flagged.
+     * Each visit continues the processor's {@code ubind} cursor, so repeated visits
+     * take different units. No free unit leaves {@code variable} as {@code null}.
+     */
+    public static class UnitNextStatement extends SugarStatement{
+        public String type = "@poly";
+        public String variable = "unit";
+
+        @Override
+        public void build(Table table){
+            table.add(text("unit.next", "control next idle")).self(c -> hint(c, "unit.next"));
+            field(table, type, value -> type = value).width(90f);
+            table.add(text("unit.as", "as")).padLeft(6f).self(c -> hint(c, "unit.as"));
+            field(table, variable, value -> variable = value).width(80f);
+        }
+
+        @Override public String name(){ return cardText("unit.next", "Control Next Idle Unit"); }
+        @Override public String typeName(){ return "UnitNext"; }
+        @Override public String searchTerms(){ return "ubind flag idle unit"; }
+        @Override public void write(StringBuilder out){
+            out.append("unitnext ").append(type).append(' ').append(variable);
+        }
+    }
+
+    /**
+     * For-like block: each iteration binds one unit of {@code type} that this processor
+     * owns, up to {@code count}, and assigns it to {@code variable}. Missing slots are
+     * filled by the same claim protocol as {@link UnitBindStatement}. {@code break} and
+     * {@code continue} apply to this block.
+     */
+    public static class UnitForBeginStatement extends BeginStatement{
+        public String count = "1";
+        public String type = "@poly";
+        public String variable = "unit";
+
+        @Override
+        public void build(Table table){
+            table.table(content -> {
+                content.left();
+                content.add(text("unit.for", "control")).self(c -> hint(c, "unit.for"));
+                field(content, count, value -> count = value).width(50f);
+                content.add(text("unit.for.of", "of")).padLeft(6f);
+                field(content, type, value -> type = value).width(90f);
+                content.add(text("unit.as", "as")).padLeft(6f).self(c -> hint(c, "unit.as"));
+                field(content, variable, value -> variable = value).width(80f);
+                foldControl(content);
+            }).growX().fillX().left();
+        }
+
+        @Override public String name(){ return cardText("unit.for", "Control Units"); }
+        @Override public String typeName(){ return "UnitFor"; }
+        @Override public String searchTerms(){ return "ubind flag for unit"; }
+        @Override public void write(StringBuilder out){
+            out.append(collapsed ? "unitforc " : "unitfor ").append(count).append(' ')
+                .append(type).append(' ').append(variable).append(' ').append(destIndex);
+        }
+    }
+
+    /** Clears this processor's flag on {@code variable} and drops logic control. */
+    public static class UnitFreeStatement extends SugarStatement{
+        public String variable = "unit";
+
+        @Override
+        public void build(Table table){
+            table.add(text("unit.free", "release")).self(c -> hint(c, "unit.free"));
+            field(table, variable, value -> variable = value).width(80f);
+        }
+
+        @Override public String name(){ return cardText("unit.free", "Release Unit"); }
+        @Override public String typeName(){ return "UnitFree"; }
+        @Override public String searchTerms(){ return "flag unbind unit"; }
+        @Override public void write(StringBuilder out){
+            out.append("unitfree ").append(variable);
+        }
+    }
+
     public static class BreakStatement extends SugarStatement{
         @Override public void build(Table table){}
         @Override public String name(){ return cardText("break", "Break"); }
@@ -955,6 +1066,47 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
         }
         result.collapsed = collapsed;
         return result;
+    }
+
+    public static LStatement parseUnitBind(String[] tokens){
+        UnitBindStatement result = new UnitBindStatement();
+        result.type = requireToken("unitbind", tokens, 1);
+        result.variable = requireToken("unitbind", tokens, 2);
+        return result;
+    }
+
+    public static LStatement parseUnitNext(String[] tokens){
+        UnitNextStatement result = new UnitNextStatement();
+        result.type = requireToken("unitnext", tokens, 1);
+        result.variable = requireToken("unitnext", tokens, 2);
+        return result;
+    }
+
+    public static LStatement parseUnitFree(String[] tokens){
+        UnitFreeStatement result = new UnitFreeStatement();
+        result.variable = requireToken("unitfree", tokens, 1);
+        return result;
+    }
+
+    public static LStatement parseUnitFor(String[] tokens){
+        return parseUnitFor(tokens, false);
+    }
+
+    public static LStatement parseUnitFor(String[] tokens, boolean collapsed){
+        UnitForBeginStatement result = new UnitForBeginStatement();
+        result.count = requireToken("unitfor", tokens, 1);
+        result.type = requireToken("unitfor", tokens, 2);
+        result.variable = requireToken("unitfor", tokens, 3);
+        result.destIndex = parseDestIndex(requireToken("unitfor", tokens, 4));
+        result.collapsed = collapsed;
+        return result;
+    }
+
+    private static String requireToken(String name, String[] tokens, int index){
+        if(tokens.length <= index || tokens[index] == null || tokens[index].isEmpty() || "~".equals(tokens[index])){
+            throw new IllegalArgumentException("Invalid " + name + " statement: missing token " + index);
+        }
+        return tokens[index];
     }
 
     public static LStatement parseWhileBegin(String[] tokens){

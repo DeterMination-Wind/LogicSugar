@@ -509,6 +509,10 @@ public class LogicSugarMod extends Mod{
         registered = true;
 
         LogicIO.allStatements.add(SugarStatements.ForBeginStatement::new);
+        LogicIO.allStatements.add(SugarStatements.UnitBindStatement::new);
+        LogicIO.allStatements.add(SugarStatements.UnitNextStatement::new);
+        LogicIO.allStatements.add(SugarStatements.UnitForBeginStatement::new);
+        LogicIO.allStatements.add(SugarStatements.UnitFreeStatement::new);
         LogicIO.allStatements.add(SugarStatements.WhileBeginStatement::new);
         LogicIO.allStatements.add(SugarStatements.SwitchBeginStatement::new);
         LogicIO.allStatements.add(SugarStatements.IfBeginStatement::new);
