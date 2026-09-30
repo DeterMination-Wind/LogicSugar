@@ -231,6 +231,11 @@ public final class ProcessorStatus{
      *  being cleared, so a user who runs with the camera detached keeps that preference.</p> */
     public static void breakpoint(LogicBuild processor, String message){
         if(disableBreakpoints) return;
+        // Upstream v0.10 refuses to pause in multiplayer, and the multiplayer floor requires
+        // it here as well: pausing freezes every processor's accumulator for a frame, which
+        // is a single-player debugging act with no meaning across clients. The processor
+        // simply keeps running.
+        if(Vars.net != null && Vars.net.active()) return;
 
         Vars.state.set(GameState.State.paused);
 

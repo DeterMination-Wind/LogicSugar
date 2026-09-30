@@ -10,7 +10,7 @@ import mindustry.logic.*;
 import mindustry.logic.LCanvas.*;
 import mindustry.logic.LStatements.*;
 import mindustry.logic.SugarAsserts.AssertBoundsCard;
-import mindustry.logic.SugarAsserts.AssertOp;
+import mindustry.logic.ConditionOp;
 import mindustry.logic.SugarAsserts.AssertionType;
 import mindustry.logic.SugarStatements.BeginStatement;
 import mindustry.logic.SugarStatements.FuncCallStatement;
@@ -536,9 +536,9 @@ public class ExprHook{
         card.type = parseAssertionType(line.type);
         card.multiple = optionalValue(line.multiple);
         card.min = optionalValue(line.min);
-        card.opMin = parseAssertOp(line.opMin);
+        card.opMin = parseBoundsOp(line.opMin);
         card.value = optionalValue(line.value);
-        card.opMax = parseAssertOp(line.opMax);
+        card.opMax = parseBoundsOp(line.opMax);
         card.max = optionalValue(line.max);
         card.message = autoMessage(line.message);
         return card;
@@ -552,11 +552,14 @@ public class ExprHook{
         }
     }
 
-    private static AssertOp parseAssertOp(String token){
+    /** Bounds operators are the game's {@link ConditionOp} (the card stores that type), and
+     *  only the two inequality forms are legal in a saved {@code assertBounds} line. */
+    private static ConditionOp parseBoundsOp(String token){
         try{
-            return AssertOp.valueOf(token);
+            ConditionOp op = ConditionOp.valueOf(token);
+            return op == ConditionOp.lessThan || op == ConditionOp.lessThanEq ? op : ConditionOp.lessThanEq;
         }catch(Exception e){
-            return AssertOp.lessThanEq;
+            return ConditionOp.lessThanEq;
         }
     }
 

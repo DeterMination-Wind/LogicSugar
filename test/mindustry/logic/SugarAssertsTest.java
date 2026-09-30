@@ -1,7 +1,6 @@
 package mindustry.logic;
 
 import arc.struct.Seq;
-import mindustry.logic.SugarAsserts.AssertOp;
 import mindustry.logic.SugarAsserts.AssertionType;
 
 /**
@@ -25,11 +24,14 @@ public class SugarAssertsTest{
         verifyRestoreAcceptsBothBuildShapes();
         decompileDebugBuildRoundTrip();
         assertTypeRoundTripAndClassification();
+        assertConditionCardRoundTrip();
         System.out.println("LogicSugar SugarAsserts self-test passed.");
     }
 
     private static void wireFormatMatchesMlogAssertions(){
-        // token layout transcribed from MlogAssertions' LogicStatements.write()
+        // token layout transcribed from MlogAssertions' LogicStatements.write() (v0.11.1)
+        checkLine("assert equal x false ~",
+            compileLine("assert equal x false ~"));
         checkLine("assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"msg\"",
             compileLine("assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"msg\""));
         checkLine("assertequals 0 i \"should be 0\"",
@@ -38,23 +40,24 @@ public class SugarAssertsTest{
             compileLine("assertflush position"));
         checkLine("assertprints position \"frog\" \"bad output\"",
             compileLine("assertprints position \"frog\" \"bad output\""));
-        checkLine("error \"Runtime error at #[[1]\" @counter null null null null null null null null",
-            compileLine("error \"Runtime error at #[[1]\" @counter null null null null null null null null"));
-        checkLine("log info \"Logging a message at #[[1]\" @counter null null null null null null null null",
-            compileLine("log info \"Logging a message at #[[1]\" @counter null null null null null null null null"));
+        checkLine("error \"Runtime error at #{@counter}.\" null null null null null null null null null",
+            compileLine("error \"Runtime error at #{@counter}.\" null null null null null null null null null"));
+        checkLine("log info \"Logging a message at #{@counter}.\" null null null null null null null null null",
+            compileLine("log info \"Logging a message at #{@counter}.\" null null null null null null null null null"));
         checkLine("breakpoint always x false",
             compileLine("breakpoint always x false"));
     }
 
     private static void writeParseWriteIsIdempotent(){
         String[] lines = {
+            "assert lessThanEq x 10 ~",
             "assertBounds multiple 3 1 lessThan i lessThanEq 9 \"idx\"",
             "assertBounds integer ~ ~ lessThan i lessThanEq ~ ~",
             "assertequals \"str\" v ~",
             "assertflush p1",
             "assertprints p1 \"out\" ~",
             "error \"boom [[2]\" @counter x1 null null null null null null null",
-            "log err \"logged [[1]\" @counter null null null null null null null null",
+            "log err \"logged [[1]\" @counter null null null null null null null null null",
             "breakpoint lessThan x 10",
         };
         for(String line : lines){
@@ -69,7 +72,7 @@ public class SugarAssertsTest{
         SugarAsserts.AssertBoundsCard bounds =
             (SugarAsserts.AssertBoundsCard)parseOne("assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"Index out of bounds (0 to 10).\"");
         check(bounds.type == AssertionType.integer, "bounds type not parsed");
-        check(bounds.opMin == AssertOp.lessThanEq && bounds.opMax == AssertOp.lessThanEq, "bounds ops not parsed");
+        check(bounds.opMin == ConditionOp.lessThanEq && bounds.opMax == ConditionOp.lessThanEq, "bounds ops not parsed");
         check(bounds.message.equals("\"Index out of bounds (0 to 10).\""), "quoted message kept raw, got: " + bounds.message);
 
         SugarAsserts.LogCard log = (SugarAsserts.LogCard)parseOne("log debug \"[[1] done\" @counter 1 2 null null null null null null");
@@ -78,6 +81,18 @@ public class SugarAssertsTest{
 
         SugarAsserts.BreakpointCard bp = (SugarAsserts.BreakpointCard)parseOne("breakpoint equal x 1");
         check(bp.op == ConditionOp.equal, "breakpoint op not parsed");
+
+        // the generic assert card (upstream v0.11.0)
+        SugarAsserts.AssertConditionCard assertion =
+            (SugarAsserts.AssertConditionCard)parseOne("assert greaterThanEq x 10 \"x >= 10\"");
+        check(assertion.op == ConditionOp.greaterThanEq, "assert op not parsed");
+        check(assertion.value.equals("x") && assertion.compare.equals("10"), "assert operands not parsed");
+        check(assertion.message.equals("\"x >= 10\""), "assert message not parsed");
+
+        // a card default writes an empty message as the ~ placeholder, which the runtime
+        // reads back as "no custom message"
+        SugarAsserts.AssertEqualsCard empty = (SugarAsserts.AssertEqualsCard)parseOne("assertequals 0 i ~");
+        check(empty.message.isEmpty(), "~ did not decode to an empty message: " + empty.message);
     }
 
     private static void emptyFieldsKeepTokenCount(){
@@ -159,32 +174,68 @@ public class SugarAssertsTest{
         check(result.sugar.contains("op add y x 1"), "regular statements lost in recovery: " + result.sugar);
     }
 
-    /** asserttype is a LogicSugar extension (no MlogAssertions counterpart): the wire
-     *  format and the runtime value classification are pinned here. */
+    /** asserttype covers the upstream v0.11 taxonomy (plus LogicSugar's null type): the wire
+     *  format, the tolerant read of the pre-v0.10 token order and the value classification
+     *  are pinned here. */
     private static void assertTypeRoundTripAndClassification(){
+        // current upstream order: <type> <value> <message>
         SugarAsserts.AssertTypeCard card =
-            (SugarAsserts.AssertTypeCard)parseOne("asserttype @unit unit \"should be a unit\"");
-        check(card.value.equals("@unit") && card.type == SugarAsserts.AssertDataType.unit,
+            (SugarAsserts.AssertTypeCard)parseOne("asserttype unit @unit \"should be a unit\"");
+        check(card.value.equals("@unit") && card.type == SugarAsserts.AssertionDataType.unit,
             "asserttype fields not parsed");
-        checkLine("asserttype @unit unit \"should be a unit\"", writeOne(card));
+        checkLine("asserttype unit @unit \"should be a unit\"", writeOne(card));
 
         // none is spelled "null" on the wire (reserved word in Java)
-        SugarAsserts.AssertTypeCard noneCard = (SugarAsserts.AssertTypeCard)parseOne("asserttype x null ~");
-        check(noneCard.type == SugarAsserts.AssertDataType.none, "wire token 'null' not parsed as none");
-        checkLine("asserttype x null ~", writeOne(noneCard));
+        SugarAsserts.AssertTypeCard noneCard = (SugarAsserts.AssertTypeCard)parseOne("asserttype null x ~");
+        check(noneCard.type == SugarAsserts.AssertionDataType.none, "wire token 'null' not parsed as none");
+        checkLine("asserttype null x ~", writeOne(noneCard));
+
+        // pre-v0.10 order (<value> <type>) is still read, and re-written in the current order
+        SugarAsserts.AssertTypeCard legacy = (SugarAsserts.AssertTypeCard)parseOne("asserttype @unit unit ~");
+        check(legacy.value.equals("@unit") && legacy.type == SugarAsserts.AssertionDataType.unit,
+            "legacy asserttype order not accepted: " + legacy.value + "/" + legacy.type);
+        checkLine("asserttype unit @unit ~", writeOne(legacy));
+
+        // unknown tokens stay a clean error (LParser turns it into InvalidStatement)
+        try{
+            parseOne("asserttype bogus x ~");
+            check(false, "unknown asserttype data type did not fail parsing");
+        }catch(RuntimeException e){
+            check(e.getMessage() != null && e.getMessage().contains("asserttype"), "unclean parse error: " + e);
+        }
 
         // runtime classification (the taxonomy the failure message shows)
-        check(SugarAsserts.AssertDataType.number.matches(num("n", 1.5)), "number not matched");
-        check(!SugarAsserts.AssertDataType.number.matches(objectVar("s", "frog")), "string matched as number");
-        check(SugarAsserts.AssertDataType.none.matches(objectVar("n", null)), "null not matched");
-        check(SugarAsserts.AssertDataType.string.matches(objectVar("s", "frog")), "string not matched");
-        check(SugarAsserts.AssertDataType.team.matches(objectVar("t", mindustry.game.Team.derelict)), "team not matched");
-        check(SugarAsserts.AssertDataType.actualType(num("n", 1.5)).equals("number"), "actual type of a number");
-        check(SugarAsserts.AssertDataType.actualType(objectVar("n", null)).equals("null"), "actual type of null");
-        check(SugarAsserts.AssertDataType.actualType(objectVar("s", "frog")).equals("string"), "actual type of a string");
-        check(SugarAsserts.AssertDataType.actualType(objectVar("t", mindustry.game.Team.derelict)).equals("team"), "actual type of a team");
-        check(SugarAsserts.AssertDataType.actualType(objectVar("e", ConditionOp.equal)).equals("enum"), "actual type of an enum");
-        check(SugarAsserts.AssertDataType.actualType(objectVar("o", new Object())).equals("unknown"), "actual type of an unknown object");
+        check(SugarAsserts.AssertionDataType.number.matches(num("n", 1.5)), "number not matched");
+        check(!SugarAsserts.AssertionDataType.number.matches(objectVar("s", "frog")), "string matched as number");
+        check(SugarAsserts.AssertionDataType.none.matches(objectVar("n", null)), "null not matched");
+        check(SugarAsserts.AssertionDataType.string.matches(objectVar("s", "frog")), "string not matched");
+        check(SugarAsserts.AssertionDataType.team.matches(objectVar("t", mindustry.game.Team.derelict)), "team not matched");
+        check(SugarAsserts.AssertionDataType.actualType(num("n", 1.5)).equals("number"), "actual type of a number");
+        check(SugarAsserts.AssertionDataType.actualType(objectVar("n", null)).equals("null"), "actual type of null");
+        check(SugarAsserts.AssertionDataType.actualType(objectVar("s", "frog")).equals("string"), "actual type of a string");
+        check(SugarAsserts.AssertionDataType.actualType(objectVar("t", mindustry.game.Team.derelict)).equals("team"), "actual type of a team");
+        check(SugarAsserts.AssertionDataType.actualType(objectVar("e", ConditionOp.equal)).equals("unknown"),
+            "actual type of an unclassified enum must be 'unknown': " + SugarAsserts.AssertionDataType.actualType(objectVar("e", ConditionOp.equal)));
+        check(SugarAsserts.AssertionDataType.actualType(objectVar("o", new Object())).equals("unknown"), "actual type of an unknown object");
+    }
+
+    /** The generic {@code assert} card: emit-mode lowering plus the carrier round trip. */
+    private static void assertConditionCardRoundTrip(){
+        String sugar = "set x 1\nassert lessThanEq x 10 ~\n";
+        String emitted = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
+        String mlog = SugarCompiler.stripMarkers(emitted);
+        check(mlog.contains("assert lessThanEq x 10 ~"), "emit mode did not write the assert instruction");
+        check(SugarCompiler.verifyRestore(emitted, sugar), "assert debug build failed carrier verification");
+
+        String stripped = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
+        check(!SugarCompiler.stripMarkers(stripped).contains("assert lessThanEq"), "strip mode leaked the assert instruction");
+        check(SugarCompiler.restore(stripped).contains("assert lessThanEq x 10"), "carrier lost the assert statement");
+
+        // the opcode must be part of the assert set, otherwise verifyRestore skips the emit
+        // shape comparison for assert-only programs
+        check(SugarAsserts.containsAssertStatements(sugar), "assert opcode not recognized as an assertion");
     }
 
     private static LVar objectVar(String name, Object value){

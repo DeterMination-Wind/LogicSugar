@@ -296,13 +296,17 @@ public final class ReconstructionMatrixTest{
      * every one of them under the same verify gate.
      */
     private static void addAssertionFixtures(){
+        addCarrier("assert.op", "assert lessThanEq index 10 ~\nset x 1\n", "assert lessThanEq index 10");
         addCarrier("assert.bounds", "assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"msg\"\nset x 1\n", "assertBounds integer");
         addCarrier("assert.equals", "assertequals 0 i \"should be 0\"\nset x 1\n", "assertequals 0 i");
         addCarrier("assert.flush", "assertflush position\nset x 1\n", "assertflush position");
         addCarrier("assert.prints", "assertprints position \"frog\" \"bad output\"\nset x 1\n", "assertprints position");
-        addCarrier("assert.type", "asserttype @unit unit \"should be a unit\"\nset x 1\n", "asserttype @unit unit");
-        addCarrier("assert.error", "error \"Runtime error at #[[1]\" @counter null null null null null null null null\nset x 1\n", "error \"Runtime error at");
-        addCarrier("assert.log", "log info \"Logging a message at #[[1]\" @counter null null null null null null null null\nset x 1\n", "log info");
+        addCarrier("assert.type", "asserttype unit @unit \"should be a unit\"\nset x 1\n", "asserttype unit @unit");
+        // upstream <= v0.9 and LogicSugar <= 5.5 wrote the operands the other way round; the
+        // tolerant reader has to keep those carriers loadable
+        addCarrier("assert.type.legacyOrder", "asserttype @unit unit \"should be a unit\"\nset x 1\n", "asserttype @unit unit");
+        addCarrier("assert.error", "error \"Runtime error at #{@counter}.\" null null null null null null null null null\nset x 1\n", "error \"Runtime error at");
+        addCarrier("assert.log", "log info \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "log info");
         addCarrier("assert.breakpoint", "breakpoint always x false\nset x 1\n", "breakpoint always x false");
     }
 

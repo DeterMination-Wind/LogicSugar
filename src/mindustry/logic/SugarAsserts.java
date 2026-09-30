@@ -10,22 +10,46 @@ import arc.scene.ui.TextField;
 import arc.scene.ui.layout.Cell;
 import arc.scene.ui.layout.Table;
 import arc.util.Log;
-import mindustry.gen.Icon;
+import mindustry.ai.UnitCommand;
+import mindustry.ai.UnitStance;
+import mindustry.ctype.Content;
+import mindustry.entities.bullet.BulletType;
+import mindustry.game.Team;
 import mindustry.gen.Building;
+import mindustry.gen.Icon;
 import mindustry.gen.LogicIO;
 import mindustry.gen.Unit;
-import mindustry.game.Team;
-import mindustry.ctype.Content;
 import mindustry.logic.LExecutor.LInstruction;
 import mindustry.logic.SugarStatements.SugarStatement;
+import mindustry.type.Item;
+import mindustry.type.Liquid;
+import mindustry.type.StatusEffect;
+import mindustry.type.UnitType;
+import mindustry.type.Weather;
 import mindustry.ui.Styles;
+import mindustry.world.Block;
+import mindustry.world.blocks.logic.CanvasBlock;
+import mindustry.world.blocks.logic.LogicBlock;
+import mindustry.world.blocks.logic.LogicDisplay;
+import mindustry.world.blocks.logic.MemoryBlock;
+import mindustry.world.blocks.logic.MessageBlock;
+
+import java.util.Arrays;
 
 /**
  * Assertion statement set for runtime checks and debugging, ported from the upstream
- * MlogAssertions mod (cardillan/mlogassertions v0.8.2) with its exact wire format, so
+ * MlogAssertions mod (cardillan/mlogassertions, currently v0.11.1) with its wire format, so
  * programs compiled in debug mode run identically under either mod and Mindcode-generated
  * code round-trips through the editor. The one extension is {@code asserttype}'s null
  * type — see {@link AssertTypeCard}.
+ *
+ * <p>Synced from v0.8.2 to v0.11.1: the generic {@code assert} card, the failure messages
+ * that name the compared values, {@code asserttype}'s expanded data-type taxonomy and its
+ * {@code <type> <value>} token order (v0.10; the older {@code <value> <type>} text is still
+ * read), {@code assertprints}' buffer truncation, and the {@code {1}}/{@code {name}}
+ * message placeholders (the older {@code [[1]} form still renders). Upstream's snapshot
+ * instruction and the Vars/Memory/Properties screens are not ported — see
+ * {@code docs/architecture.md}.</p>
  *
  * <p>The cards serialize to the custom instruction tokens themselves ({@code assertBounds
  * ...}), which double as the sugar source format. The compiler decides their fate at
@@ -69,6 +93,7 @@ public final class SugarAsserts{
         if(parsersInstalled) return;
         parsersInstalled = true;
 
+        register(AssertConditionCard::new, AssertConditionCard.opcode, SugarAsserts::parseAssert);
         register(AssertBoundsCard::new, AssertBoundsCard.opcode, SugarAsserts::parseAssertBounds);
         register(AssertEqualsCard::new, AssertEqualsCard.opcode, SugarAsserts::parseAssertEquals);
         register(AssertFlushCard::new, AssertFlushCard.opcode, SugarAsserts::parseAssertFlush);
@@ -98,7 +123,7 @@ public final class SugarAsserts{
     /** The assertion opcodes this class owns; the compiler and the decompiler use this to
      *  decide whether the assert-emit dimension matters for a program. */
     public static final String[] opcodes = {
-        AssertBoundsCard.opcode, AssertEqualsCard.opcode, AssertFlushCard.opcode,
+        AssertConditionCard.opcode, AssertBoundsCard.opcode, AssertEqualsCard.opcode, AssertFlushCard.opcode,
         AssertPrintsCard.opcode, AssertTypeCard.opcode, ErrorCard.opcode, LogCard.opcode, BreakpointCard.opcode
     };
 
@@ -172,26 +197,79 @@ public final class SugarAsserts{
             return field(row, value, setter).width(width).pad(2f);
         }
 
-        /** 末尾的「消息」行：标签 + 铺满剩余宽度的输入框。 */
+        /** 末尾的「消息」行：标签 + 铺满剩余宽度的输入框。留空表示不写自定义消息，失败时
+         *  按比较值生成默认消息（上游 v0.11 语义），所以输入框用 hint 文案说明占位符写法；
+         *  hint 只影响显示，不写进卡片。 */
         protected void messageLine(Table table, Color tint, String value, Cons<String> setter){
             line(table, tint, row -> {
                 tag(row, "asserts.message", "message");
-                field(row, value, setter).width(0f).growX().pad(2f);
+                Cell<TextField> cell = field(row, value, setter).width(0f).growX().pad(2f);
+                if(cell.get() != null){
+                    cell.get().setMessageText(text("asserts.messageHint", "optional; {1}, {2}\u2026 are replaced by the compared values"));
+                }
             }, true);
+        }
+    }
+
+    /** The generic {@code assert} instruction: halts the program when the condition is
+     *  false, exactly like a {@code jump} that must not be taken. Ported from upstream
+     *  v0.11.0. The message field is optional; an empty one falls back to the localized
+     *  "Assertion [value] [op] [compare] failed." text. Inside a custom message,
+     *  {@code {1}}/{@code {2}}/{@code {3}} stand for the value, the comparison and the
+     *  operator (upstream's numbering). */
+    public static class AssertConditionCard extends AssertCard{
+        public static final String opcode = "assert";
+        public ConditionOp op = ConditionOp.equal;
+        public String value = "x", compare = "false";
+        public String message = "";
+
+        @Override
+        public void build(Table table){
+            table.clearChildren();
+            Color tint = table.color;
+            line(table, tint, row -> {
+                tag(row, "asserts.assert", "assert");
+                addCompactOp(row, op, o -> {
+                    op = o;
+                    build(table);
+                }, value, s -> value = s, compare, s -> compare = s);
+            }, false);
+            messageLine(table, tint, message, s -> message = s);
+        }
+
+        @Override public String name(){ return cardText("asserts.assert.card", "Assert"); }
+        @Override public String typeName(){ return "Assert"; }
+
+        @Override
+        public LInstruction build(LAssembler builder){
+            return new logicsugar.assist.AssertInstructions.AssertI(op, builder.var(value),
+                builder.var(compare), builder.var(message));
+        }
+
+        @Override
+        public void write(StringBuilder out){
+            out.append(opcode).append(' ').append(op.name()).append(' ')
+                .append(optional(value)).append(' ').append(optional(compare)).append(' ')
+                .append(optional(message));
         }
     }
 
     /** Value range/type check for an index or general numeric variable. */
     public static class AssertBoundsCard extends AssertCard{
         public static final String opcode = "assertBounds";
+        /** The only operators a bounds check accepts (upstream restricts the game's
+         *  {@link ConditionOp} the same way); anything else is a parse error. */
+        static final ConditionOp[] ops = {ConditionOp.lessThan, ConditionOp.lessThanEq};
         public AssertionType type = AssertionType.integer;
         public String multiple = "2";
         public String min = "0";
-        public AssertOp opMin = AssertOp.lessThanEq;
+        public ConditionOp opMin = ConditionOp.lessThanEq;
         public String value = "index";
-        public AssertOp opMax = AssertOp.lessThanEq;
+        public ConditionOp opMax = ConditionOp.lessThanEq;
         public String max = "10";
-        public String message = "\"Index out of bounds (0 to 10).\"";
+        /** 空消息 = 用比较值生成默认文本（上游 v0.11 语义）；写了消息则原样显示，
+         *  可用 {@code {1}}/{@code {2}}/{@code {3}} 引用上界/校验值/下界。 */
+        public String message = "";
 
         @Override
         public void build(Table table){
@@ -233,10 +311,10 @@ public final class SugarAsserts{
             }, Styles.logict, () -> {}).size(96f, 40f).pad(4f).color(row.color).left();
         }
 
-        private void opButton(Table row, AssertOp op, Cons<AssertOp> setter){
+        private void opButton(Table row, ConditionOp op, Cons<ConditionOp> setter){
             row.button(b -> {
                 b.add(op.symbol);
-                b.clicked(() -> showSelect(b, AssertOp.all, op, setter));
+                b.clicked(() -> showSelect(b, ops, op, setter));
             }, Styles.logict, () -> {}).size(48f, 40f).pad(4f).color(row.color).left();
         }
 
@@ -262,7 +340,7 @@ public final class SugarAsserts{
         public static final String opcode = "assertequals";
         public String expected = "0";
         public String actual = "value";
-        public String message = "\"value should be equal to 0\"";
+        public String message = "";
 
         @Override
         public void build(Table table){
@@ -327,7 +405,7 @@ public final class SugarAsserts{
         public static final String opcode = "assertprints";
         public String position = "position";
         public String expected = "\"frog\"";
-        public String message = "\"text output should be equal to 'frog'\"";
+        public String message = "";
 
         @Override
         public void build(Table table){
@@ -360,16 +438,17 @@ public final class SugarAsserts{
 
     /** Checks that a variable currently holds a value of the expected runtime data type.
      *
-     *  <p>Upstream MlogAssertions added its own {@code asserttype} in v0.8.1 with the same
-     *  opcode and 4-token layout; the six shared type tokens are byte-identical. LogicSugar
-     *  additionally offers {@code none} ("null" on the wire), which upstream's parser
-     *  rejects ({@code AssertDataType.valueOf}), so a debug build using the null type
-     *  cannot be opened by MlogAssertions/Mindcode. Every other type interchanges.</p> */
+     *  <p>Upstream MlogAssertions added its own {@code asserttype} with the same opcode;
+     *  v0.10 both widened the type taxonomy and swapped the token order to
+     *  {@code <type> <value>}, which is what this card writes (upstream v0.8.2/0.9 and
+     *  LogicSugar ≤5.5 wrote {@code <value> <type>} — {@link SugarAsserts#parseAssertType}
+     *  still reads that form). LogicSugar additionally offers {@code none} ("null" on the
+     *  wire), which upstream cannot name with {@code asserttype} at all.</p> */
     public static class AssertTypeCard extends AssertCard{
         public static final String opcode = "asserttype";
+        public AssertionDataType type = AssertionDataType.number;
         public String value = "value";
-        public AssertDataType type = AssertDataType.number;
-        public String message = "\"value should hold the expected data type\"";
+        public String message = "";
 
         @Override
         public void build(Table table){
@@ -381,11 +460,11 @@ public final class SugarAsserts{
                 tag(row, "asserts.istype", "is of type");
                 row.button(b -> {
                     b.add(type.display());
-                    b.clicked(() -> showSelect(b, AssertDataType.all, type, o -> {
+                    b.clicked(() -> showSelect(b, AssertionDataType.all, type, o -> {
                         type = o;
                         build(table);
                     }));
-                }, Styles.logict, () -> {}).size(96f, 40f).pad(4f).color(row.color).left();
+                }, Styles.logict, () -> {}).size(140f, 40f).pad(4f).color(row.color).left();
             }, false);
             messageLine(table, tint, message, s -> message = s);
         }
@@ -395,13 +474,13 @@ public final class SugarAsserts{
 
         @Override
         public LInstruction build(LAssembler builder){
-            return new logicsugar.assist.AssertInstructions.AssertTypeI(builder.var(value), type, builder.var(message));
+            return new logicsugar.assist.AssertInstructions.AssertTypeI(type, builder.var(value), builder.var(message));
         }
 
         @Override
         public void write(StringBuilder out){
-            out.append(opcode).append(' ').append(optional(value)).append(' ')
-                .append(type.token()).append(' ').append(optional(message));
+            out.append(opcode).append(' ').append(type.token()).append(' ')
+                .append(optional(value)).append(' ').append(optional(message));
         }
     }
 
@@ -417,9 +496,12 @@ public final class SugarAsserts{
         public MessageCard(String opcode, boolean hasLevel, String defaultTemplate){
             this.opcode = opcode;
             this.hasLevel = hasLevel;
-            params[0] = "\"" + defaultTemplate + " at #[[1]\"";
-            params[1] = "@counter";
-            for(int i = 2; i < params.length; i++) params[i] = "null";
+            // Upstream v0.11.1 makes the counter a variable reference ({@code {@counter}}
+            // renders as the instruction index) and leaves p1..p9 free for user params.
+            // LogicSugar ≤5.5 used "[[1]" with p1 bound to @counter; that form still
+            // renders (legacy placeholder support in AssertInstructions).
+            params[0] = "\"" + defaultTemplate + " at #{@counter}.\"";
+            for(int i = 1; i < params.length; i++) params[i] = "null";
         }
 
         @Override
@@ -548,7 +630,7 @@ public final class SugarAsserts{
         Log.LogLevel.err, Log.LogLevel.warn, Log.LogLevel.info, Log.LogLevel.debug,
     };
 
-    /** 日志级别按钮的显示名。与 {@link AssertDataType#display()} 同一约定：只影响界面，
+    /** 日志级别按钮的显示名。与 {@link AssertionDataType#display()} 同一约定：只影响界面，
      *  卡片序列化出去的分级 token（{@code err}/{@code warn}/…）保持不变。 */
     private static String levelName(Log.LogLevel level){
         return Core.bundle.get("logicsugar.asserts.level." + level.name(), level.name());
@@ -556,14 +638,23 @@ public final class SugarAsserts{
 
     // ===== parsers =====
 
+    public static LStatement parseAssert(String[] tokens){
+        AssertConditionCard result = new AssertConditionCard();
+        result.op = parseEnum(ConditionOp.class, tokens[1], AssertConditionCard.opcode + " op");
+        result.value = optionalValue(tokens[2]);
+        result.compare = optionalValue(tokens[3]);
+        result.message = optionalValue(tokens[4]);
+        return result;
+    }
+
     public static LStatement parseAssertBounds(String[] tokens){
         AssertBoundsCard result = new AssertBoundsCard();
         result.type = parseEnum(AssertionType.class, tokens[1], AssertBoundsCard.opcode + " type");
         result.multiple = optionalValue(tokens[2]);
         result.min = optionalValue(tokens[3]);
-        result.opMin = parseEnum(AssertOp.class, tokens[4], AssertBoundsCard.opcode + " min op");
+        result.opMin = parseBoundsOp(tokens[4]);
         result.value = optionalValue(tokens[5]);
-        result.opMax = parseEnum(AssertOp.class, tokens[6], AssertBoundsCard.opcode + " max op");
+        result.opMax = parseBoundsOp(tokens[6]);
         result.max = optionalValue(tokens[7]);
         result.message = optionalValue(tokens[8]);
         return result;
@@ -593,8 +684,20 @@ public final class SugarAsserts{
 
     public static LStatement parseAssertType(String[] tokens){
         AssertTypeCard result = new AssertTypeCard();
-        result.value = optionalValue(tokens[1]);
-        result.type = AssertDataType.parse(tokens[2]);
+        String first = tokens[1], second = tokens[2];
+        // Upstream ≥v0.10 writes "<type> <value>"; upstream ≤0.9 and LogicSugar ≤5.5 wrote
+        // "<value> <type>". A token that is not a data-type name can only be the value, so
+        // the older line is still read. When both look like type names the current order
+        // wins (that is the only order this card writes; a variable literally named after a
+        // type in the legacy order is the one ambiguous case).
+        boolean firstIsType = AssertionDataType.isToken(first), secondIsType = AssertionDataType.isToken(second);
+        if(secondIsType && !firstIsType){
+            result.type = AssertionDataType.parse(second);
+            result.value = optionalValue(first);
+        }else{
+            result.type = AssertionDataType.parse(first);
+            result.value = optionalValue(second);
+        }
         result.message = optionalValue(tokens[3]);
         return result;
     }
@@ -629,70 +732,128 @@ public final class SugarAsserts{
         }
     }
 
+    /** A bounds operator, restricted to the two the instruction understands (a wider
+     *  {@link ConditionOp} token in a saved program is a corrupt line, not a valid card). */
+    private static ConditionOp parseBoundsOp(String token){
+        for(ConditionOp op : AssertBoundsCard.ops){
+            if(op.name().equals(token)) return op;
+        }
+        throw new IllegalArgumentException("Invalid " + AssertBoundsCard.opcode + " operator: '" + token + "'");
+    }
+
     private static String optionalValue(String value){
         return value == null || value.equals("~") ? "" : value;
     }
 
-    /** Runtime data types an {@link AssertTypeCard} can assert, mirroring the
-     *  classification the game itself shows for logic variables. {@code none} is spelled
-     *  {@code null} on the wire ({@code null} is a reserved word in Java). */
-    public enum AssertDataType{
-        number("number"), string("string"), content("content"), building("building"),
-        unit("unit"), team("team"), none("null"),
+    /** Runtime data types an {@link AssertTypeCard} can assert, mirroring the classification
+     *  the game itself shows for logic variables.
+     *
+     *  <p>Ported from upstream MlogAssertions v0.11.1 ({@code AssertionDataType}): what was a
+     *  flat list of six names now has per-content and per-building sub-types plus the
+     *  property/readable/writable/senseable interface types. A general kind matches a
+     *  reference to any instance of it, the numbered sub-types narrow that down. The wire
+     *  token is {@link #name()} except for {@code none}, spelled {@code null} ({@code null} is
+     *  a reserved word in Java); {@code none} is a LogicSugar extension — upstream cannot
+     *  assert the null value with {@code asserttype}.</p> */
+    public enum AssertionDataType{
+        // Basic types
+        number(0),
+        none(0),
+        string(0, String.class),
+
+        // General and specific contents
+        content(0, Content.class),
+        item(1, Item.class),
+        block(1, Block.class),
+        bulletType(1, BulletType.class),
+        liquid(1, Liquid.class),
+        statusEffect(1, StatusEffect.class),
+        unitType(1, UnitType.class),
+        weather(1, Weather.class),
+        team(1, Team.class),
+        unitCommand(1, UnitCommand.class),
+        unitStance(1, UnitStance.class),
+
+        // Any unit
+        unit(0, Unit.class),
+
+        // General and specific buildings
+        building(0, Building.class),
+        processor(1, LogicBlock.LogicBuild.class),
+        memory(1, MemoryBlock.MemoryBuild.class),
+        message(1, MessageBlock.MessageBuild.class),
+        display(1, LogicDisplay.LogicDisplayBuild.class),
+        canvas(1, CanvasBlock.CanvasBuild.class),
+
+        // Other special values
+        property(0, LAccess.class),
+        readable(0, LReadable.class),
+        writable(0, LWritable.class),
+        senseable(0, Senseable.class),
         ;
 
-        public static final AssertDataType[] all = values();
+        public static final AssertionDataType[] all = values();
+        /** Most specific first: {@link #actualType} reports the narrowest match, so an Item
+         *  is named {@code item} and not merely {@code content}. */
+        public static final AssertionDataType[] sorted;
 
-        private final String token;
+        static{
+            sorted = values();
+            Arrays.sort(sorted, (a, b) -> Integer.compare(-a.level, -b.level));
+        }
 
-        AssertDataType(String token){
-            this.token = token;
+        private final int level;
+        private final Class<?> objectClass;
+
+        AssertionDataType(int level, Class<?> objectClass){
+            this.level = level;
+            this.objectClass = objectClass;
+        }
+
+        AssertionDataType(int level){
+            this(level, null);
         }
 
         /** The wire-format token; the type select button shows the localized label. */
         public String token(){
-            return token;
+            return this == none ? "null" : name();
         }
 
         /** Localized label for the type select button (falls back to the wire token). */
         public String display(){
-            return Core.bundle.get("logicsugar.asserts.datatype." + token, token);
+            return Core.bundle.get("logicsugar.asserts.datatype." + token(), token());
         }
 
         public boolean matches(LVar var){
             if(this == none) return var.isobj && var.objval == null;
             if(this == number) return !var.isobj;
-            if(!var.isobj) return false;
-            Object o = var.objval;
-            return switch(this){
-                case string -> o instanceof String;
-                case content -> o instanceof Content;
-                case building -> o instanceof Building;
-                case unit -> o instanceof Unit;
-                case team -> o instanceof Team;
-                default -> false;
-            };
+            return var.isobj && objectClass.isInstance(var.objval);
         }
 
         /** The classification a failure message shows for the actual value — the same
-         *  taxonomy the game's own variable panel uses (number/null/string/content/
-         *  building/unit/team/enum/unknown), so "expected unit, got null" reads exactly
-         *  like the editor would describe the variable. */
+         *  taxonomy the game's own variable panel uses, so "expected unit, got null" reads
+         *  exactly like the editor would describe the variable. */
         public static String actualType(LVar var){
             if(!var.isobj) return "number";
             if(var.objval == null) return "null";
-            if(var.objval instanceof String) return "string";
-            if(var.objval instanceof Content) return "content";
-            if(var.objval instanceof Building) return "building";
-            if(var.objval instanceof Unit) return "unit";
-            if(var.objval instanceof Team) return "team";
-            if(var.objval instanceof Enum<?>) return "enum";
+            for(AssertionDataType type : sorted){
+                if(type.objectClass != null && type.objectClass.isInstance(var.objval)) return type.name();
+            }
             return "unknown";
         }
 
-        public static AssertDataType parse(String token){
-            for(AssertDataType type : all){
-                if(type.token.equals(token)) return type;
+        /** Whether {@code token} names a data type; used to tell the two {@code asserttype}
+         *  token orders apart (see {@link SugarAsserts#parseAssertType}). */
+        public static boolean isToken(String token){
+            for(AssertionDataType type : all){
+                if(type.token().equals(token)) return true;
+            }
+            return false;
+        }
+
+        public static AssertionDataType parse(String token){
+            for(AssertionDataType type : all){
+                if(type.token().equals(token)) return type;
             }
             throw new IllegalArgumentException("Invalid asserttype data type: '" + token + "'");
         }
@@ -736,28 +897,4 @@ public final class SugarAsserts{
         }
     }
 
-    public enum AssertOp{
-        lessThan("<", (a, b) -> a < b),
-        lessThanEq("<=", (a, b) -> a <= b),
-        ;
-
-        public static final AssertOp[] all = values();
-
-        public final AssertOpLambda function;
-        public final String symbol;
-
-        AssertOp(String symbol, AssertOpLambda function){
-            this.symbol = symbol;
-            this.function = function;
-        }
-
-        @Override
-        public String toString(){
-            return symbol;
-        }
-
-        public interface AssertOpLambda{
-            boolean get(double a, double b);
-        }
-    }
 }

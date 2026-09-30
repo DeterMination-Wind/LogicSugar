@@ -25,10 +25,13 @@ this file only adds what is specific to this project.
   只能靠设置描述与文档把后果讲清（见 bundle 的 maxInstructions/assertEmit 描述）。
 - 新功能提案先按此底线分类：不碰保存产物 → 正常实现；碰保存产物 → 必须加联机门禁，
   并在 bundle 与 `docs/architecture.md` 说明单机限定。
-- **上游同步基线**：断言/断点子系统对齐 cardillan/MlogAssertions **v0.8.2**（本地副本
+- **上游同步基线**：断言/断点子系统对齐 cardillan/MlogAssertions **v0.11.1**（本地副本
   `../_upstream/MlogAssertions-pr`，`git fetch upstream` 更新）。上游的指令上限覆盖
-  （`max-instructions`）**不得**移植。唯一线格式例外：`asserttype` 的 `null` 类型是
-  LogicSugar 扩展，上游 `AssertDataType.valueOf` 不识别——改这一块前先看
+  （`max-instructions`）**不得**移植；上游 v0.10/0.11 的 Vars / Memory / Properties 界面与
+  快照子系统（`snapshot` 指令、`Snapshots` 数据层）本身不在同步范围内（它们不改变保存产物，
+  属独立功能，若要移植需另议）。线格式例外有两处：`asserttype` 的 `null` 类型是 LogicSugar
+  扩展（上游 `AssertionDataType` 不识别），以及上游 v0.10 起 `asserttype` 的 token 顺序为
+  `<type> <value>`（旧序仍可读，保存统一写新序）——改这一块前先看
   `SugarAsserts.AssertTypeCard` 的注释与 `assertTypeTest`。
 
 ## Build & Test
@@ -36,7 +39,7 @@ this file only adds what is specific to this project.
 ```powershell
 cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest,
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
-                                      # varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, arrayTest,
+                                      # varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, assertMessageTest, arrayTest,
                                       # arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest,
                                       # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest,
                                       # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest,

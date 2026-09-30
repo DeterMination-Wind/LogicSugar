@@ -9,20 +9,22 @@ import mindustry.ctype.ContentType;
 import mindustry.game.Team;
 import mindustry.gen.Building;
 import mindustry.gen.MechUnit;
-import mindustry.logic.SugarAsserts.AssertDataType;
+import mindustry.logic.SugarAsserts.AssertionDataType;
 
 /**
- * Pinned coverage for the {@code asserttype} card (LogicSugar-original, no MlogAssertions
- * counterpart; the wire format itself is pinned in SugarAssertsTest). Two layers:
+ * Pinned coverage for the {@code asserttype} card (upstream MlogAssertions has the same
+ * instruction since v0.8.1; the wire format is pinned in SugarAssertsTest as well).
  *
  * <p><b>Compile layer</b> — a sugar program carrying {@code asserttype} cards lowers to
  * the exact fixed 4-token mlog lines in emit (debug build) mode and produces nothing but
- * a carrier in strip mode, with the sugar (assertions included) surviving in the carrier.</p>
+ * a carrier in strip mode, with the sugar (assertions included) surviving in the carrier.
+ * The token order is upstream ≥v0.10's {@code <type> <value> <message>}.</p>
  *
- * <p><b>Semantic layer</b> — {@link AssertDataType#matches(LVar)} classifies every LVar
+ * <p><b>Semantic layer</b> — {@link AssertionDataType#matches(LVar)} classifies every LVar
  * state into exactly one type: a non-object value ({@code !isobj}) is a <em>number</em>,
  * a null object ({@code isobj && objval == null}) is <em>none</em> ("null" on the wire),
- * and everything else by {@code instanceof} on the object value. The two states are the
+ * and everything else by {@code instanceof} on the object value, with the narrowest
+ * subtype winning in {@link AssertionDataType#actualType(LVar)}. The two states are the
  * exact split the game itself uses ({@code LAssembler.putVar} creates variables as null
  * objects; {@code LVar.setnum} flips back to the non-object state).</p>
  *
@@ -54,9 +56,9 @@ public class AssertTypeTest{
 
     private static void emitModeWritesAssertTypeLines(){
         String sugar = "set n 1\n"
-            + "asserttype n number \"n should be a number\"\n"
-            + "asserttype sensor building \"sensor should be a building\"\n"
-            + "asserttype flag unit ~\n"
+            + "asserttype number n \"n should be a number\"\n"
+            + "asserttype building sensor \"sensor should be a building\"\n"
+            + "asserttype unit flag ~\n"
             + "op add out n 1\n";
         String compiled = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
             SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
@@ -68,12 +70,12 @@ public class AssertTypeTest{
         }
         check(emitted.size == 3, "expected exactly three emitted asserttype lines, got: " + emitted);
 
-        // exact token layout: opcode, value, type wire token, message ("~" for empty),
-        // in source order — asserttype is LogicSugar-original, so this format is ours
+        // exact token layout: opcode, type wire token, value, message ("~" for empty),
+        // in source order (upstream >= v0.10)
         String[][] expected = {
-            {"asserttype n number \"n should be a number\"", "n", "number"},
-            {"asserttype sensor building \"sensor should be a building\"", "sensor", "building"},
-            {"asserttype flag unit ~", "flag", "unit"},
+            {"asserttype number n \"n should be a number\"", "number", "n"},
+            {"asserttype building sensor \"sensor should be a building\"", "building", "sensor"},
+            {"asserttype unit flag ~", "unit", "flag"},
         };
         for(int i = 0; i < expected.length; i++){
             String[] exp = expected[i];
@@ -81,8 +83,8 @@ public class AssertTypeTest{
             Seq<String> tokens = wireTokens(exp[0]);
             check(tokens.size == 4, "asserttype line must keep a fixed 4-token layout: " + exp[0] + " -> " + tokens);
             check(tokens.get(0).equals("asserttype"), "opcode token drifted: " + exp[0]);
-            check(tokens.get(1).equals(exp[1]), "value token drifted: " + exp[0]);
-            check(tokens.get(2).equals(exp[2]), "type token drifted: " + exp[0]);
+            check(tokens.get(1).equals(exp[1]), "type token drifted: " + exp[0]);
+            check(tokens.get(2).equals(exp[2]), "value token drifted: " + exp[0]);
         }
         check(mlog.contains("set n 1") && mlog.contains("op add out n 1"),
             "emit mode dropped regular instructions");
@@ -94,13 +96,13 @@ public class AssertTypeTest{
         // LAssembler.var() consults the game constants table; the self-test runs headless
         Vars.logicVars = new GlobalVars();
 
-        checkAssemblesTo("asserttype n number \"n should be a number\"", "n", AssertDataType.number);
-        checkAssemblesTo("asserttype sensor building \"sensor should be a building\"", "sensor", AssertDataType.building);
+        checkAssemblesTo("asserttype number n \"n should be a number\"", "n", AssertionDataType.number);
+        checkAssemblesTo("asserttype building sensor \"sensor should be a building\"", "sensor", AssertionDataType.building);
         // none is spelled "null" on the wire (reserved word in Java); empty message is "~"
-        checkAssemblesTo("asserttype x null ~", "x", AssertDataType.none);
+        checkAssemblesTo("asserttype null x ~", "x", AssertionDataType.none);
     }
 
-    private static void checkAssemblesTo(String line, String valueName, AssertDataType type){
+    private static void checkAssemblesTo(String line, String valueName, AssertionDataType type){
         Seq<LStatement> parsed = LAssembler.read(line, true);
         check(parsed.size == 1, "emitted line did not parse into exactly one statement: " + line);
         check(parsed.get(0) instanceof SugarAsserts.AssertTypeCard, "not an AssertTypeCard: " + line);
@@ -112,8 +114,8 @@ public class AssertTypeTest{
         check(asm.instructions.length == 1, "assemble produced wrong instruction count: " + line);
         check(asm.instructions[0] instanceof AssertInstructions.AssertTypeI, "not an AssertTypeI: " + line);
         AssertInstructions.AssertTypeI instr = (AssertInstructions.AssertTypeI)asm.instructions[0];
-        check(instr.type == type, "instruction type not wired from the card, expected " + type.token() + ": " + line);
-        check(instr.value.name.equals(valueName), "value var not wired, expected '" + valueName + "': " + line);
+        check(instr.expectedType == type, "instruction type not wired from the card, expected " + type.token() + ": " + line);
+        check(instr.actualValue.name.equals(valueName), "value var not wired, expected '" + valueName + "': " + line);
         if(line.contains("\"")){
             check(instr.message.isobj && instr.message.objval instanceof String str && !str.isEmpty(),
                 "quoted message literal not unwrapped: " + instr.message.objval);
@@ -122,8 +124,8 @@ public class AssertTypeTest{
 
     private static void stripModeKeepsMlogVanilla(){
         String sugar = "set x 1\n"
-            + "asserttype x number \"x should be a number\"\n"
-            + "asserttype sensor building \"sensor should be a building\"\n"
+            + "asserttype number x \"x should be a number\"\n"
+            + "asserttype building sensor \"sensor should be a building\"\n"
             + "op add y x 1\n";
         String compiled = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
             SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
@@ -134,14 +136,14 @@ public class AssertTypeTest{
         check(mlog.contains("set x 1") && mlog.contains("op add y x 1"), "strip mode dropped regular instructions");
         check(SugarCompiler.isSugarProgram(compiled), "carrier missing after strip compile");
         String restored = SugarCompiler.restore(compiled);
-        check(restored.contains("asserttype x number") && restored.contains("asserttype sensor building"),
+        check(restored.contains("asserttype number x") && restored.contains("asserttype building sensor"),
             "carrier lost the asserttype statements");
     }
 
     private static void verifyRestoreAcceptsAssertTypeSugar(){
         // asserttype must be recognized as an assert opcode so verifyRestore tries both
         // emit shapes for asserttype-only debug builds (see SugarCompiler.verifyRestore)
-        String sugar = "set x 1\nasserttype x number \"x should be a number\"\n";
+        String sugar = "set x 1\nasserttype number x \"x should be a number\"\n";
         String debug = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
             SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
         check(SugarCompiler.verifyRestore(debug, sugar), "asserttype debug build failed carrier verification");
@@ -150,7 +152,7 @@ public class AssertTypeTest{
         check(SugarCompiler.verifyRestore(stripped, sugar), "asserttype strip build failed carrier verification");
     }
 
-    // ===== semantic layer: AssertDataType.matches =====
+    // ===== semantic layer: AssertionDataType.matches =====
 
     private static void numberVarMatchesOnlyNumber(){
         // non-object values: number matches regardless of the value (42.5 and 0 alike),
@@ -158,25 +160,40 @@ public class AssertTypeTest{
         LVar num = new LVar("n");
         num.isobj = false;
         num.numval = 42.5;
-        checkOnlyMatches(AssertDataType.number, num, "number 42.5");
+        checkOnlyMatches(AssertionDataType.number, num, "number 42.5");
 
         LVar zero = new LVar("zero");
         zero.isobj = false;
         zero.numval = 0;
-        checkOnlyMatches(AssertDataType.number, zero, "number 0");
+        checkOnlyMatches(AssertionDataType.number, zero, "number 0");
     }
 
     private static void objectVarsMatchByInstanceof(){
-        // every object class matches exactly its own type — in particular a Building is
-        // not a Content and a Team is not a Content, so the object categories are disjoint
-        checkOnlyMatches(AssertDataType.string, objectVar("s", "frog"), "string");
-        checkOnlyMatches(AssertDataType.building, objectVar("b", new Building(){}), "building");
+        // The taxonomy is hierarchical since v0.11: a general kind matches any instance of
+        // it, the numbered sub-types narrow it down, and the interface types (property /
+        // readable / writable / senseable) cut across the class hierarchy. Only the leaf
+        // classifications are disjoint; the failure message picks the narrowest match.
+        LVar building = objectVar("b", new Building(){});
+        checkMatches(AssertionDataType.building, true, building, "building");
+        checkMatches(AssertionDataType.senseable, true, building, "a building is senseable");
+        checkActual(building, "building");
+
         // MechUnit: a concrete generated unit class (mindustry.gen.Unit leaves
         // Builderc.validatePlans abstract, so Unit itself cannot be instantiated);
         // its constructor is protected, hence the anonymous subclass
-        checkOnlyMatches(AssertDataType.unit, objectVar("u", new MechUnit(){}), "unit");
-        checkOnlyMatches(AssertDataType.content, objectVar("c", testContent()), "content");
-        checkOnlyMatches(AssertDataType.team, objectVar("t", Team.derelict), "team");
+        LVar unit = objectVar("u", new MechUnit(){});
+        checkMatches(AssertionDataType.unit, true, unit, "unit");
+        checkMatches(AssertionDataType.senseable, true, unit, "a unit is senseable");
+        checkActual(unit, "unit");
+
+        LVar content = objectVar("c", testContent());
+        checkOnlyMatches(AssertionDataType.content, content, "content");
+        checkActual(content, "content");
+
+        LVar team = objectVar("t", Team.derelict);
+        checkMatches(AssertionDataType.team, true, team, "team");
+        checkMatches(AssertionDataType.senseable, true, team, "a team is senseable");
+        checkActual(team, "team");
     }
 
     private static void nullObjectMatchesOnlyNone(){
@@ -184,20 +201,32 @@ public class AssertTypeTest{
         // fresh variables as, what the null constant is, and what a null object value
         // (e.g. a sensor / memory read with no result) looks like
         LVar nullObj = objectVar("x", null);
-        checkOnlyMatches(AssertDataType.none, nullObj, "null object");
+        checkOnlyMatches(AssertionDataType.none, nullObj, "null object");
+        checkActual(nullObj, "null");
         // the boundary the memory-object scenario leans on: a plain number is not null
-        check(!AssertDataType.none.matches(num("n", 1.5)), "number matched as null");
-        check(!AssertDataType.number.matches(nullObj), "null matched as number");
+        check(!AssertionDataType.none.matches(num("n", 1.5)), "number matched as null");
+        check(!AssertionDataType.number.matches(nullObj), "null matched as number");
     }
 
     /** Asserts that exactly one type — {@code expected} — matches the variable. */
-    private static void checkOnlyMatches(AssertDataType expected, LVar var, String what){
-        for(AssertDataType type : AssertDataType.all){
+    private static void checkOnlyMatches(AssertionDataType expected, LVar var, String what){
+        for(AssertionDataType type : AssertionDataType.all){
             boolean matched = type.matches(var);
             check(type == expected ? matched : !matched,
                 what + ": expected " + expected.token() + (matched ? " only, but " : " to match, but ")
                     + type.token() + (type == expected ? " did not" : " matched"));
         }
+    }
+
+    /** Asserts that {@code type} is (or is not) in the set of types matching the variable. */
+    private static void checkMatches(AssertionDataType type, boolean expected, LVar var, String what){
+        check(type.matches(var) == expected, what + ": " + type.token() + (expected ? " did not match" : " matched"));
+    }
+
+    /** Asserts that the failure message would name {@code expected} for this value. */
+    private static void checkActual(LVar var, String expected){
+        String actual = AssertionDataType.actualType(var);
+        check(actual.equals(expected), "actualType must report the narrowest match: expected " + expected + ", got " + actual);
     }
 
     // ===== helpers =====

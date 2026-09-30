@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十四个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十五个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了四十四个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了四十五个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -23,8 +23,9 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `varClipboardTest` | `logicsugar.assist.VarClipboardSelfTest` | 变量导出 TSV 格式：表头、按名排序、全精度数字、对象值走 PrintI 格式化（字符串原样、null） |
 | `processorStatusTest` | `logicsugar.assist.ProcessorStatusSelfTest` | 状态指示纯函数：wait 阈值含等判定、阈值 0 关闭、扫描预算按帧时长换算（60FPS 一帧正好 perTick、240FPS 分数进位不丢、低帧率封顶 5×perTick）、扫描档位映射与旧版原始值到档位的一次性迁移 |
 | `unitFlagsTest` | `logicsugar.assist.UnitFlagsSelfTest` | 单位 flag 叠加纯函数：0 / NaN / Inf 不绘制、非零有限值显示、整型去掉 `.0`、分数与超 long 范围保持 `Double.toString`、标签锚在 hitbox 上沿、前 10 个不同 flag 使用高对比度配色且后续使用鲜明随机色 |
-| `assertTest` | `mindustry.logic.SugarAssertsTest` | 断言语句集：与 MlogAssertions 逐字节线格式、write/parse 往返幂等、`~` 占位定长 token、坏枚举干净报错、strip/emit 编译行为、verifyRestore 双形态、调试构建反编译 round-trip |
-| `assertTypeTest` | `mindustry.logic.AssertTypeTest` | `asserttype` 卡（LogicSugar 原生语句）：emit 编译产物行格式与定长 token、emit 行 re-parse/assemble 出 `AssertTypeI` 的接线、strip 模式零泄漏且载体保留、verifyRestore 双形态、`AssertDataType.matches` 语义矩阵（number/null 对象/string/content/building/unit/team 互斥），并钉住未来「内存对象存储」（上游 #12459）场景的 number/对象分型 |
+| `assertTest` | `mindustry.logic.SugarAssertsTest` | 断言语句集：与 MlogAssertions v0.11.1 的线格式、write/parse 往返幂等、`~` 占位定长 token、坏枚举干净报错、`assert` 卡的 emit 产物与载体往返、`asserttype` 新旧两种 token 顺序的读取、strip/emit 编译行为、verifyRestore 双形态、调试构建反编译 round-trip |
+| `assertTypeTest` | `mindustry.logic.AssertTypeTest` | `asserttype` 卡：emit 编译产物行格式（`<type> <value> <message>`）与定长 token、emit 行 re-parse/assemble 出 `AssertTypeI` 的接线、strip 模式零泄漏且载体保留、verifyRestore 双形态、`AssertionDataType.matches` 语义矩阵（number/null 对象/string/content/building/unit/team，层级匹配：senseable 同时命中单位/建筑/队伍）、`actualType` 取最窄匹配，并钉住未来「内存对象存储」（上游 #12459）场景的 number/对象分型 |
+| `assertMessageTest` | `logicsugar.assist.AssertMessageTest` | 断言消息占位符引擎（无 executor 的纯函数）：`{1}` 编号按消息槽偏移、`{变量名}` 取活值（`{@counter}` 减 1）、`[[N]` 旧写法、无法解析的占位符原样保留、未使用的参数按需追加（字符串加引号、`null` 跳过）、数值打印（整数去 `.0`、颜色字面量、NaN）、空/非字符串消息落到本地化默认文本 |
 | `arrayTest` | `mindustry.logic.ArraySugarTest` | `array` 声明卡与 `buf[i]` 下标：字面量/变量下标的 `read` 精确行（地址 = base + 下标，base>0 先 `op add`）、下标赋值 `write` 行、越界字面量与未声明名报错、无注册表时退化为普通发射（纯原版不受影响）、严格校验（重名/同内存块重叠/非法 base/size）、声明卡不产行且载体往返、条件表达式 lowering 出 `read` 行、产物纯原版、unfold→fold 折回表达式且再编译流一致；容量口径：名字启发式（`cellN`=64、`bankN`/`worldN`=512、其余跳过）与**链接解析优先**（`resolvedMemoryCapacity`：注入假解析器验证 world-cell 式「512 格的 `cellN`」不再被误拒、解析到更小方块时按真实容量收紧、链接到非内存块返回 0 时不得回落猜测、解析不到才回落名字并把容量标注为推断值、`enterLinkResolver`/`restoreLinkResolver` 配对不泄漏） |
 | `arrayBulkTest` | `logicsugar.assist.data.ArrayBulkTest` | 数组批量运算：`array_sum/array_avg/array_min/array_max/array_count/array_find/array_fill/array_copy/array_sort/array_sort_desc/array_reverse/array_replace/array_swap/array_lower_bound` 的表达式展开（实参必须是已声明数组，矩阵按行主序摊平）、旧短名 `min`/`max` 的 1 参（数组运算）与 2 参（原版内置）分派、错误实参编译期报错、内置函数注入与 normal 共享子程序、不进入 `__ls_lib` 载体、未使用不进产物、产物纯原版与往返 |
 | `dataFrameworkTest` | `logicsugar.assist.data.DataFrameworkSelfTest` | F2 框架：`ExprIntrinsics` 注册/遮蔽/按 arity 分派/成员读写扩展点、`DataModules` 注册幂等与 collect/restore 配对、`DataDeclaration` 跳过 lower、注入函数并入 `LibraryIndex` 且排除出载体、markInvalid 接线 |
