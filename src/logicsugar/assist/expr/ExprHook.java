@@ -142,6 +142,11 @@ public class ExprHook{
                         j++;
                         break;
                     }
+                }else if(st instanceof SelectStatement sel && foldsSpanPrologue(sel)){
+                    // span 展开的前导行（select building slot）：不是积木，但必须留在链里。
+                    // 它永远不结束链：这些 scratch 不是用户表达式的一部分，折叠时由
+                    // ExprCompiler 作为 consumed 行消费掉。
+                    ops.add(new ExprCompiler.SelectLine(sel.result, sel.op.name(), sel.comp0, sel.comp1, sel.a, sel.b));
                 }else if(st instanceof WriteStatement write && isArrayMemory(write.target)){
                     // 注册表命中的 write 行：下标赋值的终结行（没有 dest），链到此为止。
                     // 整条链（含地址计算 op add）交给 rebuildAssignment 折回 buf[i] = value。
@@ -250,14 +255,36 @@ public class ExprHook{
         // 用户手写的普通 read/write 与纯原版 mlog（无声明卡）不受影响
         if(st instanceof ReadStatement read) return isArrayMemory(read.target);
         if(st instanceof WriteStatement write) return isArrayMemory(write.target);
+        // span 展开的前导行（select building slot）：不是积木，但必须参与折叠，
+        // 否则 `x = buf[i]` 保存一次就永久退化成前导段 + 一条原版 read 积木
+        if(st instanceof SelectStatement sel) return foldsSpanPrologue(sel);
         return false;
+    }
+
+    /**
+     * span 展开前导段里的 select 行（{@code result} 是固定的 building scratch）。
+     * {@code foldAll} 据此把它收进折叠链；{@code unfoldAll} 反过来必须仍然认为它
+     * “没有对应的原版积木”（{@link #statementFor} 不映射它）——否则展开会删掉卡片却
+     * 不补出这几条指令，保存文本也会变。判定与折叠共用本方法，避免两边漂移。
+     */
+    public static boolean foldsSpanPrologue(LStatement st){
+        return st instanceof SelectStatement sel && SpanAccess.BUILDING.equals(sel.result);
     }
 
     /** memory 变量名是否承载了当前注册表中的数组（宽松口径画布注册表）。 */
     private static boolean isArrayMemory(String memory){
         if(memory == null || memory.isEmpty()) return false;
         ArrayRegistry registry = ArrayRegistry.active();
-        return registry != null && !registry.isEmpty() && !registry.byMemory(memory).isEmpty();
+        if(registry == null || registry.isEmpty()) return false;
+        if(!registry.byMemory(memory).isEmpty()) return true;
+        // span 成员：数组/矩阵登记在 span 别名上，而保存文本里的物理读落在成员块上
+        // （常量下标被编译成 `read x cell1 3`），这些行同样要能参与折回。
+        for(ArrayRegistry.SpanInfo span : registry.spansByMember(memory)){
+            if(!registry.byMemory(span.name).isEmpty() || !registry.matricesByMemory(span.name).isEmpty()){
+                return true;
+            }
+        }
+        return false;
     }
 
     /** funccall 的实参必须是纯值（temp/变量/数字，无逗号无括号），否则无法无损重建表达式。 */
@@ -630,6 +657,11 @@ public class ExprHook{
             String dest = ExprCompiler.lineDest(ops.get(k));
             if(dest != null) temps.add(dest);
         }
+        // span 展开的固定 scratch（__ls_span_q/r/b）不是“值”：任何一次展开都会在它的
+        // read/write 之前立刻重写它们，所以链外出现同名文本只能说明那是另一次展开自己的
+        // 副本（画布上两张 span 表达式卡就是这种情况），删掉本链不会改变它的行为。
+        // 不排除的话两张卡会互相把对方判成“外部读取”，谁都折不回来。
+        temps.removeAll(SpanAccess.scratchNames());
         if(temps.isEmpty()) return false;
         for(int idx = 0; idx < statements.size(); idx++){
             if(idx >= chainStart && idx < chainEnd) continue;

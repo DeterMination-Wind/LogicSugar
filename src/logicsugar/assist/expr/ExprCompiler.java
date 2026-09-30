@@ -1452,14 +1452,132 @@ public class ExprCompiler{
             }
             ArrayFold fold = resolveArrayFold(registry, memory, address, ops, p);
             if(fold == null) fold = resolveMatrixFold(registry, memory, address, ops, p);
+            List<Line> spanConsumed = null;
+            if(fold == null){
+                // span 展开（内存名是 span 成员或固定 scratch）：换一个视角再解一次，
+                // 前导段行随折叠一起消费；多条 span 都能解释时按不可判定放弃
+                for(SpanFoldView view : spanFoldViews(ops, p, memory, address)){
+                    ArrayFold candidate = resolveArrayFold(registry, view.memory, view.address, ops, p);
+                    if(candidate == null) candidate = resolveMatrixFold(registry, view.memory, view.address, ops, p);
+                    if(candidate == null) continue;
+                    if(fold != null){
+                        fold = null;
+                        spanConsumed = null;
+                        break;
+                    }
+                    fold = candidate;
+                    spanConsumed = view.prologue;
+                }
+            }
             if(fold == null) continue;
             if(folds == null) folds = new IdentityHashMap<>();
             folds.put(line, fold);
             if(fold.consumed != null){
                 for(Line consumed : fold.consumed) folds.put(consumed, ArrayFold.CONSUMED);
             }
+            if(spanConsumed != null){
+                for(Line consumed : spanConsumed) folds.put(consumed, ArrayFold.CONSUMED);
+            }
         }
         return folds;
+    }
+
+    /** span 展开折叠的视角：memory 换成 span 别名、address 换成逻辑地址。 */
+    private static final class SpanFoldView{
+        final String memory;
+        final String address;
+        /** 要随折叠一起消费的前导段行（常量格内地址形态没有前导段，为 null）。 */
+        final List<Line> prologue;
+
+        SpanFoldView(String memory, String address, List<Line> prologue){
+            this.memory = memory;
+            this.address = address;
+            this.prologue = prologue;
+        }
+    }
+
+    /**
+     * span 展开的两形态反解（见 {@link logicsugar.assist.expr.SpanAccess}）：
+     * <ul>
+     *   <li><b>常量格内地址</b>：常量下标被折叠成指向选中成员的一条 {@code read}/{@code write}
+     *       （例如 {@code read x cell1 3}）。成员序号 k + 格内地址 local → 逻辑地址
+     *       {@code k*C + local}，再交给 {@link #resolveArrayFold} 按 span 别名归属。
+     *       local 必须落在这一格的容量内，否则原程序就是越界访问，折回去会变语义；</li>
+     *   <li><b>变量逻辑地址</b>：前导段 {@code op idiv}/{@code op mod} + N 条 select + read/write
+     *       落在固定 scratch 上。成员序列与每格容量反查出 span 别名，逻辑地址就是 idiv 的
+     *       被除数操作数（{@code q*C + r} 恰好还原成它），前导段整段记入待消费行。</li>
+     * </ul>
+     * 空表表示不是 span 展开。多条 span 或重复形态能解释同一段展开时调用方按不可判定
+     * 处理（宁可少折回），最终仍有 {@link #verifyArrayFold} 的重新编译比对兜底。
+     */
+    private static List<SpanFoldView> spanFoldViews(List<Line> ops, int p, String memory, String address){
+        List<SpanFoldView> views = new ArrayList<>();
+        Long local = ArrayRegistry.parseIntLiteral(address);
+        if(local != null){
+            if(local < 0) return views;
+            for(ArrayRegistry.SpanInfo span : ArrayRegistry.findSpansByMember(memory)){
+                if(local >= span.cellCapacity) continue;
+                int member = span.indexOfMember(memory);
+                if(member < 0) continue;
+                long logical = (long)member * span.cellCapacity + local;
+                if(logical > Integer.MAX_VALUE) continue;
+                views.add(new SpanFoldView(span.name, Long.toString(logical), null));
+            }
+            return views;
+        }
+        if(!SpanAccess.BUILDING.equals(memory) || !SpanAccess.SLOT.equals(address)) return views;
+        SpanFoldView prologue = spanPrologueView(ops, p);
+        if(prologue != null) views.add(prologue);
+        return views;
+    }
+
+    /**
+     * 识别前导段并从「成员序列 + 每格容量」反查 span 别名（N = 成员数）：
+     * <pre>
+     * op idiv Q addr C
+     * op mod  R addr C
+     * select B equal Q 0 m0 0
+     * select B equal Q k mk B      (k = 1..N-1)
+     * </pre>
+     * 名称关系（Q/R/B 是固定 scratch）、序号连续性、失败分支（第一条落到数字 0，
+     * 其余保留上一次结果）都要对上；没有 ≥2 个成员、形状反查不到或形状重复时返回 null。
+     */
+    private static SpanFoldView spanPrologueView(List<Line> ops, int p){
+        int k = p - 1;
+        List<Line> prologue = new ArrayList<>();
+        List<String> members = new ArrayList<>();
+        while(k >= 0 && ops.get(k) instanceof SelectLine sel){
+            if(!SpanAccess.BUILDING.equals(sel.result) || !"equal".equals(sel.op)
+                || !SpanAccess.QUOTIENT.equals(sel.comp0)) break;
+            prologue.add(0, sel);
+            members.add(0, sel.a);
+            k--;
+        }
+        int count = members.size();
+        if(count < 2) return null;
+        for(int i = 0; i < count; i++){
+            SelectLine sel = (SelectLine)prologue.get(i);
+            // prologue 已按地址顺序（k = 0..N-1）排好：第 i 条就是第 i 个成员
+            if(!sel.comp1.equals(Integer.toString(i))) return null;
+            if(i == 0){
+                if(!sel.b.equals("0")) return null;
+            }else if(!sel.b.equals(SpanAccess.BUILDING)){
+                return null;
+            }
+        }
+        if(k < 1) return null;
+        if(!(ops.get(k) instanceof OpLine mod) || !mod.op.equals("mod")
+            || !SpanAccess.SLOT.equals(mod.dest)) return null;
+        if(!(ops.get(k - 1) instanceof OpLine div) || !div.op.equals("idiv")
+            || !SpanAccess.QUOTIENT.equals(div.dest)) return null;
+        if(!div.a.equals(mod.a) || !div.b.equals(mod.b)) return null;
+        Long capacity = ArrayRegistry.parseIntLiteral(div.b);
+        if(capacity == null || capacity <= 0 || capacity > Integer.MAX_VALUE) return null;
+        ArrayRegistry.SpanInfo span = ArrayRegistry.findSpanByShape(members, capacity.intValue());
+        if(span == null) return null;
+        prologue.add(0, mod);
+        prologue.add(0, div);
+        return new SpanFoldView(span.name, div.a, prologue);
     }
 
     /** 一维数组归属解析（规则见 {@link #resolveArrayFolds}），未命中返回 null。 */

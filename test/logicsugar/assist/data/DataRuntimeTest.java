@@ -1,6 +1,7 @@
 package logicsugar.assist.data;
 
 import logicsugar.LogicSugarMod;
+import logicsugar.assist.expr.SpanAccess;
 import mindustry.Vars;
 import mindustry.logic.GlobalVars;
 import mindustry.logic.LAssembler;
@@ -52,6 +53,7 @@ public final class DataRuntimeTest{
         sortRuntime();
         arrayBulkRuntime();
         chainRuntime();
+        spanRuntime();
 
         System.out.println("LogicSugar data runtime self-test passed.");
     }
@@ -340,6 +342,58 @@ public final class DataRuntimeTest{
             + "datacall hsize r1 \"h\"\n");
         checkNum(full, "r0", -1, "push on a full heap reports -1");
         checkNum(full, "r1", 2, "full heap must not grow");
+    }
+
+    // ===== multi-cell span =====
+
+    /**
+     * Span addressing on the real executor: the expansion selects a <b>building object</b> with
+     * {@code select} and then reads/writes through it. A numeric-only {@code select} (or a wrong
+     * member order) silently breaks every span access in game, and no shape-only test can see it
+     * — this is the runtime half of {@code spanTest} (2026-09 review).
+     */
+    private static void spanRuntime(){
+        // 2 cells: logical 70 = cell2[6] (capacity 64 per cell)
+        Run two = run("span big \"cell1 + cell2\"\n"
+            + "set i 70\n"
+            + "write 111 big i\n"
+            + "read x big i\n"
+            + "read y big 70\n"
+            + "read z big -1\n");
+        checkNum(two, "x", 111, "variable span read");
+        checkNum(two, "y", 111, "constant span read (folded to cell2[6])");
+        checkMem(two, "cell2", 6, 111, "span write must land in the second cell");
+        checkMem(two, "cell1", 6, 0, "the first cell must stay untouched");
+        checkNaN(two, "z", "a negative address reads nothing");
+
+        // 3 cells: 130 = 2*64 + 2 -> cell3[2]; N*C (192) is out of range and writes nowhere
+        Run three = run("span wide \"cell1 + cell2 + cell3\"\n"
+            + "write 7 wide 130\n"
+            + "read w wide 130\n"
+            + "write 9 wide 192\n"
+            + "read v wide 192\n");
+        checkMem(three, "cell3", 2, 7, "the third member of a span");
+        checkNum(three, "w", 7, "third member read");
+        checkMem(three, "cell1", 0, 0, "an address past N*C must not write cell1");
+        checkMem(three, "cell2", 0, 0, "an address past N*C must not write cell2");
+        checkNaN(three, "v", "an address past N*C reads nothing");
+
+        // The injected builtin pair (no emitter uses them yet) still has to run: its body expands
+        // a fixed 8 slots and clears the padding with `q >= n`, which the inline expansion never
+        // emits — a shape-only test cannot see whether that extra select works. The 6th argument
+        // is deliberately a real block (cell3) so a missing padding line would read/write it.
+        String eight = "cell1, cell2, cell3, 0, 0, 0, 0, 0";
+        Run builtin = run("set i 70\n"
+            + "set j 128\n"                      // exactly N*C: the first slot past the span
+            + "write 42 cell3 0\n"
+            + "funccall " + SpanAccess.BUILTIN_WRITE + " \"7, i, 64, 2, " + eight + "\" r1\n"
+            + "funccall " + SpanAccess.BUILTIN_READ + " \"i, 64, 2, " + eight + "\" r2\n"
+            + "funccall " + SpanAccess.BUILTIN_READ + " \"j, 64, 2, " + eight + "\" r3\n"
+            + "funccall " + SpanAccess.BUILTIN_WRITE + " \"9, j, 64, 2, " + eight + "\" r4\n");
+        checkMem(builtin, "cell2", 6, 7, "the injected spanwrite builtin must write through the builtin path");
+        checkNum(builtin, "r2", 7, "the injected spanread builtin must read it back");
+        checkNaN(builtin, "r3", "the builtin's `q >= n` padding must clear an out-of-range slot");
+        checkMem(builtin, "cell3", 0, 42, "the builtin's padding must drop an out-of-range write");
     }
 
     private static void chainRuntime(){

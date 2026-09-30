@@ -169,6 +169,18 @@ public final class ReconstructionMatrixTest{
         addCarrier("decl.array", "array buf cell1 0 8\nset x 1\n", "array buf cell1 0 8");
         // Span is carrier-only: the idiv/select expansion is not inferred back into this card.
         addCarrier("decl.span", "span big \"cell1 + cell2\"\nset x 1\n", "cell1 + cell2");
+        // Span + array over the span alias: `capacityOf` hands out N*C and arrayinit expands
+        // through SpanAccess. The expression-card fixture pins the *saved text* of an index
+        // expression (the idiv/select expansion) as it reaches the carrier — that text is what
+        // ExprHook.foldAll has to turn back into `x = buf[i]` on reopen.
+        addCarrier("decl.span.array", "span big \"cell1 + cell2\"\narray buf big 0 128\narrayinit buf 7 ~ ~ ~ ~ ~ ~ ~\n",
+            "array buf big 0 128");
+        addCarrier("decl.span.exprcard", "span big \"cell1 + cell2\"\narray buf big 0 128\n"
+            + "op idiv __ls_span_q i 64\nop mod __ls_span_r i 64\n"
+            + "select __ls_span_b equal __ls_span_q 0 cell1 0\n"
+            + "select __ls_span_b equal __ls_span_q 1 cell2 __ls_span_b\n"
+            + "read x __ls_span_b __ls_span_r\n",
+            "read x __ls_span_b __ls_span_r");
         addCarrier("decl.matrix", "matrix m cell1 0 2 2\nset x 1\n", "matrix m cell1 0 2 2");
         addCarrier("decl.arrayinit", "array buf cell1 0 8\narrayinit buf 1 2 3 ~ ~ ~ ~ ~\n", "arrayinit buf 1 2 3");
         addCarrier("decl.record", "record p hp team ~ ~ ~ ~ ~ ~\nset x 1\n", "record p hp team");

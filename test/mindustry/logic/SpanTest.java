@@ -1,8 +1,12 @@
 package mindustry.logic;
 
+import arc.struct.Seq;
 import logicsugar.LogicSugarMod;
 import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ExprHook;
+import logicsugar.assist.expr.ExprStatement;
+import logicsugar.assist.expr.SpanAccess;
 import mindustry.Vars;
 import mindustry.gen.Building;
 
@@ -14,10 +18,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Multi-cell span. Headless (no link resolver, or every member unresolved) assumes
- * capacity 64 only when every member name matches {@code cellN}. A linked build uses
- * {@code memoryCapacity} from the resolver; a world-cell that happens to be named
- * {@code cellN} is not treated as 64.
+ * Multi-cell span. Headless (no link resolver, or a member that resolves nowhere) falls back to the
+ * same name heuristic as the array side: {@code cellN} = 64, {@code bankN}/{@code worldN} = 512.
+ * A linked build always uses {@code memoryCapacity} from the resolver; a world-cell that happens to
+ * be named {@code cellN} is not treated as 64.
+ *
+ * <p>Also pins the reconstruction half (2026-09 review): an Expr card over a span must fold back
+ * (the whole reason the v5 saved text carries the {@code idiv}/{@code select} expansion).</p>
  *
  * <p>Variable addressing is {@code N+3} instructions (5 when N=2). {@code idiv} is
  * {@code Math.floor}, so a negative address yields {@code q <= -1} and matches none of
@@ -91,7 +98,20 @@ public final class SpanTest{
         expectFail("span big \"cell1\"\nset x 1\n", "one cell");
         expectFail("span big \"cell1 + + cell2\"\nset x 1\n", "empty term");
         expectFail("span big \"cell1 + 5\"\nset x 1\n", "not a name");
-        expectFail("span big \"bank1 + bank2\"\nset x 1\n", "headless bank");
+        // 无链接上下文时回落与数组侧同一口径的名字启发式（cellN=64 / bankN|worldN=512）。
+        // 2026-09 复核前这里只接受 cellN：bank span 在共享/换图后编译失败，而编译失败会让
+        // 编辑器回落 vanilla 视图，用户下次保存就把只存在于载体里的 span/array 卡丢掉了。
+        check(instructions("span b \"bank1 + bank2\"\nset x 1\n").equals(List.of("set x 1")),
+            "headless bank span must compile with the inferred 512 slots");
+        check(ArrayRegistry.compileRegistry(LAssembler.read("span b \"bank1 + bank2\"\nset x 1\n", true),
+            Collections.emptySet()).span("b").logicalCapacity == 1024, "bank span logical capacity");
+        check(ArrayRegistry.memoryCapacity("world3") == 512, "worldN inference");
+        expectFail("span b \"cell1 + bank1\"\nset x 1\n", "mixed inferred capacities");
+        expectFail("span b \"mem1 + mem2\"\nset x 1\n", "unknown link names");
+
+        expressionCardFoldRoundTrip();
+        foldChainWiring();
+        spanBuiltinsStayConsistent();
         try{
             compile(SPAN + "array buf big 0 8\ndatacall array_sum r \"buf\"\n");
             check(false, "array_sum on a span should fail");
@@ -136,6 +156,191 @@ public final class SpanTest{
     private static String compile(String sugar){
         return SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, null, null,
             SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
+    }
+
+    /**
+     * 表达式卡重建（2026-09 复核）：span 上的数组/矩阵下标必须能折回，否则用户写的
+     * {@code x = buf[i]} 保存一次就永久退化成前导段 + 一条 read 积木（载体里存的就是展开后的
+     * 文本）。无头环境搭不出 LCanvas，所以用 {@code ExprHook.foldAll} 实际调用的同一对函数
+     * （compile / rebuild + 安全门 {@code verifyArrayFold}）钉住——与 arrayTest 的折层口径一致。
+     */
+    private static void expressionCardFoldRoundTrip(){
+        withSpanRegistry(SPAN + "array buf big 0 128\n", () -> {
+            // 变量地址：前导段 + read 折回 buf[i]
+            List<ExprCompiler.Line> variable = ExprCompiler.compile("x", "buf[i]", name -> false, false);
+            check(variable.size() == 5, "span expression chain shape: " + textOf(variable));
+            check("x = buf[i]".equals(spanFoldBack(textOf(variable))),
+                "variable span read did not fold: " + spanFoldBack(textOf(variable)));
+            check(ExprCompiler.verifyArrayFold(variable, "x", "buf[i]", name -> false),
+                "variable span fold must pass the recompile gate");
+
+            // 常量地址：编译器把下标折成指向选中成员的一条 read
+            List<ExprCompiler.Line> constant = ExprCompiler.compile("x", "buf[64]", name -> false, false);
+            check(textOf(constant).equals("read x cell2 0"), "constant span read shape: " + textOf(constant));
+            check("x = buf[64]".equals(spanFoldBack(textOf(constant))),
+                "constant span read did not fold: " + spanFoldBack(textOf(constant)));
+            // 常量形态是单行，ExprStatement.write() 因此**不写**自描述标记；它必须真的能折回，
+            // 否则“没有标记”就是丢卡的第二种途径（复核报告的原始症状）。
+            check(ExprHook.foldsBackAlone(constant), "a single-line span read is expected to fold back alone");
+            check(ExprCompiler.verifyArrayFold(constant, "x", "buf[64]", name -> false),
+                "constant span fold must pass the recompile gate");
+
+            // 赋值链：前导段 + write 折回 buf[i] = 7
+            List<ExprCompiler.Line> assignment = ExprCompiler.compile("buf[i]", "7", name -> false, false);
+            check("buf[i] = 7".equals(spanFoldBack(textOf(assignment))), "span assignment did not fold");
+            check(ExprCompiler.verifyArrayFold(assignment, "buf[i]", "7", name -> false),
+                "span assignment must pass the recompile gate");
+            // 常量赋值：单行 write 也要折回（foldsBackAlone 同样依赖 span 视角）
+            check("buf[64] = 7".equals(spanFoldBack(textOf(ExprCompiler.compile("buf[64]", "7", name -> false, false)))),
+                "constant span assignment did not fold");
+
+            // 含临时量的复合表达式：read 的临时量靠同一张 folds 表替换掉
+            check("x = buf[i]+1".equals(spanFoldBack(textOf(ExprCompiler.compile("x", "buf[i] + 1", name -> false, false)))),
+                "span read inside a larger expression did not fold");
+            check("x = buf[i]*2".equals(spanFoldBack(textOf(ExprCompiler.compile("x", "buf[i] * 2", name -> false, false)))),
+                "span read with a tail op did not fold");
+            // 一张卡里两个 span（读+写）：两条链都要按 span 视角归属，再走 rebuildAssignment
+            check("buf[i] = buf[j]+1".equals(spanFoldBack(
+                    textOf(ExprCompiler.compile("buf[i]", "buf[j] + 1", name -> false, false)))),
+                "a card with two span accesses did not fold");
+        });
+        // 矩阵走同一条反解（逻辑地址 → m[i][j]）
+        withSpanRegistry(SPAN + "matrix m big 0 2 2\n", () -> {
+            check("x = m[i][j]".equals(spanFoldBack(textOf(ExprCompiler.compile("x", "m[i][j]", name -> false, false)))),
+                "span matrix fold");
+            check("x = m[0][1]".equals(spanFoldBack(textOf(ExprCompiler.compile("x", "m[0][1]", name -> false, false)))),
+                "constant span matrix fold");
+        });
+        // 成员上没有数组/矩阵时保持原样（纯 read 卡不受影响）
+        withSpanRegistry(SPAN, () -> {
+            check(spanFoldBack("read x cell1 3") == null, "a member read without an array over the span must not fold");
+            check(spanFoldBack("read x cell1 i") == null,
+                "a variable local address must not fold: buf[i] could reach into another cell");
+        });
+        // 逻辑地址越出所有数组区间时不折（折回去会让下次编译报错）
+        withSpanRegistry(SPAN + "array buf big 0 8\n", () -> {
+            check(spanFoldBack("read x cell2 0") == null, "an out-of-range logical address must not fold");
+        });
+        // 手写的假前导段（成员序列对不上任何 span 形状）不折
+        withSpanRegistry(SPAN + "array buf big 0 128\n", () -> {
+            String lookalike = "op idiv __ls_span_q i 64\nop mod __ls_span_r i 64\n"
+                + "select __ls_span_b equal __ls_span_q 0 cell9 0\n"
+                + "select __ls_span_b equal __ls_span_q 1 cell1 __ls_span_b\n"
+                + "read x __ls_span_b __ls_span_r";
+            check(spanFoldBack(lookalike) == null, "a hand-written idiv/select lookalike must not fold");
+        });
+    }
+
+    /**
+     * 折叠接线（两边必须同时成立，否则“保存一次就丢卡”）：
+     * {@code foldAll} 要把前导段 select 收进链（{@link ExprHook#foldsSpanPrologue}），
+     * 而 {@code unfoldAll} 仍要认为它没有对应的原版积木，从而保留表达式卡；链外读取检查
+     * 要忽略固定 scratch，否则画布上两张相邻的 span 表达式卡会互相判成外部读取。
+     */
+    private static void foldChainWiring(){
+        List<ExprCompiler.Line> ops = inSpanRegistry(SPAN + "array buf big 0 128\n",
+            () -> ExprCompiler.compile("x", "buf[i]", name -> false, false));
+        check(ExprHook.hasUnmappableLine(ops), "span prologue lines must keep the Expr card on unfold");
+        check(!ExprHook.keepsCard(ops), "a span chain is multi-line and must not be treated as a single-line card");
+        check(!ExprHook.foldsBackAlone(ops), "a prologue chain must not claim foldsBackAlone");
+        check(SpanAccess.scratchNames().contains(SpanAccess.BUILDING), "scratch names must include the building slot");
+
+        Seq<LStatement> prologue = LAssembler.read("select __ls_span_b equal __ls_span_q 0 cell1 0\n", true);
+        check(ExprHook.foldsSpanPrologue(prologue.get(0)), "span prologue select must be a fold chain line");
+        Seq<LStatement> userSelect = LAssembler.read("select out equal a b 1 2\n", true);
+        check(!ExprHook.foldsSpanPrologue(userSelect.get(0)), "a user select must not enter the fold chain");
+
+        // 两张相邻的 span 表达式卡（载体文本重开后的画布形态）。两张卡的文本必须在注册表
+        // 上下文里生成，否则 compile 会按“没有数组声明”退化成逻辑 read（read x buf i），
+        // 那正是这条检查要防的**展开后的**文本，测不到任何东西（2026-09 复核自己踩过）。
+        String twoCards = inSpanRegistry(SPAN + "array buf big 0 128\n", () -> SPAN + "array buf big 0 128\n"
+            + textOf(ExprCompiler.compile("x", "buf[i]", name -> false, false)) + "\n"
+            + textOf(ExprCompiler.compile("y", "buf[j]", name -> false, false)) + "\n");
+        Seq<LStatement> loaded = LAssembler.read(twoCards, true);
+        List<LStatement> statements = new ArrayList<>();
+        for(int i = 0; i < loaded.size; i++) statements.add(loaded.get(i));
+        check(statements.size() == 12, "the two-card fixture must parse into 12 statements, got " + statements.size());
+        check(!ExprHook.hasExternalReads(statements, 2, 7, ops),
+            "another span card's scratch must not count as an external read");
+        // 普通临时变量的链外读取仍然要拦住
+        List<LStatement> external = new ArrayList<>();
+        for(LStatement st : LAssembler.read("array buf cell1 0 8\nread _0 cell1 i\nop mul y _0 2\nset z _0\n", true)){
+            external.add(st);
+        }
+        check(external.size() == 4, "the external-reader fixture must parse into 4 statements");
+        List<ExprCompiler.Line> chain = new ArrayList<>();
+        chain.add(new ExprCompiler.ReadLine("_0", "cell1", "i"));
+        chain.add(new ExprCompiler.OpLine("mul", "y", "_0", "2"));
+        check(ExprHook.hasExternalReads(external, 1, 3, chain),
+            "a real temp read outside the chain must still block the fold");
+    }
+
+    /**
+     * 两个注入函数（{@code spanread}/{@code spanwrite}）不参与内联发射，但会并进本次编译的
+     * 函数库：编辑器侧的函数名校集必须与编译路径同口径，否则直接调用既会被标红又能编译通过。
+     */
+    private static void spanBuiltinsStayConsistent(){
+        ExprCompiler.FunctionChecker checker = ExprStatement.functionChecker();
+        check(checker.isFunction(SpanAccess.BUILTIN_READ), "span read builtin must be a known function in the editor");
+        check(checker.isFunction(SpanAccess.BUILTIN_WRITE), "span write builtin must be a known function in the editor");
+        check(SpanAccess.builtinFunctionNames().size() == 2, "span builtin name set");
+        check(!SpanAccess.builtinFunctionNames().contains(SpanAccess.BUILDING), "scratch names must not be builtins");
+
+        String product = executable(compile(SPAN
+            + "funccall " + SpanAccess.BUILTIN_READ + " \"0, 64, 2, cell1, cell2, 0, 0, 0, 0, 0, 0\" out\n"
+            + "printflush message1\n"));
+        check(!product.contains("funccall"), "the builtin call must be lowered, not left as sugar:\n" + product);
+        check(product.contains("op idiv") && product.contains("greaterThanEq"),
+            "the span read builtin body must reach the product:\n" + product);
+    }
+
+    /** 在一个只声明了这些声明的注册表上下文里跑；进出均恢复，不泄漏到其它检查。 */
+    private static <T> T inSpanRegistry(String declarations, java.util.function.Supplier<T> body){
+        ArrayRegistry registry = ArrayRegistry.compileRegistry(LAssembler.read(declarations, true), Collections.emptySet());
+        ArrayRegistry previous = ArrayRegistry.enter(registry);
+        try{
+            return body.get();
+        }finally{
+            ArrayRegistry.restore(previous);
+        }
+    }
+
+    private static void withSpanRegistry(String declarations, Runnable body){
+        inSpanRegistry(declarations, () -> {
+            body.run();
+            return null;
+        });
+    }
+
+    /** 折层判定：与 {@code ExprHook.foldAll} 同口径（write 结尾走 rebuildAssignment，否则 rebuild）。 */
+    private static String spanFoldBack(String chainText){
+        List<ExprCompiler.Line> ops = new ArrayList<>();
+        for(String raw : chainText.replace("\r\n", "\n").split("\n", -1)){
+            String line = raw.trim();
+            if(line.isEmpty()) continue;
+            String[] parts = line.split("\\s+");
+            if(line.startsWith("op ")){
+                ops.add(new ExprCompiler.OpLine(parts[1], parts[2], parts[3], parts[4]));
+            }else if(line.startsWith("select ") && parts.length == 7){
+                ops.add(new ExprCompiler.SelectLine(parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]));
+            }else if(line.startsWith("read ") && parts.length == 4){
+                ops.add(new ExprCompiler.ReadLine(parts[1], parts[2], parts[3]));
+            }else if(line.startsWith("write ") && parts.length == 4){
+                ops.add(new ExprCompiler.WriteLine(parts[1], parts[2], parts[3]));
+            }else{
+                check(false, "spanFoldBack cannot parse line: " + line);
+            }
+        }
+        if(!ops.isEmpty() && ops.get(ops.size() - 1) instanceof ExprCompiler.WriteLine){
+            String[] pair = ExprCompiler.rebuildAssignment(ops);
+            return pair == null ? null : pair[0] + " = " + pair[1];
+        }
+        String expr = ExprCompiler.rebuild(ops);
+        if(expr == null) return null;
+        String[] lines = chainText.trim().replace("\r\n", "\n").split("\n", -1);
+        String[] last = lines[lines.length - 1].trim().split("\\s+");
+        String dest = last[0].equals("op") ? last[2] : last[1];
+        return dest + " = " + expr;
     }
 
     /** Addressing and payload lines. Entry skip and carriers are not part of the count. */

@@ -17,6 +17,7 @@ import mindustry.logic.SugarStatements.SpanStatement;
 import mindustry.world.blocks.logic.MemoryBlock;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -113,9 +114,10 @@ public final class ArrayRegistry{
     }
 
     /**
-     * 无头、且没有任何已链接方块时，span 成员若全部是 {@code cellN}，按每格这个容量计算。
+     * 无头、且没有任何已链接方块时，{@code cellN} 成员按每格这个容量计算。
      * 真实链接打开时不用这个数：world-cell 的变量名也是 {@code cellN}，容量是链接上的
-     * {@code memoryCapacity}（512），不是 64。
+     * {@code memoryCapacity}（512），不是 64。{@code bankN}/{@code worldN} 由
+     * {@link #memoryCapacity} 给出 512（与数组侧同一口径）。
      */
     public static final int HEADLESS_CELL_CAPACITY = 64;
 
@@ -132,6 +134,26 @@ public final class ArrayRegistry{
             this.cellCapacity = cellCapacity;
             this.logicalCapacity = members.length * cellCapacity;
         }
+
+        /** @return 成员在地址顺序里的序号；不是本 span 的成员时返回 -1。 */
+        public int indexOfMember(String member){
+            if(member == null) return -1;
+            for(int i = 0; i < members.length; i++){
+                if(member.equals(members[i])) return i;
+            }
+            return -1;
+        }
+
+        /** @return 成员序列与每格容量是否完全一致（展开折叠反查用）。 */
+        public boolean matchesShape(List<String> candidate, int cellCapacity){
+            if(candidate == null || candidate.size() != members.length || this.cellCapacity != cellCapacity){
+                return false;
+            }
+            for(int i = 0; i < members.length; i++){
+                if(!members[i].equals(candidate.get(i))) return false;
+            }
+            return true;
+        }
     }
 
     private final Map<String, ArrayInfo> byName = new LinkedHashMap<>();
@@ -141,6 +163,31 @@ public final class ArrayRegistry{
     /** @return 按声明名查找的 span，未声明时为 null。 */
     public SpanInfo span(String name){
         return name == null ? null : spans.get(name);
+    }
+
+    /**
+     * 反查：以 {@code member} 为成员的 span（按声明顺序；同一内存块可以出现在多条 span 里）。
+     * 展开折叠要把「物理成员 + 格内地址」还原成「span 别名 + 逻辑地址」，这是唯一入口。
+     */
+    public List<SpanInfo> spansByMember(String member){
+        List<SpanInfo> result = new ArrayList<>();
+        if(member != null){
+            for(SpanInfo info : spans.values()){
+                if(info.indexOfMember(member) >= 0) result.add(info);
+            }
+        }
+        return result;
+    }
+
+    /** @return 成员序列与每格容量完全一致的那条 span；形状重复（无法判定是哪一条）时 null。 */
+    public SpanInfo spanByShape(List<String> members, int cellCapacity){
+        SpanInfo found = null;
+        for(SpanInfo info : spans.values()){
+            if(!info.matchesShape(members, cellCapacity)) continue;
+            if(found != null) return null;
+            found = info;
+        }
+        return found;
     }
 
     /** @return 按声明名查找的数组，未声明时为 null。 */
@@ -337,56 +384,65 @@ public final class ArrayRegistry{
 
     /**
      * 成员共享容量。已链接的方块用它自己的 {@code memoryCapacity}，混合容量直接拒绝；
-     * 特权内存块（world-cell）在非特权处理器上拒绝。没有任何链接信息时，仅当每个
-     * 成员都是 {@code cellN} 才假定 {@link #HEADLESS_CELL_CAPACITY}。
+     * 特权内存块（world-cell）在非特权处理器上拒绝。
+     *
+     * <p>解析不到链接的成员与数组侧同一口径：回落 {@link #memoryCapacity} 的名字启发式
+     * （{@code cellN}=64、{@code bankN}/{@code worldN}=512，大小写不敏感），猜不出来
+     * （既没链接、名字也不是这三种链接名）仍然是编译错误——span 的 {@code idiv}/{@code mod}
+     * 需要一个确定的每格容量，不能像数组容量检查那样“不限制”。</p>
+     *
+     * <p>2026-09 复核修正：这里原来只接受全 {@code cellN}，于是共享/换图后未链接的
+     * {@code bank1 + bank2} 直接编译失败；而载体验证失败会让编辑器回落 vanilla 视图，
+     * 用户下次保存就会丢掉只存在于载体里的 span/array 卡。对齐数组侧的猜测口径后，
+     * 这类程序仍能编译（容量标为 inferred，错误信息会说来自变量名）。</p>
      */
     private static int sharedCapacity(int index, String name, List<String> members){
         LinkResolver resolver = linkResolver();
         int capacity = -1;
-        boolean sawLink = false;
-        boolean[] linked = new boolean[members.size()];
+        boolean[] known = new boolean[members.size()];
         if(resolver != null){
             for(int m = 0; m < members.size(); m++){
                 String member = members.get(m);
                 int resolved = resolver.capacity(member);
                 if(resolved > 0){
-                    sawLink = true;
-                    linked[m] = true;
+                    known[m] = true;
                     if(resolver.privilegedMemory(member) && !resolver.processorPrivileged()){
                         throw error("span", index, "'" + name + "' member '" + member
                             + "' is a privileged memory block on a non-privileged processor");
                     }
-                    if(capacity < 0){
-                        capacity = resolved;
-                    }else if(capacity != resolved){
-                        throw error("span", index, "'" + name + "' members have mixed capacities ("
-                            + capacity + " and " + resolved + ")");
-                    }
+                    capacity = mergeCapacity(index, name, member, capacity, resolved, "linked", false);
                 }else if(resolved == 0){
                     throw error("span", index, "'" + name + "' member '" + member + "' is not a linked memory block");
                 }
             }
         }
-        if(sawLink){
-            for(int m = 0; m < members.size(); m++){
-                if(!linked[m]){
-                    throw error("span", index, "'" + name + "' member '" + members.get(m)
-                        + "' is not a linked memory block");
-                }
+        for(int m = 0; m < members.size(); m++){
+            if(known[m]) continue;
+            String member = members.get(m);
+            int guessed = memoryCapacity(member);
+            if(guessed <= 0){
+                throw error("span", index, "'" + name + "' capacity is unknown for member '" + member
+                    + "': it is not a linked memory block and not a cellN/bankN/worldN link name");
             }
-            return capacity;
+            capacity = mergeCapacity(index, name, member, capacity, guessed, "inferred from the variable name", true);
         }
-        for(String member : members){
-            if(!isCellLink(member)){
-                throw error("span", index, "'" + name + "' capacity is unknown without a linked memory block; '"
-                    + member + "' is not a cellN link (a headless build assumes " + HEADLESS_CELL_CAPACITY
-                    + " only when every member is cellN)");
-            }
-        }
-        return HEADLESS_CELL_CAPACITY;
+        return capacity;
     }
 
-    /** {@code cell} + 纯数字，大小写不敏感。bank/world 不算：无链接时不能猜它们的容量。 */
+    /**
+     * 合并一个成员的容量：与已确定值不同就是混合容量错误（也包括一个来自链接、另一个来自
+     * 名字猜测的情况——span 的每次访问都要除以同一个 C）。{@code source} 只影响错误措辞。
+     */
+    private static int mergeCapacity(int index, String name, String member, int current, int value,
+                                     String source, boolean guessed){
+        if(current < 0) return value;
+        if(current == value) return current;
+        throw error("span", index, "'" + name + "' members have mixed capacities: " + current + " and "
+            + value + " for '" + member + "'" + (guessed ? " (" + source + ")" : "")
+            + "; every member of a span must address the same number of slots");
+    }
+
+    /** {@code cellN}：链接名模式（world-cell 的变量名也是它）。span 的逻辑名不得与真实链接重名。 */
     private static boolean isCellLink(String memory){
         return prefixedDigits(memory, "cell");
     }
@@ -445,7 +501,7 @@ public final class ArrayRegistry{
     public static int memoryCapacity(String memory){
         if(memory == null) return -1;
         String name = memory.trim().toLowerCase(Locale.ROOT);
-        if(name.startsWith("cell")) return digitsOnly(name.substring(4)) ? 64 : -1;
+        if(name.startsWith("cell")) return digitsOnly(name.substring(4)) ? HEADLESS_CELL_CAPACITY : -1;
         if(name.startsWith("bank")) return digitsOnly(name.substring(4)) ? 512 : -1;
         if(name.startsWith("world")) return digitsOnly(name.substring(5)) ? 512 : -1;
         return -1;
@@ -561,9 +617,31 @@ public final class ArrayRegistry{
     /** 编译中的注册表优先，其次是已 enter 的上下文，最后才是画布。 */
     public static SpanInfo findSpan(String memory){
         if(memory == null) return null;
-        ArrayRegistry registry = compiling != null ? compiling : current;
-        if(registry == null) registry = active();
+        ArrayRegistry registry = contextRegistry();
         return registry == null ? null : registry.spans.get(memory);
+    }
+
+    /**
+     * 反查：成员名 → 拥有该成员的 span（展开折叠用；取不到上下文时为空表）。
+     * 返回多条时调用方必须按「不可判定」处理——多条 span 能解释同一段展开时
+     * 折回哪一个别名并不唯一（最终仍有重编译比对兜底）。
+     */
+    public static List<SpanInfo> findSpansByMember(String member){
+        if(member == null) return Collections.emptyList();
+        ArrayRegistry registry = contextRegistry();
+        return registry == null ? Collections.emptyList() : registry.spansByMember(member);
+    }
+
+    /** 反查：成员序列 + 每格容量 → span（展开折叠用；形状重复或没有上下文时 null）。 */
+    public static SpanInfo findSpanByShape(List<String> members, int cellCapacity){
+        ArrayRegistry registry = contextRegistry();
+        return registry == null ? null : registry.spanByShape(members, cellCapacity);
+    }
+
+    /** 编译中 → 已 enter → 画布探测；都取不到返回 null。 */
+    private static ArrayRegistry contextRegistry(){
+        ArrayRegistry registry = compiling != null ? compiling : current;
+        return registry != null ? registry : canvasRegistry();
     }
 
     /** {@link #capacityOf} 的数值来源。 */
@@ -571,15 +649,24 @@ public final class ArrayRegistry{
         SpanInfo span = findSpan(memory);
         if(span != null){
             LinkResolver resolver = linkResolver();
-            if(resolver != null && span.members.length > 0 && resolver.capacity(span.members[0]) > 0){
+            if(resolver != null && allMembersLinked(resolver, span)){
                 return CapacitySource.linked;
             }
+            // 自测/无链接上下文、或只有部分成员能解析时，容量可能来自名字启发式：
+            // 宁可按“推断值”报，也不要让用户以为它是链接上读到的真实容量
             return CapacitySource.inferred;
         }
         int resolved = resolvedCapacity(memory);
         if(resolved > 0) return CapacitySource.linked;
         if(resolved == 0) return CapacitySource.notMemory;
         return memoryCapacity(memory) > 0 ? CapacitySource.inferred : CapacitySource.unknown;
+    }
+
+    private static boolean allMembersLinked(LinkResolver resolver, SpanInfo span){
+        for(String member : span.members){
+            if(resolver.capacity(member) <= 0) return false;
+        }
+        return span.members.length > 0;
     }
 
     /** 容量越界错误：解析到真实链接就直说，猜的要标明是推断值。 */

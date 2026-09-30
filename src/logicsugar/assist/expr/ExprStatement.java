@@ -101,6 +101,9 @@ public class ExprStatement extends LStatement{
         // F2: 数据模块的表达式函数名（sum/avg/count/... 以及 record 成员等）在编辑器里合法
         names.addAll(ExprIntrinsics.intrinsicNames());
         names.addAll(logicsugar.assist.data.DataModules.builtinFunctionNames());
+        // span 的两个注入函数与编译器同口径：它们会并进本次编译的函数库，
+        // 编辑器不能把它们当未定义函数（编辑与提交的行为必须一致）。
+        names.addAll(SpanAccess.builtinFunctionNames());
         SugarCanvas canvas = SugarCanvas.current();
         if(canvas != null && canvas.statements != null){
             for(arc.scene.Element child : canvas.statements.getChildren()){

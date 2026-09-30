@@ -25,6 +25,7 @@ import logicsugar.assist.data.DataModules;
 import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprIntrinsics;
+import logicsugar.assist.expr.SpanAccess;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -1191,8 +1192,10 @@ public final class SugarCompiler{
             if(statement instanceof FuncDefStatement def) local.add(def.name);
         }
         SugarFunctions.LibraryIndex library = SugarFunctions.library();
-        // F2: 数据模块注入的内置函数名（编辑器里对内置 funccall 不标红）
-        Set<String> builtinNames = DataModules.builtinFunctionNames();
+        // F2: 注入的内置函数名（数据模块 + span 寻址），编辑器里对内置 funccall 不标红。
+        // span 的两个函数不参与发射，但会并进本次编译的函数库，编辑器判“未定义”必须同口径。
+        Set<String> builtinNames = new HashSet<>(DataModules.builtinFunctionNames());
+        builtinNames.addAll(SpanAccess.builtinFunctionNames());
         for(int i = 0; i < statements.size; i++){
             if(statements.get(i) instanceof FuncCallStatement call){
                 if(!local.contains(call.name)

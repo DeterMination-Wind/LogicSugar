@@ -3,7 +3,11 @@ package logicsugar.assist.expr;
 import logicsugar.assist.expr.ArrayRegistry.SpanInfo;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 唯一的 span 寻址展开。变量逻辑地址是 {@code idiv}/{@code mod}、{@code N} 条
@@ -18,6 +22,19 @@ import java.util.List;
  * {@code SugarFunctions} 报编译错误，而不是只打到第一格。{@code spanread}/{@code spanwrite}
  * 是同一套展开的注入函数，给以后的批量算法用，不替换已有函数体。{@code N} 在函数里是参数，
  * 所以固定展开 8 格后再用一条 {@code q >= n} 把补位槽清掉。
+ *
+ * <p><b>不变量（改任何发射点前先读）：前导段与它的 read/write 必须在产物里紧邻。</b>
+ * {@link #QUOTIENT}/{@link #SLOT}/{@link #BUILDING} 是程序级固定名，不像表达式临时变量
+ * （{@code _0, _1, …}）那样会被 {@code renameConditionTemp}/{@code renameReturnTemp}/
+ * {@code renameDataTemp} 改名——条件、函数体、数据内联里的 span 展开共用同一组 scratch。
+ * 目前所有发射点都是「先发射完整前导、紧接着发射 read/write」（{@code ExprCompiler} 的
+ * 下标/赋值路径、{@code SugarFunctions} 的 read/write 与条件/返回/实参路径），所以这些
+ * scratch 不需要跨语句存活；任何把 {@code relocate()}/{@code appendRead()} 的返回值
+ * 延后使用的改法会让两次展开互相覆盖。{@code spanTest} 把产物形状钉在固定名上，
+ * 改名字是显式的、测试可见的决定。
+ *
+ * <p>{@link #scratchNames()} 是这三组固定名的集合：折叠链的“链外读取”检查要把它们排除，
+ * 否则画布上两张 span 表达式卡会把对方的 scratch 当成外部读取，谁都折不回来。
  */
 public final class SpanAccess{
     public static final String BUILTIN_READ = "__ls_builtin_spanread";
@@ -27,7 +44,25 @@ public final class SpanAccess{
     public static final String SLOT = "__ls_span_r";
     public static final String BUILDING = "__ls_span_b";
 
+    private static final Set<String> SCRATCH_NAMES = Collections.unmodifiableSet(
+        new LinkedHashSet<>(Arrays.asList(QUOTIENT, SLOT, BUILDING)));
+    private static final Set<String> BUILTIN_NAMES = Collections.unmodifiableSet(
+        new LinkedHashSet<>(Arrays.asList(BUILTIN_READ, BUILTIN_WRITE)));
+
     private SpanAccess(){}
+
+    /** 前导段使用的固定 scratch 变量（折叠的链外读取检查必须忽略它们）。 */
+    public static Set<String> scratchNames(){
+        return SCRATCH_NAMES;
+    }
+
+    /**
+     * 两个注入函数的名字。它们不参与产物发射（内联展开才是实现），但会并进本次编译的
+     * 函数库，因此编辑器侧的“未定义函数”标红必须把它们当内置函数，不能与编译路径不一致。
+     */
+    public static Set<String> builtinFunctionNames(){
+        return BUILTIN_NAMES;
+    }
 
     public static boolean isSpan(String memory){
         return ArrayRegistry.findSpan(memory) != null;
