@@ -160,6 +160,8 @@ public final class ReconstructionMatrixTest{
 
     private static void addDeclarationFixtures(){
         addCarrier("decl.array", "array buf cell1 0 8\nset x 1\n", "array buf cell1 0 8");
+        // Span is carrier-only: the idiv/select expansion is not inferred back into this card.
+        addCarrier("decl.span", "span big \"cell1 + cell2\"\nset x 1\n", "cell1 + cell2");
         addCarrier("decl.matrix", "matrix m cell1 0 2 2\nset x 1\n", "matrix m cell1 0 2 2");
         addCarrier("decl.arrayinit", "array buf cell1 0 8\narrayinit buf 1 2 3 ~ ~ ~ ~ ~\n", "arrayinit buf 1 2 3");
         addCarrier("decl.record", "record p hp team ~ ~ ~ ~ ~ ~\nset x 1\n", "record p hp team");

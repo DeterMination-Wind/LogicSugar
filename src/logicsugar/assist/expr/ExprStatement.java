@@ -75,7 +75,14 @@ public class ExprStatement extends LStatement{
         }
         for(int i = 0; i < lines.size(); i++){
             if(i > 0) builder.append("\n");
-            builder.append(lines.get(i).toText());
+            ExprCompiler.Line line = lines.get(i);
+            if(line instanceof ExprCompiler.ReadLine read){
+                builder.append(SpanAccess.renderRead(read.dest, read.a, read.b));
+            }else if(line instanceof ExprCompiler.WriteLine write){
+                builder.append(SpanAccess.renderWrite(write.value, write.memory, write.address));
+            }else{
+                builder.append(line.toText());
+            }
         }
         // 单行卡片额外写一行自描述标记（注释）：让重开/撤销能把这一行还原成卡片而不是
         // 普通积木。多行卡片由 foldAll 的 >= 2 门槛折回，不需要标记（那会改变语句条数）；

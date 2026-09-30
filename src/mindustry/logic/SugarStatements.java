@@ -20,6 +20,7 @@ import mindustry.ui.Styles;
 import logicsugar.assist.SugarTooltip;
 import logicsugar.assist.expr.ExpressionEditor;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public final class SugarStatements{
@@ -74,6 +75,7 @@ public final class SugarStatements{
         LAssembler.customParsers.put("array", SugarStatements::parseArray);
         LAssembler.customParsers.put("matrix", SugarStatements::parseMatrix);
         LAssembler.customParsers.put("arrayinit", SugarStatements::parseArrayInit);
+        LAssembler.customParsers.put("span", SugarStatements::parseSpan);
 
         // Read-only compatibility for markers produced by the first development version.
         LAssembler.customParsers.put("forend", tokens -> new SugarStatements.BlockEndStatement());
@@ -786,6 +788,72 @@ public final class SugarStatements{
         }
     }
 
+    /**
+     * 多格内存：编辑器里写成表达式 {@code mem = cell1 + cell3 + cell2}。
+     * {@code +} 只表示按书写顺序拼接，第一项是地址 0。个数不限。
+     * 卡片不产指令；读写由 {@link logicsugar.assist.expr.SpanAccess} 展开。
+     *
+     * <p>存档仍是定长 3 token {@code span <name> "<expr>"}。整段表达式放进引号，
+     * 因为 LParser 复用静态 token 数组，可变个数的 cell 名会把上一行的残值读进来。</p>
+     */
+    public static class SpanStatement extends SugarStatement{
+        /** 合并后的内存名。read/write 和数组的 memory 都填它。 */
+        public String name = "mem";
+        /** 成员求和式，例如 {@code cell1 + cell3 + cell2}。 */
+        public String expr = "cell1 + cell2";
+
+        @Override
+        public void build(Table table){
+            table.add(text("span.card", "Mem")).self(c -> hint(c, "span.name"));
+            field(table, name, value -> name = value).width(70f);
+            table.add(" = ").padLeft(4f);
+            table.add(new ExpressionEditor(expr, text("span.expr.hint", "cell1 + cell2"), value -> expr = value))
+                .growX().padLeft(4f);
+        }
+
+        @Override public String name(){ return cardText("span.card", "Mem"); }
+        @Override public String typeName(){ return "Span"; }
+        @Override public LCategory category(){ return arrayAlgo; }
+
+        @Override
+        public void write(StringBuilder out){
+            out.append("span ").append(optional(name == null ? "" : name)).append(" \"")
+                .append(escapeQuoted(expr == null ? "" : expr)).append('"');
+        }
+
+        /**
+         * 把 {@code cell1 + cell3 + cell2} 拆成地址顺序。空项、非名字、其它运算符都拒绝。
+         * 不足两格由登记处拒绝，这里只负责拆式子。
+         */
+        public static List<String> membersOf(String expr){
+            String text = expr == null ? "" : expr.trim();
+            if(text.isEmpty()){
+                throw new IllegalArgumentException("needs a sum of cell names, like cell1 + cell2");
+            }
+            String[] parts = text.split("\\+", -1);
+            List<String> members = new ArrayList<>(parts.length);
+            for(String part : parts){
+                String raw = part.trim();
+                if(raw.isEmpty() || !spanIdentifier(raw)){
+                    throw new IllegalArgumentException("'" + text + "' must be cell names joined by +, like cell1 + cell3 + cell2");
+                }
+                members.add(raw);
+            }
+            return members;
+        }
+
+        private static boolean spanIdentifier(String raw){
+            if(raw.isEmpty()) return false;
+            char first = raw.charAt(0);
+            if(!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || first == '_')) return false;
+            for(int i = 1; i < raw.length(); i++){
+                char c = raw.charAt(i);
+                if(!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+            }
+            return true;
+        }
+    }
+
     /** 数组声明卡：把内存块的一段地址登记为命名数组（纯编译期元数据）。卡片本身
      *  不产出任何 mlog 行（lower 时剥离，编译产物保持纯原版指令）；表达式下标
      *  {@code buf[i]} / {@code buf[i] = x} 经 {@link logicsugar.assist.expr.ArrayRegistry}
@@ -1123,6 +1191,19 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
     public static LStatement parseReturn(String[] tokens){
         ReturnStatement result = new ReturnStatement();
         result.expr = unescapeQuoted(stripQuotes(tokens[1]));
+        return result;
+    }
+
+    public static LStatement parseSpan(String[] tokens){
+        SpanStatement result = new SpanStatement();
+        result.name = optionalValue(tokens[1]);
+        if(result.name.isEmpty()){
+            throw new IllegalArgumentException("Invalid span statement: missing name");
+        }
+        if(tokens.length < 3){
+            throw new IllegalArgumentException("Invalid span statement: missing cell sum");
+        }
+        result.expr = unescapeQuoted(stripQuotes(tokens[2]));
         return result;
     }
 
