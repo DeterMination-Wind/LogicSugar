@@ -133,6 +133,16 @@ Logic Sugar 的部分设计与实现受益于以下项目，感谢这些作者�
 - [logic-assist](https://github.com/nosbhghggg/logic-assist)（GPL-3.0）—— 跳转线按目标着色的思路来源，本项目最初基于此 Mod 开发
 - [MI2-Utilities](https://github.com/BlackDeluxeCat/MI2-Utilities)（GPL-3.0）logic-assist 的致谢中包含了 Mi2U ~虽然我也不知道为什么~
 
+## 负责任地使用 AI
+
+本项目除 README 和部分 Doc 外，几乎全部由 AI 生成。秉持*负责任地使用 AI* 的原则，我简要说明一下项目的历史：
+
+1. 本项目最早由 Claude Opus 4.6 开发。当时 Claude 订阅出现 Bug，Opus 4.6 因而可免费使用，我也借此机会把自己的想法实现成了这个 demo。
+2. 在后续开发中，我不断从自己的 Mlog 编写经历中，寻找 Mod 能让写 Mlog 更便捷的地方。显示方面，目前的 QoL Mod 已接近成熟；但在编译器方面，似乎还没有一个能在游戏内实时查看的编译器可用。
+3. 与本项目一同诞生的还有 `MlogStudio`、`MlogSugar` 等暂不维护的项目。以 `MlogStudio` 为例，我在制作过程中意识到，要在*游戏外*的 Mlog 编辑器中实现实时预览非常困难，这促使我转向游戏内编译器的开发。
+4. 这个项目最初只想实现 `For` / `While` 循环，当时的最终目标也只是 `Func` 功能。但后来我发现它对逻辑编写极为便利，于是开始制作一些更高级、更常用的积木/小功能。
+5. 如果你好奇的话：本项目先后使用 `Opus 4.6` -> `GPT-5.5` -> `GPT-5.6-Sol / Luna` -> `DeepSeek V4(.1) Flash` 开发。在 `DeepSeek Harness` 发布后，我学习了其出色的 Doc 架构，并改造了 `LogicSugar`，使 `DeepSeek V4.1 Flash` 的能力即可满足项目开发需求。如果你也想用 AI 参与开发，那当然很好。但请始终记住：**负责任地使用 AI**，你需要对自己的代码负责。因此，我建议维护者在 Push 代码前，先用单独的 Subagent Review 一遍，这可能会发现不少低级问题。
+
 ## 许可证
 
 本项目基于 [GNU GPL v3](LICENSE) 许可证开源。
