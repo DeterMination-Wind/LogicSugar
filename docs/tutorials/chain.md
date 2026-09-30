@@ -1,6 +1,6 @@
 # 链表（chain）
 
-> 返回 [教程目录](README.md) · 上一章 [小顶堆](heap.md)
+> 返回 [教程目录](README.md) · 上一章 [小顶堆](heap.md) · 下一章 [合并内存](span.md)
 
 ## 什么时候用
 

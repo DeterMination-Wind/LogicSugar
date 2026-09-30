@@ -212,6 +212,38 @@ dynamic-`@counter` triage treats only a dispatch `recognizeStride` accepts as kn
 - Run `.\gradlew.bat reconstructionTest reconstructionMatrixTest decompileTest` before
   claiming the feature complete.
 
+### Multi-cell `span`: a third recovery layer (the editor fold, not inference)
+
+A `span` card lives only in the carrier, and so does the saved text of an index expression over
+it: `x = buf[i]` is written as `op idiv` / `op mod` / N×`select` / `read`/`write` (a constant
+index folds to a one-line `read x cell1 3` on the member block). Decompiler inference
+deliberately does not invent span cards, so the only thing that can turn that text back into the
+card the user edited is `ExprHook.foldAll`: the carrier text *is* the program's sugar, so a card
+that does not fold back is silently replaced by raw blocks on every reopen (reported 2026-09).
+All three parts are load-bearing and pinned by `spanTest`:
+
+- `ExprCompiler.resolveArrayFolds` has a **span view** that re-expresses memory/address as
+  (span alias, logical address): member + literal local address → `k*C + local`, or the
+  prologue's member list + per-cell capacity via `ArrayRegistry.findSpanByShape` with the `idiv`
+  dividend (`q*C + r`) as the logical address. Prologue lines are marked `CONSUMED` so they
+  vanish with the fold. Two spans explaining the same expansion ⇒ null ("fold less, never fold
+  wrong"); `verifyArrayFold` still decides every surviving candidate by recompiling it.
+- `ExprHook.foldsSpanPrologue` lets the prologue `select` lines into the fold chain, but
+  `statementFor` must keep returning null for `SelectLine`: `unfoldAll` keeps a chain with
+  unmappable lines as an Expr card (`hasUnmappableLine`), which is what keeps the canvas card and
+  the saved text consistent.
+- `ExprHook.hasExternalReads` must exclude `SpanAccess.scratchNames()`. Those three names are
+  program-level scratch that every expansion rewrites right before its own access, so another
+  span card mentioning them is not an external read — without the exclusion two adjacent span
+  cards refuse each other's fold and neither ever comes back.
+
+The constant form is a trap of its own: `ExprStatement.write()` skips the `# @ls-expr-card`
+marker whenever `foldsBackAlone` is true, i.e. it trusts "foldAll's array gate can fold this
+alone". For a span read that is only true because the span view exists, so `spanTest` pins
+`foldsBackAlone` and `rebuild` together. Runtime coverage is `dataRuntimeTest.spanRuntime`: the
+expansion must select a **building object** (a numeric-only `select` would break every span
+access in game while every shape-only test still passed).
+
 **Text import is another way into the same pipeline.** `SugarCanvas.load` runs
 `ExprTextImport.plan` first: a line that vanilla `LParser` cannot dispatch (`x = buf[3]`,
 `buf[i] = 5`, `result = (a + b) * 2`) is swapped for a unique `set __ls_import_N 0` sentinel

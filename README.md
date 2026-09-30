@@ -53,6 +53,7 @@ Write common control flow as blocks; on save, everything compiles to plain vanil
 | --- | --- |
 | `array` | Standard array |
 | `matrix` | 2-D array |
+| `span` | Combined memory (several blocks as one address space) |
 | `record` | Record |
 | `stack` | Stack |
 | `queue` | Queue |

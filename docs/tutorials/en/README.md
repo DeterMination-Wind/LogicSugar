@@ -23,6 +23,7 @@ Each chapter covers one structure: when to use it, the declaration card, a funct
 | List | compact sequence with index insert/remove | `vector_push_back` `vector_at` `vector_erase` | [list.md](list.md) |
 | Min-heap | priority queue that peels the minimum | `heap_push` `heap_pop` | [heap.md](heap.md) |
 | Chain | free list plus node links | `chain_init` `chain_alloc` `chain_get` `chain_link` | [chain.md](chain.md) |
+| Combined memory | several equal blocks as one logical address space | `read x mem i`, `buf[i]` (array memory = mem) | [span.md](span.md) |
 
 > Note: the editor menus and cards use the new names (e.g. `stack_push`); the old short names (e.g. `spush`) still parse in existing saves, and new cards are always written with the new names.
 
@@ -32,7 +33,7 @@ See the selection guide below if you are not sure what these structures are.
 
 ### Declaration cards are compile-time metadata
 
-The declaration cards array / matrix / record / stack / queue / deque / bitset / map / uset / list / heap / chain do not emit any mlog lines. They tell LogicSugar which name maps to which memory range and which compile-time facts hold. The product contains only vanilla instructions such as op / read / write / jump / funccall / sensor / end.
+The declaration cards array / matrix / span / record / stack / queue / deque / bitset / map / uset / list / heap / chain do not emit any mlog lines. They tell LogicSugar which name maps to which memory range and which compile-time facts hold. The product contains only vanilla instructions such as op / read / write / jump / funccall / sensor / end.
 
 Consequences:
 
@@ -54,6 +55,8 @@ The memory field names the memory block variable that holds the data. Capacity c
 base is the starting physical address. size / capacity / words / rows x cols is the occupied length. base + length beyond the capacity is a compile error. A resolved link always wins (so world-cell and modded memory blocks are judged by their real slot count); only when no link can be resolved at all does the guessed table above apply, and the error then says the capacity is `inferred from the variable name`.
 
 All array/matrix/record/container memory accesses stay inside that range. Overlaps between different modules are not rejected automatically; see the caveats in each chapter.
+
+The memory name can also be a `span` (several blocks combined into one logical address space): in `array buf big 0 128` the memory is the span name `big`, the `buf[i]` sugar keeps working, and `SpanAccess` converts the access into "which block + slot". Its logical capacity is `N * C`, and the per-block capacity of the span's own members uses the table above too — see [span.md](span.md).
 
 ### Names and reserved prefix
 
@@ -139,6 +142,7 @@ Notes:
 | random access to numeric slots | [array.md](array.md) |
 | whole-array sum, sort, search | [array-bulk.md](array-bulk.md) |
 | a 2-D table (grid, map, matrix math) | [matrix.md](matrix.md) |
+| more data than one block holds, as one address range | [span.md](span.md) |
 | to pack related values into an object | [record.md](record.md) |
 | LIFO (undo, DFS, bracket matching) | [stack.md](stack.md) |
 | FIFO (task queue, BFS) | [queue.md](queue.md) |

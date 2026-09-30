@@ -72,10 +72,13 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 ## 表达式与恢复
 
 ### 容量解析（capacity resolution）
-声明卡的容量上限口径：`ArrayRegistry.capacityOf(memory)` 先向当前会话的处理器解析该变量链接到的方块（`LinkResolver`；mod 启动时用 `ArrayRegistry.setLinkResolverProvider(ArrayRegistry::processorLinks)` 装延迟提供者，按需从 `SugarLogicDialog.executor` 取），命中 `MemoryBlock` 就返回真实 `memoryCapacity`；解析到方块但不是内存块返回 0（确定不限制）；完全解析不到（无处理器上下文、变量缺失）才回落到按名字猜的 `memoryCapacity(String)`。三态由 `CapacitySource` 区分（`linked` / `notMemory` / `inferred` / `unknown`），只有 `inferred` 的错误信息会标注是猜的。函数库会话与无头自测没有处理器，因此回落分支必须保留；由 `arrayTest` 的 `resolvedMemoryCapacity` 钉住。
+声明卡的容量上限口径：`ArrayRegistry.capacityOf(memory)` 先向当前会话的处理器解析该变量链接到的方块（`LinkResolver`；mod 启动时用 `ArrayRegistry.setLinkResolverProvider(ArrayRegistry::processorLinks)` 装延迟提供者，按需从 `SugarLogicDialog.executor` 取），命中 `MemoryBlock` 就返回真实 `memoryCapacity`；解析到方块但不是内存块返回 0（确定不限制）；完全解析不到（无处理器上下文、变量缺失）才回落到按名字猜的 `memoryCapacity(String)`。三态由 `CapacitySource` 区分（`linked` / `notMemory` / `inferred` / `unknown`），只有 `inferred` 的错误信息会标注是猜的。函数库会话与无头自测没有处理器，因此回落分支必须保留；由 `arrayTest` 的 `resolvedMemoryCapacity` 钉住。span 名返回逻辑容量 `N * C`（`SpanInfo.logicalCapacity`）；每格容量 C 对未链接的成员走同一张名字表（即 `inferred`），只有全部成员都解析到链接时 `capacitySource(span)` 才是 `linked`——所以它比数组多一条硬约束：猜不出来（既无链接、名字也不像链接名）就不能编译，因为 `idiv`/`mod` 需要确定的除数。
 
 ### 数组（array）
 `array` 声明卡定义的纯 sugar 抽象：把内存块变量（如 `cell1`）上 `[base, base+size)` 的一段物理地址登记为命名数组。卡片本身不产出任何 mlog 行（lower 时剥离，产物保持纯原版指令）；表达式下标 `buf[i]` / 下标赋值 `buf[i] = x` 在编译期查 `ArrayRegistry` 换算物理地址（= base + 逻辑下标）后发射原版 `read` / `write`。v0 限制：base/size 仅接受整数字面量，重名与同内存块区间重叠是编译错误，数组名不得与函数重名。编辑器折叠只在注册表把 `read`/`write` 的内存块命中到已声明数组时把该行折回下标表达式——纯原版 mlog（无声明卡）不做数组推断恢复；字面量下标越界是编译错误，变量下标不做静态越界检查，运行时保持 v160.1 的内存语义（越界读返回 null）。由 `arrayTest` 钉住。
+
+### 多格 span（span）
+`span <name> "<cell1 + cell3 + cell2>"` 声明卡：把若干**等容量**内存块按书写顺序拼成一段逻辑地址空间，逻辑容量 `N * C`（C = 每格容量）。卡片不产指令；这个名字可以直接 `read`/`write`，也可以作为数组/矩阵/容器声明卡的 `memory`（`capacityOf(span 名)` 交给它们做区间检查）。变量逻辑地址在 `SpanAccess` 一处展开成 `idiv`/`mod` + N 条 `select` 挑块 + 一条 `read`/`write`（`N+3` 条），常量地址折叠成指向选中成员的一条指令；前导段的 `__ls_span_q/r/b` 是程序级固定 scratch，**与它对应的 read/write 必须紧邻发射**（见架构文档的不变量）。恢复只走载体：反编译器不从 `idiv`/`select` 推断 span 卡；编辑器侧由 `ExprHook.foldAll` + `ExprCompiler` 的 span 视角把展开文本折回 `buf[i]`（安全门仍是 `verifyArrayFold` 重编译比对）。由 `spanTest`、`dataRuntimeTest` 与 `reconstructionMatrixTest` 的 `decl.span*` fixture 钉住。
 
 ### 短路求值（short-circuit）
 `&&` / `||` 按控制流顺序求值：右侧只在需要时执行。`ShortCircuitCompiler` 把短路谓词下降为条件 `jump`，不产生先行求值的布尔临时变量。

@@ -23,6 +23,8 @@ array <name> <memory> <base> <size>
 
 示例：`array buf cell1 0 8` 表示 `buf[0]..buf[7]` 对应 `cell1` 的地址 `0..7`。
 
+`memory` 也可以填一个 `span` 名（多块内存拼成的逻辑地址空间）：`span big "cell1 + cell2"` + `array buf big 0 128` 时 `buf[i]` 照常用，容量上限是 `N*C`，地址由 `SpanAccess` 换算成「哪一块 + 格内偏移」；详见 [合并内存（span）](span.md)。
+
 声明卡只是编译期元数据，不产出任何 mlog 行。
 
 ## 表达式写法

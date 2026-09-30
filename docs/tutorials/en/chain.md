@@ -1,6 +1,6 @@
 # Chain (chain)
 
-> [Tutorial index](README.md) | Previous: [Min-heap](heap.md) | Chinese: [../chain.md](../chain.md)
+> [Tutorial index](README.md) | Previous: [Min-heap](heap.md) | Next: [Combined memory](span.md) | Chinese: [../chain.md](../chain.md)
 
 ## When to use
 

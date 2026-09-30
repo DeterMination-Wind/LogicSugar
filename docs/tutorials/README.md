@@ -23,6 +23,7 @@
 | 列表 | 紧凑的顺序表，可按下标插入/删除 | `vector_push_back` `vector_at` `vector_erase` | [list.md](list.md) |
 | 小顶堆 | 反复取最小值的优先队列 | `heap_push` `heap_pop` | [heap.md](heap.md) |
 | 链表 | 空闲链加节点链接 | `chain_init` `chain_alloc` `chain_get` `chain_link` | [chain.md](chain.md) |
+| 合并内存 | 把多块等容量内存拼成一段逻辑地址 | `read x mem i`、`buf[i]`（数组的内存填 mem） | [span.md](span.md) |
 
 > 提示：编辑器菜单与积木显示的是新名字（如 `stack_push`）；旧短名（如 `spush`）仍能解析已有存档，但新写的卡片一律用新名。
 
@@ -32,7 +33,7 @@
 
 ### 声明卡只是编译期元数据
 
-array / matrix / record / stack / queue / deque / bitset / map / uset / list / heap / chain 这些声明卡不产出任何 mlog 行。它们的作用是把「哪个名字对应哪块内存 / 哪些编译期信息」告诉 LogicSugar；真正写进处理器的只有 `op` / `read` / `write` / `jump` / `funccall` / `sensor` / `end` 等原版指令。
+array / matrix / span / record / stack / queue / deque / bitset / map / uset / list / heap / chain 这些声明卡不产出任何 mlog 行。它们的作用是把「哪个名字对应哪块内存 / 哪些编译期信息」告诉 LogicSugar；真正写进处理器的只有 `op` / `read` / `write` / `jump` / `funccall` / `sensor` / `end` 等原版指令。
 
 因此：
 
@@ -54,6 +55,8 @@ array / matrix / record / stack / queue / deque / bitset / map / uset / list / h
 `base` 是起始物理地址；`size` / `capacity` / `words` / `rows`×`cols` 是占用长度。`base + 占用长度` 超过容量时编译期报错。能解析到链接就以真实容量为准（所以 world-cell、模组内存块按它们的实际格子数判断）；只有完全解析不到链接时才按上表的猜测值检查，且错误信息会写明容量是 `inferred from the variable name`（推断值）。
 
 数组/矩阵/记录/容器的所有内存读写都会落在这段区间内；不同模块之间的区间重叠不会被自动拦截（见每章的使用须知）。
+
+这些名字也可以是一个 `span`（多块内存拼成的逻辑地址空间）：`array buf big 0 128` 里的 `big` 就是 span 名，下标糖 `buf[i]` 照常用，内存读写由 `SpanAccess` 换算成「哪一块 + 格内偏移」，逻辑容量是 `N * C`；span 成员自己的每格容量也走上面这张表（见 [span.md](span.md)）。
 
 ### 名字与保留前缀
 
@@ -139,6 +142,7 @@ chain c        -> __ls_chn_c_head / _free
 | 按下标随机读写一段数字 | [array.md](array.md) |
 | 对整段数组求和、排序、查找 | [array-bulk.md](array-bulk.md) |
 | 二维表（网格、地图、矩阵乘法） | [matrix.md](matrix.md) |
+| 一块内存装不下、想把多块拼成一段地址 | [span.md](span.md) |
 | 把几个相关的值打包成一个对象 | [record.md](record.md) |
 | 后进先出（撤销、DFS、括号匹配） | [stack.md](stack.md) |
 | 先进先出（任务队列、BFS） | [queue.md](queue.md) |

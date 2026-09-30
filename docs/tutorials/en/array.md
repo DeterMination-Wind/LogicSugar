@@ -21,6 +21,8 @@ array <name> <memory> <base> <size>
 
 Example: `array buf cell1 0 8` maps buf[0]..buf[7] to addresses 0..7. The declaration card emits no mlog.
 
+The `memory` field may also be a `span` name (several blocks combined into one logical address space): with `span big "cell1 + cell2"` plus `array buf big 0 128`, `buf[i]` keeps working, the limit is `N*C`, and `SpanAccess` converts the address into "which block + slot" — see [Combined memory (span)](span.md).
+
 ## Expression forms
 
 | Form | Meaning | Result |
