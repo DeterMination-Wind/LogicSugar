@@ -205,7 +205,7 @@ public class VarsDialog extends BaseDialog{
                 t.image(view.building().block.uiIcon).size(64f).pad(5f);
 
                 t.table(left -> {
-                    left.add(view.buildingDescMulti()).growX().ellipsis(true).wrap(false).top().left();
+                    noWrapLabel(left, view.buildingDescMulti()).growX().top().left();
                 }).minWidth(0f).pad(5f).padLeft(10f).top().growX();
 
                 t.table(right -> {
@@ -218,10 +218,10 @@ public class VarsDialog extends BaseDialog{
                     title.table(tBlock -> {
                         tBlock.image(view.building().block.uiIcon).size(Vars.iconLarge).padRight(5f);
                         tBlock.table(text -> {
-                            text.add(view.buildingDesc()).color(Color.white).growX().ellipsis(true).wrap(false).get().setAlignment(Align.left);
+                            noWrapLabel(text, view.buildingDesc()).color(Color.white).growX().get().setAlignment(Align.left);
                             text.row();
                             text.table(tProperties -> {
-                                tProperties.add(view.buildingPos()).color(Color.gray).growX().ellipsis(true).wrap(false).get().setAlignment(Align.left);
+                                noWrapLabel(tProperties, view.buildingPos()).color(Color.gray).growX().get().setAlignment(Align.left);
                                 if(snapshot != null){
                                     tProperties.add(snapshot.time()).color(Color.gray).growX().get().setAlignment(Align.right);
                                 }
@@ -234,9 +234,9 @@ public class VarsDialog extends BaseDialog{
                         if(view.live()){
                             tSnapshot.add(tr("logicsugar.vars.live", "Live")).color(Pal.accent).top().growX().get().setAlignment(Align.left);
                         }else{
-                            tSnapshot.add(tr("logicsugar.vars.snapshot.label", "#{0}: {1} {2}",
+                            noWrapLabel(tSnapshot, tr("logicsugar.vars.snapshot.label", "#{0}: {1} {2}",
                                             snapshot.id(), snapshot.type().charIcon, snapshot.name()))
-                                    .color(Pal.accent).growX().ellipsis(true).wrap(false).get().setAlignment(Align.left);
+                                    .color(Pal.accent).growX().get().setAlignment(Align.left);
 
                             Label l = tSnapshot.add(snapshots.pos()).color(Pal.accent).growX().padLeft(10f).get();
                             l.setAlignment(Align.right);
@@ -691,6 +691,22 @@ public class VarsDialog extends BaseDialog{
 
     /** 本地化文本：{@code logicsugar.vars.<key>}，bundle 缺键时用英文 fallback；
      *  {@link L10n#text} 同时处理了 {@code {0}} 占位与无头环境。 */
+
+    /**
+     * 添加一个不换行、超宽省略的标签。
+     *
+     * <p>为什么不用 {@code Cell.wrap(false)}：那是 v160 arc 才有的重载。Neon 聚合构建把工作区
+     * 里那份旧 arc（{@code Arc/arc-core/build/libs/arc-core-1.0.jar}）放在编译类路径最前面，
+     * Mindustry.jar 自带的新 arc 被它遮住；旧版 {@code Cell} 只有无参 {@code wrap()}，而
+     * {@code wrapLabel(boolean)} 只认 TextButton，对 Label 都没用。{@code Label.setWrap(false)}
+     * 两代 arc 都有，且新版 {@code Cell.wrap(boolean)} 本来就转发到它，语义完全一致。</p>
+     */
+    static Cell<Label> noWrapLabel(Table table, CharSequence text){
+        Label label = new Label(text);
+        label.setWrap(false);
+        return table.add(label).ellipsis(true);
+    }
+
     private static String tr(String key, String fallback, Object... args){
         return L10n.text(key, fallback, args);
     }

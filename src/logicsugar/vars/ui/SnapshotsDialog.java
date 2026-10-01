@@ -123,16 +123,16 @@ public class SnapshotsDialog extends BaseDialog{
                 item.left();
                 item.table(text -> {
                     if(group){
-                        text.add(snapshot.buildingDescMulti()).growX().ellipsis(true).wrap(false).pad(0).top().left();
+                        VarsDialog.noWrapLabel(text, snapshot.buildingDescMulti()).growX().pad(0).top().left();
                     }else{
-                        text.add(tr(groupSize > 1 ? "logicsugar.vars.snapshotblocks.many" : "logicsugar.vars.snapshotblocks.one",
+                        VarsDialog.noWrapLabel(text, tr(groupSize > 1 ? "logicsugar.vars.snapshotblocks.many" : "logicsugar.vars.snapshotblocks.one",
                                         groupSize > 1 ? "Snapshot #{0}: {1} blocks" : "Snapshot #{0}: {1} block",
                                         snapshot.id(), groupSize))
-                                .growX().ellipsis(true).wrap(false).pad(0).top().left();
+                                .growX().pad(0).top().left();
                         text.row();
-                        text.add(snapshot.name()).color(Pal.accent).ellipsis(true).growX().ellipsis(true).wrap(false).pad(0).top().left();
+                        VarsDialog.noWrapLabel(text, snapshot.name()).color(Pal.accent).growX().pad(0).top().left();
                         text.row();
-                        text.add(snapshot.time()).color(Color.gray).growX().ellipsis(true).wrap(false).pad(0).top().left();
+                        VarsDialog.noWrapLabel(text, snapshot.time()).color(Color.gray).growX().pad(0).top().left();
                     }
                 }).pad(0).top().growX();
             }).growX().minWidth(0f);
