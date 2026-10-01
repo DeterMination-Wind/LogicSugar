@@ -308,6 +308,8 @@ public final class ReconstructionMatrixTest{
         addCarrier("assert.error", "error \"Runtime error at #{@counter}.\" null null null null null null null null null\nset x 1\n", "error \"Runtime error at");
         addCarrier("assert.log", "log info \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "log info");
         addCarrier("assert.breakpoint", "breakpoint always x false\nset x 1\n", "breakpoint always x false");
+        // snapshot is client-side only but still a card: its sugar has to survive the carrier
+        addCarrier("assert.snapshot", "snapshot connected cell1 \"name\"\nset x 1\n", "snapshot connected cell1");
     }
 
     /**

@@ -19,6 +19,7 @@ import arc.scene.ui.layout.Table;
 import arc.struct.Seq;
 import arc.util.Time;
 import mindustry.Vars;
+import mindustry.core.GameState;
 import mindustry.gen.Building;
 import mindustry.gen.Icon;
 import mindustry.gen.LogicIO;
@@ -39,6 +40,7 @@ import logicsugar.assist.SugarTooltip;
 import logicsugar.assist.VarClipboard;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprStatement;
+import logicsugar.vars.ui.VarsDialog;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -71,6 +73,9 @@ public class SugarLogicDialog extends LogicDialog{
     private String recoveredSugar;
     private boolean showingOriginal;
     public LExecutor executor;
+
+    /** 原版「变量」按钮被本类换成 Vars/Memory/Properties 界面后的替身（见 {@link #installVarsButton}）。 */
+    private TextButton varsButton;
     /** When true, a failed compile during a close is passed back to the caller as raw sugar
      *  instead of being dropped. Used by the function library editing session (executor == null),
      *  so processor edits are never affected. */
@@ -161,6 +166,7 @@ public class SugarLogicDialog extends LogicDialog{
                 installCompiledCopy();
                 installOriginalView();
                 installInspectionCopy();
+                installVarsButton();
             }
             selectionClipboard.tick(canvas, this);
             budgetTimer += Time.delta;
@@ -232,8 +238,53 @@ public class SugarLogicDialog extends LogicDialog{
         // fixed-width cells are what pushed it off narrow windows.
         installBudgetLabel();
         installHistoryButtons();
+        installVarsButton();
         bottomButtonsWidth = -1f;
         layoutBottomButtons();
+    }
+
+    /**
+     * 把原版「变量」按钮换成 Vars/Memory/Properties 界面——上游 MlogAssertions 的入口：
+     * 编辑器的变量按钮不再打开原版变量表，而是打开 {@link VarsDialog}（编辑器态仍走原版全局变量
+     * 对话框，由 {@link #openVars} 分流）。
+     *
+     * <p>为什么要摘掉原按钮重建：arc 的 {@code Button} 自身也注册了 ClickListener（悬停/按下
+     * 态），直接清监听器会把按钮外观一并弄坏；而重写原版 {@code setup()} 又会把整个按钮行复制
+     * 一遍。摘掉后换一个同名新按钮，行布局靠名字找人（{@code layoutBottomButtons}），不受影响。</p>
+     *
+     * <p>必须每次显示都重跑：原版 {@code setup()} 每显示一次就重建整行按钮，所以本方法挂在
+     * {@link #installSugarButtons}（shown 回调）里，并在 update 的周期扫描里兜底。</p>
+     */
+    private void installVarsButton(){
+        Element vanilla = buttons.find("variables");
+        if(vanilla == varsButton) return;
+        if(vanilla != null) vanilla.remove();
+        TextButton button = buttons.button("@variables", Icon.menu, this::openVars).name("variables").get();
+        button.update(() -> button.setText(shouldShowVariables() ? "@variables" : "@logic.globals"));
+        varsButton = button;
+    }
+
+    /** 变量按钮的动作分流：编辑器/函数库会话（无处理器）走原版全局变量；处理器走变量界面。 */
+    private void openVars(){
+        if(!shouldShowVariables() || executor == null || executor.build == null){
+            globalsDialog.show();
+            return;
+        }
+
+        VarsDialog dialog = new VarsDialog(executor.build);
+        // 原版变量对话框的暂停编排：打开时恢复运行（否则变量不会更新），关闭时停回暂停态。
+        // 联机与主菜单不碰游戏状态；wasPaused 是 BaseDialog 的 protected 字段（子类访问合法）。
+        dialog.hidden(() -> {
+            if(!wasPaused && !Vars.net.active() && !Vars.state.isMenu()){
+                Vars.state.set(GameState.State.paused);
+            }
+        });
+        dialog.shown(() -> {
+            if(!wasPaused && !Vars.net.active() && !Vars.state.isMenu()){
+                Vars.state.set(GameState.State.playing);
+            }
+        });
+        dialog.show();
     }
 
     /**

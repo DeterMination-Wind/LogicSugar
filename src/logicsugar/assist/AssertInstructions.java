@@ -4,7 +4,10 @@ import arc.Core;
 import arc.func.Func;
 import arc.graphics.Color;
 import arc.util.Log;
+import logicsugar.vars.SnapshotType;
+import logicsugar.vars.Snapshots;
 import mindustry.Vars;
+import mindustry.gen.Building;
 import mindustry.logic.ConditionOp;
 import mindustry.logic.LExecutor;
 import mindustry.logic.LVar;
@@ -277,6 +280,34 @@ public final class AssertInstructions{
         }
     }
 
+    /** Creates a snapshot of a block through the snapshot subsystem. Purely client-side: it
+     *  never changes the saved program, so it needs no multiplayer gate. The name is the
+     *  card's message when that is a non-empty string, otherwise the localized
+     *  "Mlog &lt;type&gt; snapshot" default. Portable: an invalid/dead block is ignored inside
+     *  {@link Snapshots#create}. */
+    public static class SnapshotI implements LExecutor.LInstruction, AssertInstruction{
+        public SnapshotType type = SnapshotType.isolated;
+        public LVar block, message;
+
+        public SnapshotI(SnapshotType type, LVar block, LVar message){
+            this.type = type;
+            this.block = block;
+            this.message = message;
+        }
+
+        public SnapshotI(){
+        }
+
+        @Override
+        public void run(LExecutor exec){
+            if(block.obj() instanceof Building building){
+                Snapshots.create(building, type, isCustomMessage(message)
+                    ? formatMessage(exec::optionalVar, "", false, message, new Object[0])
+                    : L10n.text("logicsugar.vars.snapshot.mlogname", "Mlog {0} snapshot", type.name()));
+            }
+        }
+    }
+
     /** Whether the game runs in a networked session. */
     static boolean multiplayer(){
         return Vars.net != null && Vars.net.active();
@@ -299,14 +330,26 @@ public final class AssertInstructions{
             if(ProcessorStatus.disableBreakpoints) return;  // avoid building the message
             breakpoint(exec.build, assertionText(exec::optionalVar, defaultKey, message, values));
         }else{
+            String text = assertionText(exec::optionalVar, defaultKey, message, values);
             exec.counter.numval--;
             exec.yield = true;
-            ProcessorStatus.setMessage(exec.build,
-                () -> assertionText(exec::optionalVar, defaultKey, message, values));
+            ProcessorStatus.setMessage(exec.build, () -> text);
+            // Upstream v0.11: an isolated snapshot of the failing processor, named after the
+            // failure message. Client-side, so it is not gated on multiplayer.
+            if(ProcessorStatus.snapshotOnAssertion){
+                Snapshots.create(exec.build, SnapshotType.isolated, text);
+            }
         }
     }
 
     private static void breakpoint(LogicBuild build, String message){
+        // Upstream v0.11 takes a connected snapshot when a breakpoint hits (its own code
+        // asks snapshotOnAssertion() here, which we read as the breakpoint setting it means).
+        if(ProcessorStatus.snapshotOnBreakpoint){
+            Snapshots.create(build, SnapshotType.connected,
+                L10n.text("logicsugar.vars.snapshot.breakpoint", "Breakpoint snapshot at #{0}",
+                    (int)build.executor.counter.numval - 1));
+        }
         ProcessorStatus.breakpoint(build, message);
     }
 

@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十五个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十八个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了四十五个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了四十八个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -26,6 +26,9 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `assertTest` | `mindustry.logic.SugarAssertsTest` | 断言语句集：与 MlogAssertions v0.11.1 的线格式、write/parse 往返幂等、`~` 占位定长 token、坏枚举干净报错、`assert` 卡的 emit 产物与载体往返、`asserttype` 新旧两种 token 顺序的读取、strip/emit 编译行为、verifyRestore 双形态、调试构建反编译 round-trip |
 | `assertTypeTest` | `mindustry.logic.AssertTypeTest` | `asserttype` 卡：emit 编译产物行格式（`<type> <value> <message>`）与定长 token、emit 行 re-parse/assemble 出 `AssertTypeI` 的接线、strip 模式零泄漏且载体保留、verifyRestore 双形态、`AssertionDataType.matches` 语义矩阵（number/null 对象/string/content/building/unit/team，层级匹配：senseable 同时命中单位/建筑/队伍）、`actualType` 取最窄匹配，并钉住未来「内存对象存储」（上游 #12459）场景的 number/对象分型 |
 | `assertMessageTest` | `logicsugar.assist.AssertMessageTest` | 断言消息占位符引擎（无 executor 的纯函数）：`{1}` 编号按消息槽偏移、`{变量名}` 取活值（`{@counter}` 减 1）、`[[N]` 旧写法、无法解析的占位符原样保留、未使用的参数按需追加（字符串加引号、`null` 跳过）、数值打印（整数去 `.0`、颜色字面量、NaN）、空/非字符串消息落到本地化默认文本 |
+| `varsTest` | `logicsugar.vars.VarsDataTest` | 变量/内存/属性数据层：`MemoryText` 导出→导入往返（整数/小数/颜色/负数/非有限写 `null`/转义字符串）、导出文本逐字节格式、坏行报告且不落盘（两阶段 validate→read）、hex/二进制/颜色/科学计数输入、`ValueType` 分类与线格式标题、`BlockDataType` 名称取键、`VarsOptions` 默认值 |
+| `varsUiTest` | `logicsugar.vars.VarsUiLogicTest` | 快照列表导航状态机（first/last/next/prev 边界与拒绝移动不改视图、select 命中/未命中、组快照与活数据视图、`pos()`/`title()` 的键+英文 fallback 与占位顺序），以及集成层需要的公开接口形状（构造器/`setup`/`SnapshotList` 方法、`globalsOpener` 默认 null） |
+| `varsAccessTest` | `logicsugar.vars.VarsAccessTest` | 入口纯逻辑：三击状态机（第三次触发、窗口过期重数、换方块重数、窗口 0 关闭、点空复位）、`SnapshotType` 线 token 与显示名、设置默认值，以及**bundle 覆盖**（代码里用到的每个 `logicsugar.vars.*`/`logicsugar.asserts.*` 文案键都必须在 `bundle.properties` 里有条目） |
 | `arrayTest` | `mindustry.logic.ArraySugarTest` | `array` 声明卡与 `buf[i]` 下标：字面量/变量下标的 `read` 精确行（地址 = base + 下标，base>0 先 `op add`）、下标赋值 `write` 行、越界字面量与未声明名报错、无注册表时退化为普通发射（纯原版不受影响）、严格校验（重名/同内存块重叠/非法 base/size）、声明卡不产行且载体往返、条件表达式 lowering 出 `read` 行、产物纯原版、unfold→fold 折回表达式且再编译流一致；容量口径：名字启发式（`cellN`=64、`bankN`/`worldN`=512、其余跳过）与**链接解析优先**（`resolvedMemoryCapacity`：注入假解析器验证 world-cell 式「512 格的 `cellN`」不再被误拒、解析到更小方块时按真实容量收紧、链接到非内存块返回 0 时不得回落猜测、解析不到才回落名字并把容量标注为推断值、`enterLinkResolver`/`restoreLinkResolver` 配对不泄漏） |
 | `arrayBulkTest` | `logicsugar.assist.data.ArrayBulkTest` | 数组批量运算：`array_sum/array_avg/array_min/array_max/array_count/array_find/array_fill/array_copy/array_sort/array_sort_desc/array_reverse/array_replace/array_swap/array_lower_bound` 的表达式展开（实参必须是已声明数组，矩阵按行主序摊平）、旧短名 `min`/`max` 的 1 参（数组运算）与 2 参（原版内置）分派、错误实参编译期报错、内置函数注入与 normal 共享子程序、不进入 `__ls_lib` 载体、未使用不进产物、产物纯原版与往返 |
 | `dataFrameworkTest` | `logicsugar.assist.data.DataFrameworkSelfTest` | F2 框架：`ExprIntrinsics` 注册/遮蔽/按 arity 分派/成员读写扩展点、`DataModules` 注册幂等与 collect/restore 配对、`DataDeclaration` 跳过 lower、注入函数并入 `LibraryIndex` 且排除出载体、markInvalid 接线 |
@@ -59,7 +62,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前四十四个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前四十八个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 
@@ -96,3 +99,12 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
     **长程序必须一样能画**（2026-09-25「长逻辑里罢工、编辑一下只闪一帧」报告）：在上面那段长程序里，每张 `@counter` 写入卡都应同时有角标和线；随便点一张卡的按钮（复制/编辑/上下移）后线**不能**消失。查不到线时先看日志：这份功能任何失败都会打一行 `[LogicSugar] @counter indicator line disabled: <原因>`（`noteOnce` 去重），它就是"为什么没画"的答案 —— 静默失效是这条功能最贵的故障模式。每帧路径只允许走 `SugarCanvas.readonlyText()`（`originTest` 的 `overlayUsesReadonlySnapshot` 钉住），`save()` 每帧调会 unfold/fold 重建积木元素、文本还是展开态，且原版 `saveUI()` 对脱离的 jump 目标会抛 NPE。
     **轨道不能重叠**：摆三段互相重叠的 `@counter` 跳转（例如第 1 张跳到第 9 张、第 3 张跳到第 7 张、第 5 张跳到第 6 张），三条线必须落在**不同横向距离**上，不能挤成同一条竖线互相穿插；嵌套那次（第 3→7 在 1→9 内部）应更贴近积木。横向距离来自 `logicsugar.assist.JumpLanes`（原版 `setJumpHeights` 区间着色的镜像），层号本身由 `counterJumpIndexTest` 的 `jumpLanesSeparateOverlappingCurves` 覆盖，这里只看"有没有真的分开"。
     **箭头要咬住目标卡**：目标端的箭头必须**压在那张卡的左缘上**（跨缘约 3/4 在外、1/4 在内），并且**指向卡内**。若箭头整枚漂在卡片左侧、或箭头朝外，就是镜像只翻了 x 偏移没翻宽度（`Tex.logicNode.draw` 的负宽度同时管"跨缘"和"贴图翻转"），`originTest` 的 `overlayRailsFollowLanes` 钉住了这一行。
+
+18. **变量/内存/属性界面与快照**：
+    - 打开任意处理器编辑器，点底部「变量」——应打开变量界面（标题「变量」），关闭后游戏保持暂停、再打开时恢复运行（原版变量对话框的暂停编排）；在编辑器态（全局变量按钮变成「内置变量」）仍打开原版全局变量表。
+    - 在变量界面里切换十进制/十六进制、排序/原始顺序、显示/隐藏临时变量与链接、有效位数与对齐；这些只在本次会话内生效。标题栏的文件夹/方框/下载/垃圾桶/问号逐个点一遍：快照列表、新建、恢复、删除、帮助都要有反应；用 `◀ ▶` 与 PgUp/PgDn、Home/End 在快照间切换，标题位置计数（`1/3`）随动。
+    - 点内存块（cell/bank）的配置面板：应出现「快照」与「菜单」两个按钮；菜单进入内存界面，`Edit` 里清空、复制到剪贴板、从剪贴板导入三条都要能用。复制出来的文本贴进表格软件再粘贴回去，导入后数值一致（含糊/非法行会被跳过并提示，且**部分失败不会写坏内存**）。
+    - 连点同一个方块三次（间隔默认 500ms）打开属性界面；把设置里的「三击速度」设为 0 后手势失效。
+    - `snapshot` 卡：在单机 emit 构建下放一张 `snapshot connected @this` 卡，运行后到目标方块快照列表里能看到新快照（名字为卡片消息或默认的「Mlog … 快照」）；调试断言失败时若开了「断言失败自动快照」应多出一份孤立快照，断点命中时若开了「断点自动快照」应多出一份连通快照。把「快照上限」设为 0：配置面板不再出现快照按钮、`snapshot` 指令无效、已有快照被清空。
+    - **MindustryX 上必须追加而非替换**：在 MindustryX 客户端点内存块/处理器，面板上 MindustryX 自己的内存网格/处理器工具条必须**仍在**，本 mod 的按钮追加在后面；原版客户端则只看到本 mod 的按钮（处理器上不会出现两个编辑铅笔）。
+    - `snapshot` 卡与其它断言一样受「调试断言构建」开关控制：strip 下不写进产物、emit 下写进产物；联机会话强制 strip（产物仍 ≤1000 条、无原版不可解析行）。

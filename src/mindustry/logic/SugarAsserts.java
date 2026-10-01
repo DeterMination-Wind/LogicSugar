@@ -28,6 +28,7 @@ import mindustry.type.UnitType;
 import mindustry.type.Weather;
 import mindustry.ui.Styles;
 import mindustry.world.Block;
+import logicsugar.vars.SnapshotType;
 import mindustry.world.blocks.logic.CanvasBlock;
 import mindustry.world.blocks.logic.LogicBlock;
 import mindustry.world.blocks.logic.LogicDisplay;
@@ -99,6 +100,7 @@ public final class SugarAsserts{
         register(AssertFlushCard::new, AssertFlushCard.opcode, SugarAsserts::parseAssertFlush);
         register(AssertPrintsCard::new, AssertPrintsCard.opcode, SugarAsserts::parseAssertPrints);
         register(AssertTypeCard::new, AssertTypeCard.opcode, SugarAsserts::parseAssertType);
+        register(SnapshotCard::new, SnapshotCard.opcode, SugarAsserts::parseSnapshot);
         register(ErrorCard::new, ErrorCard.opcode, SugarAsserts::parseError);
         register(LogCard::new, LogCard.opcode, SugarAsserts::parseLog);
         register(BreakpointCard::new, BreakpointCard.opcode, SugarAsserts::parseBreakpoint);
@@ -124,7 +126,8 @@ public final class SugarAsserts{
      *  decide whether the assert-emit dimension matters for a program. */
     public static final String[] opcodes = {
         AssertConditionCard.opcode, AssertBoundsCard.opcode, AssertEqualsCard.opcode, AssertFlushCard.opcode,
-        AssertPrintsCard.opcode, AssertTypeCard.opcode, ErrorCard.opcode, LogCard.opcode, BreakpointCard.opcode
+        AssertPrintsCard.opcode, AssertTypeCard.opcode, ErrorCard.opcode, LogCard.opcode, BreakpointCard.opcode,
+        SnapshotCard.opcode
     };
 
     /** Whether a sugar source line starts with one of the assertion opcodes (cheap scan
@@ -251,6 +254,55 @@ public final class SugarAsserts{
             out.append(opcode).append(' ').append(op.name()).append(' ')
                 .append(optional(value)).append(' ').append(optional(compare)).append(' ')
                 .append(optional(message));
+        }
+    }
+
+    /** Creates a snapshot of a block (or of every logic block on the map) at run time.
+     *
+     *  <p>Ported from upstream v0.10. Like every card in this family it is stripped by
+     *  default (the sugar survives in the carrier) and only written into the program as a
+     *  real {@code snapshot} line in a debug ({@code emit}) build, because a vanilla client
+     *  cannot parse the instruction. Creating a snapshot is a client-side act (it never
+     *  changes the saved program), so it is allowed in multiplayer.</p> */
+    public static class SnapshotCard extends AssertCard{
+        public static final String opcode = "snapshot";
+        public SnapshotType type = SnapshotType.isolated;
+        public String block = "@this";
+        public String message = "";
+
+        @Override
+        public void build(Table table){
+            table.clearChildren();
+            Color tint = table.color;
+            line(table, tint, row -> {
+                tag(row, "asserts.snapshot.create", "create");
+                row.button(b -> {
+                    b.add(type.display());
+                    b.clicked(() -> showSelect(b, SnapshotType.all, type, o -> {
+                        type = o;
+                        build(table);
+                    }));
+                }, Styles.logict, () -> {}).size(120f, 40f).pad(4f).color(row.color).left();
+                if(type != SnapshotType.global){
+                    tag(row, "asserts.snapshot.of", "of");
+                    input(row, block, s -> block = s, VAR_W);
+                }
+            }, false);
+            messageLine(table, tint, message, s -> message = s);
+        }
+
+        @Override public String name(){ return cardText("asserts.snapshot.card", "Snapshot"); }
+        @Override public String typeName(){ return "Snapshot"; }
+
+        @Override
+        public LInstruction build(LAssembler builder){
+            return new logicsugar.assist.AssertInstructions.SnapshotI(type, builder.var(block), builder.var(message));
+        }
+
+        @Override
+        public void write(StringBuilder out){
+            out.append(opcode).append(' ').append(type.name()).append(' ')
+                .append(optional(block)).append(' ').append(optional(message));
         }
     }
 
@@ -698,6 +750,14 @@ public final class SugarAsserts{
             result.type = AssertionDataType.parse(first);
             result.value = optionalValue(second);
         }
+        result.message = optionalValue(tokens[3]);
+        return result;
+    }
+
+    public static LStatement parseSnapshot(String[] tokens){
+        SnapshotCard result = new SnapshotCard();
+        result.type = parseEnum(SnapshotType.class, tokens[1], SnapshotCard.opcode + " type");
+        result.block = optionalValue(tokens[2]);
         result.message = optionalValue(tokens[3]);
         return result;
     }

@@ -115,12 +115,38 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - **asserttype 线格式**：上游 v0.10 起顺序为 `<type> <value> <message>`（本 mod 同）；类型表与上游 v0.11.1 对齐（24 种：基础类型 + 内容物细分 item / block / bulletType / liquid / statusEffect / unitType / weather / team / unitCommand / unitStance + building 细分 processor / memory / message / display / canvas + property / readable / writable / senseable），LogicSugar 额外支持 `none`（线上写 `null`）——上游 `AssertionDataType` 无法断言空值。旧的 `<value> <type>` 顺序仍可读取（`parseAssertType` 以「哪个 token 是类型名」判定；两个都是类型名时按新序），保存时统一写新序。类型分类是层级而非互斥：`senseable` 同时匹配单位/建筑/队伍，失败消息用 `AssertionDataType.actualType` 取最窄匹配（如 building 而不是 senseable）。
 - **assertprints 缓冲语义**：按上游 v0.11.1，在比较前就把缓冲区截断到记录位置——失败重试不再累积输出，也不把被检查区域的文本留给下一条 `assertprints`。
 - **失败消息的默认文本不含消息槽**：上游把消息槽当作 `{0}` 传给默认文本，导致默认消息里印出 `null`；LogicSugar 只渲染比较值（`assertionText` 注释记录了这处有意偏离）。
-- **未移植**：上游 v0.10/0.11 的 Vars / Memory / Properties 界面与快照子系统（`snapshot` 指令、`Snapshots` 数据层）。它们不改变保存产物，属独立功能，未纳入本次同步；`asserttype` 的 `null` 类型仍是唯一线格式扩展。
+- **`snapshot` 指令**：与其它断言卡同一家族（`SugarAsserts.SnapshotCard` + `AssertInstructions.SnapshotI`），线格式 `snapshot <type> <block> <message>`（`isolated`/`connected`/`global`），strip/emit 与载体覆盖同其它断言卡。它是纯客户端动作（不改保存产物），因此不受联机门禁限制。
 
 - **双身份序列化**：卡片 `write()` 直接输出指令 token，既是编辑器卡片也是 mlog 指令行；空槽位按 LogicSugar 惯例写 `~` 保持定长 token（上游无此约定，仅空字段场景降级）。
 - **AssertEmit 开关**（设置项 `logicsugar.assertEmit`，默认 `strip`，**仅单机/编辑器生效**）：`strip` 把断言编译掉——sugar（含断言）随载体保存，mlog 保持原版可解析；`emit`（调试构建）把断言写回为真实指令，**原版客户端会将其降级为 InvalidStatement 占位**（程序能跑但断言静默失效）。联机会话（`Vars.net.active()`，已连接或自建）下 `currentAssertEmit()` 一律强制 `strip`——兼容底线在代码层强制，不依赖用户自觉；显式 `compile(..., AssertEmit)` 重载仅供验证矩阵与自测使用。
 - **共存去重**：注册时若 `LAssembler.customParsers` 已有同名 opcode（如 MlogAssertions 先加载），整组跳过，不重复加面板卡片、不覆盖他人解析器。注意 MlogAssertions 后加载时会覆盖解析器并追加自己的卡片，两 mod 并存时面板可能出现两套卡片，属上游行为。
 - **验证门**：候选或原始程序含断言时，verify 矩阵扩展为 FuncMode × SwitchStrategy × AssertEmit；无断言程序维持 2×2，编译成本不涨。`ProcessorStatus` 的地图扫描跳过断言指令（消息生命周期归指令自身管）。
+
+## 变量/内存/属性界面与快照（调试工具）
+
+移植自上游 MlogAssertions v0.11.1 的「Vars / Memory / Properties」三合一对话框与快照子系统。三者共用
+同一个 `VarsDialog`，标题由数据源决定（`BlockDataType`：`变量`/`内存`/`属性`）；快照也是同一种数据源，
+因此浏览快照与浏览活数据用的是同一套渲染。
+
+- **数据层 `logicsugar.vars`**（无 UI 依赖）：`VariableValues`（活值/快照共用的读取接口）、
+  `ProcessorVars`/`MemoryVars`/`SensorVars`、`Snapshot` + `ProcessorSnapshot`/`MemorySnapshot`/`SensorSnapshot`、
+  `Snapshots`（每方块一份队列、上限、创建/删除）、`MemoryText`（内存块文本的导出/导入）、`VarsOptions`
+  （会话级显示状态与 `COLOR_LIMIT`）、`SnapshotType`。
+- **界面层 `logicsugar.vars.ui`**：`VarsDialog`、`SnapshotList`（活数据 + 快照队列的导航视图）、
+  `SnapshotsDialog`（快照列表）、`EllipsisLabel`，以及两个入口类见下。
+- **三个入口**：
+  1. 逻辑编辑器的「变量」按钮（`SugarLogicDialog.installVarsButton` 接管同名原版按钮；编辑器/函数库
+     会话仍走原版全局变量对话框），打开时的暂停编排照搬原版（`wasPaused`）。
+  2. 三击任意方块（`VarsAccess`，`EventType.TapEvent` + 纯状态机 `TripleTap`，窗口 `logicsugar.tripleTap`）。
+  3. 内存块/处理器的配置面板（`BlockConfigAccess`，反射替换 `InputHandler.config`）。
+- **MindustryX 共存（原则要求）**：探测到 fork 自带 `mindustryX.features.ui.LogicSupport` 时，内存块/处理器的
+  配置面板**先调用方块自己的 `buildConfiguration` 再追加**本 mod 的按钮（否则会把 MindustryX 的内存网格/
+  处理器工具条整块顶掉）；原版则按上游做法自建按钮（原版处理器的面板只有一个编辑铅笔，重复调用会出现两个）。
+- **老内核兼容**：v160 才有的对象内存（`objectMemory`/`numberMemory`/`sentinel`）探测不到时，
+  `MemoryVars` 退回老 fork 的单个 `double[] memory`（全部槽位视为数值槽），两个模型都探测不到则视图退化为 0 行。
+- **不改变保存产物**：界面与快照都只存在于客户端内存；快照不随地图保存，关图即丢。失败自动快照、断点自动快照、
+  上限与三击窗口等设置在自有设置页与 Neon 聚合页（`bekBuildSettings`）**两处**注册（AGENTS.md 双形态要求），
+  设置值由 `VarsAccess.applySettings` / `ProcessorStatus.applySettings` 读入运行期字段。
 
 ## 函数与全局函数库
 

@@ -30,6 +30,10 @@ import logicsugar.assist.JumpLineColor;
 import logicsugar.assist.ProcessorStatus;
 import logicsugar.assist.UnitFlags;
 import logicsugar.assist.VarDisplayFilter;
+import logicsugar.vars.MemoryVars;
+import logicsugar.vars.Snapshots;
+import logicsugar.vars.ui.BlockConfigAccess;
+import logicsugar.vars.ui.VarsAccess;
 import logicsugar.assist.data.ArrayBulkModule;
 import logicsugar.assist.data.BitsetModule;
 import logicsugar.assist.data.ChainModule;
@@ -154,6 +158,8 @@ public class LogicSugarMod extends Mod{
         // heuristic inside ArrayRegistry.
         ArrayRegistry.setLinkResolverProvider(ArrayRegistry::processorLinks);
         on(ClientLoadEvent.class, event -> Core.app.post(LogicSugarMod::installEditor));
+        // 变量界面/快照与编辑器所有权无关（其它 mod 接管编辑器时快照仍然可用），单独安装
+        on(ClientLoadEvent.class, event -> Core.app.post(LogicSugarMod::installVars));
     }
 
     /** Re-applies the localized mod bundle, which the game's own pass cannot find on Android.
@@ -356,6 +362,27 @@ public class LogicSugarMod extends Mod{
         SugarLogicDialog sugar = new SugarLogicDialog();
         if(carryPanels) transferOverlayPanels(old, sugar);
         Vars.ui.logic = sugar;
+    }
+
+    /**
+     * 变量界面（Vars/Memory/Properties）与快照子系统的安装：数据层初始化 + 两个入口
+     * （三击任意方块、内存块/处理器配置面板上的按钮）+ 设置读取，以及运行时 mlog 的
+     * {@code snapshot} 指令需要的内存视图。
+     *
+     * <p>与 {@link #installEditor} 分开：编辑器被其它 mod 接管时快照仍然应当可用，而这些
+     * 入口都不依赖编辑器所有权。整段包在 try 里：它们是可选功能，任何一环接不上（例如游戏
+     * 改掉了需要反射的私有字段）都不允许影响编辑/编译。</p>
+     */
+    private static void installVars(){
+        try{
+            Snapshots.init();
+            MemoryVars.init();
+            VarsAccess.applySettings();
+            VarsAccess.init();
+            BlockConfigAccess.init();
+        }catch(Throwable t){
+            Log.warn("LogicSugar: failed to install the vars/snapshot subsystem: @", t);
+        }
     }
 
     /** The editor add-ons only make sense on our own canvas, so a step-aside pass skips them. */
@@ -570,6 +597,7 @@ public class LogicSugarMod extends Mod{
         table.pref(new LogicSugarSettings.EditorConflictSetting(LogicSugarMod.settingEditorConflict, LogicSugarMod.EditorConflict.ask.id));
         table.pref(new LogicSugarSettings.LibraryButtonSetting("logicsugar.funclib"));
         LogicSugarSettings.addProcessorStatusPrefs(table);
+        LogicSugarSettings.addVarsPrefs(table);
         LogicSugarSettings.addUnitFlagsPref(table);
         LogicSugarSettings.addHideVarsPref(table);
         LogicSugarSettings.addBoxSelectPrefs(table);

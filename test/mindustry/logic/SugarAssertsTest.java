@@ -25,6 +25,7 @@ public class SugarAssertsTest{
         decompileDebugBuildRoundTrip();
         assertTypeRoundTripAndClassification();
         assertConditionCardRoundTrip();
+        snapshotCardRoundTrip();
         System.out.println("LogicSugar SugarAsserts self-test passed.");
     }
 
@@ -32,6 +33,8 @@ public class SugarAssertsTest{
         // token layout transcribed from MlogAssertions' LogicStatements.write() (v0.11.1)
         checkLine("assert equal x false ~",
             compileLine("assert equal x false ~"));
+        checkLine("snapshot isolated @unit ~",
+            compileLine("snapshot isolated @unit ~"));
         checkLine("assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"msg\"",
             compileLine("assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"msg\""));
         checkLine("assertequals 0 i \"should be 0\"",
@@ -51,6 +54,8 @@ public class SugarAssertsTest{
     private static void writeParseWriteIsIdempotent(){
         String[] lines = {
             "assert lessThanEq x 10 ~",
+            "snapshot connected cell1 \"named\"",
+            "snapshot global ~ ~",
             "assertBounds multiple 3 1 lessThan i lessThanEq 9 \"idx\"",
             "assertBounds integer ~ ~ lessThan i lessThanEq ~ ~",
             "assertequals \"str\" v ~",
@@ -217,6 +222,29 @@ public class SugarAssertsTest{
         check(SugarAsserts.AssertionDataType.actualType(objectVar("e", ConditionOp.equal)).equals("unknown"),
             "actual type of an unclassified enum must be 'unknown': " + SugarAsserts.AssertionDataType.actualType(objectVar("e", ConditionOp.equal)));
         check(SugarAsserts.AssertionDataType.actualType(objectVar("o", new Object())).equals("unknown"), "actual type of an unknown object");
+    }
+
+    /** The {@code snapshot} card (upstream v0.10): wire format, emit lowering and carrier
+     *  round trip. Creating a snapshot is client-side only, so strip mode leaves the saved
+     *  program untouched. */
+    private static void snapshotCardRoundTrip(){
+        String sugar = "set x 1\nsnapshot connected cell1 \"named\"\n";
+        String emitted = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
+        String mlog = SugarCompiler.stripMarkers(emitted);
+        check(mlog.contains("snapshot connected cell1 \"named\""), "emit mode did not write the snapshot instruction");
+        check(SugarCompiler.verifyRestore(emitted, sugar), "snapshot debug build failed carrier verification");
+
+        String stripped = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
+        check(!SugarCompiler.stripMarkers(stripped).contains("snapshot "), "strip mode leaked the snapshot instruction");
+        check(SugarCompiler.restore(stripped).contains("snapshot connected cell1"), "carrier lost the snapshot statement");
+
+        // the opcode belongs to the assert set, otherwise verifyRestore skips the emit shape
+        // comparison for snapshot-only programs
+        check(SugarAsserts.containsAssertStatements(sugar), "snapshot opcode not recognized as an assertion");
+        // a global snapshot has no target block; "~" keeps the token count fixed
+        checkLine("snapshot global ~ ~", compileLine("snapshot global ~ ~"));
     }
 
     /** The generic {@code assert} card: emit-mode lowering plus the carrier round trip. */
