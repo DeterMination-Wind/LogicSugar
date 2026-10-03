@@ -200,6 +200,33 @@ public final class SugarDecompiler{
         String structured = candidate.emit();
         Verification verification = verify(structured, input, privileged);
         if(!verification.matched){
+            // Unit-control cards are recovered from the compiler's own lowering, one layer above
+            // the generic if/loop reading of the same instructions. A layer that fails the gate
+            // must not cost the program what it could recover before it existed: retry with the
+            // layer switched off, and only then fall through to the alternative-candidate
+            // backtracking below.
+            if(candidate.unitFrames > 0){
+                List<Integer> fallbackDecisions = new ArrayList<>();
+                Candidate fallback = new Candidate(program, new ArrayList<>());
+                fallback.unitCards = false;
+                try{
+                    fallback.recoverFunctions();
+                    fallback.parseMain(null, fallbackDecisions);
+                    String text = fallback.emit();
+                    Verification fallbackVerification = verify(text, input, privileged);
+                    if(fallbackVerification.matched){
+                        notes.add("unit-control card recovery did not verify; "
+                            + "kept the generic reading of the same instructions");
+                        return new Result(text, true, fallbackVerification.mode, fallback.structured,
+                            fallback.passthrough, notes);
+                    }
+                    // The decisions of the generic reading are the ones the retries below were
+                    // designed around; the unit pass stops recording them where a card matched.
+                    decisions = fallbackDecisions;
+                }catch(Throwable ignored){
+                    // Keep the unit pass's own decision log for the retries.
+                }
+            }
             Result backtracked = backtrack(program, input, privileged, decisions, notes);
             if(backtracked != null) return backtracked;
             notes.add("unstructured instructions were kept as vanilla mlog");
@@ -972,6 +999,40 @@ public final class SugarDecompiler{
         @Override int priority(){ return 20; }
     }
 
+    /**
+     * A recovered plain unit card ({@code unitbind}/{@code unitnext}/{@code unitfree}). Its whole
+     * lowering is one source statement, so the item covers the entire region: a jump into the
+     * middle of the lowering then resolves to this statement and the recompilation gate rejects
+     * the candidate instead of silently retargeting the jump.
+     */
+    private static final class UnitCardItem extends Item{
+        final String text;
+        UnitCardItem(int from, int to, String text){ super(from, to); this.text = text; }
+        @Override void write(StringBuilder out, Emitter emitter){ out.append(text).append('\n'); }
+        @Override int priority(){ return 20; }
+    }
+
+    /**
+     * The recovered {@code unitfor} head. The block's scan prologue, its delivery (the unit
+     * assignment) and its step/back edge all regenerate from this one card, so the item covers
+     * the prologue and the frame parses only the body between them.
+     */
+    private static final class UnitForItem extends Item{
+        final String count, type, variable;
+        BlockEndItem end;
+        UnitForItem(int from, int to, String count, String type, String variable){
+            super(from, to);
+            this.count = count;
+            this.type = type;
+            this.variable = variable;
+        }
+        @Override void write(StringBuilder out, Emitter emitter){
+            out.append("unitfor ").append(count).append(' ').append(type).append(' ')
+                .append(variable).append(' ').append(emitter.itemSlot(end)).append('\n');
+        }
+        @Override int priority(){ return 20; }
+    }
+
     private static final class SwitchItem extends Item{
         final String value;
         final boolean rawTable;
@@ -1084,7 +1145,7 @@ public final class SugarDecompiler{
     }
 
     private static final class Frame{
-        enum Kind{ IF, WHILE, FOR, SWITCH }
+        enum Kind{ IF, WHILE, FOR, SWITCH, UNIT, UNIT_FOR }
         Kind kind;
         int start, bodyStart, bodyEnd, exit, resume, continueTarget;
         /** Breaks may be threaded past the structural exit label; the blockend still belongs
@@ -1116,8 +1177,19 @@ public final class SugarDecompiler{
         List<Long> defaultCaseValues = new ArrayList<>();
         /** Statement the {@code default} card sits on, or -1 when the switch declares none. */
         int defaultStart = -1;
+        /**
+         * Unit-control card ({@link Candidate#tryUnitCard}). The region is the compiler's own
+         * {@code ubind}/flag lowering and is reproduced by the card, so there is no condition or
+         * body to describe: {@link #unitCard} is the whole source line of a plain card
+         * ({@code unitbind}/{@code unitnext}/{@code unitfree}), while a {@code unitfor} head is
+         * written from the three operand fields.
+         */
+        String unitCard = "", unitCount = "", unitType = "", unitVariable = "";
 
         double recoveryLoss(){
+            // Unit cards are matched against the compiler's own private names, i.e. the shape is
+            // proven before it is offered; no speculative decomposition may outrank one.
+            if(kind == Kind.UNIT || kind == Kind.UNIT_FOR) return -6.0;
             // A confirmed short-circuit layout is preferable to a coincidentally valid native
             // decomposition: the latter can erase the fact that the right operand was conditional.
             if(shortCircuitExpression != null) return -4.0 + RecoveryPredicate.parseShortCircuit(shortCircuitExpression)
@@ -1161,6 +1233,23 @@ public final class SugarDecompiler{
         /** Cursors where tryFrames faced more than one candidate (recorded on the greedy pass). */
         private List<Integer> decisions;
         int structured, passthrough;
+        /**
+         * Unit-control card recovery is a switchable layer: {@link SugarDecompiler#infer} retries
+         * without it when a unit candidate fails the gate, so a shape this compiler never lowered
+         * can never cost a program the structure the generic reading recovers.
+         */
+        boolean unitCards = true;
+        /** How many unit cards were actually emitted (the retry is pointless without one). */
+        private int unitFrames;
+        /**
+         * Index base of the statement list being lowered, and whether it is a hoisted function
+         * body. The unit card lowering numbers its private temporaries by that list's own index
+         * ({@code __ls_ub_n_<prefix><index>}), and {@link #unitIndexMatches} has to reproduce it.
+         */
+        private int scopeBase;
+        private boolean scopeFunction;
+        /** {@code __ls_ub_*_<prefix><index>} prefix: empty in main, {@code func_<name>_} in a body. */
+        private String unitPrefix = "";
 
         Candidate(Program program, List<String> notes){ this.program = program; this.notes = notes; }
 
@@ -1409,11 +1498,18 @@ public final class SugarDecompiler{
         void parseMain(RecoveryVeto veto, List<Integer> decisionLog){
             this.veto = veto;
             this.decisions = decisionLog;
+            unitPrefix = "";
+            scopeBase = 0;
+            scopeFunction = false;
             parseRange(0, program.statements.size(), null);
             for(FunctionInfo function : functions) emitFunction(function);
         }
 
         void emitFunction(FunctionInfo function){
+            // Hoisted bodies are lowered with their own name prefix and their own index base.
+            unitPrefix = "func_" + function.name + "_";
+            scopeBase = items.size();
+            scopeFunction = true;
             FuncDefItem definition = new FuncDefItem(function.entry, function.name, function.params);
             items.add(definition);
             int cursor = function.entry;
@@ -1529,6 +1625,323 @@ public final class SugarDecompiler{
             }
         }
 
+        // ===== Unit-control cards ===========================================================
+
+        /**
+         * Recognizes the unit-control cards ({@code unitbind}, {@code unitnext}, {@code unitfor},
+         * {@code unitfree}) from the compiler's own lowering of them.
+         *
+         * <p>Unlike the other candidates this is not an inference from jump shapes: the region is
+         * built from the private {@code __ls_ub_*} temporaries and a fixed instruction sequence
+         * ({@code emitUnitBind} / {@code emitUnitNext} / {@code emitUnitFor} / {@code emitUnitFree}),
+         * so a program that merely calls {@code ubind} or reads {@code @flag} never matches, and
+         * a match is checked instruction by instruction — every jump target included. That is
+         * what lets a stripped carrier open as the card again instead of as the generic if/loop
+         * reading of the same scan loop ({@code unitfor} in particular has no vanilla shape a
+         * reader could recognize by intent).</p>
+         *
+         * <p>The lowering numbers its temporaries with the statement's index in the list it is
+         * lowering ({@code __ls_ub_n_3}); the compiler regenerates those names from the recovered
+         * card's position, so a card that would land at another index cannot reproduce the
+         * instruction stream. That condition is checked here: refusing the match leaves the
+         * program with the reading it had before this recovery existed, while accepting it and
+         * failing the gate would cost the program every structure the generic pass recovered.</p>
+         */
+        private Frame tryUnitCard(int at, int limit){
+            if(!unitCards || at + 4 > limit) return null;
+            if(!unitLine(at, "op", "mul", "__ls_ub_uid", "@thisx", "100000")) return null;
+            if(!unitLine(at + 1, "op", "add", "__ls_ub_uid", "__ls_ub_uid", "@thisy")) return null;
+            if(!unitLine(at + 2, "op", "add", "__ls_ub_uid", "__ls_ub_uid", "1")) return null;
+
+            Statement head = program.statements.get(at + 3);
+            if(head.kind().equals("ubind")) return unitFreeFrame(at, limit);
+            if(unitTempIndex(at + 3, 1, "n") != null) return unitForFrame(at, limit);
+            if(unitTempIndex(at + 3, 1, "s") != null) return unitNextFrame(at, limit);
+            if(head.kind().equals("jump")) return unitBindFrame(at, limit);
+            return null;
+        }
+
+        /**
+         * {@code unitfree}: bind the variable, clear the processor's flag and logic control, drop
+         * the variable. The region falls through to the card's own end label.
+         */
+        private Frame unitFreeFrame(int at, int limit){
+            int end = at + 12;
+            if(end > limit) return null;
+            String index = unitTempIndex(at + 5, 1, "d");
+            if(!unitIndexMatches(index)) return null;
+            String dead = unitTemp("d", index), flag = unitTemp("f", index);
+            String variable = program.statements.get(at + 3).token(1);
+            if(!unitOperand(variable)) return null;
+            boolean ok = unitLine(at + 3, "ubind", variable)
+                && unitJump(at + 4, end, "equal", "@unit", "null")
+                && unitLine(at + 5, "sensor", dead, "@unit", "@dead")
+                && unitJump(at + 6, end, "notEqual", dead, "0")
+                && unitLine(at + 7, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 8, end, "notEqual", flag, "__ls_ub_uid")
+                && unitLine(at + 9, "ucontrol", "flag", "0", "0", "0", "0", "0")
+                && unitLine(at + 10, "ucontrol", "unbind", "0", "0", "0", "0", "0")
+                && unitLine(at + 11, "set", variable, "null");
+            return ok ? unitCardFrame(at, end, "unitfree " + variable) : null;
+        }
+
+        /**
+         * {@code unitbind}: claim one unit of the type, or rebind one that already wears the
+         * processor's flag. The region ends at the label both outcomes jump to.
+         */
+        private Frame unitBindFrame(int at, int limit){
+            String index = unitTempIndex(at + 3, 3, "h");
+            if(!unitIndexMatches(index)) return null;
+            String hold = unitTemp("h", index), flag = unitTemp("f", index), dead = unitTemp("d", index),
+                ctrl = unitTemp("c", index), anchor = unitTemp("a", index), steps = unitTemp("s", index);
+            int scan = at + 11, lost = at + 10, loop = at + 13, keep = at + 20,
+                take = at + 39, fail = at + 42, end = at + 44;
+            if(end > limit) return null;
+            String type = program.statements.get(at + 15).token(1);
+            String variable = program.statements.get(at + 39).token(1);
+            if(!unitOperand(variable)) return null;
+            boolean ok = unitJump(at + 3, scan, "equal", hold, "null")
+                && unitLine(at + 4, "ubind", hold)
+                && unitJump(at + 5, lost, "equal", "@unit", "null")
+                && unitLine(at + 6, "sensor", dead, "@unit", "@dead")
+                && unitJump(at + 7, lost, "notEqual", dead, "0")
+                && unitLine(at + 8, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 9, take, "equal", flag, "__ls_ub_uid")
+                && unitLine(at + 10, "set", hold, "null")
+                && unitLine(at + 11, "set", steps, "0")
+                && unitLine(at + 12, "set", anchor, "null")
+                && unitLine(at + 13, "op", "add", steps, steps, "1")
+                && unitJump(at + 14, fail, "greaterThan", steps, "8192")
+                && unitLine(at + 15, "ubind", type)
+                && unitJump(at + 16, fail, "equal", "@unit", "null")
+                && unitJump(at + 17, fail, "equal", "@unit", anchor)
+                && unitJump(at + 18, keep, "notEqual", anchor, "null")
+                && unitLine(at + 19, "set", anchor, "@unit")
+                && unitLine(at + 20, "sensor", dead, "@unit", "@dead")
+                && unitJump(at + 21, loop, "notEqual", dead, "0")
+                && unitLine(at + 22, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 23, take, "equal", flag, "__ls_ub_uid")
+                && unitJump(at + 24, loop, "notEqual", flag, "0")
+                && unitLine(at + 25, "sensor", ctrl, "@unit", "@controlled")
+                && unitJump(at + 26, loop, "notEqual", ctrl, "0")
+                && unitLine(at + 27, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 28, loop, "notEqual", flag, "0")
+                && unitClaim(at + 29, index, loop)
+                && unitLine(at + 39, "set", variable, "@unit")
+                && unitLine(at + 40, "set", hold, "@unit")
+                && unitJump(at + 41, end, "always", "x", "false")
+                && unitLine(at + 42, "set", variable, "null")
+                && unitLine(at + 43, "set", hold, "null");
+            return ok ? unitCardFrame(at, end, "unitbind " + type + " " + variable) : null;
+        }
+
+        /**
+         * {@code unitnext}: the same scan loop without the "rebind a unit that already wears our
+         * flag" branch. The region ends at the label both assignments jump to.
+         */
+        private Frame unitNextFrame(int at, int limit){
+            String index = unitTempIndex(at + 3, 1, "s");
+            if(!unitIndexMatches(index)) return null;
+            String steps = unitTemp("s", index), anchor = unitTemp("a", index), flag = unitTemp("f", index),
+                dead = unitTemp("d", index), ctrl = unitTemp("c", index);
+            int loop = at + 5, keep = at + 12, fail = at + 32, end = at + 33;
+            if(end > limit) return null;
+            String type = program.statements.get(at + 7).token(1);
+            String variable = program.statements.get(at + 30).token(1);
+            if(!unitOperand(variable)) return null;
+            boolean ok = unitLine(at + 3, "set", steps, "0")
+                && unitLine(at + 4, "set", anchor, "null")
+                && unitLine(at + 5, "op", "add", steps, steps, "1")
+                && unitJump(at + 6, fail, "greaterThan", steps, "8192")
+                && unitLine(at + 7, "ubind", type)
+                && unitJump(at + 8, fail, "equal", "@unit", "null")
+                && unitJump(at + 9, fail, "equal", "@unit", anchor)
+                && unitJump(at + 10, keep, "notEqual", anchor, "null")
+                && unitLine(at + 11, "set", anchor, "@unit")
+                && unitLine(at + 12, "sensor", dead, "@unit", "@dead")
+                && unitJump(at + 13, loop, "notEqual", dead, "0")
+                && unitLine(at + 14, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 15, loop, "notEqual", flag, "0")
+                && unitLine(at + 16, "sensor", ctrl, "@unit", "@controlled")
+                && unitJump(at + 17, loop, "notEqual", ctrl, "0")
+                && unitLine(at + 18, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 19, loop, "notEqual", flag, "0")
+                && unitClaim(at + 20, index, loop)
+                && unitLine(at + 30, "set", variable, "@unit")
+                && unitJump(at + 31, end, "always", "x", "false")
+                && unitLine(at + 32, "set", variable, "null");
+            return ok ? unitCardFrame(at, end, "unitnext " + type + " " + variable) : null;
+        }
+
+        /**
+         * {@code unitfor}: the two-phase scan loop, the shared claim protocol, and the author's
+         * body between the delivered unit and the loop's own step. The block's tail (the step
+         * and the back edge) regenerates from the card, so the frame owns it while {@code break}
+         * and {@code continue} inside the body keep targeting the card's exit and step.
+         */
+        private Frame unitForFrame(int at, int limit){
+            String index = unitTempIndex(at + 3, 1, "n");
+            if(!unitIndexMatches(index)) return null;
+            String seen = unitTemp("n", index), phase = unitTemp("p", index), owned = unitTemp("o", index),
+                anchor = unitTemp("a", index), steps = unitTemp("s", index), room = unitTemp("r", index),
+                hold = unitTemp("h", index), flag = unitTemp("f", index), dead = unitTemp("d", index),
+                ctrl = unitTemp("c", index);
+            int scan = at + 8, mark = at + 15, keep = at + 16, ours = at + 40,
+                countLabel = at + 43, give = at + 52, wrap = at + 45;
+            if(give + 1 > limit) return null;
+            Statement guard = program.statements.get(at + 9);
+            int after = guard.target;
+            // The block's own tail follows the body immediately: the step, the back edge, and
+            // then the label the card's guard jumps to. Anything else is not this lowering.
+            int step = after - 2;
+            if(after <= give + 2 || after > limit || step < give + 1) return null;
+            Statement back = program.statements.get(step + 1);
+            if(!back.isAlways() || back.target != scan) return null;
+
+            String type = program.statements.get(at + 10).token(1);
+            String count = program.statements.get(at + 26).token(4);
+            String variable = program.statements.get(give).token(1);
+            if(!unitOperand(variable)) return null;
+            boolean ok = unitLine(at + 3, "set", seen, "0")
+                && unitLine(at + 4, "set", phase, "0")
+                && unitLine(at + 5, "set", owned, "0")
+                && unitLine(at + 6, "set", anchor, "null")
+                && unitLine(at + 7, "set", steps, "0")
+                && unitLine(at + 8, "op", "add", steps, steps, "1")
+                && unitJump(at + 9, after, "greaterThan", steps, "8192")
+                && unitLine(at + 10, "ubind", type)
+                && unitJump(at + 11, wrap, "equal", "@unit", "null")
+                && unitJump(at + 12, mark, "equal", anchor, "null")
+                && unitJump(at + 13, wrap, "equal", "@unit", anchor)
+                && unitJump(at + 14, keep, "always", "x", "false")
+                && unitLine(at + 15, "set", anchor, "@unit")
+                && unitLine(at + 16, "sensor", dead, "@unit", "@dead")
+                && unitJump(at + 17, scan, "notEqual", dead, "0")
+                && unitLine(at + 18, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 19, ours, "equal", flag, "__ls_ub_uid")
+                && unitJump(at + 20, scan, "equal", phase, "0")
+                && unitJump(at + 21, scan, "notEqual", flag, "0")
+                && unitLine(at + 22, "sensor", ctrl, "@unit", "@controlled")
+                && unitJump(at + 23, scan, "notEqual", ctrl, "0")
+                && unitLine(at + 24, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 25, scan, "notEqual", flag, "0")
+                && unitJump(at + 26, scan, "greaterThanEq", seen, count)
+                && unitJump(at + 27, scan, "lessThanEq", room, "0")
+                && unitClaim(at + 28, index, scan)
+                && unitLine(at + 38, "op", "sub", room, room, "1")
+                && unitJump(at + 39, give, "always", "x", "false")
+                && unitJump(at + 40, countLabel, "equal", phase, "0")
+                && unitJump(at + 41, scan, "greaterThanEq", seen, count)
+                && unitJump(at + 42, give, "always", "x", "false")
+                && unitLine(at + 43, "op", "add", owned, owned, "1")
+                && unitJump(at + 44, scan, "always", "x", "false")
+                && unitJump(at + 45, after, "notEqual", phase, "0")
+                && unitLine(at + 46, "set", phase, "1")
+                && unitLine(at + 47, "set", seen, "0")
+                && unitLine(at + 48, "set", steps, "0")
+                && unitLine(at + 49, "op", "sub", room, count, owned)
+                && unitJump(at + 50, scan, "equal", "@unit", "null")
+                && unitJump(at + 51, keep, "always", "x", "false")
+                && unitLine(give, "set", variable, "@unit")
+                && unitLine(step, "op", "add", seen, seen, "1");
+            if(!ok) return null;
+
+            Frame frame = new Frame();
+            frame.kind = Frame.Kind.UNIT_FOR;
+            frame.start = at;
+            frame.bodyStart = give + 1;
+            frame.bodyEnd = step;
+            frame.exit = after;
+            frame.resume = after;
+            frame.continueTarget = step;
+            frame.unitCount = count;
+            frame.unitType = type;
+            frame.unitVariable = variable;
+            return frame;
+        }
+
+        /** The flag claim every unit card shares: write the flag, yield four ticks so a peer
+         *  processor that read flag 0 just before us gets to write first, then re-read it. */
+        private boolean unitClaim(int at, String index, int reject){
+            String hold = unitTemp("h", index), flag = unitTemp("f", index);
+            return unitLine(at, "set", hold, "@unit")
+                && unitLine(at + 1, "ucontrol", "flag", "__ls_ub_uid", "0", "0", "0", "0")
+                && unitLine(at + 2, "end") && unitLine(at + 3, "end")
+                && unitLine(at + 4, "end") && unitLine(at + 5, "end")
+                && unitLine(at + 6, "ubind", hold)
+                && unitJump(at + 7, reject, "equal", "@unit", "null")
+                && unitLine(at + 8, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 9, reject, "notEqual", flag, "__ls_ub_uid");
+        }
+
+        /** The index encoded in a compiler-private unit temporary
+         *  ({@code __ls_ub_<kind>_<prefix><index>}), or null when the token is not one. */
+        private String unitTempIndex(int at, int token, String kind){
+            if(at < 0 || at >= program.statements.size()) return null;
+            String name = unitTemp(kind, "");
+            String value = program.statements.get(at).token(token);
+            if(!value.startsWith(name)) return null;
+            String index = value.substring(name.length());
+            if(index.isEmpty()) return null;
+            for(int i = 0; i < index.length(); i++){
+                if(!Character.isDigit(index.charAt(i))) return null;
+            }
+            return index;
+        }
+
+        /** The full private name of one of a unit card's temporaries. */
+        private String unitTemp(String kind, String index){
+            return "__ls_ub_" + kind + "_" + unitPrefix + index;
+        }
+
+        /**
+         * Whether the card being recovered keeps the statement index its lowering numbered the
+         * temporaries with. The compiler numbers them by the card's position in the list being
+         * lowered (a main statement, or a hoisted function's body statement) and regenerates the
+         * names from the recovered source, so the card has to land at that same position.
+         */
+        private boolean unitIndexMatches(String index){
+            if(index == null) return false;
+            int expected = items.size() - scopeBase - (scopeFunction ? 1 : 0);
+            return index.equals(Integer.toString(expected));
+        }
+
+        /** Whether a card operand can be what the author wrote: compiler-private names cannot. */
+        private static boolean unitOperand(String token){
+            return !token.isEmpty() && !token.startsWith("__ls_");
+        }
+
+        /** Whether the statement at {@code at} is exactly these tokens ({@code null} matches any). */
+        private boolean unitLine(int at, String... tokens){
+            if(at < 0 || at >= program.statements.size()) return false;
+            Statement statement = program.statements.get(at);
+            if(statement.tokens.length != tokens.length) return false;
+            for(int i = 0; i < tokens.length; i++){
+                if(tokens[i] != null && !tokens[i].equals(statement.token(i))) return false;
+            }
+            return true;
+        }
+
+        /** Whether the statement at {@code at} is a jump to {@code target} with these operands. */
+        private boolean unitJump(int at, int target, String operation, String value, String compare){
+            if(at < 0 || at >= program.statements.size()) return false;
+            Statement statement = program.statements.get(at);
+            return statement.isJump() && statement.tokens.length == 5 && statement.target == target
+                && statement.token(2).equals(operation) && statement.token(3).equals(value)
+                && statement.token(4).equals(compare);
+        }
+
+        /** A recovered plain unit card: its entire lowering is this one source statement. */
+        private Frame unitCardFrame(int start, int end, String card){
+            Frame frame = new Frame();
+            frame.kind = Frame.Kind.UNIT;
+            frame.start = start;
+            frame.exit = end;
+            frame.resume = end;
+            frame.unitCard = card;
+            return frame;
+        }
+
         /** Single structure-trial pipeline shared by the main range and function bodies, so
          *  identical instruction shapes recover identically everywhere. The @counter jump
          *  table is tried before the comparison-chain switch (its {@code op add @counter}
@@ -1542,10 +1955,14 @@ public final class SugarDecompiler{
          *  caught by recompilation verification. */
         private Frame tryFrames(int at, int limit){
             List<Frame> candidates = new ArrayList<>();
+            // Unit-control cards are the compiler's own lowering of a card, recognized by its
+            // private names; a match is a proof and outranks every inferred shape.
+            Frame frame = tryUnitCard(at, limit);
+            if(frame != null) candidates.add(frame);
             // A guard-less table carries its rows straight after the dispatch; the guarded
             // lowering puts two bounds guards there instead, so the two never match the same
             // position and the order between them only decides which is tried first.
-            Frame frame = tryStrideSwitch(at, limit);
+            frame = tryStrideSwitch(at, limit);
             if(frame != null) candidates.add(frame);
             frame = tryBareSwitchTable(at, limit);
             if(frame != null) candidates.add(frame);
@@ -1577,7 +1994,7 @@ public final class SugarDecompiler{
         /** Specificity tiebreak for equally-lossy candidates. */
         private static int kindRank(Frame.Kind kind){
             return switch(kind){
-                case FOR -> 0;
+                case FOR, UNIT, UNIT_FOR -> 0;
                 case WHILE -> 1;
                 case SWITCH -> 2;
                 case IF -> 3;
@@ -2079,6 +2496,25 @@ public final class SugarDecompiler{
                     items.add(end);
                     header.end = end;
                     structured++;
+                }
+                case UNIT -> {
+                    items.add(new UnitCardItem(frame.start, frame.exit - 1, frame.unitCard));
+                    structured++;
+                    unitFrames++;
+                }
+                case UNIT_FOR -> {
+                    // The card reproduces its whole scan prologue up to the delivered unit, so the
+                    // item covers it and the frame parses only the author's body. Break and
+                    // continue inside the body keep the card's own exit and step targets.
+                    UnitForItem header = new UnitForItem(frame.start, frame.bodyStart - 1,
+                        frame.unitCount, frame.unitType, frame.unitVariable);
+                    items.add(header);
+                    parseRange(frame.bodyStart, frame.bodyEnd, new Context(frame.exit, frame.continueTarget, parent));
+                    BlockEndItem end = new BlockEndItem(frame.exit);
+                    items.add(end);
+                    header.end = end;
+                    structured++;
+                    unitFrames++;
                 }
             }
         }

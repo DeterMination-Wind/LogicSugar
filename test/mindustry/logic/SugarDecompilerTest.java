@@ -48,6 +48,7 @@ public final class SugarDecompilerTest{
         deletedCarrierDegradesToInference();
         staleCarrierRecoversFromInstructions();
         dynamicCounterStaysFlat();
+        unitControlCardsRecoverFromTheirLowering();
         entrySkipIsRecognisedOnlyAtTheEndOfMain();
         functionZoneViolationSkipsRecovery();
         functionStructuresSurviveZoneCheck();
@@ -613,6 +614,48 @@ public final class SugarDecompilerTest{
         check(result.structured == 0, "dynamic @counter program claimed structure");
         check(result.notes.stream().anyMatch(note -> note.contains("@counter")),
             "dynamic @counter triage left no explanatory note: " + result.notes);
+    }
+
+    /**
+     * The reported 2026-10 program: a {@code unitfor} block whose body is a vanilla statement.
+     * The card has no vanilla jump shape of its own — the scan loop used to reopen as a stack of
+     * if cards over its guards — so it is recovered from the compiler's own lowering of it
+     * ({@code __ls_ub_*} temporaries, matched instruction for instruction). The failure
+     * direction stays "show more vanilla": a program that only resembles the lowering is left
+     * alone.
+     */
+    private static void unitControlCardsRecoverFromTheirLowering(){
+        String source = "unitfor 3 @poly unit 999\nucontrol move @thisx @thisy 0 0 0\nblockend\nprint unit\n";
+        String stripped = stripGenerated(SugarCompiler.compile(source));
+        SugarDecompiler.Result result = SugarDecompiler.decompile(stripped);
+        check(result.verified, "unit-control program was not verified: " + result.notes);
+        check(result.sugar.contains("unitfor 3 @poly unit"),
+            "the unitfor card did not come back:\n" + result.sugar);
+        check(result.sugar.contains("ucontrol move @thisx @thisy"),
+            "the block body was rewritten:\n" + result.sugar);
+        check(!result.sugar.contains("ifbegin"),
+            "the scan loop was still read as if cards:\n" + result.sugar);
+        // The card has to reproduce the program, not rewrite it.
+        check(productStream(result.sugar).equals(inputStream(stripped)),
+            "the recovered unitfor does not recompile to the original program:\n" + productStream(result.sugar));
+        // And the editor has to open with that view, at the privilege level a processor uses.
+        SugarDecompiler.Opening opening = SugarDecompiler.openingSource(stripped, false, false);
+        check(opening.mode == SugarDecompiler.OpeningMode.inferred && opening.source.contains("unitfor 3 @poly unit"),
+            "the editor did not open the unit-control program as the card: " + opening.mode);
+
+        String bound = stripGenerated(SugarCompiler.compile("unitbind @poly unit\nprint unit\n"));
+        SugarDecompiler.Result bind = SugarDecompiler.decompile(bound);
+        check(bind.verified && bind.sugar.contains("unitbind @poly unit"),
+            "unitbind did not come back: " + bind.notes + "\n" + bind.sugar);
+
+        // An edited lowering (one scan guard's limit changed) is not the compiler's shape any
+        // more, so the region has to stay as vanilla instructions.
+        String edited = stripped.replace("greaterThan __ls_ub_s_0 8192", "greaterThan __ls_ub_s_0 8193");
+        check(!edited.equals(stripped), "the fixture no longer contains the guard this test edits");
+        SugarDecompiler.Result near = SugarDecompiler.decompile(edited);
+        check(near.verified, "the edited program was rejected outright: " + near.notes);
+        check(!near.sugar.contains("unitfor"),
+            "a modified lowering was rewritten into a unitfor card:\n" + near.sugar);
     }
 
     /**

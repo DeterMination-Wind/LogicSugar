@@ -186,7 +186,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - 有载体且验证通过 → 声明卡和表达式一并回来（编辑器再 `foldAll` 折回 `buf[i]` / `stack_push` 等）。
 - 没有载体（别人用手写 mlog、或载体被删）→ **不猜测**声明卡，只显示 `read`/`write`/`op`/`jump`。注入函数 `__ls_builtin_*` 的蹦床也不得恢复成用户 `funcdef`。
-- 单位控制卡（`unitbind` / `unitnext` / `unitfor` / `unitfree`）同样只活在载体里。lowering 是普通 `ubind` / `sensor` / `ucontrol flag` / `end`，和手写的抢旗代码分不开，推断路径不恢复这些卡。
+- 单位控制卡（`unitbind` / `unitnext` / `unitfor` / `unitfree`）同样只活在载体里，但它们的 lowering 不是「普通抢旗代码」：整段由编译器私有的 `__ls_ub_<字段>_<下标>` 临时变量与固定指令序列构成（见「路径 2」的单位控制卡一段），所以无载体时按名字逐条比对恢复；对不上一律保持 vanilla。
 
 反编译预检必须走 `LogicSugarMod.registerStatements()`（模块 + 解析器），否则载体里的声明卡会被当成未知行。
 
@@ -213,7 +213,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 失败方向永远是"多显示原版代码"，绝不改写未知程序。新增恢复模式（跳转表、短路谓词、新数据结构）一律放在这道门之后；新功能若既不能进载体、也不能被推断，就要在文档写明「重开只显示原版」。
 
-`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 179 个 fixture / 1106 个 gate 断言覆盖当前全部控制积木、全部声明卡、全部 `datacall` 操作和断言/调试卡：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且必须保持 100+，不得只改数字。
+`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 198 个 fixture / 1246 个 gate 断言覆盖当前全部控制积木、全部声明卡、全部 `datacall` 操作和断言/调试卡：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且必须保持 100+，不得只改数字。
 
 **无边界跳转表（`switchbegin … raw`）与 `default` 分支**：手写 `@counter` 跳转表没有边界守卫，就是 `op add @counter @counter <v>` 后跟每条槽位一条无条件跳转行。用编译器的*带守卫*跳转表去还原它会多出两条指令并夹紧越界值，等于偷偷改写程序，所以形态写进源码：
 
@@ -223,6 +223,11 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - **步长表**（`switchbegin … stride <n> <tmp> abs|rel`）：手写程序用 `op mul <tmp> <idx> <n>` 再写入 `@counter`，case 正文按固定长度紧挨着排，而不是每个槽一条跳转行。`abs` 的常数在编译时按第一条正文的指令下标重算；`rel` 的偏移是 `1 - firstCase * n`，使第一个 case 落在三条派发指令的下一行。推断要求至少两个完整槽，且槽尾同为 `end` 或同指一处的无条件跳转；对不上就保持 vanilla。动态 `@counter` 分诊只把 `recognizeStride` 接受的派发当成已知安全形状。
 - **步长表**（`switchbegin … stride <n> <tmp> abs|rel`）：手写程序用 `op mul` 再写入 `@counter`，case 正文按固定长度紧挨着排。`abs` 的常数在编译时按第一条正文的指令下标重算；`rel` 使第一个 case 落在三条派发指令的下一行。推断要求至少两个完整槽，槽尾同为 `end` 或同指一处的无条件跳转。动态 `@counter` 分诊只把 `recognizeStride` 接受的派发当成已知安全形状。
 - 带守卫跳转表的推断同样恢复 `default`：守卫与空槽行落在 switch *内部*的体上而不是出口，此时 switch 真正的结尾是各 case 体 break 跳转的目标（`switchEndBeyond`）。两种读法都作为候选给出——体里跳出 switch 的跳转在这一层与 default 无法区分——由门裁决，与其余恢复逻辑同一套做法。
+
+**单位控制卡（`unitbind` / `unitnext` / `unitfor` / `unitfree`）是另一类推断：不是从跳转形状猜，而是认编译器自己的 lowering**（`tryUnitCard` + `unitFreeFrame` / `unitBindFrame` / `unitNextFrame` / `unitForFrame`）。这一段与 `__ls_sw_*` 跳转表同一思路：整段由 `__ls_ub_uid`（`@thisx * 100000 + @thisy + 1`）、`__ls_ub_<字段>_<下标>` 临时变量与固定指令序列组成，因此逐条比对（每条 jump 的目标、四条 `end` 空等、claim 后的 flag 复核都要对上），随手写的 `ubind` / `sensor @flag` 不会命中；`unitfor` 的体区（卡自带的扫描前导与 step/回边之间）仍由常规 `parseRange` 恢复，`break` / `continue` 分别指向卡的出口与 step。
+
+- **下标条件**：lowering 把临时变量按「正在 lower 的那张语句表的序号」命名（`__ls_ub_n_3`），而编译器重编译恢复后的源码时是从卡片在源码里的位置重新生成这些名字。所以 `unitIndexMatches` 要求卡片落在同一序号（主程序用可见语句序号，函数体用体序号，`scopeBase` / `scopeFunction` 记录），否则**不认这张卡**——认了也过不了门，反而会连累整程序的其它恢复。声明卡、表达式卡等零指令语句改变序号时同样拒绝。
+- **一层可关的恢复层**：`Candidate.unitCards`。万一认了却过不了门（例如上面的序号推算之外还有别的差异），`infer` 会**关掉这层再跑一遍**，验证通过就用旧读法（正是本层存在前的结果），并加一条 note；旧读法也失败时才继续 `backtrack`。所以新层只能把视图变好，不会把已有的恢复弄没。
 
 短路守卫恢复（`tryShortCircuitFrames`）是这套机制的核心用户：`ShortCircuitCompiler` 的 lowering 是若干 `[条件 jump, fallback jump]` 原子对的连续拼接（内部续接标签都落在原子对起点），守卫解析器从对的目标关系重建布尔树（`parseGuardTree`，带换目标环检测的备忘递归），为同一片守卫区域同时给出 `if` / `while` / `for` 候选。由此单原子守卫、顶层 `!`、任意嵌套 `&&`/`||` 树以及 `whilebegin`/`forbegin` 的 `exprsc` 条件都能恢复，不再限于固定四指令布局。体内跳回 while 守卫头的 always 跳转就是 `continue` 的 lowering 形状，由循环上下文恢复为 `continue` 语句。
 

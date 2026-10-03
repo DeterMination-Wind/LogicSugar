@@ -211,6 +211,37 @@ so the product stays byte-identical without storing a stale address. Anything th
 full slots with a shared `end` or shared unconditional-jump trailer stays vanilla. The
 dynamic-`@counter` triage treats only a dispatch `recognizeStride` accepts as known-safe.
 
+### Unit-control cards are inferred from the compiler's own lowering
+
+`unitbind` / `unitnext` / `unitfor` / `unitfree` used to be carrier-only, and a program without a
+carrier (the reported case: the product of a `unitfor` block pasted back as mlog) reopened as a
+stack of `ifbegin` cards over the scan loop's guards — faithful per the gate, useless to the user.
+They are now recovered by inference, but not by guessing from jump shapes: `tryUnitCard` matches
+the lowering instruction for instruction by its private `__ls_ub_uid` /
+`__ls_ub_<kind>_<index>` names (the same approach as the `__ls_sw_*` tables), so hand-written
+`ubind` / `@flag` code never matches. A `unitfor` frame keeps the author's body — the region
+between the card's own delivery line and its step/back edge — so `break` and `continue` inside it
+stay items, and nested blocks, loops and hoisted function bodies all recover.
+
+Two properties are load-bearing:
+
+- **`unitIndexMatches` (refuse, do not recover).** The lowering numbers its temporaries with the
+  statement index of the list being lowered (`__ls_ub_n_3`), and the compiler regenerates those
+  names from the recovered card's position; a card that would land at another index (zero-instruction
+  cards before it, a function body whose item base differs) cannot reproduce the instruction stream.
+  Refusing the match keeps the previous reading, while recovering and failing the gate would cost
+  the program every other structure it can recover — the failure direction stays "show more
+  vanilla".
+- **The layer is switchable** (`Candidate.unitCards`). When a unit candidate fails the gate,
+  `infer` reruns with the layer off, keeps that result if it verifies (the reading that existed
+  before the layer) and only then falls through to `backtrack`. The layer can improve a view; it
+  can never remove a recovery that already worked.
+
+Fixtures: the `unit.*` entries in `ReconstructionMatrixTest` are `addInferred` (carrier +
+inference; `unit.for.body` is the reported program), and `decompileTest`'s
+`unitControlCardsRecoverFromTheirLowering` pins both directions — the recovered block, and a
+lowering with one scan guard edited that must stay vanilla.
+
 **Checklist for any change that touches the compiled product:**
 
 - Update the carrier path so the new card/feature survives `compile → save → restore → verifyRestore`.
