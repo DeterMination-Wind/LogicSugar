@@ -214,6 +214,12 @@ public final class ReconstructionMatrixTest{
         // 没有标记时单行卡与普通 set/op 积木在文本里无法区分，保存一次就会退化成积木。
         addCarrier("decl.exprcard", "stack s cell1 0 4\nset result 0\n"
             + ExprStatement.cardMarkerPrefix + "result \"0\"\n", ExprStatement.cardMarkerPrefix);
+        // 过期 destIndex 会让 restore() 按嵌套重写语句文本；单行卡的自描述标记（它唯一的存在证据）
+        // 必须活过这次重写，否则重开时卡片静默退化成普通 set 积木。
+        addCarrier("decl.exprcard.staleDest",
+            "stack s cell1 0 4\nifbegin x greaterThan 0 999\nset result 0\n"
+                + ExprStatement.cardMarkerPrefix + "result \"0\"\nblockend\n",
+            ExprStatement.cardMarkerPrefix + "result \"0\"");
     }
 
     private static void addOperationFixtures(){

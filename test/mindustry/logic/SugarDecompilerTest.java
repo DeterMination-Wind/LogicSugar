@@ -49,6 +49,7 @@ public final class SugarDecompilerTest{
         staleCarrierRecoversFromInstructions();
         dynamicCounterStaysFlat();
         unitControlCardsRecoverFromTheirLowering();
+        expressionCardMarkersSurviveRecovery();
         entrySkipIsRecognisedOnlyAtTheEndOfMain();
         functionZoneViolationSkipsRecovery();
         functionStructuresSurviveZoneCheck();
@@ -656,6 +657,64 @@ public final class SugarDecompilerTest{
         check(near.verified, "the edited program was rejected outright: " + near.notes);
         check(!near.sugar.contains("unitfor"),
             "a modified lowering was rewritten into a unitfor card:\n" + near.sugar);
+    }
+
+    /**
+     * Expression cards and the reopen paths (reported 2026-10: a single-line expression card
+     * silently degraded into a plain {@code set}/{@code op} block).
+     *
+     * <p>A single-line card ({@code x = 0}, {@code x = a + b}, {@code x = cos(a)}) compiles to
+     * exactly one statement, byte-identical to a plain block — the comment marker
+     * {@link logicsugar.assist.expr.ExprStatement#write} adds is the only evidence that the line
+     * was a card. Both halves are pinned here: the stored path keeps the marker through the
+     * stale-{@code destIndex} rewrite, and the inference path puts a <em>verified</em> marker back
+     * — while a marker that no longer matches its statement is dropped.</p>
+     */
+    private static void expressionCardMarkersSurviveRecovery(){
+        String marker = logicsugar.assist.expr.ExprStatement.cardMarkerPrefix + "x \"0\"";
+        String source = "set a 1\n"
+            + "op add _0 a b\n"
+            + "op mul result _0 2\n"
+            + "set x 0\n"
+            + marker + "\n"
+            + "ifbegin a greaterThan 0 999\n"
+            + "print result\n"
+            + "blockend\n";
+        String compiled = SugarCompiler.compile(source, SugarCompiler.FuncMode.normal);
+
+        // Stored path: the carrier's destIndex comment is stale, so restore() re-serializes the
+        // statements — and has to keep the comment it does not understand.
+        String restored = SugarCompiler.restore(compiled);
+        check(restored.contains(marker), "the stale-dest rewrite dropped the expression-card marker:\n" + restored);
+        check(SugarCompiler.verifyRestore(compiled, restored), "the restored carrier stopped verifying");
+
+        // Inference path: the program was edited outside Logic Sugar, so the stored source is
+        // stale and recovery has to bring the marker back from the product's marker block.
+        String edited = compiled.replace("print result", "print a");
+        SugarDecompiler.Result result = SugarDecompiler.decompile(edited);
+        check(result.verified, "the edited program was not verified: " + result.notes);
+        check(result.sugar.contains("set x 0\n" + marker),
+            "inference lost the expression-card marker:\n" + result.sugar);
+
+        // And the recovered text has to still be what the editor's text import turns back into
+        // the card the user had — the marker is only useful if that round trip works.
+        logicsugar.assist.expr.ExprTextImport.Plan plan = logicsugar.assist.expr.ExprTextImport.plan(result.sugar);
+        check(!plan.isEmpty(), "the recovered marker was not recognised by the text import");
+        boolean card = false;
+        for(LStatement statement : LAssembler.read(plan.text(), true)){
+            logicsugar.assist.expr.ExprStatement recovered = plan.statementFor(statement);
+            if(recovered != null) card = "x".equals(recovered.dest) && "0".equals(recovered.expr);
+        }
+        check(card, "the recovered marker did not come back as a card:\n" + result.sugar);
+
+        // A marker whose expression no longer unfolds to the statement below it is evidence for
+        // something else: it must be dropped, never used to rewrite the statement.
+        String mismatched = edited.replace("# @ls-expr-card x \"0\"", "# @ls-expr-card x \"a + b\"");
+        check(!mismatched.equals(edited), "the fixture no longer contains the marker this test edits");
+        SugarDecompiler.Result stale = SugarDecompiler.decompile(mismatched);
+        check(stale.verified, "the mismatched program was rejected outright: " + stale.notes);
+        check(!stale.sugar.contains("# @ls-expr-card"),
+            "a marker that does not match its statement was used:\n" + stale.sugar);
     }
 
     /**

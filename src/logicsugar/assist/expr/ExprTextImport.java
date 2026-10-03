@@ -9,10 +9,13 @@ import mindustry.logic.LCanvas.StatementElem;
 import mindustry.logic.LStatement;
 import mindustry.logic.LStatements.SetStatement;
 import mindustry.logic.SugarCanvas;
+import mindustry.logic.SugarCompiler;
 import mindustry.logic.SugarStatements;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -175,6 +178,100 @@ public final class ExprTextImport{
             quoted = quoted.substring(1, quoted.length() - 1);
         }
         return new Assignment(dest, SugarStatements.unescapeQuoted(quoted));
+    }
+
+    /**
+     * 单行表达式卡的自描述标记行：{@code # @ls-expr-card <dest> "<expr>"}。格式只在本处维护：
+     * {@link ExprStatement#write} 写出它，{@link #cardMarkers} 读回它。
+     */
+    public static String cardMarker(String dest, String expr){
+        return ExprStatement.cardMarkerPrefix + (dest == null ? "" : dest) + " \""
+            + SugarStatements.escapeQuoted(expr == null ? "" : expr) + "\"";
+    }
+
+    /**
+     * 文本里全部表达式卡标记，按出现顺序给出 {@code (dest, expr)}。
+     *
+     * <p>标记有两种形态：独立一行（编辑器画布文本，以及载体解码出的文本）与嵌在注释标记块里的
+     * {@code # @logic-sugar-line # @ls-expr-card …}——程序存档的产物里标记只会以第二种形态存在。</p>
+     */
+    public static List<String[]> cardMarkers(String asm){
+        List<String[]> result = new ArrayList<>();
+        if(asm == null) return result;
+        for(String raw : asm.replace("\r\n", "\n").split("\n", -1)){
+            String line = raw.trim();
+            String source = SugarCompiler.markerSourceOf(line);
+            if(source != null) line = source.trim();
+            Assignment marker = parseCardMarker(line);
+            if(marker != null) result.add(new String[]{marker.dest(), marker.expr()});
+        }
+        return result;
+    }
+
+    /**
+     * 把 {@code source} 里的表达式卡标记放到本类认领它们的位置：紧跟在它所展开成的那条语句下面。
+     *
+     * <p>重写程序会丢掉注释——反编译器推断与 {@code SugarCompiler.rewriteStaleBlockDests} 都
+     * 按语句重新序列化文本——而标记是「这一行原本是单行表达式卡，不是普通 set/op 积木」的唯一证据。
+     * 本方法只把这份证据放回去：只有当 {@code text} 里确实存在该标记所展开成的那条语句
+     * （{@link ExprCompiler#compile} 单行结果，逐字比较）时才认领，每条语句至多认领一次，
+     * 下面已经有标记行的语句不再补一份。因此过期标记（程序在 Logic Sugar 之外被改过）匹配不到任何
+     * 语句、直接被丢弃，绝不会把一条语句改写成它从来不是的卡片。</p>
+     *
+     * @return 没有任何标记可用时逐字返回 {@code text}
+     */
+    public static String attachCardMarkers(String text, String source){
+        List<String[]> markers = cardMarkers(source);
+        if(text == null || text.isEmpty() || markers.isEmpty()) return text;
+
+        String[] lines = text.replace("\r\n", "\n").split("\n", -1);
+        boolean[] claimed = new boolean[lines.length];
+        Map<Integer, String> insertAfter = new LinkedHashMap<>();
+        for(String[] marker : markers){
+            String unfolding = singleLineUnfolding(marker[0], marker[1]);
+            if(unfolding == null) continue;
+            for(int i = 0; i < lines.length; i++){
+                if(claimed[i] || !lines[i].trim().equals(unfolding)) continue;
+                // 已经带标记的语句（载体文本、或前一轮已经补过）不再补第二份
+                if(hasMarkerBelow(lines, i)) break;
+                claimed[i] = true;
+                insertAfter.put(i, cardMarker(marker[0], marker[1]));
+                break;
+            }
+        }
+        if(insertAfter.isEmpty()) return text;
+
+        StringBuilder out = new StringBuilder();
+        for(int i = 0; i < lines.length; i++){
+            out.append(lines[i]);
+            String marker = insertAfter.get(i);
+            if(marker != null) out.append('\n').append(marker);
+            if(i + 1 < lines.length) out.append('\n');
+        }
+        return out.toString();
+    }
+
+    /** 下一条非空行是否已经是表达式卡标记行。 */
+    private static boolean hasMarkerBelow(String[] lines, int index){
+        for(int i = index + 1; i < lines.length; i++){
+            if(lines[i].trim().isEmpty()) continue;
+            return lines[i].trim().startsWith(ExprStatement.cardMarkerPrefix);
+        }
+        return false;
+    }
+
+    /**
+     * {@code dest = expr} 编译出的那一条语句；编译失败或需要多行时返回 null（多行卡不写标记）。
+     * 函数名校验刻意宽松：标记只在程序里已经存在同一条语句时才被采用，所以这里解析不出的名字不该
+     * 让卡片丢掉。
+     */
+    private static String singleLineUnfolding(String dest, String expr){
+        try{
+            List<ExprCompiler.Line> lines = ExprCompiler.compile(dest, expr, name -> true, false);
+            return lines.size() == 1 ? lines.get(0).toText() : null;
+        }catch(Throwable ignored){
+            return null;
+        }
     }
 
     /** 画布版本：把哨兵 set 语句原位换成 {@link ExprStatement} 卡（与 ExprHook 折叠同一套增删方式）。 */

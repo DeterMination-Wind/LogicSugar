@@ -52,6 +52,7 @@ public class ExprCardSelfTest{
         unknownRawLineIsReported();
         singleLineCardsCarryTheMarker();
         markerRoundTripsThroughTextImport();
+        markerSurvivesTextRewrites();
         carrierRoundTripKeepsTheCard();
         textIsIdenticalWithAndWithoutUnfold();
         counterConstantsAreFolded();
@@ -213,6 +214,54 @@ public class ExprCardSelfTest{
     }
 
     /** 标记 + 展开行必须还原成同一张卡（一对一：语句条数不变，jump 下标不动）。 */
+    /**
+     * 标记必须在<b>重写文本</b>的路径上活下来：单行卡的展开行与普通积木逐字相同，标记是唯一证据，
+     * 而两处重写都按语句重新序列化（丢掉注释）——{@code SugarCompiler.rewriteStaleBlockDests}
+     * （载体里 destIndex 过期时）与反编译器推断（编辑器侧由 {@code SugarDecompilerTest} 钉住）。
+     *
+     * <p>同时钉住标记的两种形态：存档产物里它只以注释标记块里的嵌套形态存在，而
+     * {@code plan} 只认紧跟在语句下面的独立标记行，所以由 {@link ExprTextImport#attachCardMarkers}
+     * 把它提到位——且只在「文本里确实存在该标记所展开成的那条语句」时采用，重复调用不会补第二份。</p>
+     */
+    private static void markerSurvivesTextRewrites(){
+        String sugar = "stack s cell1 0 4\n"
+            + writeOf("x", "0") + "\n"
+            + "ifbegin a greaterThan 0 999\n"
+            + "print x\n"
+            + "blockend\n";
+        String compiled = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal);
+        check(compiled.contains(ExprStatement.cardMarkerPrefix),
+            "the marker must reach the product (inside the comment marker block):\n" + compiled);
+
+        // 载体里的 destIndex 是过期的 999：restore() 会按嵌套重写语句文本，标记必须留在原地
+        String restored = SugarCompiler.restore(compiled);
+        check(restored.contains("set x 0\n" + ExprStatement.cardMarkerPrefix + "x \"0\""),
+            "the stale-dest rewrite dropped the marker:\n" + restored);
+        check(SugarCompiler.verifyRestore(compiled, restored), "the restored carrier stopped verifying");
+
+        // 产物里标记嵌在注释标记块里，plan 认不出：先提到语句下面，语句条数与下标都不变
+        String hoisted = ExprTextImport.attachCardMarkers(compiled, compiled);
+        check(hoisted.contains("set x 0\n" + ExprStatement.cardMarkerPrefix + "x \"0\""),
+            "a nested marker was not hoisted next to its statement:\n" + hoisted);
+        check(ExprTextImport.attachCardMarkers(hoisted, hoisted).equals(hoisted),
+            "hoisting must be idempotent (no second marker below the same statement)");
+        check(LAssembler.read(hoisted, true).size == LAssembler.read(compiled, true).size,
+            "hoisting must not change the statement count (a marker is a comment)");
+        check(!ExprTextImport.plan(hoisted).isEmpty(), "the hoisted marker was not recognised");
+
+        // 过期标记（记录的表达式展开后对不上那条语句）不得被采用
+        String mismatched = compiled.replace("# @ls-expr-card x \"0\"", "# @ls-expr-card x \"a + b\"");
+        check(!mismatched.equals(compiled), "the fixture no longer contains the marker this test edits");
+        String kept = ExprTextImport.attachCardMarkers(mismatched, mismatched);
+        check(!kept.contains("set x 0\n" + ExprStatement.cardMarkerPrefix),
+            "a stale marker was attached to a statement it does not unfold to:\n" + kept);
+
+        // 没有标记的纯原版文本完全不受影响
+        String plain = "set x 5\nop add y a b\n";
+        check(ExprTextImport.attachCardMarkers(plain, plain).equals(plain),
+            "plain text must not be rewritten by the marker pass");
+    }
+
     private static void markerRoundTripsThroughTextImport(){
         String asm = "set y 1\n" + writeOf("result", "a + b") + "\nprint x\n";
         ExprTextImport.Plan plan = ExprTextImport.plan(asm);

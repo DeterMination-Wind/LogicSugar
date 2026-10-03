@@ -88,8 +88,7 @@ public class ExprStatement extends LStatement{
         // 普通积木。多行卡片由 foldAll 的 >= 2 门槛折回，不需要标记（那会改变语句条数）；
         // 单行 read/write 由 foldAll 的数组门槛折回，也不加标记。
         if(ExprHook.keepsCard(lines) && !ExprHook.foldsBackAlone(lines) && dest != null){
-            builder.append('\n').append(cardMarkerPrefix).append(dest).append(' ')
-                .append('"').append(SugarStatements.escapeQuoted(expr == null ? "" : expr)).append('"');
+            builder.append('\n').append(ExprTextImport.cardMarker(dest, expr));
         }
     }
 

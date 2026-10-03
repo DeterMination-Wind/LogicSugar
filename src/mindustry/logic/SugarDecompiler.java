@@ -1,6 +1,8 @@
 package mindustry.logic;
 
 import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ExprStatement;
+import logicsugar.assist.expr.ExprTextImport;
 import logicsugar.assist.expr.ShortCircuitCompiler;
 
 import java.util.ArrayList;
@@ -217,8 +219,8 @@ public final class SugarDecompiler{
                     if(fallbackVerification.matched){
                         notes.add("unit-control card recovery did not verify; "
                             + "kept the generic reading of the same instructions");
-                        return new Result(text, true, fallbackVerification.mode, fallback.structured,
-                            fallback.passthrough, notes);
+                        return withExprCardMarkers(new Result(text, true, fallbackVerification.mode,
+                            fallback.structured, fallback.passthrough, notes), input);
                     }
                     // The decisions of the generic reading are the ones the retries below were
                     // designed around; the unit pass stops recording them where a card matched.
@@ -228,12 +230,36 @@ public final class SugarDecompiler{
                 }
             }
             Result backtracked = backtrack(program, input, privileged, decisions, notes);
-            if(backtracked != null) return backtracked;
+            if(backtracked != null) return withExprCardMarkers(backtracked, input);
             notes.add("unstructured instructions were kept as vanilla mlog");
             return new Result(canonical, true, "flat", 0, program.statements.size(), notes);
         }
-        return new Result(structured, true, verification.mode, candidate.structured,
-            candidate.passthrough, notes);
+        return withExprCardMarkers(new Result(structured, true, verification.mode, candidate.structured,
+            candidate.passthrough, notes), input);
+    }
+
+    /**
+     * {@code result} with the expression-card markers of {@code input} put back into its text.
+     *
+     * <p>A single-line expression card ({@code x = 0}, {@code x = a + b}, {@code x = cos(a)})
+     * compiles to exactly one statement, byte-identical to a plain {@code set}/{@code op} block:
+     * the comment marker {@link ExprStatement#write} adds is the only evidence that the line was
+     * a card. A saved program keeps that marker only inside the persistence carrier and the
+     * comment marker block, and structure recovery re-serializes statements, so without this the
+     * card silently degraded into a block on reopen even though the evidence was still in the
+     * text.</p>
+     *
+     * <p>{@link ExprTextImport#attachCardMarkers} uses a marker only where the recovered text
+     * already contains the exact statement it unfolds to, and the lines it inserts are comments —
+     * the recompilation gate ignores them, which is why attaching them after verification is
+     * sound. The flat results are deliberately left untouched: they promise to hand back the
+     * input, and the editor loads the original text for them anyway.</p>
+     */
+    private static Result withExprCardMarkers(Result result, String input){
+        String marked = ExprTextImport.attachCardMarkers(result.sugar, input);
+        if(marked.equals(result.sugar)) return result;
+        return new Result(marked, result.verified, result.matchedMode, result.structured,
+            result.passthrough, result.notes);
     }
 
     /** Maximum promoted-alternative attempts after a failed greedy verification. */

@@ -100,7 +100,12 @@ public class SugarCanvas extends LCanvas{
             // `buf[i] = 5`）在这里补上文本形态：原版 LParser 只按首 token 查表，认不出赋值行，
             // 会静默变成 InvalidStatement(noop)。plan() 把这行一对一换成哨兵 set 语句
             // （语句条数不变，因此 jump 下标与标签解析完全不受影响），加载完成后换回卡片。
-            ExprTextImport.Plan importPlan = ExprTextImport.plan(asm);
+            //
+            // 单行表达式卡靠自描述标记还原，而标记在存档产物里只以注释标记块的形式存在
+            // （`# @logic-sugar-line # @ls-expr-card …`），plan() 只认紧跟在语句下面的独立标记行。
+            // 先把标记提到它展开成的那条语句下面（只在语句逐字存在时采用，见 attachCardMarkers）。
+            String text = ExprTextImport.attachCardMarkers(asm, asm);
+            ExprTextImport.Plan importPlan = ExprTextImport.plan(text);
             if(librarySession){
                 // The function library may hold far more statements than a processor program;
                 // vanilla LCanvas.load parses through LParser, which stops at the processor cap.

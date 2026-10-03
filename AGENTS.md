@@ -316,6 +316,31 @@ appeared to do nothing):
   `destIndex` stay untouched), which `ExprTextImport` turns back into the card on load. Multi-line
   cards keep relying on the `>= 2` fold threshold and deliberately carry no marker (collapsing
   N lines would shift indices). Add a fixture to `reconstructionMatrixTest` when the format changes.
+- **The marker is evidence, and it has to survive every text rewrite.** A single-line card's
+  unfolded line is byte-identical to a plain `set`/`op` block, so the marker is the *only* thing
+  that tells the two apart; two paths re-serialize statements and used to drop every comment with
+  them (reported 2026-10: the card silently came back as a plain block even though the evidence was
+  still in the text):
+  - `SugarCompiler.rewriteStaleBlockDests` (stale `destIndex` comment in a stored carrier) now
+    re-serializes statements **in place** (`writeStatementsKeepingComments`), so comments, labels
+    and blank lines stay exactly where they were instead of being reconstructed from the parsed
+    statement list.
+  - the decompiler's structure recovery (`SugarDecompiler.infer`) re-attaches the markers through
+    `ExprTextImport.attachCardMarkers`, which uses a marker only where the recovered text already
+    contains the exact single statement it unfolds to (`ExprCompiler.compile` with a lenient
+    function checker, one line); each statement is claimed at most once, and a stale marker (the
+    program was edited outside Logic Sugar) matches nothing and is dropped instead of rewriting a
+    statement into a card it never was. The inserted lines are comments, so the recompilation gate
+    ignores them — which is why attaching after verification is sound. `decompileTest`'s
+    `expressionCardMarkersSurviveRecovery` pins both halves.
+  - in a saved *product* the marker only exists nested inside the comment marker block
+    (`# @logic-sugar-line # @ls-expr-card …`), while `ExprTextImport.plan` pairs a marker only with
+    the code line directly above it — so `SugarCanvas.load` hoists the markers out first
+    (`attachCardMarkers(asm, asm)`; idempotent, a statement that already carries one is left
+    alone). `ExprTextImport.cardMarker` is the single serializer of the format: `ExprStatement.write`
+    and the recovery both go through it. `exprCardTest`'s `markerSurvivesTextRewrites` pins the
+    rewrite, the hoisting and the stale-marker refusal; `reconstructionMatrixTest`'s
+    `decl.exprcard.staleDest` fixture pins the carrier path.
 - **Rich-text escaping in the card display: escape `[` only.** `ExprStatement.highlight` wraps each
   token in `[color]…[]`; Arc's markup parser treats `[[` as one literal `[` and leaves `]` alone,
   so escaping `]` as `]]` renders an extra bracket on the card (`result = list[1]` showed as

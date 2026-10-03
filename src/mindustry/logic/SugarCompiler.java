@@ -1309,6 +1309,12 @@ public final class SugarCompiler{
      * nesting is unambiguous. Byte-identical when dests are already correct, so healthy
      * carriers keep their exact source. Parse failures and unbalanced blocks leave the
      * decoded text untouched (verifyRestore / decompiler inference still apply).
+     *
+     * <p>Every line that is not a statement (comments — expression-card markers among them —
+     * and blank lines) stays exactly where it was: re-serializing the statements alone dropped
+     * them, which silently downgraded a single-line expression card into a plain set/op block
+     * on the next open, because the marker comment is the only evidence that the line was a
+     * card.</p>
      */
     static String rewriteStaleBlockDests(String sugar){
         if(sugar == null || sugar.isEmpty()) return sugar;
@@ -1317,10 +1323,45 @@ public final class SugarCompiler{
             int[] before = snapshotDests(statements);
             if(!recomputeBlockDests(statements)) return sugar;
             if(Arrays.equals(before, snapshotDests(statements))) return sugar;
-            return writeStatements(statements);
+            return writeStatementsKeepingComments(sugar, statements);
         }catch(Throwable ignored){
             return sugar;
         }
+    }
+
+    /**
+     * {@link #writeStatements} for a text whose non-statement lines must survive: statements are
+     * re-serialized in place, everything else (comments, labels, blank lines) is copied
+     * verbatim. {@link LAssembler#read} drops comments and labels, so writing the statement list
+     * back is only equivalent when the caller does not care about them.
+     */
+    private static String writeStatementsKeepingComments(String sugar, Seq<LStatement> statements){
+        String normalized = sugar.replace("\r\n", "\n");
+        boolean trailingNewline = normalized.endsWith("\n");
+        String[] lines = normalized.split("\n", -1);
+        int count = lines.length;
+        if(trailingNewline && count > 0 && lines[count - 1].isEmpty()) count--;
+
+        StringBuilder out = new StringBuilder();
+        int next = 0;
+        for(int i = 0; i < count; i++){
+            if(next < statements.size && isStatementLine(lines[i])){
+                statements.get(next++).write(out);
+            }else{
+                out.append(lines[i]);
+            }
+            if(i + 1 < count) out.append('\n');
+        }
+        if(trailingNewline) out.append('\n');
+        return out.toString();
+    }
+
+    /** Whether a source line holds a statement: not blank, not a comment, not a bare label.
+     *  This is the same rule {@link LParser} uses to decide what becomes a statement. */
+    private static boolean isStatementLine(String line){
+        String trimmed = line.trim();
+        if(trimmed.isEmpty() || trimmed.startsWith("#")) return false;
+        return !(trimmed.endsWith(":") && trimmed.indexOf(' ') < 0 && trimmed.indexOf('\t') < 0);
     }
 
     /**
@@ -1359,6 +1400,16 @@ public final class SugarCompiler{
             dests[i] = statement instanceof BeginStatement begin ? begin.destIndex : Integer.MIN_VALUE;
         }
         return dests;
+    }
+
+    /**
+     * The Sugar source line a comment marker entry carries
+     * ({@code # @logic-sugar-line <line>}), or null when the line is not one. The marker block is
+     * the second carrier shape, so this is also how the decompiler reaches the expression-card
+     * markers a saved program keeps there.
+     */
+    public static String markerSourceOf(String line){
+        return line != null && line.startsWith(markerLine) ? line.substring(markerLine.length()) : null;
     }
 
     private static String writeStatements(Seq<LStatement> statements){
