@@ -536,11 +536,14 @@ public class SugarLogicDialog extends LogicDialog{
      */
     private String readonlyCanvasText(){
         if(canvas == null) return "";
-        return canvas instanceof SugarCanvas sugar ? sugar.readonlyText() : canvas.save();
+        // 历史快照必须是能重新解析的**程序文本**（展开态）：{@code save()} 现在就是纯文本读取，
+        // 一个积木元素都不动。折叠态快照（readonlyText）里多行表达式卡占多条语句，而 jump/begin
+        // 记的是画布语句下标，{@code canvas.load()} 回灌时会静默改掉跳转目标。
+        return canvas.save();
     }
 
-    /** 历史快照一律走只读文本：{@code save()} 会 unfold/fold（重建积木元素）且给出的是展开态文本，
-     *  而画布停在折叠态；下面几条路径（尤其每帧轮询）用 save() 等于让编辑器自己反复改画布。 */
+    /** 历史快照一律走纯文本读取：{@code save()} 不再 unfold/fold（不会重建积木元素），
+     *  下面几条路径（尤其每帧轮询）可以放心调。 */
     private String canvasSnapshot(){
         try{
             return readonlyCanvasText();

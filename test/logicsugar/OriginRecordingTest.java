@@ -37,6 +37,9 @@ public class OriginRecordingTest{
             overlayUsesReadonlySnapshot();
             overlayRailsFollowLanes();
             overlayFailureAndCandidateWiring();
+            saveIsAPureTextRead();
+            overlayHintCannotOutliveItsCanvas();
+            addressLabelsDoNotOscillate();
         }catch(java.io.IOException exception){
             check(false, "overlay sources could not be read: " + exception.getMessage());
         }
@@ -311,10 +314,10 @@ public class OriginRecordingTest{
         String refresh = SourceNails.methodBody(overlay, "private void refresh(){");
         String refreshCode = withoutComments(refresh);
         check(refreshCode.contains("canvas.readonlyText()"),
-            "the per-frame refresh must read the read-only snapshot");
+            "the per-frame refresh must read the read-only (display-space) snapshot");
         check(!refreshCode.contains("canvas.save()"),
-            "the per-frame refresh must never call canvas.save(): it unfolds/folds the canvas and its "
-                + "text is the unfolded layout, while elementAt() indexes the folded one");
+            "the per-frame refresh must never call canvas.save(): its text is the unfolded layout, "
+                + "while elementAt()/CompileProvenance index the folded canvas that is on screen");
         check(refreshCode.contains("catch(Throwable"), 
             "the per-frame callback must contain its own failures: an escaping exception kills the "
                 + "callback for the rest of the session and the line silently never comes back");
@@ -332,6 +335,83 @@ public class OriginRecordingTest{
         String poll = withoutComments(SourceNails.methodBody(dialog, "private void pollCanvasHistory(){"));
         check(poll.contains("readonlyCanvasText()"),
             "the undo-history poll runs every few frames and must use the read-only snapshot too");
+        String snapshotText = withoutComments(SourceNails.methodBody(dialog, "private String readonlyCanvasText(){"));
+        check(snapshotText.contains("canvas.save()"),
+            "the history snapshot must be the program text (unfolded): a folded text keeps the canvas "
+                + "statement indices inside jump/begin cards while the re-parse renumbers statements");
+    }
+
+    /**
+     * {@code save()} 必须是纯文本读取：它会被周期性调用（指令预算横幅每 24 帧一次、共存档里
+     * 第三方编辑器每帧一次），只要它在前后 unfold/fold，正在编辑的 Expression 卡就会被拆掉
+     * 重建，文本框下一帧因元素脱离而失焦（2026-10 报告：“点进编辑区域马上丢焦点、卡片每帧
+     * 抖动”）；而一旦某次 {@code foldAll} 因外部读取拒绝折回，卡片还会被永久退化成裸 op 积木。
+     *
+     * <p>展开改在文本层：{@code ExprHook.unfoldedText} 把多行卡展开成 op 行并把 jump/begin
+     * 记的<b>画布</b>语句下标换算成<b>文本</b>语句下标（逐字等价与下标自洽由
+     * {@code exprCardTest} 的 {@code unfoldedTextMatchesTheUnfoldedCanvas} 钉住）。</p>
+     */
+    private static void saveIsAPureTextRead() throws java.io.IOException{
+        System.out.println("== save() 不改画布 ==");
+        String canvas = SourceNails.readSource("src/mindustry/logic/SugarCanvas.java");
+        String save = withoutComments(SourceNails.methodBody(canvas, "public String save(){"));
+        check(save.contains("ExprHook.unfoldedText(this)"),
+            "save() must hand over the text-layer unfolded program text");
+        check(!save.contains("unfoldAll") && !save.contains("foldAll"),
+            "save() must not unfold/fold the canvas: it is called periodically and every call would "
+                + "rebuild the statement elements (the focused Expression field loses focus every time)");
+        check(!save.contains("super.save()"),
+            "super.save() would write the folded text: multi-line cards would shift every jump/begin "
+                + "target written from a canvas statement index");
+
+        // 卡片的“保不保留”判定只有一处，两条路径不能漂
+        String haystack = SourceNails.readSource("src/logicsugar/assist/expr/ExprHook.java");
+        String cardLines = withoutComments(SourceNails.methodBody(haystack, "private static List<ExprCompiler.Line> cardLines("));
+        check(cardLines.contains("ExprStatement.functionChecker()"),
+            "cardLines() must validate function names exactly like the editor and the save pre-check");
+        int uses = haystack.split("cardLines\\(exprStmt", -1).length - 1;
+        check(uses >= 1, "unfoldAll() must keep using the shared cardLines() decision");
+    }
+
+    /**
+     * 悬停提示必须自己收尾：{@code hideAll()} 只找得到“当前那一份” overlay，而
+     * {@code LCanvas.rebuild()} / {@code load()} 会把 jumps 层整个清空，旧实例的提示就成了
+     * 没人认领的孤儿（2026-10 报告：“退出逻辑处理器后，鼠标旁边还留着「编译器入口 skip …」”）。
+     */
+    private static void overlayHintCannotOutliveItsCanvas() throws java.io.IOException{
+        System.out.println("== 悬停提示自收尾 ==");
+        String overlay = SourceNails.readSource("src/mindustry/logic/CounterJumpOverlay.java");
+        String updateHint = withoutComments(SourceNails.methodBody(overlay, "private void updateHint(){"));
+        check(updateHint.contains("hint.update(this::guardHint)"),
+            "the hint label must carry its own watchdog: it lives on the scene root and nobody else "
+                + "can reach the detached overlay's instance after a rebuild/load");
+        String guard = withoutComments(SourceNails.methodBody(overlay, "private boolean hintOnScreen(){"));
+        check(guard.contains("layer.parent == null"),
+            "the watchdog must notice that its own jumps layer was replaced");
+        check(guard.contains("canvas.getScene() != Core.scene"),
+            "the watchdog must notice that the canvas left the scene");
+        check(guard.contains("visible"),
+            "the watchdog must notice a hidden dialog (the canvas stays attached but invisible)");
+    }
+
+    /**
+     * 行号标签不能每帧在“语句下标”与“mlog 下标”之间来回跳：宽度改变会让卡片头部左右抖动，
+     * 还会让整个语句列表每帧重排一次（2026-10 报告：“expr 积木渲染抖动（向左抖动）”）。
+     * 顺序必须先是原版布局、再写我们的文本、最后把 {@code needsLayout} 清掉。
+     */
+    private static void addressLabelsDoNotOscillate() throws java.io.IOException{
+        System.out.println("== 行号标签不抖动 ==");
+        String canvas = SourceNails.readSource("src/mindustry/logic/SugarCanvas.java");
+        String body = withoutComments(SourceNails.methodBody(canvas, "private void updateMlogAddresses(){"));
+        int layout = body.indexOf("statements.validate()");
+        int write = body.indexOf("setLabelText(");
+        int clear = body.indexOf("clearStatementLayoutFlag()");
+        check(layout >= 0 && write > layout && clear > write,
+            "updateMlogAddresses() must run the vanilla layout first, then write the mlog text, then "
+                + "clear needsLayout (otherwise the next draw() re-runs layout and both texts alternate "
+                + "every frame)");
+        check(body.contains("if(!changed) return;"),
+            "the idle path must not force a layout pass at all (it runs every frame for every card)");
     }
 
     /**

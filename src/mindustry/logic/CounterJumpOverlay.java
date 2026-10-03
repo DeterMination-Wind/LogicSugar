@@ -654,6 +654,37 @@ public final class CounterJumpOverlay{
         hint.remove();
     }
 
+    /**
+     * 提示的自检：不再该显示时必须自己消失。
+     *
+     * <p>{@link #hideAll} 只能管住“当前这一份 overlay”——{@code LCanvas.rebuild()} 与
+     * {@code load()} 会把 jumps 层整个清空（{@code statements.jumps.clear()}），旧实例的
+     * CounterLayer 连同它每帧的 {@code refresh()} 一起消失，{@code install()} 随后建一份新的；
+     * 旧实例留在 scene root 上的提示就成了没人认领的孤儿（而 {@link #hideAll} 只在当前那份里
+     * 找 CounterLayer，永远找不到它）。报告现象：退出逻辑处理器后，鼠标旁边仍留着
+     * “编译器入口 skip …”这行提示（2026-10）。</p>
+     *
+     * <p>挂 {@code update} 而不是靠对话框的 {@code hide()}：提示是 scene root 的子元素，只要
+     * 它自己还在（visible）就一定会被 act，所以自检每帧都会跑，与谁负责关对话框无关——
+     * 共存档的第三方对话框、被换下去的旧画布、函数库会话都因此自动收尾。</p>
+     */
+    private void guardHint(){
+        if(hintOnScreen()) return;
+        hideHint();
+    }
+
+    /** 提示仍然可以显示：画布在场景里、可见，且本实例的 jumps 层还在树上。 */
+    private boolean hintOnScreen(){
+        if(canvas == null || canvas.statements == null || Core.scene == null) return false;
+        // jumps 层被 rebuild()/load() 换掉（旧图层脱离父节点）时本实例已失效
+        if(layer.parent == null) return false;
+        if(canvas.getScene() != Core.scene) return false;
+        for(Element elem = canvas; elem != null; elem = elem.parent){
+            if(!elem.visible) return false;
+        }
+        return true;
+    }
+
     /** 一段跟着光标走的说明标签。挂在 scene root 上（与 EscapePreview 同一套做法），
      *  这样它不会被 pane 的裁剪切掉，也不参与画布布局。 */
     private void updateHint(){
@@ -665,6 +696,7 @@ public final class CounterJumpOverlay{
             hint = new Label("", Styles.outlineLabel);
             hint.touchable = Touchable.disabled;
             hint.setFontScale(0.8f);
+            hint.update(this::guardHint);
         }
         if(hint.parent != Core.scene.root){
             if(hint.parent != null) hint.remove();

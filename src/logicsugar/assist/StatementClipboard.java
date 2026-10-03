@@ -1,6 +1,8 @@
 package logicsugar.assist;
 
 import arc.struct.Seq;
+import logicsugar.assist.expr.ExprStatement;
+import logicsugar.assist.expr.ExprTextImport;
 import mindustry.logic.LAssembler;
 import mindustry.logic.LStatement;
 import mindustry.logic.LStatements.InvalidStatement;
@@ -76,7 +78,15 @@ public final class StatementClipboard{
         StringBuilder out = new StringBuilder();
         out.append(headerPrefix).append(fragment.size).append('\n');
         for(int i = 0; i < fragment.size; i++){
-            fragment.get(i).write(out);
+            LStatement statement = fragment.get(i);
+            // 表达式卡写成单行文本形态 {@code dest = expr}：它原本写出的是一串 op，载荷里一条卡
+            // 占多条语句，重新解析时语句条数变了、片段内的 jump 相对下标随之错位，而卡片也只能
+            // 靠折叠推断（表达式原文会被重建改写）。粘贴侧用 ExprTextImport 一对一换回同一张卡。
+            if(statement instanceof ExprStatement card && ExprTextImport.canWriteInline(card.dest, card.expr)){
+                out.append(card.dest).append(" = ").append(card.expr);
+            }else{
+                statement.write(out);
+            }
             out.append('\n');
         }
         return out.toString();

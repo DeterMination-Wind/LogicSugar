@@ -1,6 +1,8 @@
 package logicsugar.assist;
 
 import arc.struct.Seq;
+import logicsugar.assist.expr.ExprStatement;
+import logicsugar.assist.expr.ExprTextImport;
 import mindustry.logic.LAssembler;
 import mindustry.logic.LStatement;
 import mindustry.logic.LStatements.JumpStatement;
@@ -20,6 +22,7 @@ public class StatementClipboardSelfTest{
         SugarStatements.installParsers();
 
         payloadRoundTripsEveryStatement();
+        expressionCardsKeepOneLineAndTheirIndexInAPayload();
         headerMarksThePayload();
         headerWithoutBodyIsNotAPayload();
         crlfTextIsAccepted();
@@ -47,6 +50,53 @@ public class StatementClipboardSelfTest{
         check(back.size == fragment.size, "statement count changed: " + back.size + " != " + fragment.size);
         check(StatementClipboard.write(back).equals(payload),
             "payload is not stable across a round trip:\n" + payload + " ->\n" + StatementClipboard.write(back));
+    }
+
+    /**
+     * 表达式卡在载荷里必须只占一条语句（{@code dest = expr}），且粘贴侧能按同一口径换回卡片：
+     * 多行卡原本写出的是那一串 op（一条卡占多条语句），重新解析时片段内的 jump 相对下标会错位，
+     * 卡片也只能靠折叠推断、表达式原文会被重建改写——用户看到的就是“复制 Expr 积木后，
+     * 马上转为了编译后形态”（2026-10 报告）。
+     */
+    private static void expressionCardsKeepOneLineAndTheirIndexInAPayload(){
+        ExprStatement card = new ExprStatement();
+        card.dest = "newx";
+        card.expr = "ceil(rand(10))";
+        Seq<LStatement> fragment = Seq.with(card, LAssembler.read("jump 0 always x false", true).first());
+
+        String payload = StatementClipboard.write(fragment);
+        check(payload.contains("newx = ceil(rand(10))"), "the card must be written as one inline line:\n" + payload);
+        check(payload.split("\n", -1).length == 4, "header plus two statements, one line each:\n" + payload);
+
+        // 粘贴侧与 SugarCanvas.load 同口径：plan 换哨兵 -> 解析 -> 哨兵换回同一张卡
+        ExprTextImport.Plan plan = ExprTextImport.plan(payload);
+        check(!plan.isEmpty(), "the inline card line must be recognised:\n" + payload);
+        Seq<LStatement> incoming = StatementClipboard.parse(plan.text());
+        check(incoming != null && incoming.size == 2,
+            "statement count must not change: " + (incoming == null ? "null" : incoming.size));
+        check(ExprTextImport.applyToStatements(incoming, plan) == 1, "the inline line must turn back into a card");
+        check(incoming.get(0) instanceof ExprStatement restored
+                && restored.dest.equals("newx") && restored.expr.equals("ceil(rand(10))")
+                && !restored.expr.contains("\\n"),
+            "the card did not round-trip verbatim: " + incoming.get(0).getClass().getSimpleName());
+        check(((JumpStatement)incoming.get(1)).destIndex == 0, "the jump's relative index moved");
+
+        // 旧载荷（单行卡写成 set + 标记）仍然要能还原成卡片
+        String marked = StatementClipboard.headerPrefix + "1\nset x a\n"
+            + ExprStatement.cardMarkerPrefix + "x \"a + b\"\n";
+        ExprTextImport.Plan markedPlan = ExprTextImport.plan(marked);
+        Seq<LStatement> markedIncoming = StatementClipboard.parse(markedPlan.text());
+        check(ExprTextImport.applyToStatements(markedIncoming, markedPlan) == 1,
+            "a stored marker payload must still restore its card:\n" + marked);
+        check(markedIncoming.get(0) instanceof ExprStatement markedCard && markedCard.expr.equals("a + b"),
+            "the stored marker payload restored the wrong statement");
+
+        // 单行形态的保守边界：不吉利的表达式/目标退回 op 形态，由折叠推断恢复卡片
+        check(ExprTextImport.canWriteInline("x", "a + b"), "a plain assignment is writable inline");
+        check(!ExprTextImport.canWriteInline("@counter", "5*2"), "a @-prefixed destination cannot use the inline form");
+        check(!ExprTextImport.canWriteInline("", "0"), "an empty destination cannot use the inline form");
+        check(!ExprTextImport.canWriteInline("x", "a # b"), "a '#' inside the expression cannot survive one line");
+        check(!ExprTextImport.canWriteInline("x", "a; b"), "a ';' inside the expression cannot survive one line");
     }
 
     private static void headerMarksThePayload(){

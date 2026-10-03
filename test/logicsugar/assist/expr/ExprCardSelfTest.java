@@ -6,6 +6,7 @@ import mindustry.Vars;
 import mindustry.logic.GlobalVars;
 import mindustry.logic.LAssembler;
 import mindustry.logic.LStatement;
+import mindustry.logic.LStatements;
 import mindustry.logic.LStatements.SetStatement;
 import mindustry.logic.SugarCompiler;
 import mindustry.logic.SugarStatements;
@@ -56,6 +57,8 @@ public class ExprCardSelfTest{
         carrierRoundTripKeepsTheCard();
         textIsIdenticalWithAndWithoutUnfold();
         counterConstantsAreFolded();
+        unfoldedTextMatchesTheUnfoldedCanvas();
+        duplicateChainsShareTempsWithoutBlockingEachOther();
 
         System.out.println("LogicSugar expression card self-test passed.");
     }
@@ -408,6 +411,130 @@ public class ExprCardSelfTest{
             out.append(line.toText());
         }
         return out.toString();
+    }
+
+    /**
+     * {@code save()} 的文本现在是<b>文本层展开</b>（{@link ExprHook#unfoldedText}），不再把
+     * 画布 unfold/fold 一遍再重建积木元素——只要有人周期性调 save()（自身的指令预算横幅每 24 帧
+     * 一次、共存档里第三方编辑器每帧一次），正在编辑的 Expression 卡就会被拆掉重建，文本框下一帧
+     * 因为元素已脱离而失焦（2026-10 报告：“点进编辑区域马上丢焦点、卡片每帧抖动”）。
+     *
+     * <p>这里钉住两条，缺一不可：</p>
+     * <ul>
+     *   <li><b>逐字等于旧路径</b>：把画布展开后的语句列表直接 {@code LAssembler.write}，与
+     *       文本层展开写出的内容一致（同一个 {@code toStatements} 展开、同一套单行卡保留判定）；</li>
+     *   <li><b>下标仍然对得上</b>：多行卡在文本里是 N 条语句，jump / begin 记的是画布语句下标，
+     *       必须换算到展开后的下标，否则重新解析时目标整体偏移。</li>
+     * </ul>
+     */
+    private static void unfoldedTextMatchesTheUnfoldedCanvas(){
+        // 多行卡 + 一条 op + 一条指向该 op 的 jump（画布下标 1）
+        ExprStatement card = newExprCard("x", "ceil(rand(10))");
+        LStatements.OperationStatement op = opLine("op add y 1 1");
+        LStatements.JumpStatement jump = (LStatements.JumpStatement)LAssembler.read("jump 1 equal y 1", true).first();
+        List<LStatement> canvas = new ArrayList<>();
+        canvas.add(card);
+        canvas.add(op);
+        canvas.add(jump);
+
+        String pure = ExprHook.unfoldedText(canvas, false);
+
+        // 1) 与旧路径（画布展开后再写）逐字一致。旧路径里 jump 的 destIndex 会被 saveUI()
+        //    写成展开后的下标，这里显式对齐同一个口径。
+        List<LStatement> expanded = new ArrayList<>();
+        expanded.addAll(ExprHook.toStatements(compile(card), null, false));
+        int opIndex = expanded.size();
+        expanded.add(op);
+        LStatements.JumpStatement expandedJump = (LStatements.JumpStatement)LAssembler.read("jump 0 equal y 1", true).first();
+        expandedJump.destIndex = opIndex;
+        expanded.add(expandedJump);
+        Seq<LStatement> seq = new Seq<>(expanded.size());
+        for(LStatement statement : expanded) seq.add(statement);
+        check(pure.equals(LAssembler.write(seq)),
+            "text-layer unfolding must write exactly what the unfolded canvas wrote"
+                + "\n  pure:     " + pure.replace("\n", " | ")
+                + "\n  unfolded: " + LAssembler.write(seq).replace("\n", " | "));
+
+        // 2) 重新解析后 jump 要仍然指着那条 op（旧实现把画布也展开了才不会偏移）
+        Seq<LStatement> parsed = LAssembler.read(pure, true);
+        LStatement last = parsed.peek();
+        check(last instanceof LStatements.JumpStatement, "the fixture must end with a jump, got " + last.getClass().getSimpleName());
+        int target = ((LStatements.JumpStatement)last).destIndex;
+        check(target >= 0 && target < parsed.size, "the jump target did not land inside the parsed program: " + target);
+        StringBuilder targetText = new StringBuilder();
+        parsed.get(target).write(targetText);
+        check(targetText.toString().equals("op add y 1 1"),
+            "the parsed jump no longer targets the op block: " + targetText);
+
+        // 3) begin 卡的块尾注释同样换算，而且改完要还原（不能污染画布上的字段）
+        SugarStatements.IfBeginStatement begin = new SugarStatements.IfBeginStatement();
+        begin.value = "y";
+        begin.destIndex = 2;
+        List<LStatement> block = new ArrayList<>();
+        block.add(card);
+        block.add(begin);
+        block.add(new SugarStatements.BlockEndStatement());
+        String blockText = ExprHook.unfoldedText(block, false);
+        check(begin.destIndex == 2, "text-layer unfolding must not leave the canvas index rewritten");
+        Seq<LStatement> parsedBlock = LAssembler.read(blockText, true);
+        int endIndex = parsedBlock.size - 1;
+        check(parsedBlock.get(endIndex - 1) instanceof SugarStatements.IfBeginStatement parsedBegin
+                && parsedBegin.destIndex == endIndex,
+            "the begin card's block-end index must be rewritten into text-statement space: " + blockText.replace("\n", " | "));
+
+        // 4) 单行卡的标记行是注释、不占语句：其后的 jump 映射不变
+        ExprStatement single = newExprCard("z", "a + b");
+        LStatements.JumpStatement singleJump = (LStatements.JumpStatement)LAssembler.read("jump 1 equal a b", true).first();
+        List<LStatement> markerCanvas = new ArrayList<>();
+        markerCanvas.add(single);
+        markerCanvas.add(opLine("op mul w 2 2"));
+        markerCanvas.add(singleJump);
+        String markerText = ExprHook.unfoldedText(markerCanvas, false);
+        check(markerText.contains(ExprStatement.cardMarkerPrefix), "a single-line card must keep its marker: " + markerText);
+        Seq<LStatement> parsedMarker = LAssembler.read(markerText, true);
+        check(parsedMarker.size == 3, "a comment marker must not add a statement: " + parsedMarker.size);
+        check(((LStatements.JumpStatement)parsedMarker.peek()).destIndex == 1,
+            "the marker line must not shift the jump target: " + markerText.replace("\n", " | "));
+    }
+
+    /**
+     * 复制粘贴出来的第二份链用同一批临时变量：旧口径“链外文本里出现过”会把两条链互判成
+     * 外部读取，两条都折不回来 —— 卡片在保存后永久退化成裸 op 积木
+     * （2026-10 报告：“复制 Expr 积木后，马上转为了编译后形态”）。
+     * 判定改成“只有真正的读才算”，但真的链外读取仍然必须拦住。
+     */
+    private static void duplicateChainsShareTempsWithoutBlockingEachOther(){
+        ExprStatement card = newExprCard("x", "ceil(rand(10))");
+        List<ExprCompiler.Line> chain = compile(card);
+        check(chain.size() == 2, "the fixture must be a two-line chain, got " + text(chain));
+        String temp = ExprCompiler.lineDest(chain.get(0));
+        check(temp != null && ExprCompiler.isTemp(temp), "the first chain line must write a temp, got " + temp);
+
+        List<LStatement> duplicate = new ArrayList<>();
+        duplicate.addAll(ExprHook.toStatements(chain, null, false));
+        duplicate.addAll(ExprHook.toStatements(chain, null, false));
+        check(duplicate.size() == 4, "the duplicate fixture must be two chains of two, got " + duplicate.size());
+        check(!ExprHook.hasExternalReads(duplicate, 0, 2, chain),
+            "the pasted second chain must not block the first chain's fold (its own first line defines " + temp + ")");
+        check(!ExprHook.hasExternalReads(duplicate, 2, 4, chain),
+            "and the same in the other direction");
+
+        // 链外语句真的在链的定义之外读它 -> 仍然拦住
+        List<LStatement> reader = new ArrayList<>(duplicate.subList(0, 2));
+        reader.add(LAssembler.read("op mul z " + temp + " 3", true).first());
+        check(ExprHook.hasExternalReads(reader, 0, 2, chain),
+            "a statement reading the chain temp must still block the fold: " + temp);
+
+        // 链外先写再读（另一条链的完整形态）不算外部读取
+        List<LStatement> redefined = new ArrayList<>(duplicate.subList(0, 2));
+        redefined.add(LAssembler.read("set " + temp + " 7", true).first());
+        redefined.add(LAssembler.read("op mul z " + temp + " 3", true).first());
+        check(!ExprHook.hasExternalReads(redefined, 0, 2, chain),
+            "a value that comes from an outside definition is not a read of the folded chain");
+    }
+
+    private static LStatements.OperationStatement opLine(String text){
+        return (LStatements.OperationStatement)LAssembler.read(text, true).first();
     }
 
     private static void check(boolean condition, String message){

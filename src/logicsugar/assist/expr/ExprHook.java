@@ -21,8 +21,11 @@ import java.util.*;
  * 表达式集成钩子：提供 op 链 ↔ 表达式的双向转换。
  *
  * 集成后：
- * - foldAll() 由 LogicCanvas.load() 直接调用，零延迟
- * - save() 由 LogicCanvas.save() 调用：unfoldAll → super.save → foldAll
+ * - foldAll() 由 LogicCanvas.load()（以及粘贴片段之后）直接调用，零延迟
+ * - save() 是**纯文本读取**：{@link #unfoldedText} 在文本层展开多行卡并换算 jump/begin 的
+ *   语句下标，画布一个元素都不动（旧实现是 unfoldAll → super.save → foldAll，周期性调用会把
+ *   正在编辑的 Expression 卡拆掉重建、让输入框失焦）。{@link #unfoldAll} 因此只剩“画布形态”
+ *   这一条用途（两条路径共用 {@link #cardLines} 的判定，不会漂）
  * - 行号由 LogicCanvas.act() 更新
  * - LogicIO.allStatements 是 public static 字段，直接访问无需反射
  * - 跳转高度刷新通过 SugarCanvas 的兼容入口处理
@@ -312,6 +315,152 @@ public class ExprHook{
         }
     }
 
+    // ===== 文本：展开态（画布一个元素都不动） =====================================================
+
+    /**
+     * 画布当前内容的<b>展开态程序文本</b>：语义等于旧的
+     * {@code unfoldAll() → super.save() → foldAll()} 取到的那段文本，但不改动画布。
+     *
+     * <p>为什么要有这一份"不碰画布的 save()"：{@code unfoldAll} 会 remove/addAt 积木元素、重建
+     * 每张卡的 {@code StatementElem}。只要 {@code save()} 被周期性调用（自身的指令预算横幅每 24
+     * 帧一次、共存档里第三方编辑器每帧一次），正在编辑的 Expression 卡就会被拆掉重建，文本框在
+     * 下一次 {@code Scene.act} 里因为元素已脱离而失焦——用户看到的是"点进编辑区域马上就丢焦点"
+     * （2026-10 报告）。取文本本来就是纯读取，展开只需要发生在文本层。</p>
+     *
+     * <p>展开态的意义是下标口径：{@code LAssembler.write} 一行一条语句，而
+     * {@code JumpStatement.destIndex} / {@code BeginStatement.destIndex} 记的是<b>画布语句
+     * 下标</b>。多行表达式卡在文本里是 N 条语句，所以这些下标必须换算到展开后的下标，否则重新
+     * 解析时目标会整体偏移（旧实现靠"先把画布也展开"保证两者相等，代价就是重建积木）。</p>
+     */
+    public static String unfoldedText(LCanvas canvas){
+        if(canvas == null || canvas.statements == null) return "";
+
+        // 先把跳转/结构卡的目标落到 destIndex：与 LCanvas.save() 一样从 UI 侧取值
+        saveUIAll(canvas);
+        // 与 foldAll/unfoldAll 同一个数组/span 注册表快照：地址换算与越界检查要对着同一份声明表
+        ArrayRegistry snapshot = ArrayRegistry.canvasRegistry(canvas);
+        ArrayRegistry previousArrays = ArrayRegistry.enter(snapshot == null ? ArrayRegistry.empty() : snapshot);
+        try{
+            List<LStatement> statements = new ArrayList<>();
+            for(Element child : canvas.statements.getChildren()){
+                if(child instanceof StatementElem elem && elem.st != null) statements.add(elem.st);
+            }
+            return unfoldedText(statements, assertEmitEnabled());
+        }finally{
+            ArrayRegistry.restore(previousArrays);
+        }
+    }
+
+    /** 越界断言只在 emit 调试构建（单机）下成为真实语句；strip 模式与联机恒不发射。 */
+    private static boolean assertEmitEnabled(){
+        return SugarCompiler.currentAssertEmit() == SugarCompiler.AssertEmit.emit;
+    }
+
+    /**
+     * 语句列表口径（无画布，可单测）：{@code statements} 的下标就是画布语句下标。
+     *
+     * <p>画布上下文（数组/span 注册表）由调用方负责；画布侧入口是
+     * {@link #unfoldedText(LCanvas)}。</p>
+     */
+    public static String unfoldedText(List<LStatement> statements, boolean emitAsserts){
+        int size = statements.size();
+        if(size == 0) return "";
+
+        // 第一遍：展开计划 + "画布语句下标 -> 文本语句下标"
+        int[] textIndex = new int[size + 1];
+        List<TextPlan> plan = new ArrayList<>(size);
+        int emitted = 0;
+        for(int i = 0; i < size; i++){
+            textIndex[i] = emitted;
+            TextPlan text = planStatement(statements, i, plan, emitAsserts);
+            plan.add(text);
+            emitted += text.statements;
+        }
+        textIndex[size] = emitted;
+
+        // 第二遍：写文本（目标下标换算在写之前完成）
+        StringBuilder out = new StringBuilder();
+        for(int i = 0; i < size; i++){
+            for(LStatement line : plan.get(i).lines){
+                appendStatement(out, line, textIndex);
+            }
+        }
+        return out.toString();
+    }
+
+    /** 一条画布语句的文本形态：{@link #lines} 是要写的语句，{@link #statements} 是它们占用的
+     *  文本语句条数。保留一张多行表达式卡时两者不同——卡只有一条语句，但文本是 N 条。 */
+    private record TextPlan(List<LStatement> lines, int statements){}
+
+    /** 展开一条画布语句的文本形态：多行表达式卡在文本层展开成它的 op 行（画布不动），
+     *  其余语句原样一条。展开判定与 {@link #unfoldAll} 共用 {@link #cardLines}，两条路径不会漂。 */
+    private static TextPlan planStatement(List<LStatement> statements, int index, List<TextPlan> plan, boolean emitAsserts){
+        LStatement statement = statements.get(index);
+        if(statement instanceof ExprStatement card){
+            List<ExprCompiler.Line> ops = cardLines(card, emitAsserts);
+            if(ops != null){
+                if(!keepsCard(ops) && !hasUnmappableLine(ops)){
+                    List<LStatement> expanded = toStatements(ops, previousLines(plan), emitAsserts);
+                    return new TextPlan(expanded, expanded.size());
+                }
+                // 保留卡片（单行卡 / 链里有画布表达不了的行）：文本仍是 write() 写出的那串行，
+                // 可能多行——span 前导段的 select 就没有对应的原版积木，条数按行数算。
+                return new TextPlan(Collections.singletonList(statement), Math.max(1, ops.size()));
+            }
+        }
+        return new TextPlan(Collections.singletonList(statement), 1);
+    }
+
+    /** 展开计划尾部连续的自动断言语句：{@link #toStatements} 的“重复展开不重复插卡”靠它，
+     *  口径与画布侧的 {@code trailingAutoAsserts} 一致（可以跨多条画布语句往回看）。 */
+    private static List<LStatement> previousLines(List<TextPlan> plan){
+        List<LStatement> tail = new ArrayList<>();
+        for(int i = plan.size() - 1; i >= 0; i--){
+            List<LStatement> lines = plan.get(i).lines;
+            for(int k = lines.size() - 1; k >= 0; k--){
+                LStatement line = lines.get(k);
+                if(!isAutoAssert(line)) return tail;
+                tail.add(0, line);
+            }
+        }
+        return tail;
+    }
+
+    /**
+     * 写一条语句并补换行；jump / begin 卡里记的<b>画布</b>语句下标换算成<b>文本</b>语句下标。
+     *
+     * <p>{@code destIndex} 只是 {@code dest} 的 UI 镜像（{@code setupUI()} 按它重建），所以可以
+     * 临时改写；写完在 {@code finally} 里还原，读文本的其它人（结构引导线、指示线）看到的仍是
+     * 画布下标的原值。越界（目标已删除等）原样写出，编译器的报错口径与旧实现一致。</p>
+     */
+    private static void appendStatement(StringBuilder out, LStatement statement, int[] textIndex){
+        int canvasIndex = statementIndex(statement);
+        if(canvasIndex < 0 || canvasIndex >= textIndex.length){
+            statement.write(out);
+            out.append('\n');
+            return;
+        }
+        setStatementIndex(statement, textIndex[canvasIndex]);
+        try{
+            statement.write(out);
+        }finally{
+            setStatementIndex(statement, canvasIndex);
+        }
+        out.append('\n');
+    }
+
+    /** 语句里记录的画布语句下标（没有则为 -1）：jump 的目标、begin 卡的块尾注释。 */
+    private static int statementIndex(LStatement statement){
+        if(statement instanceof JumpStatement jump) return jump.destIndex;
+        if(statement instanceof BeginStatement begin) return begin.destIndex;
+        return -1;
+    }
+
+    private static void setStatementIndex(LStatement statement, int value){
+        if(statement instanceof JumpStatement jump) jump.destIndex = value;
+        else if(statement instanceof BeginStatement begin) begin.destIndex = value;
+    }
+
     public static void unfoldAll(LCanvas canvas){
         if(canvas == null || canvas.statements == null) return;
 
@@ -338,7 +487,7 @@ public class ExprHook{
 
         // 越界断言只在 emit 调试构建（单机）下展开成 assertBounds 卡；strip 模式与联机
         // 恒不插入（currentAssertEmit() 已含联机门禁）。
-        boolean emitAsserts = SugarCompiler.currentAssertEmit() == SugarCompiler.AssertEmit.emit;
+        boolean emitAsserts = assertEmitEnabled();
 
         boolean changed = false;
         for(int i = 0; i < children.size; i++){
@@ -348,13 +497,10 @@ public class ExprHook{
 
             ExprStatement exprStmt = (ExprStatement)elem.st;
 
-            List<ExprCompiler.Line> ops;
-            try{
-                // 与 ExprStatement.write()/SugarLogicDialog 预检同口径：使用 functionChecker
-                // 校验函数名，否则未定义函数会被展开成 will-fail 的 funccall（编译时才报错），
-                // 与编辑期标红、保存拦截的行为不一致。
-                ops = ExprCompiler.compile(exprStmt.dest, exprStmt.expr, ExprStatement.functionChecker(), emitAsserts);
-            }catch(Exception e){
+            // 编译失败 / 单行卡 / 链里有画布表达不了的行都保留卡片，展开判定与文本层
+            // （{@link #unfoldedText}）共用同一次调用，两条路径不会漂。
+            List<ExprCompiler.Line> ops = cardLines(exprStmt, emitAsserts);
+            if(ops == null){
                 // 编译失败：保留 ExprStatement 不展开，write() 会输出 lastOps
                 // 避免 unfold→fold 循环用 lastOps 重建 ExprStatement 覆盖错误的 expr
                 continue;
@@ -403,6 +549,23 @@ public class ExprHook{
     }
 
     // ===== 展开产物：Line 链 → 画布语句（含自动越界断言） =====
+
+    /**
+     * 表达式卡编译后的行为（{@code null} = 编译失败，调用方保留卡片、{@code write()} 走 lastOps
+     * 回退）。画布展开（{@link #unfoldAll}）与文本展开（{@link #unfoldedText}）共用这一处，
+     * 因此"什么卡不展开"的判定不会在两边漂。
+     *
+     * <p>与 {@code ExprStatement.write()}/{@code SugarLogicDialog} 预检同口径：使用
+     * {@link ExprStatement#functionChecker()} 校验函数名，否则未定义函数会被展开成 will-fail 的
+     * funccall（编译时才报错），与编辑期标红、保存拦截的行为不一致。</p>
+     */
+    private static List<ExprCompiler.Line> cardLines(ExprStatement card, boolean emitAsserts){
+        try{
+            return ExprCompiler.compile(card.dest, card.expr, ExprStatement.functionChecker(), emitAsserts);
+        }catch(Exception e){
+            return null;
+        }
+    }
 
     /**
      * 该链是否应保留表达式卡而不展开：只有一行、且这一行有对应的原版卡片
@@ -652,7 +815,14 @@ public class ExprHook{
     }
 
     /** 链外读取检查（语句列表口径，画布遍历与自测共用；null 表示非语句元素）。
-     *  链内临时变量被链外语句引用时折叠会删除这些变量、值也会变，必须放弃折叠。 */
+     *  链内临时变量被链外语句引用时折叠会删除这些变量、值也会变，必须放弃折叠。
+     *
+     *  <p>只有“读”才算数：一条语句自己写下的那个名字是<b>定义</b>。旧实现按“文本里出现过”
+     *  判定，于是两条完全相同的表达式链（复制粘贴出来的第二份）会互相把对方的定义当成外部读取，
+     *  两条链都折不回来——卡片在保存后永久退化成裸 op 积木（2026-10 报告：「复制 Expr 积木后，
+     *  马上转为了编译后形态」）。现在的口径：某条语句里除了它自己定义的那一次出现，多出来的
+     *  都算读；而读之前已有链外定义时（例如另一条链的第一行 {@code op rand _0 10}），读到的
+     *  不是被折叠链的值，不算外部读取。</p> */
     public static boolean hasExternalReads(List<LStatement> statements, int chainStart, int chainEnd,
                                            List<ExprCompiler.Line> ops){
         Set<String> temps = new HashSet<>();
@@ -666,31 +836,59 @@ public class ExprHook{
         // 不排除的话两张卡会互相把对方判成“外部读取”，谁都折不回来。
         temps.removeAll(SpanAccess.scratchNames());
         if(temps.isEmpty()) return false;
+
+        // 链外语句已经定义过的临时变量：此后读到的不是被折叠链的值。
+        Set<String> defined = new HashSet<>();
         for(int idx = 0; idx < statements.size(); idx++){
             if(idx >= chainStart && idx < chainEnd) continue;
             LStatement st = statements.get(idx);
             if(st == null) continue;
             StringBuilder text = new StringBuilder();
             st.write(text);
+            String writes = definesVariable(st);
             for(String temp : temps){
-                if(containsIdentifier(text, temp)) return true;
+                int occurrences = countIdentifier(text, temp);
+                if(occurrences == 0) continue;
+                // 恰好一次且就是这条语句写入的变量 -> 那是定义，不是读取
+                if(occurrences == 1 && temp.equals(writes)){
+                    defined.add(temp);
+                    continue;
+                }
+                if(!defined.contains(temp)) return true;
             }
         }
         return false;
     }
 
-    /** 字符串是否包含独立成词的标识符（避免 "_1" 误匹配 "_10"）。 */
-    private static boolean containsIdentifier(StringBuilder text, String identifier){
+    /** 语句写进的变量名；没认出来的定义一律按读取处理（宁可少折叠，不可折错）。 */
+    private static String definesVariable(LStatement statement){
+        if(statement instanceof OperationStatement op) return op.dest;
+        if(statement instanceof SensorStatement sensor) return sensor.to;
+        if(statement instanceof ReadStatement read) return read.output;
+        if(statement instanceof FuncCallStatement call) return call.result;
+        if(statement instanceof SetStatement set) return set.to;
+        if(statement instanceof SelectStatement select) return select.result;
+        return null;
+    }
+
+    /** 字符串里独立成词的标识符出现次数（避免 "_1" 误匹配 "_10"）。 */
+    private static int countIdentifier(StringBuilder text, String identifier){
+        int count = 0;
         int from = 0;
         while(true){
             int at = text.indexOf(identifier, from);
-            if(at < 0) return false;
+            if(at < 0) return count;
             boolean boundaryBefore = at == 0 || !isIdentifierChar(text.charAt(at - 1));
             int after = at + identifier.length();
             boolean boundaryAfter = after == text.length() || !isIdentifierChar(text.charAt(after));
-            if(boundaryBefore && boundaryAfter) return true;
+            if(boundaryBefore && boundaryAfter) count++;
             from = at + 1;
         }
+    }
+
+    /** 字符串是否包含独立成词的标识符（避免 "_1" 误匹配 "_10"）。 */
+    private static boolean containsIdentifier(StringBuilder text, String identifier){
+        return countIdentifier(text, identifier) > 0;
     }
 
     private static boolean isIdentifierChar(char c){

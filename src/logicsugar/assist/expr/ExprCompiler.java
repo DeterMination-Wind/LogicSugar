@@ -732,7 +732,8 @@ public class ExprCompiler{
     }
 
     /** 越界断言发射开关（emit 调试构建）。编译路径显式传入，编辑器/预览路径恒为 false：
-     *  编辑器展开（ExprHook.unfoldAll）会把链写回画布，断言行只在真正的 lower 阶段生成。 */
+     *  编辑器侧的展开（{@code ExprHook.unfoldedText} 的文本层展开）按同一开关处理断言行，
+     *  而断言行本身只在真正的 lower 阶段生成。 */
     private static boolean boundsAsserts;
 
     /**

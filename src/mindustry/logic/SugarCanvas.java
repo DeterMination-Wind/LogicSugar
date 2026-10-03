@@ -130,33 +130,41 @@ public class SugarCanvas extends LCanvas{
         super.load(asm);
     }
 
+    /**
+     * 交出自己的<b>展开态程序文本</b>（原版 consumer 拿到的那段 mlog/sugar 源码）。
+     *
+     * <p>这里是<b>纯读取</b>：{@code ExprHook.unfoldedText} 在文本层展开多行表达式卡，并把
+     * jump/begin 记下的画布语句下标换算到展开后的下标，一个积木元素都不动。旧实现是
+     * {@code unfoldAll() → super.save() → foldAll()}，每次调用都会 remove/addAt 积木并重建
+     * {@code StatementElem}；只要有人周期性调 save()（本对话框的指令预算横幅每 24 帧一次、
+     * 共存档里第三方编辑器每帧一次），正在编辑的 Expression 卡就会被拆掉重建，文本框在下一帧
+     * 因为元素已脱离而失焦（2026-10 报告：“点进编辑区域马上丢焦点、卡片每帧抖动”），而若
+     * {@code foldAll} 这次刚好因外部读取等原因拒绝折回，卡片还会被永久退化成裸 op 积木。</p>
+     *
+     * <p>展开态的写法与旧路径逐字一致（同一批 {@code ExprHook.toStatements} 展开、同一套
+     * 单行卡/不可映射行的保留判定），所以载体、{@code verifyRestore} 与重新解析都对得上。</p>
+     */
     @Override
     public String save(){
         structure.refresh();
-        ExprHook.unfoldAll(this);
-        String result = super.save();
-        ExprHook.foldAll(this);
-        return result;
+        return ExprHook.unfoldedText(this);
     }
 
     /**
-     * 只读文本快照，给"每帧比较签名"的旁路用（{@link CounterJumpOverlay} 的缓存失效判断、
-     * 撤销历史轮询）。
+     * 屏幕形态（折叠态）的文本快照：给按“显示语句下标”索引积木的旁路用
+     * （{@link CounterJumpOverlay} 用 {@code elementAt(i)} 找卡片，而它的编译产物按
+     * {@code SugarCompiler.CompileProvenance} 映射回同一套下标）。
      *
-     * <p>{@link #save()} 不能每帧调，原因有两个，都是实测过的：</p>
-     * <ol>
-     *   <li>它在取文本前后跑 {@link ExprHook#unfoldAll} / {@link ExprHook#foldAll}（结构控制器
-     *       {@code refresh()} 也在里面），会 remove / addAt 积木元素并重建 {@code StatementElem}，
-     *       这本该只在真正编辑时发生；</li>
-     *   <li>它的文本是<b>展开态</b>，而绘制侧 {@code elementAt(i)} 索引的是屏幕上的<b>折叠态</b>，
-     *       两套语句下标对不上（一张多行 Expr 卡 = 展开后的 N 条语句）。</li>
-     * </ol>
-     *
-     * <p>这里逐条走 {@link #normalizeJumpUI} 再拼文本，等价于原版 {@code LCanvas.save()}
+     * <p>为什么不用 {@link #save()}：{@code save()} 给的是<b>展开态</b>文本（多行 Expr 卡在
+     * 那里是 N 条语句），而绘制侧索引的是屏幕上的折叠态——一张多行卡 = 一条语句，两套下标
+     * 空间对不上。这里逐条 {@link #normalizeJumpUI} 再拼文本，等价于原版 {@code LCanvas.save()}
      * （{@code saveUI()} + {@code LAssembler.write()}），但 ①不触发任何折叠、②不会因为
      * {@code jump} 的目标元素已脱离而抛 NPE。第二点尤其重要：本方法是在每帧回调里被调的，
      * 一次抛出就会让那条回调静默死掉，指示线此后整场不再绘制（2026-09-25「长逻辑里
      * @counter 渲染罢工，编辑一下只闪一帧」的报告）。</p>
+     *
+     * <p>注意它是折叠态文本：含多行卡的画布不一定能直接当程序文本去编译（jump 的目标下标
+     * 与解析后的语句序号对不上）。要拿“能重新解析的程序文本”用 {@link #save()}。</p>
      */
     public String readonlyText(){
         if(statements == null) return "";
@@ -242,54 +250,90 @@ public class SugarCanvas extends LCanvas{
     }
 
     private void updateMlogAddresses(){
-        if(statements == null) return;
+        if(statements == null || addressLabelField == null) return;
         Seq<Element> children = statements.getChildren();
         if(children.isEmpty()) return;
 
+        // 先问“有哪张标签不是我们要的文本”：全部对得上就直接返回。标签文本一变就会
+        // invalidateHierarchy（整条父链重排），而本方法每帧跑一次。
         boolean changed = false;
         int mlogLine = 0;
         for(Element child : children){
             if(!(child instanceof LCanvas.StatementElem elem)) continue;
 
-            int lineCount = 1;
-            if(elem.st instanceof ExprStatement expression){
-                if(expression.lastOps == null){
-                    try{
-                        expression.lastOps = ExprCompiler.compile(expression.dest, expression.expr);
-                    }catch(Exception ignored){}
-                }
-                if(expression.lastOps != null) lineCount = expression.lastOps.size();
+            int lineCount = mlogLineCount(elem);
+            Label label = addressLabel(elem);
+            if(label != null && !mlogAddressText(mlogLine, lineCount).equals(label.getText().toString())){
+                changed = true;
+                break;
             }
+            mlogLine += lineCount;
+        }
+        if(!changed) return;
 
-            String text = lineCount > 1
-                ? mlogLine + "->" + (mlogLine + lineCount - 1)
-                : Integer.toString(mlogLine);
-            try{
-                Label label = addressLabelField == null ? null : (Label)addressLabelField.get(elem);
-                if(label != null && !label.getText().toString().equals(text)){
-                    label.setText(text);
-                    changed = true;
-                }
-            }catch(IllegalAccessException ignored){}
+        // 顺序不能颠倒：原版 layout 会把标签改回“语句下标”（updateAddress），
+        // 所以必须先把 layout 跑完、再写我们的下标文本；而 setText() 会再次
+        // invalidateHierarchy（Draw 里的 validate 会因此重跑 layout 把文本改回下标），
+        // 因此在写完以后把 needsLayout 清掉。早期版本把顺序写反了：每帧在
+        // "1" 与 "1->2" 之间来回一次（行号也从未真正显示），标签宽度变化表现为
+        // 卡片头部左右抖动，还让整个语句列表每帧重排一次（2026-10 报告）。
+        statements.invalidate();
+        statements.validate();
+
+        mlogLine = 0;
+        for(Element child : children){
+            if(!(child instanceof LCanvas.StatementElem elem)) continue;
+
+            int lineCount = mlogLineCount(elem);
+            setLabelText(elem, mlogAddressText(mlogLine, lineCount));
             mlogLine += lineCount;
         }
 
-        // Only force a layout pass when a label changed or something else already
-        // invalidated the statement list; relayouting every frame is O(n) even at idle.
-        boolean alreadyInvalid = false;
-        if(needsLayoutField != null){
-            try{
-                alreadyInvalid = needsLayoutField.getBoolean(statements);
-            }catch(IllegalAccessException ignored){}
-        }
-        if(changed || alreadyInvalid){
-            statements.invalidate();
-            statements.validate();
-            if(changed && needsLayoutField != null){
+        // setText() 把 needsLayout 又立起来了；不清掉，Draw 里的 validate 就会再跑一次
+        // layout、把文本改回下标，下一帧再改回来——永远抖动。
+        clearStatementLayoutFlag();
+    }
+
+    /** 该积木发射的指令数：多行表达式卡按行数算，其余一条。 */
+    private static int mlogLineCount(LCanvas.StatementElem elem){
+        if(elem.st instanceof ExprStatement expression){
+            if(expression.lastOps == null){
                 try{
-                    needsLayoutField.setBoolean(statements, false);
-                }catch(IllegalAccessException ignored){}
+                    expression.lastOps = ExprCompiler.compile(expression.dest, expression.expr);
+                }catch(Exception ignored){
+                    // 编辑中不完整的表达式：按一条指令计，不改变标签文本就不抖动
+                }
             }
+            if(expression.lastOps != null) return expression.lastOps.size();
+        }
+        return 1;
+    }
+
+    /** 标签文本：多行卡写指令区间，其余写首条指令下标（与原版行号同一列）。 */
+    private static String mlogAddressText(int mlogLine, int lineCount){
+        return lineCount > 1 ? mlogLine + "->" + (mlogLine + lineCount - 1) : Integer.toString(mlogLine);
+    }
+
+    private void setLabelText(LCanvas.StatementElem elem, String text){
+        Label label = addressLabel(elem);
+        if(label != null && !label.getText().toString().equals(text)) label.setText(text);
+    }
+
+    private Label addressLabel(LCanvas.StatementElem elem){
+        if(addressLabelField == null) return null;
+        try{
+            return (Label)addressLabelField.get(elem);
+        }catch(IllegalAccessException ignored){
+            return null;
+        }
+    }
+
+    /** 清掉 statements 的 needsLayout（反射，旧版字段名变动时退化为多跑一次 layout，不影响文本）。 */
+    private void clearStatementLayoutFlag(){
+        if(needsLayoutField == null) return;
+        try{
+            needsLayoutField.setBoolean(statements, false);
+        }catch(IllegalAccessException ignored){
         }
     }
 

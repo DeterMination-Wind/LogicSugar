@@ -365,9 +365,10 @@ public class ExprStatement extends LStatement{
 
     @Override
     public LInstruction build(LAssembler builder){
-        // 正常流程下不会走到这里：LogicCanvas.save() 会先 unfoldAll()，
-        // ExprStatement 会被替换为 OperationStatement。
-        // 但如果代码通过 customParsers 加载后直接执行（不经过编辑器 save），
+        // 正常流程下不会走到这里：ExprStatement 只由编辑器造出来（文本里的表达式行由
+        // ExprTextImport 换成哨兵后再换回卡片），而交给 LAssembler 的文本永远是展开态
+        // （save() 的 unfoldedText / 载体的展开文本）——解析出一条 ExprStatement 是不可能的。
+        // 但如果代码通过 customParsers 加载后直接执行（不经过编辑器），
         // 返回一个 no-op 指令防止静默跳过。
         List<ExprCompiler.Line> ops;
         try{

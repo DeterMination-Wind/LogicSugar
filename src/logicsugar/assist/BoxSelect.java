@@ -26,6 +26,9 @@ import mindustry.logic.SugarStatements.BlockEndStatement;
 import mindustry.ui.*;
 import mindustry.ui.dialogs.*;
 
+import logicsugar.assist.expr.ExprHook;
+import logicsugar.assist.expr.ExprTextImport;
+
 import java.lang.reflect.*;
 import java.util.*;
 
@@ -2261,6 +2264,18 @@ public class BoxSelect{
         updateSelectedButtonIcons(canvas);
     }
 
+    /** 重新选中“本次插入产生的积木”（插入前的元素身份集合之外的元素）：表达式卡在插入后被
+     *  折叠成一张新元素，按条数算选中范围会多杠一张卡，按身份取差集不会。 */
+    private static void reselectInserted(LCanvas canvas, Set<Element> existing){
+        selected.clear();
+        for(Element child : canvas.statements.getChildren()){
+            if(child instanceof StatementElem elem && !existing.contains(child)){
+                selected.add(elem);
+            }
+        }
+        updateSelectedButtonIcons(canvas);
+    }
+
     /** 双重 invalidate + validate，处理高度变化后的布局稳定 */
     private static void finalizeLayout(LCanvas canvas){
         SugarCanvas.markJumpHeightsDirty(canvas);
@@ -2391,13 +2406,20 @@ public class BoxSelect{
         if(canvas == null || canvas.statements == null) return StatementClipboard.Result.EMPTY;
 
         String text = Core.app.getClipboardText();
+        // 表达式卡的标记行与单行表达式（`x = buf[3]`）在这里先换成哨兵，与
+        // {@code SugarCanvas.load} 同一口径：下面的“能不能解析”与空载荷判定看到的是标准
+        // {@code set} 语句，粘贴进来的表达式行才不会被当成无效语句拒掉。
+        ExprTextImport.Plan importPlan = ExprTextImport.plan(text);
         // 我们自己的载荷是原样复刻的（源画布上本来就有的无效卡也要照搬）；外来文本则要求
         // 每一条都解析成功，否则一段散文会变成一堆静默的无效卡。判定只有这一个实现 —— 轮询
         // 的 Ctrl+V 也问它，各自写一份迟早会漂。
-        if(!StatementClipboard.isAcceptable(text)) return StatementClipboard.Result.NOT_LOGIC;
+        if(!StatementClipboard.isAcceptable(importPlan.text())) return StatementClipboard.Result.NOT_LOGIC;
 
-        Seq<LStatement> incoming = StatementClipboard.parse(text);
+        Seq<LStatement> incoming = StatementClipboard.parse(importPlan.text());
         if(incoming == null) return StatementClipboard.Result.NOT_LOGIC;
+        // 哨兵原位换回表达式卡：一对一替换，语句条数不变，片段内的 jump 相对下标不受影响。
+        // 否则“复制一张 Expr 卡再粘贴”会变成一叠普通 op/set 积木（2026-10 报告）。
+        ExprTextImport.applyToStatements(incoming, importPlan);
 
         if(StatementClipboard.countEscapingJumps(incoming) > 0){
             return StatementClipboard.Result.ESCAPING_JUMP;
@@ -2417,7 +2439,14 @@ public class BoxSelect{
             return StatementClipboard.Result.INCOMPLETE_STRUCTURE;
         }
 
+        // 插入前的元素身份：折叠会重建元素，选中范围按“插入前不存在的元素”取差集重算，
+        // 而不是按条数（多行表达式卡粘贴后会折成一张卡）。
+        Set<Element> existing = Collections.newSetFromMap(new IdentityHashMap<>());
+        for(Element child : canvas.statements.getChildren()) existing.add(child);
+
         insertPastedStatements(canvas, insertPos, incoming);
+        // 外来 op 链（旧载荷 / 纯 mlog 片段）按重开处理器的同一口径折回表达式卡；折不动就原样留着。
+        ExprHook.foldAll(canvas);
 
         finalizeLayout(canvas);
         // 插入改变了所有下标，跳转层与结构引导线都要跟着重算
@@ -2425,11 +2454,11 @@ public class BoxSelect{
         SugarCanvas.refreshJumpLayer(canvas);
         refreshStructureLayout(canvas);
         restoreButtonIcons(canvas);
-        reselectRange(canvas, insertPos, incoming.size);
+        reselectInserted(canvas, existing);
         enterSelectedState(canvas);
 
-        lastPasteCount = incoming.size;
-        Log.debug("[LogicAssist] Pasted @ statements at @.", incoming.size, insertPos);
+        lastPasteCount = selected.size();
+        Log.debug("[LogicAssist] Pasted @ statements at @.", lastPasteCount, insertPos);
         return StatementClipboard.Result.OK;
     }
 

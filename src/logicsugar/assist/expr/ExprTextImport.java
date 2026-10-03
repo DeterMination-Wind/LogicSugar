@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  * （一对一替换，语句条数不变，因此 jump 下标 / 标签解析完全不受影响）；
  * {@link #applyToCanvas} 或 {@link #applyToStatements} 再把哨兵换回
  * {@link ExprStatement} 卡片。产物与用户从 Operations 分类拖一张 Expr 卡完全一致：
- * 保存时由 {@code ExprHook.unfoldAll} 展开成 {@code read/write/op} 原版指令，
+ * 保存时由 {@code ExprHook.unfoldedText}（文本层展开）写成 {@code read/write/op} 原版指令，
  * 重开时由 {@code ExprHook.foldAll} 折回卡片，因此多人兼容性与 reconstruction
  * 覆盖都沿用既有路径。</p>
  *
