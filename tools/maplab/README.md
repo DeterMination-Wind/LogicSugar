@@ -130,6 +130,9 @@ tools/maplab/
 ## 注意
 
 - 说明板文案上限 400 字（`MessageBlock.maxTextLength`），工具会检查并在超限时报错。
+- 演示源码按 **LF** 读取（`Lab.read` 会归一 `
+`），因此 Windows 上 `core.autocrlf` 检出的
+  仓库也能直接跑；同时 `tools/maplab/.gitattributes` 把 `*.ls` / `library.txt` 钉成 `eol=lf`。
 - **认不出的语句直接让生成失败**：文本导入层认不出的行会被原版解析器默默落成 `InvalidStatement`：
   产物里多一条 `noop`、编辑器里多一张红色的「无效」卡，载体里也照样存着（用户报过的 @counter
   指示线不画线就是这个原因）。`LabCompiler.rejectUnparsedLines` 会对**用户文本 / 画布文本 / 编译产物**

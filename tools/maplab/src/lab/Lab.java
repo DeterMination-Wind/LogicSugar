@@ -613,9 +613,17 @@ public final class Lab{
         return null;
     }
 
+    /**
+     * 读一份演示源码（UTF-8）：**行尾统一归成 LF**。
+     *
+     * <p>原版 {@code LParser} 只在语句开头吞掉 {@code \r\n}，token 扫描器不把 {@code \r}
+     * 当分隔符：CRLF 检出的 demo 文件会让 {@code ifbegin x equal 1 999\r} 的最后一个 token 变成
+     * {@code "999\r"}（destination index 解析失败）或直接把字符串尾部带进 token。游戏里处理器的
+     * 代码永远是 LF，所以这里读进来就归一，Windows 上 core.autocrlf 检出也能直接跑。</p>
+     */
     private static String read(Path path){
         try{
-            return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+            return new String(Files.readAllBytes(path), StandardCharsets.UTF_8).replace("\r\n", "\n");
         }catch(IOException e){
             throw new RuntimeException("cannot read " + path, e);
         }
