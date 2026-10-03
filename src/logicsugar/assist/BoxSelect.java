@@ -148,6 +148,86 @@ public class BoxSelect{
         return SugarCanvas.currentIdleSpace();
     }
 
+    // ===== 拖动诊断日志 =====
+
+    /**
+     * 拖动路径上会静默失效的判断，全部留一行可见日志（与 {@code CounterJumpOverlay.noteOnce}
+     * 同一哲学：屏幕上看不见、日志里也没有的失败只能靠猜——2026-09 的"重复积木"报告就是这样
+     * 查了两轮）。每类每场最多一行（按 key 去重，几何类按变化后的内容去重），纯 {@code Log.info}
+     * 加字符串拼接，不影响拖动行为。
+     */
+    private static final Set<String> reportedDragNotes = new HashSet<>();
+    /** 本次拖动序号：让"每次拖动一次"的日志既每拖都出现，又不至于每帧刷屏。 */
+    private static int dragSequence = 0;
+    /** 本次拖动是否已经报过重绘偏移来源。 */
+    private static boolean dragRedrawSourceReported = false;
+    /** 上一次几何基准（children 数 / 可见数 / getPrefHeight() 之和），见 {@link #reportGeometryChange}。 */
+    private static String dragGeometryBaseline = null;
+
+    private static void dragNoteOnce(String key, String message){
+        if(!reportedDragNotes.add(key)) return;
+        Log.info("[LogicSugar] drag " + message);
+    }
+
+    /** 一个元素的可诊断身份：identity hash（同一场里唯一）+ 可见性 + 是否还挂在画布上 + 偏移。 */
+    private static String describeElement(StatementElem elem, LCanvas canvas){
+        if(elem == null) return "none";
+        boolean attached = canvas != null && canvas.statements != null && elem.parent == canvas.statements;
+        return "#" + Integer.toHexString(System.identityHashCode(elem))
+            + " visible=" + elem.visible
+            + " attached=" + attached
+            + " translation=(" + elem.translation.x + "," + elem.translation.y + ")";
+    }
+
+    /** children 数 / 可见元素数 / getPrefHeight() 之和 —— 拖动期间任何一项变化都说明有人跑了 layout。 */
+    private static String geometrySummary(LCanvas canvas){
+        Seq<Element> children = canvas.statements.getChildren();
+        int visible = 0;
+        float heightSum = 0f;
+        for(Element child : children){
+            if(child.visible) visible++;
+            heightSum += child.getPrefHeight();
+        }
+        return "children=" + children.size + " visible=" + visible
+            + " heightSum=" + (Math.round(heightSum * 100f) / 100f);
+    }
+
+    private static void seedGeometryBaseline(LCanvas canvas){
+        dragGeometryBaseline = canvas == null || canvas.statements == null ? null : geometrySummary(canvas);
+    }
+
+    /** (e) 拖动中几何变化：layout 一跑，dragBaseYs 基准就过期了，这是"积木错位/重复"的候选机制。 */
+    private static void reportGeometryChange(LCanvas canvas, String stage){
+        if(canvas == null || canvas.statements == null) return;
+        String now = geometrySummary(canvas);
+        if(now.equals(dragGeometryBaseline)) return;
+        dragNoteOnce("geometry|" + stage + "|" + now, "geometry changed at " + stage + ": "
+            + (dragGeometryBaseline == null ? "(no baseline)" : dragGeometryBaseline) + " -> " + now);
+        dragGeometryBaseline = now;
+    }
+
+    /** (f) 拖动结束的重复检查：children 里的语句元素数 ≠ 不同的语句对象数 ⇒ 真的多了一份元素。 */
+    private static void reportDuplicateCheck(LCanvas canvas, String stage){
+        if(canvas == null || canvas.statements == null) return;
+        Seq<Element> children = canvas.statements.getChildren();
+        Set<LStatement> distinct = Collections.newSetFromMap(new IdentityHashMap<>());
+        int statements = 0;
+        for(Element child : children){
+            if(child instanceof StatementElem elem){
+                statements++;
+                distinct.add(elem.st);
+            }
+        }
+        String detail = "end " + stage + ": children=" + children.size + " statements=" + statements
+            + " distinctSt=" + distinct.size();
+        if(statements != distinct.size()){
+            // 真重复：同一个语句对象被挂在两个元素上，屏幕上是两张一模一样的积木。
+            Log.warn("[LogicSugar] drag DUPLICATE statement objects detected: " + detail);
+        }else{
+            dragNoteOnce("end|" + stage + "|" + dragSequence, detail);
+        }
+    }
+
     // ===== 状态 =====
     private enum State{
         IDLE, SELECTING, SELECTED, PENDING_SINGLE_DRAG, DRAGGING_MOVE, DRAGGING_COPY
@@ -829,8 +909,11 @@ public class BoxSelect{
         }
         int copySize = copies.size;
 
-        if(children.size + copySize + copiedBlockEndCount(copySources) > LExecutor.maxInstructions){
-            Log.debug("[LogicAssist] Duplicate aborted: would exceed maxInstructions");
+        int generatedEnds = copiedBlockEndCount(copySources);
+        if(children.size + copySize + generatedEnds > LExecutor.maxInstructions){
+            dragNoteOnce("abort|duplicate", "duplicate aborted: would exceed maxInstructions (children="
+                + children.size + " copies=" + copySize + " ends=" + generatedEnds
+                + " limit=" + LExecutor.maxInstructions + ")");
             return;
         }
 
@@ -1018,10 +1101,18 @@ public class BoxSelect{
         // 先清除原版 dragging 字段，避免任何残留影响本次判定
         clearDraggingField(canvas);
 
+        State entryState = state;
+        Seq<Element> children = canvas.statements.getChildren();
+        dragSequence++;
+        dragRedrawSourceReported = false;
+        seedGeometryBaseline(canvas);
+
         // 方案B：拒绝拖拽"部分选中"的结构块。若选中集含孤立的 begin 或 end
         // （配对端不在选中集内），拖动会把结构撕裂（body 悬空），这里直接不进入拖拽态。
         if(isStructureSelectionIncomplete(canvas)){
-            Log.debug("[LogicAssist] Blocked drag: incomplete structure selection");
+            // 这条门以前只在 debug 日志里可见，用户看到的只是"按下去没反应"，正是最难诊断的一类报告。
+            dragNoteOnce("blocked|incomplete", "startDrag blocked: incomplete structure selection selected="
+                + selected.size() + " dragMode=" + dragMode);
             return;
         }
         dragStartMouseX = mx;
@@ -1032,7 +1123,6 @@ public class BoxSelect{
         dragInsertPos = -1;
         dragMoved = false;
 
-        Seq<Element> children = canvas.statements.getChildren();
         dragAnchorOffset = 0f;
         dragYOffsets = null;
 
@@ -1111,6 +1201,16 @@ public class BoxSelect{
         }else{
             state = State.DRAGGING_MOVE;
         }
+
+        // (c) 入口快照：手机报"拖动出现重复积木"时，这一行决定后面往哪个机制上查。
+        StatementElem firstSelected = selected.isEmpty() ? null : selected.iterator().next();
+        dragNoteOnce("startDrag|" + dragSequence, "startDrag seq=" + dragSequence
+            + " entryState=" + entryState + " finalState=" + state
+            + " selected=" + selected.size() + " children=" + children.size
+            + " statementsHeight=" + canvas.statements.getHeight()
+            + " dragMode=" + dragMode + " anchorOffset=" + dragAnchorOffset
+            + " expandSpacing=" + spaceSwitchedDuringDrag
+            + " first=" + describeElement(firstSelected, canvas));
     }
 
     /** 拖动期间每帧更新 translation 和插入位置。
@@ -1182,6 +1282,9 @@ public class BoxSelect{
         // 腾位后更新跳转线位置——此时 translation 已反映腾位，JumpCurve 能正确定位
         SugarCanvas.refreshJumpLayer(canvas);
         updateIndicatorGeometry(canvas);
+
+        // (e) 每帧比对几何基准：layout 一跑，dragBaseYs/紧凑排布的基准就过期了
+        reportGeometryChange(canvas, "updateDrag");
 
         if(Core.input.keyTap(KeyCode.mouseRight) || Core.input.keyTap(KeyCode.escape)){
             cancelDrag(canvas);
@@ -1750,6 +1853,21 @@ public class BoxSelect{
         if(selected.isEmpty()) return;
         // 所有选中积木共享相同的 translation（在 updateDrag 中统一设置）
         StatementElem first = selected.iterator().next();
+        // (d) 偏移来源每场报一次：首个选中积木若不可见/已脱离画布，它的 translation 就不再是
+        // 这一组的偏移（重绘位置错位，视觉上像"多了一块"），这条日志直接把那件事摊开。
+        if(!dragRedrawSourceReported){
+            dragRedrawSourceReported = true;
+            boolean detachedSeen = false;
+            for(StatementElem elem : selected){
+                if(canvas.statements == null || elem.parent != canvas.statements){
+                    detachedSeen = true;
+                    break;
+                }
+            }
+            dragNoteOnce("redrawOffset|" + dragSequence, "redraw offset seq=" + dragSequence
+                + " source=" + describeElement(first, canvas) + " detachedSeen=" + detachedSeen
+                + " selected=" + selected.size());
+        }
         drawElementsWithOffset(canvas, first.translation.x, first.translation.y, 1f);
     }
 
@@ -1848,6 +1966,7 @@ public class BoxSelect{
         reselectRange(canvas, actualInsert, count);
         enterSelectedState(canvas);
         Log.debug("[LogicAssist] Drag-moved " + count + " blocks to position " + actualInsert);
+        reportDuplicateCheck(canvas, "move");
     }
 
     // ===== 拖动复制 =====
@@ -1889,9 +2008,13 @@ public class BoxSelect{
         }
 
         int currentSize = canvas.statements.getChildren().size;
-        if(currentSize + clipboardSize + copiedBlockEndCount(clipboardSources) > LExecutor.maxInstructions){
-            Log.debug("[LogicAssist] Copy aborted: would exceed maxInstructions");
+        int generatedEnds = copiedBlockEndCount(clipboardSources);
+        if(currentSize + clipboardSize + generatedEnds > LExecutor.maxInstructions){
+            // 静默拒绝复制在用户看来只是"拖了没反应"，留一行可见日志。
+            dragNoteOnce("abort|copy", "copy aborted: would exceed maxInstructions (children=" + currentSize
+                + " copies=" + clipboardSize + " ends=" + generatedEnds + " limit=" + LExecutor.maxInstructions + ")");
             enterSelectedState(canvas);
+            reportDuplicateCheck(canvas, "copy-aborted");
             return;
         }
 
@@ -1924,6 +2047,7 @@ public class BoxSelect{
 
         enterSelectedState(canvas);
         Log.debug("[LogicAssist] Drag-copied " + copies.size + " blocks to position " + insertPos);
+        reportDuplicateCheck(canvas, "copy");
     }
 
     private static void cancelDrag(LCanvas canvas){
@@ -1943,6 +2067,7 @@ public class BoxSelect{
         dragInsertPos = -1;
         state = State.SELECTED;
         Log.debug("[LogicAssist] Drag cancelled.");
+        reportDuplicateCheck(canvas, "cancel");
     }
 
     /** Delete 键快速删除选中积木 */
