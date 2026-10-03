@@ -28,7 +28,7 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 | `jarAndroid` | `build/libs/LogicSugar-v<version>-android.jar` | 中间产物（含 dex），不单独分发 |
 | `deploy` | `build/libs/LogicSugar-v<version>.jar` | **唯一可分发形态**：桌面 classes + `classes.dex` + 描述符 + 资产 |
 | `copyAndroidJar` | `构建/LogicSugar/LogicSugar-dev.jar` | deploy 后自动执行（`finalizedBy`）的本地开发副本改名 |
-| `releaseZip` | `build/libs/LogicSugar-v<version>.zip` | 可选：deploy jar + README + LICENSE + sample 图 |
+| `releaseZip` | `build/distributions/LogicSugar-v<version>.zip` | 可选：deploy jar + README + LICENSE + sample 图（Gradle 对 Zip 任务的默认目录，不在 `libs/`） |
 
 `build` 任务依赖 `deploy`，所以 `./gradlew build` 即可得到完整跨平台产物。
 
@@ -37,7 +37,7 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 ## 发布前本地必做步骤
 
 1. 确认版本号：`build.gradle` 与 `mod.json` 同步为发布身份（`LogicSugar` / `<version>`）。
-2. 全量自测绿：`./gradlew check`（四十四个任务全过，见 [testing.md](testing.md)）。
+2. 全量自测绿：`./gradlew check`（四十八个任务全过，见 [testing.md](testing.md)）。
 3. 本地完整构建：`./gradlew.bat clean deploy`（需要 Android SDK 的 D8 + `android.jar`）。
 4. 撰写发布正文（初稿可存为 `release_notes_v<version>.md`）：中英对照、只写当前版本，格式见下节「发布正文风格」；发布后删除该文件，正文以 GitHub Release 为准。
 5. 核实产物：`build/libs/LogicSugar-v<version>.jar` 存在且含 `classes.dex`；`-desktop.jar` / `-android.jar` / d8-input jar 不进入发布流程。
