@@ -304,10 +304,27 @@ because a payload may be read by an older LogicSugar whose import does not know 
 
 **An `ExprStatement` card must survive `save()` — treated as a block, not a formatting detail.**
 Every palette insert triggers `SugarCanvas.addAt → afterMutate → SugarLogicDialog.recordCanvasHistory
-→ canvas.save()`, and `save()` runs `ExprHook.unfoldAll()` + `foldAll()`. Two invariants keep the
-card alive (both were violated by the 2026-09 regression where "Expr" in the add-block dialog
-appeared to do nothing):
+→ canvas.save()`, and `save()` is a *pure text read* (`ExprHook.unfoldedText`) that never touches the
+canvas (`originTest`'s `saveIsAPureTextRead` pins the purity, `exprCardTest`'s
+`unfoldedTextMatchesTheUnfoldedCanvas` pins the text). The card's text therefore has to be produced
+by the card itself, and it has to keep the canvas/statement index parity:
 
+- `ExprHook.unfoldedText` (canvas entry) / `unfoldedText(List<LStatement>, boolean)` (headless)
+  expand a multi-line card into its op lines **in the text layer only**, using the same
+  `ExprHook.toStatements` expansion and the same keep-the-card decisions as `unfoldAll`. Jump and
+  begin cards record a *canvas* statement index, so those tokens are rewritten to the *text*
+  statement index (temporarily, restored in a `finally`); a jump after a multi-line card otherwise
+  targets the wrong statement once the text is parsed again. This is why `save()` must not be
+  `unfoldAll() → super.save() → foldAll()`: that rebuilt the statement elements on every call, and
+  it is called every 24 frames (instruction-budget banner) and every frame when a third-party
+  editor wraps the consumer in the coexistence mode — the focused Expression text field lost focus
+  and the card visibly flickered (2026-10 report). A fold that refused (external read, rebuild
+  failure) could also degrade the card to raw ops permanently.
+- `unfoldAll` (canvas) is no longer on the save path: it stays as the *canvas* form of the same
+  expansion (and for tests), while **the keep-the-card rule lives in `cardLines` + `keepsCard` +
+  `hasUnmappableLine`, shared by both paths** — never duplicate it in one of them. The emit-mode
+  auto-assert cards only ever existed inside one unfold, and the fold in the same call removed them
+  again, so dropping the canvas unfold loses nothing visible.
 - `unfoldAll` only replaces a card when **every** line of its chain has a vanilla statement
   (`hasUnmappableLine`); otherwise it keeps the card. `CopyLine extends RawLine`, so the v5
   value-copy form (`x = 0`, `x = a` → `set x 0`) hit the "unknown RawLine → skip" branch while
@@ -320,8 +337,12 @@ appeared to do nothing):
   Persistence instead uses the self-describing marker `# @ls-expr-card <dest> "<expr>"`
   (`ExprStatement.cardMarkerPrefix`, a comment: executable stream, statement count and every
   `destIndex` stay untouched), which `ExprTextImport` turns back into the card on load. Multi-line
-  cards keep relying on the `>= 2` fold threshold and deliberately carry no marker (collapsing
-  N lines would shift indices). Add a fixture to `reconstructionMatrixTest` when the format changes.
+  cards keep relying on the `>= 2` fold threshold and deliberately carry no marker in save text
+  (collapsing N lines there would shift indices); a **clipboard payload** is the one place where
+  they are written inline (`dest = expr` via `ExprTextImport.canWriteInline`) because a fragment is
+  re-parsed by our own paste path — one line per card keeps the fragment's jump offsets valid and
+  restores the card verbatim (`statementClipboardTest`). Add a fixture to `reconstructionMatrixTest`
+  when the save format changes.
 - **The marker is evidence, and it has to survive every text rewrite.** A single-line card's
   unfolded line is byte-identical to a plain `set`/`op` block, so the marker is the *only* thing
   that tells the two apart; two paths re-serialize statements and used to drop every comment with
@@ -346,6 +367,16 @@ appeared to do nothing):
     alone). `ExprTextImport.cardMarker` is the single serializer of the format: `ExprStatement.write`
     and the recovery both go through it. `exprCardTest`'s `markerSurvivesTextRewrites` pins the
     rewrite, the hoisting and the stale-marker refusal; `reconstructionMatrixTest`'s
+- **`foldAll` collapses a retry only when its temporaries are not *read* outside the chain — a
+  definition is not a read.** `ExprHook.hasExternalReads` used to fail on any textual occurrence,
+  so two identical chains (the second one produced by copying the card) redefined each other's
+  `_0` and *both* refused to fold: after the next save the user's card was permanently raw ops
+  (2026-10 report: “复制 Expr 积木后，马上转为了编译后形态”). The rule now counts only real reads:
+  a statement that writes the name once and never reads it is a *definition*, and a read that
+  follows an outside definition gets that value, not the folded chain's. An unrecognised statement
+  type still counts every occurrence as a read — the failure direction stays “fold less, never fold
+  wrong”. `exprCardTest`'s `duplicateChainsShareTempsWithoutBlockingEachOther`, `arrayTest` and
+  `spanTest` pin both directions.
     `decl.exprcard.staleDest` fixture pins the carrier path.
 - **Rich-text escaping in the card display: escape `[` only.** `ExprStatement.highlight` wraps each
   token in `[color]…[]`; Arc's markup parser treats `[[` as one literal `[` and leaves `]` alone,
@@ -448,23 +479,53 @@ Only the X axis hid the mistake, because it wants no offset — which a local `0
 `originTest`'s `anchorsAreLocalCoordinates` nails the code (comments stripped, since the method's own
 comment names the wrong expression) so it cannot come back unnoticed.
 
-**The polling path must use `SugarCanvas.readonlyText()`, never `save()`.** The overlay polls the
+**The polling path must use `SugarCanvas.readonlyText()` for display-space indices; the program text (and every snapshot that has to be re-parsed) is `save()`.** The overlay polls the
 canvas text every third frame for its compile cache (`invalidate()` still forces an immediate rebuild), and the
 undo history polls it every few frames.
-`SugarCanvas.save()` is a *persisting* API: it runs `structure.refresh()` plus
-`ExprHook.unfoldAll`/`foldAll`, which remove/add statement elements and hand back the **unfolded**
-text — while `elementAt(i)` indexes the canvas as it is on screen (folded). `LCanvas.save()` on the
+`save()` is a pure read now (no element churn — see the `ExprStatement` section below), but its text
+is the **unfolded** program: a multi-line Expression card occupies several statements there, while
+the overlay's `elementAt(i)` and `SugarCompiler.CompileProvenance` index the **folded** canvas on
+screen. So the overlay keeps `readonlyText()` (same index space as the elements it draws into),
+while the undo/redo snapshots use `save()`: a folded snapshot keeps *canvas* statement indices
+inside jump/begin cards, and `canvas.load()` renumbers statements when it parses them back — jumps
+would silently retarget. `LCanvas.save()` on the
 read-only path is no better: it calls `saveUI()` on every statement and `JumpStatement.saveUI()`
 throws NPE when its target element is detached (that is what `SugarCanvas.normalizeJumpUI` exists
 for). Called from an `update()` callback, either one turns "one bad frame" into "the callback dies
 and the line never comes back" — the reported symptom was a long program drawing nothing, with a
 single flash right after an edit (2026-09-25). So: per-frame text ⇒ `readonlyText()` (null-safe,
-no folding), history snapshots ⇒ the same, and the callback wraps both the snapshot and the drawing
+no folding), and the callback wraps both the snapshot and the drawing
 in `catch(Throwable)` with `noteOnce` logging (the compile/rebuild path included), because a purely
 visual feature that dies silently is undiagnosable by design. `originTest`'s
 `overlayUsesReadonlySnapshot` pins the readonly snapshot; `overlayFailureAndCandidateWiring` pins
-the rebuild log and the `hideAll` close wiring, and `functionDefinitionsDoNotShiftOrigins` pins the
-canvas-index provenance behind funcdefs.
+the rebuild log and the `hideAll` close wiring, `functionDefinitionsDoNotShiftOrigins` pins the
+canvas-index provenance behind funcdefs, `saveIsAPureTextRead` pins that the save path never
+unfolds/folds the canvas, and `addressLabelsDoNotOscillate` pins the layout-then-text-then-clear
+order every frame depends on.
+
+**A tooltip next to the pointer must not outlive the canvas.** The hover hint
+(`CounterJumpOverlay.updateHint`) is a `Label` on `Core.scene.root` so the pane cannot clip it, and
+that is exactly why its lifetime cannot depend on `SugarLogicDialog.hide()`: `hideAll(canvas)` only
+looks inside the *current* `CounterJumpOverlay`, while `LCanvas.rebuild()` / `load()` clear the
+jumps group and `install()` builds a fresh overlay instance — the previous instance's hint becomes
+an orphan that no close path can reach (2026-10 report: the “编译器入口 skip …” hint stayed next to
+the pointer after leaving the logic processor). The label therefore carries its own watchdog
+(`hint.update(this::guardHint)`): on the scene root it is always acted, so `hintOnScreen()` can
+check `layer.parent == null` (this instance's jumps group was replaced), the canvas scene, and the
+visibility chain of every ancestor. Keep the dialog's `hideAll()` call — it is the immediate path —
+but never rely on it for the last word.
+
+**The address label must not alternate between statement index and mlog address.** Vanilla's
+`DragLayout.layout()` calls `StatementElem.updateAddress(i)` (the *statement* index); our
+`SugarCanvas.updateMlogAddresses()` writes the *instruction* address (`1->2` for a multi-line
+Expression card). The order is load-bearing: run the forced `invalidate()/validate()` first, then
+write the mlog text, then clear `WidgetGroup.needsLayout` — `Label.setText` re-invalidates the
+hierarchy, and the next `draw()`'s `validate()` would otherwise run `layout()` again and restore the
+index text. Getting it backwards made the label flip between the two texts every frame (so the
+instruction address was never even visible), forced a full statement layout per frame, and the
+width change showed up as the card header shaking sideways — reported together with “clicking the
+Expression edit area loses focus immediately” (2026-10), whose actual cause was the periodic
+`save()` rebuilding the card (above).
 
 ## Data subsystem (arrays / matrix / record / containers / bitset / map / list / heap / chain)
 
