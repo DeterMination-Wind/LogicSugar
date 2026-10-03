@@ -161,6 +161,9 @@ public class BoxSelect{
     private static int dragSequence = 0;
     /** 本次拖动是否已经报过重绘偏移来源。 */
     private static boolean dragRedrawSourceReported = false;
+    /** 上一次体检看到的卡结构（元素 → children 数），避免每帧拼字符串。 */
+    private static final Map<StatementElem, Integer> cardShapeCache = new IdentityHashMap<>();
+
     /** 上一次几何基准（children 数 / 可见数 / getPrefHeight() 之和），见 {@link #reportGeometryChange}。 */
     private static String dragGeometryBaseline = null;
 
@@ -207,6 +210,36 @@ public class BoxSelect{
     }
 
     /** (f) 拖动结束的重复检查：children 里的语句元素数 ≠ 不同的语句对象数 ⇒ 真的多了一份元素。 */
+    /**
+     * 卡内部体检：一个 {@code StatementElem} 的内容结构是「卡头表 + 内容表」（MindustryX 的
+     * 构造函数里两次 {@code table(...)}），所以 {@code getChildren().size} 正常就是 2。
+     *
+     * <p>"拖动出现重复积木"在语句层已排除（children/statements/distinctSt 相等、无几何变化、
+     * 偏移来源正常），剩下的可能是卡自己内部多了一套内容（构造路径跑两次）或某个子控件被画两遍
+     * —— 这两种都只在元素树内部，语句层计数天然看不见，所以把真实数字打出来，按结构变化去重。</p>
+     */
+    private static void diagnoseStatementCards(LCanvas canvas){
+        if(canvas == null || canvas.statements == null) return;
+        for(Element child : canvas.statements.getChildren()){
+            if(!(child instanceof StatementElem elem) || elem.st == null) continue;
+            int children = elem.getChildren().size;
+            // 每帧只做一次 map 查找与一次装箱（Integer 小值有缓存）——空闲态也要跑，不能有分配。
+            Integer previous = cardShapeCache.put(elem, children);
+            if(previous != null && previous == children) continue;
+            StringBuilder sb = new StringBuilder("card #")
+                .append(Integer.toHexString(System.identityHashCode(elem)))
+                .append(" st=").append(elem.st.getClass().getSimpleName())
+                .append(" children=").append(children)
+                .append(" cells=").append(elem.getCells().size);
+            for(int i = 0; i < elem.getChildren().size; i++){
+                Element sub = elem.getChildren().get(i);
+                sb.append(" | sub").append(i).append('=').append(sub.getClass().getSimpleName());
+                if(sub instanceof Group group) sb.append('(').append(group.getChildren().size).append(')');
+            }
+            Log.info("[LogicSugar] drag " + sb);
+        }
+    }
+
     private static void reportDuplicateCheck(LCanvas canvas, String stage){
         if(canvas == null || canvas.statements == null) return;
         Seq<Element> children = canvas.statements.getChildren();
@@ -410,6 +443,10 @@ public class BoxSelect{
                             autoScroll(c);
                         }
                     }
+                }else{
+                    // 空闲/选中态也要体检：若"重复积木"松手后仍然可见，拖动路径就不是源头，
+                    // 这一行会给出卡内部的真实结构（正常卡 = 卡头表 + 内容表，children=2）。
+                    diagnoseStatementCards(getCanvas());
                 }
             });
         }
@@ -1906,6 +1943,19 @@ public class BoxSelect{
                 // 跳过隐藏折叠 body（visible=false，负高度）：它们不可见，重画/预览时不应
                 // 绘制，否则拖折叠块会渲染出异常的虚拟块（负高度导致高度异常）。
                 if(!elem.visible) continue;
+                // 重画偏移必须与 vanilla 的 translation 一致，否则原位置会留下一份"拖不走的
+                // 积木"。这一行把两个数以及该元素的实际 stage 坐标摆出来对比（每拖每元素一行）。
+                if(dragSequence > 0 && reportedDragNotes.add("redraw|" + dragSequence
+                    + "|" + Integer.toHexString(System.identityHashCode(elem)))){
+                    Vec2 vanilla = elem.localToStageCoordinates(Tmp.v1.set(0, 0));
+                    Log.info("[LogicSugar] drag redraw elem=#"
+                        + Integer.toHexString(System.identityHashCode(elem))
+                        + " x=" + elem.x + " y=" + elem.y
+                        + " translation=(" + elem.translation.x + "," + elem.translation.y + ")"
+                        + " dx=" + dx + " dy=" + dy
+                        + " stageWithTranslation=(" + vanilla.x + "," + vanilla.y + ")"
+                        + " children=" + elem.getChildren().size);
+                }
                 boolean oldCullable = elem.cullable;
                 elem.cullable = false;
                 elem.x += dx;
