@@ -81,7 +81,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 2. **编译往返 / 重建**：写一段含 `if` / `for` / `while` / `switch` / 函数调用的程序，保存后重开——结构自动折回；"复制编译后代码"按钮拿到的是纯原版 mlog，且无模组客户端也能打开该处理器。含 `array`/`stack` 等声明卡的程序重开后声明卡仍在。纯原版 mlog（无载体）只恢复能验证的 `if`/`for` 等控制流，不凭空长出数据结构卡；手写程序（没有入口 `set @counter 0`）同样要开成 Sugar 视图，带无守卫跳转表的程序要把表折成 `switchbegin … raw`（含 `default`），而不是留在 flat 原版视图——`test/fixtures/realworld-jump-table.mlog` 就是这条的手动夹具（贴进处理器后直接打开编辑器，应看到 switch 卡与 `default`，并弹出恢复提示而不是「外部编辑」）。
 3. **双视图**：Original / Sugar 视图切换正常，切换前未保存修改有保护。
 4. **函数库**：设置入口打开函数库编辑、保存；把 `functions.txt` 改坏后重进，确认按函数抢救且警告可见。
-5. **编辑器辅助**：框选（桌面 Ctrl+点击/拖动复制；移动端长按拖动，或位移 ≥ `Scl.scl(16f)` 直接快速滑动拖动——不必先等长按）、跳转线着色、`__ls_*` 变量在 MindustryX 变量浏览器中隐藏、表达式语句错误标红；桌面 Ctrl+Z / Ctrl+Y 撤销重做，移动端底部 Undo/Redo 按钮。
+5. **编辑器辅助**：框选（桌面 Ctrl+点击/拖动复制；移动端长按拖动，或位移 ≥ `Scl.scl(16f)` 直接快速滑动拖动——不必先等长按）、跳转线着色、`__ls_*` 变量在 MindustryX 变量浏览器中隐藏、表达式语句错误标红；桌面 Ctrl+Z / Ctrl+Y 撤销重做，移动端底部 Undo/Redo 按钮。**拖动全程不得出现第二张相同积木**（重复积木、原位置不多一份、被拖组内不多余块）；一旦出现，先 `grep "\[LogicSugar\] drag "` 取 `last_log.txt`：`startDrag seq=` 是入口快照（选中数 / 首个选中元素的可见性与是否仍挂在画布上 / dragMode / 是否切换间距），`redraw offset` 是重绘采用的偏移来源，`geometry changed at` 说明拖动中有人跑了 layout，`end move|copy|cancel` 给出 children 与不同 `st` 对象的计数（不等是真重复，直接 warn）。日志按类去重，不会刷屏。
 6. **嵌套布局**：横屏/竖屏及 UI scale 100%/150%/200% 下，展开 1/2/3/4/6 层嵌套 `For`；确认 `variable`、`initial`、`step`、`until`、条件控件、`OP/Expr` 和折叠按钮均在卡片内可见且可点击。切换 MindustryX LogicSupport 侧栏显示/隐藏并重复检查；同时覆盖简体中文、繁体中文和 English。
 7. **双形态设置**：独立安装时出现 `Logic Sugar` 设置分类；并入 Neon 后设置项只出现在 Neon 总设置页，无重复分类。
 8. **安卓包**：安装 `build/libs/LogicSugar-v<version>.jar`（含 `classes.dex`）于安卓设备，确认能加载并打开逻辑编辑器。
