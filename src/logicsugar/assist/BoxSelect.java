@@ -45,7 +45,8 @@ import java.util.*;
  *   2. 释放 → 选中积木高亮，显示工具栏，积木按钮被接管
  *   3. 拖动选中积木 → 积木/半透明预览跟随鼠标，显示插入指示器
  *   4. 松手 → 积木移动/复制到新位置
- *   5. 普通单积木拖动在移动端需长按后移动超过固定 slop，桌面端移动超过 slop 即可
+ *   5. 普通单积木拖动：位移 ≥ 立即阈值（移动端 Scl.scl(16f)、桌面 8px slop）即可拖动；
+ *      移动端小于该阈值的位移仍需长按 430ms 后超过 8px（精准微调通道）
  *   6. Ctrl+点击单积木 → 选中并复制拖动
  *   7. Delete/Backspace → 快速删除选中积木
  *   8. 右键/Esc → 取消拖动
@@ -950,13 +951,21 @@ public class BoxSelect{
         pendingSingleDragKeepsSelection = false;
     }
 
-    /** Require a deliberate long press and movement before taking over vanilla dragging. */
+    /** Minimum movement that starts a single-statement drag without waiting for a long press.
+     *  Mobile scales the policy constant with the UI scale, so the gesture matches what the user
+     *  sees; desktop passes the small slop and keeps the pre-existing slop-only behaviour. */
+    private static float singleDragImmediateSlop(){
+        return Vars.mobile ? Scl.scl(BoxSelectDragPolicy.IMMEDIATE_SLOP) : BoxSelectDragPolicy.SLOP;
+    }
+
+    /** Require a deliberate long press and movement before taking over vanilla dragging,
+     *  unless the finger already travelled far enough for the swipe to be unambiguous. */
     private static boolean singleDragThresholdReached(float mx, float my){
         if(pendingSingleDrag == null) return false;
         long elapsed = Time.nanos() - pendingSingleDragStartedNanos;
         float dx = mx - pendingSingleDragX;
         float dy = my - pendingSingleDragY;
-        return BoxSelectDragPolicy.singleDragReady(elapsed, dx, dy, Vars.mobile);
+        return BoxSelectDragPolicy.singleDragReady(elapsed, dx, dy, Vars.mobile, singleDragImmediateSlop());
     }
 
     private static void finishSingleStatementDrag(){

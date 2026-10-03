@@ -258,7 +258,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 | 功能 | 类 | 要点 |
 | --- | --- | --- |
-| 框选/批量操作 | `assist.BoxSelect` + `BoxSelectDragPolicy` | capture 监听器事件驱动；拖动阈值为纯函数（8px slop、移动端 430ms 长按）便于自测 |
+| 框选/批量操作 | `assist.BoxSelect` + `BoxSelectDragPolicy` | capture 监听器事件驱动；拖动阈值为纯函数（桌面 8px slop；移动端位移 ≥ `Scl.scl(16f)` 立即拖动——快速滑动不必等长按，小位移才需 430ms 长按 + 8px 精准微调）便于自测 |
 | 跨处理器剪贴板 | `assist.StatementClipboard` + `assist.SelectionClipboardUi` | 编辑菜单「复制选区 / 粘贴选区」，Ctrl+C/V 驱动同一实现。**剪贴板放糖源码而不是编译后的 mlog**，片段落进另一个处理器后仍可继续编辑；唯一必须区别对待的是 `jump`——跨程序时旧的数字目标是另一程序的指令下标，因此复制与粘贴**双侧拒绝**。块配对由 `pairBlockEnds` 在插入前校验，之后每帧 `syncStatementIndices` 自愈。全程只有语句与字符串，无画布依赖（`statementClipboardTest` 无头跑）。入口不绑死在自家对话框上：接管档由 `SugarLogicDialog` 每帧 `tick`，共存档由 `CoexistCanvas` 对对方对话框 `tick`——否则不切到接管就没有这项功能。让位档不挂。快捷键只能轮询不能事件驱动：`UI.update()` 会把焦点清成 `null`，挂在对话框上的 capture 监听器再也收不到，而 arc 的 `handle()` 不停止冒泡、`TextField` 也保护不了自己；两件事由 `Core.scene.hasField()` 一次问清（原版无 Ctrl+C/V 键位）。后打开的对话框盖住时，快捷键只交给最上面那张 |
 | 提示折行 | `assist.TextWrap` + `assist.SugarTooltip` | arc 的 `Tooltip` 只把容器**位置**夹进舞台，比屏幕宽的容器仍会两边溢出 ⇒ 提前把**文字**折行（按 `min(屏宽×0.5, 560 design)` 预折、resize 时重折）。规则是纯函数（测量函数可替换，`textWrapTest` 用字符数精确断言）：只在空格断、超长单词硬断不丢字符、markup 标签绝不拆开、幂等 |
 | 跳转线着色 | `assist.JumpLineColor` | 按目标着色三模式：关闭 / 分散色 / 积木色 |

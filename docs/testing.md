@@ -17,7 +17,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `recoveryPredicateTest` | `mindustry.logic.RecoveryPredicateTest` | 谓词树模型：比较运算精确取反、`strictEqual` 不做有损取反、德摩根、优先级打印、求值方式影响代价 |
 | `shortCircuitTest` | `logicsugar.ShortCircuitCompilerTest` | `&&` / `||` 下降为条件 `jump`：操作数顺序、OR 续接标签、嵌套括号、`===` 取反不丢精度、坏谓词拒绝 |
 | `crossLoaderTest` | `mindustry.logic.CrossLoaderAccessTest` | 两层防守：① 以 child-first 加载器复现"模组类与游戏类分属不同运行时包"的拓扑，断言子类访问受保护成员的模式不抛 `IllegalAccessError`；② 静态扫全部已编译类的常量池成员引用，按 JVM 规则（解析到真正声明该成员的类，再看 public / protected-且是子类 / 同加载器）逐条判可访问性——包私有字段 `LogicDialog.globalsDialog` 那类引用在提交前就失败，不必等人点到那颗按钮 |
-| `boxSelectTest` | `logicsugar.assist.BoxSelectSelfTest` | 框选拖动策略纯函数：移动端 430ms 长按、桌面 8px slop、斜向/纵向阈值、边界含等 |
+| `boxSelectTest` | `logicsugar.assist.BoxSelectSelfTest` | 框选拖动策略纯函数：移动端位移 ≥ `Scl.scl(16f)` 立即拖动（不等长按）、小位移仍需 430ms 长按且长按边界含等、桌面 8px slop、斜向/纵向阈值、边界含等；另有一条源码钉：调用点必须把 `Scl.scl(IMMEDIATE_SLOP)` 传进策略 |
 | `cfgTest` | `mindustry.logic.MlogCFGTest` | 零依赖 CFG IR：leader 划分、条件/always 跳转边、可达性、支配树、自然循环与回边、多入口形态不误报、越界 jump 不崩、`@counter` 写入与 reads/writes 提取 |
 | `lintTest` | `logicsugar.MlogLintTest` | Mlog 静态检查（advisory）：unknown-op（名单转录自 LogicOp）、参数个数（经 LogicIO 双端核对）、对字面量赋值、自跳转/越界跳转、坏 jump 形状、未知指令 INFO；干净程序零误报 |
 | `varClipboardTest` | `logicsugar.assist.VarClipboardSelfTest` | 变量导出 TSV 格式：表头、按名排序、全精度数字、对象值走 PrintI 格式化（字符串原样、null） |
@@ -81,7 +81,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 2. **编译往返 / 重建**：写一段含 `if` / `for` / `while` / `switch` / 函数调用的程序，保存后重开——结构自动折回；"复制编译后代码"按钮拿到的是纯原版 mlog，且无模组客户端也能打开该处理器。含 `array`/`stack` 等声明卡的程序重开后声明卡仍在。纯原版 mlog（无载体）只恢复能验证的 `if`/`for` 等控制流，不凭空长出数据结构卡；手写程序（没有入口 `set @counter 0`）同样要开成 Sugar 视图，带无守卫跳转表的程序要把表折成 `switchbegin … raw`（含 `default`），而不是留在 flat 原版视图——`test/fixtures/realworld-jump-table.mlog` 就是这条的手动夹具（贴进处理器后直接打开编辑器，应看到 switch 卡与 `default`，并弹出恢复提示而不是「外部编辑」）。
 3. **双视图**：Original / Sugar 视图切换正常，切换前未保存修改有保护。
 4. **函数库**：设置入口打开函数库编辑、保存；把 `functions.txt` 改坏后重进，确认按函数抢救且警告可见。
-5. **编辑器辅助**：框选（桌面 Ctrl+点击/拖动复制；移动端长按拖动）、跳转线着色、`__ls_*` 变量在 MindustryX 变量浏览器中隐藏、表达式语句错误标红；桌面 Ctrl+Z / Ctrl+Y 撤销重做，移动端底部 Undo/Redo 按钮。
+5. **编辑器辅助**：框选（桌面 Ctrl+点击/拖动复制；移动端长按拖动，或位移 ≥ `Scl.scl(16f)` 直接快速滑动拖动——不必先等长按）、跳转线着色、`__ls_*` 变量在 MindustryX 变量浏览器中隐藏、表达式语句错误标红；桌面 Ctrl+Z / Ctrl+Y 撤销重做，移动端底部 Undo/Redo 按钮。
 6. **嵌套布局**：横屏/竖屏及 UI scale 100%/150%/200% 下，展开 1/2/3/4/6 层嵌套 `For`；确认 `variable`、`initial`、`step`、`until`、条件控件、`OP/Expr` 和折叠按钮均在卡片内可见且可点击。切换 MindustryX LogicSupport 侧栏显示/隐藏并重复检查；同时覆盖简体中文、繁体中文和 English。
 7. **双形态设置**：独立安装时出现 `Logic Sugar` 设置分类；并入 Neon 后设置项只出现在 Neon 总设置页，无重复分类。
 8. **安卓包**：安装 `build/libs/LogicSugar-v<version>.jar`（含 `classes.dex`）于安卓设备，确认能加载并打开逻辑编辑器。
