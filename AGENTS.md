@@ -67,12 +67,18 @@ game classes load through the app loader. Same package name, **different runtime
   **compiles fine** — javac only sees the source-level package match — and throws
   `IllegalAccessError` at runtime the first time the UI renders. This bit the first
   `addCompactOp` implementation (crash 2026-08-27).
+- Package-private *fields* trap identically and the subclass rule does not help: reading
+  `LogicDialog.globalsDialog` straight from `SugarLogicDialog.openVars` crashed the client on
+  the first click of 「内置变量」 (2026-10), while the same class's shadowing `executor` field
+  only works because the source-level reference resolves to *our* declaration. Use the same
+  reflection pattern (or an instance we own) for every package-private field.
 - Rule: any helper that touches protected game-class members must be an instance method on
   the `SugarStatement` subclass (public if a static editor like
   `rebuildConditionEditor` needs to call it). Static code may only use public game API.
-- `crossLoaderTest` simulates this loader split headlessly (child-first loader defines our
-  classes, `LStatement` stays on the parent) and fails with guidance if the pattern
-  regresses.
+- `crossLoaderTest` guards both directions: the child-first loader simulation (behaviour) and
+  a static scan of every compiled class's constant-pool member references resolved against the
+  JVM's accessibility rules (shape) — a direct package-private access fails the build instead of
+  a user's click.
 
 ## Decompiler safety gate
 

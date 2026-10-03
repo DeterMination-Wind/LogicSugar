@@ -136,7 +136,10 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
   `SnapshotsDialog`（快照列表）、`EllipsisLabel`，以及两个入口类见下。
 - **三个入口**：
   1. 逻辑编辑器的「变量」按钮（`SugarLogicDialog.installVarsButton` 接管同名原版按钮；编辑器/函数库
-     会话仍走原版全局变量对话框），打开时的暂停编排照搬原版（`wasPaused`）。
+     会话仍走原版全局变量对话框），打开时的暂停编排照搬原版（`wasPaused`）。原版那个「内置变量」
+     对话框存在包私有字段 `LogicDialog.globalsDialog` 里，只能经 `globalsDialogField` 反射打开（直接
+     访问就是 2026-10 的崩溃）；`VarsDialog.globalsOpener` 也接到同一个方法上，所以处理器会话的变量
+     界面里那颗「内置变量」按钮和它是同一个对话框。
   2. 三击任意方块（`VarsAccess`，`EventType.TapEvent` + 纯状态机 `TripleTap`，窗口 `logicsugar.tripleTap`）。
   3. 内存块/处理器的配置面板（`BlockConfigAccess`，反射替换 `InputHandler.config`）。
 - **MindustryX 共存（原则要求）**：探测到 fork 自带 `mindustryX.features.ui.LogicSupport` 时，内存块/处理器的
@@ -231,8 +234,13 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - 游戏类的 `protected` / 包私有成员（`LStatement.field`、`LogicDialog.privileged` 等）只能：① 在本模组的子类实例方法内访问（`SugarStatement.fieldsHint` / `addCompactOp` 即此模式）；② 经 `Field.setAccessible(true)` 反射访问（`SugarLogicDialog.privilegedField` 是既定范式）。
 - 静态辅助方法触碰这些成员**能编译通过**，运行时 UI 渲染时才抛 `IllegalAccessError`。
-- 缓解策略分级：编辑器赖以工作的字段用硬反射（无降级模式）；锦上添花的功能字段用 `optionalField`/`optionalMethod`（`SugarCanvas`），上游改名时功能退化而不是整个编辑器崩溃。
-- `crossLoaderTest` 以 child-first 加载器无头复现该拓扑，防止模式回退。
+- **实例字段同理**：`LogicDialog.globalsDialog` 是包私有的，`SugarLogicDialog.openVars` 直接读它编得过，
+  点一次「内置变量」就崩（2026-10 报告）。同名的 `executor` 因为被本类自己声明的同名字段遮蔽（源码解析
+  落在子类字段上）反而绕开了陷阱，`privileged` / `consumer` 则一直走反射。
+- 缓解策略分级：编辑器赖以工作的字段用硬反射（无降级模式，`SugarLogicDialog` 的 `consumer` / `privileged`）；锦上添花的功能字段用 `optionalField`/`optionalMethod`（`SugarCanvas`，以及 `SugarLogicDialog.globalsDialogField`——上游改名时退化为自建实例），上游改名时功能退化而不是整个编辑器崩溃。
+- `crossLoaderTest` 两层防守：child-first 加载器无头复现该拓扑（行为层），以及直接读全部已编译类的常量池
+  成员引用、按 JVM 规则（解析到真正声明该成员的类，再看 public / protected-且是子类 / 同加载器）逐条判可访问性
+  （形状层）。形状层不需要有人点到那颗按钮：`globalsDialog` 这类字段引用在提交前就会失败。
 
 ## 编辑器接管与共存（`logicsugar.editorConflict` 四档）
 
@@ -315,6 +323,8 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 两个必须保留的约束：① 上游 `setup()` 留在按钮行上的 `defaults().size(160f, 64f)` 同时设了**正的最大宽度**，落在该行的容器（`Stack`/换行 `Table`）会被压到单个按钮宽，固定宽度的子控件随即溢出并互相覆盖（2026-09 按钮重叠报告）；容器必须先把继承的最大宽度清掉（`Table` 的布局把 `maxWidth <= 0` 当作无上限）。② 改单元宽度或内边距时必须同步 `barButtonWidth` / `barBudgetWidth` / `barRowPad`，否则单行判定与行打包都会算错；改完还要确认它们仍只以声明单位出现在 `Cell` 上（实际布局）或经 `Scl.scl` 后进入比较（`scaledWidths`），两处不能对调。
 
 窄屏不放指令预算标签：它是最宽的一格（196px），且在 640px 这类宽度上会独占一行——多出来的整行高度只为显示一个「超限有 toast 兜底」的读数。**只有这一格会让位**：其余可按的按钮在任何宽度下都保留（最坏一格独占一行），因为按不到的按钮是真实损失，读数是可替代信息。
+
+**原版 Add 按钮是无名的，只能按形状认。** 上游 `setup()` 给 `back` / `edit` / `variables` 都起了名字，唯独 `@add` 没有，而每次显示都会 `clearChildren()` 重建整行，所以只剩一个抓手：行里**唯一没有名字的 `Button` 子元素**就是它（`BottomBarLayout.claimAddButton`，`bottomBarLayoutTest` 钉住形状、幂等性与歧义处理）。行里出现**两个**无名 `Button`（例如 fork 自己加了一个）时什么都不认：猜错会把别人的控件改名又丢掉真正的 Add，而返回 null 只会让调用方重建自己的同名按钮。这段声明必须跑在 `layoutBottomButtons()` 开头、清行之前：2026-10 的报告就是位置猜测跑在 `installVarsButton()` 之后——后者摘掉变量按钮、再把替身接到行尾，位置猜测于是认到了函数库按钮，真正的 Add 随整行一起被清掉（底栏直接少了「添加积木」）。按形状认人不看位置，所以后续再往行里加按钮也不会重演；真认不出来时（fork 改名或换了控件）就地重建一个同名同行为的按钮，绝不静默丢掉控件。
 
 ### 调色板分类
 

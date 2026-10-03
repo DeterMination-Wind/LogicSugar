@@ -57,6 +57,12 @@ public class SugarLogicDialog extends LogicDialog{
      *  IllegalAccessError). Both this and consumer keep the hard field(): they are load-bearing
      *  for the dialog (there is no degraded mode), unlike SugarCanvas's optional feature fields. */
     private static final Field privilegedField = field(LogicDialog.class, "privileged");
+    /** LogicDialog.globalsDialog (the built-in {@code @logic.*} variables dialog) is package-private
+     *  and has to be read reflectively for the same reason: the direct access compiles — same source
+     *  package — and threw IllegalAccessError the first time a user pressed 「内置变量」 (2026-10
+     *  crash report). Optional rather than hard: a fork that renames the field degrades to our own
+     *  instance of that dialog (public class, rebuilt on every show) instead of a dead editor. */
+    private static final Field globalsDialogField = optionalField(LogicDialog.class, "globalsDialog");
     /** Mirrors LogicBlock.maxCompressedLen (private upstream); read reflectively so the limit
      *  tracks upstream instead of drifting silently when the game adjusts it. */
     private static final int maxCompressedBytes = compressedLimit();
@@ -68,6 +74,8 @@ public class SugarLogicDialog extends LogicDialog{
     private TextButton originalViewButton;
     private Table originalViewMenu;
     private Dialog originalViewDialog;
+    /** Fallback built-in-variables dialog, used when {@link #globalsDialogField} is gone (see there). */
+    private Dialog ownedGlobalsDialog;
     /** Raw code and recovered source for the optional original/Sugar view toggle. */
     private String originalCode;
     private String recoveredSugar;
@@ -143,6 +151,9 @@ public class SugarLogicDialog extends LogicDialog{
         discardButton = buttons.button("@logicsugar.funclib.discard", Icon.cancel, this::discardLibraryChanges).get();
         discardButton.name = "funclib-discard";
         discardButton.visible = false;
+        // VarsDialog（处理器会话的变量界面）不引用 mindustry.logic.LogicDialog，它的「内置变量」
+        // 按钮靠这个集成钩子接线；未注入时那个按钮不显示（见 VarsDialog 类注释）。
+        VarsDialog.globalsOpener = this::showGlobalsDialog;
         // vanilla LogicDialog registers shown(setup), and setup() rebuilds the button row
         // (clearChildren) on EVERY show — wiping anything added outside it. Re-append the
         // Sugar-owned buttons after each rebuild; find() guards make it idempotent.
@@ -244,6 +255,23 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     /**
+     * Keeps the vanilla {@code @add} control in the packed action group: claims it by shape (see
+     * {@link BottomBarLayout#claimAddButton}) and, when the row has nothing left to claim — a fork
+     * that named or replaced that button — rebuilds the same action under our own name instead of
+     * silently dropping it.
+     *
+     * <p>2026-10 报告（底栏「添加积木」直接消失）的成因是这次声明跑得太晚且靠位置认人：
+     * {@link #installVarsButton} 会先把原版变量按钮摘掉、再把替身接到行尾，位置猜测因此落在函数库
+     * 按钮上，真正的 Add 随整行一起被 {@link #layoutBottomButtons} 清掉。按形状认人不看位置，但仍
+     * 必须发生在清行之前，所以调用点就在 {@code layoutBottomButtons} 开头。</p>
+     */
+    private void installAddButton(){
+        if(BottomBarLayout.claimAddButton(buttons) != null) return;
+        buttons.button("@add", Icon.add, this::showAddDialog).name("add")
+            .disabled(t -> canvas.statements.getChildren().size >= LExecutor.maxInstructions);
+    }
+
+    /**
      * 把原版「变量」按钮换成 Vars/Memory/Properties 界面——上游 MlogAssertions 的入口：
      * 编辑器的变量按钮不再打开原版变量表，而是打开 {@link VarsDialog}（编辑器态仍走原版全局变量
      * 对话框，由 {@link #openVars} 分流）。
@@ -267,7 +295,7 @@ public class SugarLogicDialog extends LogicDialog{
     /** 变量按钮的动作分流：编辑器/函数库会话（无处理器）走原版全局变量；处理器走变量界面。 */
     private void openVars(){
         if(!shouldShowVariables() || executor == null || executor.build == null){
-            globalsDialog.show();
+            showGlobalsDialog();
             return;
         }
 
@@ -284,6 +312,32 @@ public class SugarLogicDialog extends LogicDialog{
                 Vars.state.set(GameState.State.playing);
             }
         });
+        dialog.show();
+    }
+
+    /**
+     * 打开原版「内置变量」（{@code @logic.*}）对话框。
+     *
+     * <p>原版按钮直接读包私有字段 {@code LogicDialog.globalsDialog}；本类与它同名包，但运行时在
+     * 两个加载器里，直接读字段就是 2026-10 的崩溃（点「内置变量」抛 IllegalAccessError），所以照
+     * {@code consumer} / {@code privileged} 的做法走反射。字段被 fork 改名时退化为自建实例（
+     * {@code GlobalVarsDialog} 是 public 且无状态，每次 shown 重建内容），而不是让编辑器崩掉。</p>
+     *
+     * <p>这也是 {@link VarsDialog#globalsOpener} 的注入目标，变量界面里的同名按钮走同一条路径。</p>
+     */
+    private void showGlobalsDialog(){
+        Dialog dialog = null;
+        if(globalsDialogField != null){
+            try{
+                if(globalsDialogField.get(this) instanceof Dialog vanilla) dialog = vanilla;
+            }catch(ReflectiveOperationException ignored){
+                // fall through to the owned instance
+            }
+        }
+        if(dialog == null){
+            if(ownedGlobalsDialog == null) ownedGlobalsDialog = new GlobalVarsDialog();
+            dialog = ownedGlobalsDialog;
+        }
         dialog.show();
     }
 
@@ -316,17 +370,9 @@ public class SugarLogicDialog extends LogicDialog{
      * units, pushing the two end buttons off screen (2026-09 phone report).</p>
      */
     private void layoutBottomButtons(){
-        // v160 names back/edit/variables but leaves the upstream Add button anonymous.
-        // Claim that exact fourth vanilla child before clearing/reparenting it; otherwise it
-        // would be lost from the action group every time the dialog is shown.
-        Element add = buttons.find("add");
-        if(add == null && buttons.getChildren().size > 3){
-            Element candidate = buttons.getChildren().get(3);
-            if(candidate instanceof Button){
-                candidate.name = "add";
-                add = candidate;
-            }
-        }
+        // The vanilla @add control is anonymous and this is the pass that consumes (and clears) the
+        // row, so it has to be claimed here, before anything is reparented — see installAddButton.
+        installAddButton();
 
         // Add closes the action group: it is the control used most often while editing (a
         // statement lands right where the pointer already is), and keeping it last also puts it
@@ -339,7 +385,7 @@ public class SugarLogicDialog extends LogicDialog{
             buttons.find("funclib-discard"),
             buttons.find("logicsugar-undo"),
             buttons.find("logicsugar-redo"),
-            add
+            buttons.find("add")
         };
         // Only the readout is a bar control now; the two clipboard actions live in the edit menu
         // (see installInspectionCopy), which has room for them and no width budget to blow.
@@ -1155,6 +1201,18 @@ public class SugarLogicDialog extends LogicDialog{
             return result;
         }catch(ReflectiveOperationException exception){
             throw new ExceptionInInitializerError(exception);
+        }
+    }
+
+    /** Like {@link #field}, but a renamed upstream field degrades the feature instead of the mod
+     *  (see {@link #globalsDialogField}); mirrors {@code SugarCanvas.optionalField}. */
+    private static Field optionalField(Class<?> type, String name){
+        try{
+            Field result = type.getDeclaredField(name);
+            result.setAccessible(true);
+            return result;
+        }catch(ReflectiveOperationException exception){
+            return null;
         }
     }
 

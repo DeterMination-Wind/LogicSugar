@@ -3,6 +3,7 @@ package logicsugar.assist;
 import arc.Application;
 import arc.Core;
 import arc.scene.Element;
+import arc.scene.ui.Button;
 import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Stack;
 import arc.scene.ui.layout.Table;
@@ -61,6 +62,8 @@ public class BottomBarLayoutTest{
         relaxedDefaultSpansTheBar();
         wideBarKeepsGroupsApart();
         narrowBarWouldOverlapSoItMustWrap();
+        anonymousAddButtonSurvivesTheInstallOrder();
+        addClaimIsIdempotentAndLeavesNamedButtons();
 
         System.out.println("LogicSugar BottomBarLayout self-test passed.");
     }
@@ -363,6 +366,73 @@ public class BottomBarLayoutTest{
         Bounds centered = centeredContent(container);
         Bounds debug = debugContent(container);
         check(centered.right > debug.left, "this fixture must reproduce the overlap the wrap exists for");
+    }
+
+    // ---------- vanilla's anonymous @add control ----------
+
+    /**
+     * The 2026-10 report (「添加积木」disappeared from the bar) in miniature. Vanilla's
+     * {@code setup()} names back / edit / variables but builds Add anonymously, and by the time the
+     * row is packed the Sugar install has already appended its own buttons and replaced the
+     * variables button — so position no longer identifies Add (the old "fourth vanilla child" guess
+     * landed on the function-library button and the real Add was cleared with the rest of the row),
+     * while shape still does. {@link BottomBarLayout#claimAddButton} must keep the very element
+     * vanilla built.
+     */
+    private static void anonymousAddButtonSurvivesTheInstallOrder(){
+        Table row = vanillaRow();
+        Element vanillaAdd = row.getChildren().get(3);
+        check(row.find("add") == null, "vanilla leaves its Add button anonymous");
+
+        // SugarLogicDialog.installSugarButtons(): funclib + discard appended, then
+        // installVarsButton() removes the variables button and appends its replacement.
+        row.add(new Button(new Button.ButtonStyle())).name("funclib");
+        row.add(new Button(new Button.ButtonStyle())).name("funclib-discard");
+        row.find("variables").remove();
+        row.add(new Button(new Button.ButtonStyle())).name("variables");
+
+        check(row.getChildren().get(3) != vanillaAdd,
+            "this fixture must reproduce the reordering a positional claim cannot survive");
+
+        Element claimed = BottomBarLayout.claimAddButton(row);
+        check(claimed == vanillaAdd, "the claim must keep vanilla's own Add button, got " + claimed);
+        check("add".equals(claimed.name), "the claimed control must be named for the packed action group");
+    }
+
+    /** Claiming is idempotent (the layout pass re-runs on every resize) and never touches the named
+     *  vanilla controls; a row with nothing anonymous reports that instead of stealing one. */
+    private static void addClaimIsIdempotentAndLeavesNamedButtons(){
+        Table row = vanillaRow();
+        Element add = BottomBarLayout.claimAddButton(row);
+        check(add != null, "the vanilla row has an Add control to claim");
+        check(BottomBarLayout.claimAddButton(row) == add, "claiming twice must return the same control");
+        check(row.find("back") != null && row.find("edit") != null && row.find("variables") != null,
+            "claiming must leave the named vanilla controls alone");
+
+        Table named = new Table();
+        named.add(new Button(new Button.ButtonStyle())).name("back");
+        named.add(new Button(new Button.ButtonStyle())).name("edit");
+        check(BottomBarLayout.claimAddButton(named) == null,
+            "a row without an anonymous control must report nothing to claim (the dialog rebuilds Add)");
+
+        // A fork that adds an anonymous button of its own makes the shape ambiguous: claiming either
+        // one could rename a foreign control and drop the real Add, so nothing is claimed and the
+        // dialog rebuilds the action (the unnamed children are dropped by the packed layout anyway).
+        Table ambiguous = vanillaRow();
+        ambiguous.add(new Button(new Button.ButtonStyle()));
+        check(BottomBarLayout.claimAddButton(ambiguous) == null,
+            "an ambiguous row must claim nothing rather than guess between two anonymous buttons");
+        check(ambiguous.find("add") == null, "an ambiguous claim must not rename anything");
+    }
+
+    /** Vanilla's row shape: back / edit / variables are named, Add is built anonymously. */
+    private static Table vanillaRow(){
+        Table row = new Table();
+        row.add(new Button(new Button.ButtonStyle())).name("back");
+        row.add(new Button(new Button.ButtonStyle())).name("edit");
+        row.add(new Button(new Button.ButtonStyle())).name("variables");
+        row.add(new Button(new Button.ButtonStyle()));
+        return row;
     }
 
     /**

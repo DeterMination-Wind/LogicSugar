@@ -1,9 +1,14 @@
 package logicsugar.assist;
 
+import arc.scene.Element;
+import arc.scene.ui.Button;
+import arc.scene.ui.layout.Table;
+
 import java.util.Arrays;
 
 /**
- * Pure, headless-testable row packing for the logic editor's bottom bar.
+ * Pure, headless-testable row packing for the logic editor's bottom bar, plus the one piece of
+ * vanilla-row knowledge that packing depends on ({@link #claimAddButton}).
  *
  * <p>Every bar cell has a fixed width (one button = 160px, the instruction-budget label =
  * 196px including its side pads), so deciding how many rows the bar needs is plain
@@ -17,7 +22,10 @@ import java.util.Arrays;
  * single row and push its outermost buttons off screen.</p>
  *
  * <p>No game classes are touched here on purpose — the packing rules are the part worth
- * pinning with a self-test, and they must stay runnable in a headless JVM.</p>
+ * pinning with a self-test, and they must stay runnable in a headless JVM. That is also why the
+ * claim helper lives here instead of in {@code mindustry.logic.SugarLogicDialog}: this package
+ * cannot reach a package-private game member even by accident (javac rejects it), while a class
+ * sitting in a game package compiles such an access and only fails at runtime across loaders.</p>
  */
 public final class BottomBarLayout{
     private BottomBarLayout(){}
@@ -92,5 +100,42 @@ public final class BottomBarLayout{
     /** True when every cell fits into a single row of {@code available}. */
     public static boolean fitsOneRow(float available, float[] widths){
         return rowWidth(widths, 0, widths.length) <= available;
+    }
+
+    /**
+     * Claims vanilla's anonymous {@code @add} control of a bottom-bar row, so the packed action
+     * group can keep that exact element.
+     *
+     * <p>Vanilla's {@code setup()} names {@code back} / {@code edit} / {@code variables} but builds
+     * Add anonymously and rebuilds the whole row on every show, so shape is the only handle: at
+     * that point Add is the row's only unnamed button child. A positional guess ("the fourth
+     * vanilla child") is what broke in 2026-10: {@code SugarLogicDialog.installVarsButton()} runs
+     * before the row is packed, removes the variables button and re-appends its Sugar replacement
+     * at the end, so the fourth child was the function-library button — Add was renamed, left out of
+     * the action group and cleared with the rest of the row (「添加积木」disappeared). Claiming by
+     * shape does not care about that reordering; what still matters is claiming <em>before</em> the
+     * row is cleared, which is why the dialog calls this at the top of its layout pass.</p>
+     *
+     * <p>An ambiguous row (a fork that added an anonymous button of its own next to Add) claims
+     * nothing: guessing between them could rename a foreign control and drop the real one, while
+     * returning null makes the caller rebuild the action — the unnamed children would be dropped by
+     * the packed layout anyway.</p>
+     *
+     * @param row the dialog's button row, still holding its vanilla children
+     * @return the element to use as the Add control (now named {@code add}), or {@code null} when
+     *         the row has none to claim — the caller then rebuilds the control instead of losing it
+     */
+    public static Element claimAddButton(Table row){
+        Element add = row.find("add");
+        if(add != null) return add;
+
+        Element unnamed = null;
+        for(Element child : row.getChildren()){
+            if(!(child instanceof Button button) || button.name != null) continue;
+            if(unnamed != null) return null; // ambiguous: more than one candidate
+            unnamed = child;
+        }
+        if(unnamed != null) unnamed.name = "add";
+        return unnamed;
     }
 }
