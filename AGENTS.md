@@ -49,6 +49,8 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 
+`tools/maplab/` 是**独立于 Gradle 的演示地图生成器**（自己的 `build.ps1` + `demos/*.ls`，见 `tools/maplab/README.md`）：生成 100x100 的功能展厅地图（25 个处理器展台）。它不参与 `build` / `check`，改它不需要跑 Gradle；但它依赖 `build/classes/java/main` 里的编译器类，并且**目标游戏 jar 决定写出的存档格式**（新 reader 认老格式、老 reader 不认新格式），换 jar 后要重新生成。
+
 The self-tests are `main()`-based JavaExec tasks (no JUnit runner). New regression coverage
 should follow that convention and be added to `check.dependsOn`.
 

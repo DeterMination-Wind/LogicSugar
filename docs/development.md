@@ -35,6 +35,7 @@
 
 - `test` 任务被显式 `enabled = false`（本项目不用 JUnit runner）；真正的回归全部是 `main()` 式 JavaExec 任务，挂接在 `check.dependsOn` 上。
 - `test/fixtures/` 存"真实程序"夹具（当前只有 `realworld-jump-table.mlog`：第三方工具产出的 655 条无载体程序），测试通过 `SourceNails.readSource(...)` 按仓库相对路径读取。**这些文件里语句下标是有意义的**（跳转按指令下标寻址），增删行会改变程序本身，只能改注释。
+- `tools/maplab/` 是独立的小工具（不参与 `build`/`check`，也不需要 Gradle），用自己的 `build.ps1` 编译运行；它读取 `LogicSugar/build/classes/java/main` 里的编译器类。
 - `jar` 任务产物 `LogicSugar-v<版本>-desktop.jar` 是**桌面中间产物**（纯 class 字节码，安卓无法加载），不要分发；可分发形态只有 `deploy` 的合并 jar。
 - `releaseZip` 产出附 README/LICENSE/sample 的 zip，是可选的发布外包装。
 
@@ -56,6 +57,22 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 - 命名空间纪律：`__ls_` 前缀是编译器保留区，用户函数/参数名不得使用；表达式临时变量固定 `_0, _1, …` 栈式编号（逆向重建依赖"一次写一次读"的线性链，勿破坏）。
 - 触碰受保护游戏成员时遵守跨类加载器规则：实例方法放 `SugarStatement` 子类上，或走反射；`SugarCanvas` 的 optional 反射模式用于可降级功能，`SugarLogicDialog` 的硬反射模式用于无降级余地的核心字段。
 - 反编译器的新识别模式必须放在 `verify` 重编译比对门之后。
+
+## 功能展厅地图（`tools/maplab`）
+
+`tools/maplab` 是仓库自带的演示地图生成器：一键产出 100x100 的 `LogicSugar 功能展厅`——5x5 共 25 个处理器展台，每个展台演示一个功能（控制流 / 表达式与函数 / 数据结构 / 调试视图），旁边一块信息板写说明、一块输出板显示运行结果。
+
+```powershell
+cd tools\maplab
+powershell -ExecutionPolicy Bypass -File build.ps1 -Check   # 只编译自检（建议先跑这个）
+powershell -ExecutionPolicy Bypass -File build.ps1          # 生成 out\LogicSugar-Lab.msav
+```
+
+三条要点（细节见 `tools/maplab/README.md`）：
+
+- 展台源码写在 `demos/*.ls`，是**能直接粘进处理器的那份糖码**；工具复刻编辑器的三层管线（哨兵文本 → 语句表 → 画布文本 → `SugarCompiler.compile` 产物），因此地图里只有原版 mlog + 载体。
+- `-MindustryJar` 决定写出的存档格式，默认指向本机安装的客户端。处理器实体的修订号**新 reader 认老格式、老 reader 不认新格式**，用更新 master 的 jar 写出的地图会在较老客户端上读失败，换 jar 后重新生成即可。
+- 生成末尾会自己读回校验（`SaveIO` 重新加载 + 每块处理器的代码逐字节比对 + 链接/信息板/载体检查），自检也会检查每个展台的 `verifyRestore` 与 `SwitchStrategy` 稳定性。
 
 ## 调试建议
 

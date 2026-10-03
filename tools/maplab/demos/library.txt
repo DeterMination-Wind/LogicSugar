@@ -1,0 +1,9 @@
+# LogicSugar 函数库演示：最大公约数
+funcdef gcd a,b 999
+whilebegin b notEqual 0 999
+op mod t a b
+set a b
+set b t
+blockend
+return "a"
+blockend
