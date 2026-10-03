@@ -1124,14 +1124,11 @@ public final class SugarFunctions{
     private static Function buildFunction(Seq<LStatement> statements, int s, int e, boolean library, boolean allowReserved){
         FuncDefStatement def = (FuncDefStatement)statements.get(s);
         Function function = new Function(def.name, library);
+        String problem = funcDefDeclarationProblem(def, allowReserved);
+        if(problem != null) throw error("funcdef", s, problem);
         String declared = def.declaredReturns() ? def.returns.trim() : "";
         function.declaredVoid = "~".equals(declared);
-        validateName(def.name, "function", allowReserved);
         for(String param : parseParams(def.params)){
-            validateName(param, "parameter", allowReserved);
-            if(function.params.contains(param)){
-                throw error("funcdef", s, "duplicate parameter '" + param + "' in function '" + def.name + "'");
-            }
             function.params.add(param);
         }
         for(int k = s + 1; k < e; k++){
@@ -1305,6 +1302,44 @@ public final class SugarFunctions{
 
     private static void validateName(String name, String kind){
         validateName(name, kind, false);
+    }
+
+    /**
+     * The funcdef signature problem (function name, parameters, return declaration) or null when
+     * the declaration is valid. Body-dependent rules — {@code value} must return one, {@code ~}
+     * must not — stay in {@link #buildFunction}; everything that can be judged from the header is
+     * here so the compile path (which throws this message) and the editor's red marking
+     * ({@code SugarCompiler.invalidStatements}) cannot disagree: a card that is accepted at save
+     * time is never marked red, and a card that fails to save is always visible in red.
+     *
+     * <p>An unknown return declaration fails here on purpose. It used to be accepted silently
+     * (anything but {@code ~} behaved like {@code value}) while the parser rejected it, which made
+     * the card's own saved line unreadable — the editor then could not reopen its draft.
+     */
+    public static String funcDefDeclarationProblem(FuncDefStatement def, boolean allowReserved){
+        try{
+            validateName(def.name, "function", allowReserved);
+        }catch(IllegalArgumentException e){
+            return e.getMessage();
+        }
+        List<String> params = new ArrayList<>();
+        for(String param : parseParams(def.params)){
+            try{
+                validateName(param, "parameter", allowReserved);
+            }catch(IllegalArgumentException e){
+                return e.getMessage();
+            }
+            if(params.contains(param)){
+                return "duplicate parameter '" + param + "' in function '" + def.name + "'";
+            }
+            params.add(param);
+        }
+        String declared = def.declaredReturns() ? def.returns.trim() : "";
+        if(!declared.isEmpty() && !"~".equals(declared) && !"value".equals(declared)){
+            return "invalid return declaration '" + declared
+                + "' (expected ~ for void or value for a value return)";
+        }
+        return null;
     }
 
     private static void validateName(String name, String kind, boolean allowReserved){

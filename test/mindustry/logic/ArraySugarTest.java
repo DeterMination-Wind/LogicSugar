@@ -52,6 +52,7 @@ public class ArraySugarTest{
         undeclaredArrayNameFails();
         noRegistryDegradesToPlainEmission();
         registryValidationFailures();
+        clearedDeclarationFieldsStayEditable();
         declarationCardLowrsToNothingAndRoundTrips();
         conditionExpressionLowersToReadAndJump();
         outputIsPureVanilla();
@@ -165,6 +166,38 @@ public class ArraySugarTest{
         SugarCompiler.compile("array a cell1 0 8\narray b cell2 0 8\nset x 1\n",
             SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
             SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
+    }
+
+    /**
+     * A cleared declaration field is written as the {@code ~} placeholder, so the line keeps its
+     * token count and parses back to the same empty card. The parsers used to throw on it, which
+     * made the editor's own draft unreadable: the failed close kept the draft and every reopen
+     * then hit the same wall with no way to fix the program (2026-10 report; the same class of
+     * failure as the funcdef return declaration). The registry still marks the card red and the
+     * compile path still refuses it with a located error, so nothing is silently accepted.
+     */
+    private static void clearedDeclarationFieldsStayEditable(){
+        String[] cards = {
+            "span ~ \"cell1 + cell2\"",
+            "array ~ cell1 0 8",
+            "array buf ~ 0 8",
+            "matrix ~ cell1 0 2 2",
+            "arrayinit ~ 0 0 0 0 0 0 0 0",
+        };
+        for(String card : cards){
+            String sugar = card + "\nset x 1\n";
+            Seq<LStatement> statements = LAssembler.read(sugar, true);
+            check(statements.size == 2, "cleared declaration did not parse: " + card);
+            check(LAssembler.write(statements).equals(sugar),
+                "cleared declaration did not round-trip: " + card + " -> " + LAssembler.write(statements));
+            check(SugarCompiler.invalidStatements(statements)[0],
+                "cleared declaration was not marked red: " + card);
+        }
+        checkCompileThrows("array ~ cell1 0 8\nset x 1\n", "cleared array name");
+        checkCompileThrows("array buf ~ 0 8\nset x 1\n", "cleared array memory");
+        checkCompileThrows("matrix ~ cell1 0 2 2\nset x 1\n", "cleared matrix name");
+        checkCompileThrows("span ~ \"cell1 + cell2\"\nset x 1\n", "cleared span name");
+        checkCompileThrows("arrayinit ~ 0 0 0 0 0 0 0 0\nset x 1\n", "cleared arrayinit name");
     }
 
     /** The declaration card itself produces no mlog line, and the carrier round trip

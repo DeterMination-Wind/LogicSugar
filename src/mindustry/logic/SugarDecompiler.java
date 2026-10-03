@@ -125,6 +125,74 @@ public final class SugarDecompiler{
         return new Opening(code, OpeningMode.raw);
     }
 
+    /**
+     * The source an editor session must load: {@code preferred} (a kept draft, or whatever
+     * {@link #openingSource} chose) when it parses, otherwise the stored {@code code} — which the
+     * compiler produces and therefore always parses. {@code source} is null when neither parses;
+     * {@code failure} then carries the preferred source's parse error.
+     *
+     * <p>This exists because refusing to open the editor is unrecoverable in-game: a draft that
+     * fails to parse makes every later open fail the same way, leaving the user no way to fix the
+     * program (reported 2026-10: an invalid funcdef return declaration, whose card text the parser
+     * rejected while the card itself accepted it). Opening the stored program instead loses the
+     * unreadable in-editor state but keeps the processor editable; {@link OpenDecision#fallback}
+     * tells the caller to say so and to drop the draft it can no longer load.
+     *
+     * <p>Stays a plain static method for the same reason as {@link #openingSource}: the decision
+     * must be testable without a UI.</p>
+     */
+    public static OpenDecision openableSource(String preferred, String code, boolean privileged, boolean librarySession){
+        Throwable preferredFailure;
+        try{
+            parseSource(preferred, privileged, librarySession);
+            return new OpenDecision(preferred, false, null);
+        }catch(Throwable exception){
+            preferredFailure = exception;
+        }
+        if(preferred == code || !parsesSource(code, privileged, librarySession)){
+            return new OpenDecision(null, false, message(preferredFailure));
+        }
+        return new OpenDecision(code, true, message(preferredFailure));
+    }
+
+    /** The parse the logic canvas performs for a session (library text uses the library limit). */
+    private static void parseSource(String source, boolean privileged, boolean librarySession){
+        // null is not "empty": an empty program is a legal source, but a null one cannot be
+        // loaded, so it takes the same path as a parse failure (fall back to the stored code).
+        if(source == null) throw new IllegalArgumentException("no logic source to load");
+        if(librarySession){
+            SugarFunctions.readLibrary(source, privileged);
+        }else{
+            LAssembler.read(source, privileged);
+        }
+    }
+
+    private static boolean parsesSource(String source, boolean privileged, boolean librarySession){
+        if(source == null) return false;
+        try{
+            parseSource(source, privileged, librarySession);
+            return true;
+        }catch(Throwable ignored){
+            return false;
+        }
+    }
+
+    /** {@link #openableSource}'s result. */
+    public static final class OpenDecision{
+        /** What to load, or null when neither candidate parses. */
+        public final String source;
+        /** True when the preferred source could not be used and {@link #source} is the stored code. */
+        public final boolean fallback;
+        /** The preferred source's parse error; null when it parsed. */
+        public final String failure;
+
+        OpenDecision(String source, boolean fallback, String failure){
+            this.source = source;
+            this.fallback = fallback;
+            this.failure = failure;
+        }
+    }
+
     private static Result decompileLocked(String code, boolean privileged){
         String input = normalizeLineEndings(code == null ? "" : code);
         List<String> notes = new ArrayList<>();

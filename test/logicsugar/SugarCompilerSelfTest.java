@@ -1573,6 +1573,67 @@ public class SugarCompilerSelfTest{
         check(SugarStatements.normalizeReturns("void").equals("~")
             && SugarStatements.normalizeReturns("VAL").equals("value"),
             "return declaration aliases were not normalized");
+        check(SugarStatements.parseReturns("none").equals("~")
+            && SugarStatements.parseReturns("c").equals("c"),
+            "the tolerant parse path lost the alias/unknown distinction");
+
+        // An unrecognized declaration is card state, not a parse error. The parser used to throw
+        // on it, so the card's own saved line could not be read back and a kept draft left the
+        // editor permanently unopenable (reported 2026-10: `返回 c`). It must now round-trip
+        // exactly, be marked red, and be refused by the compile path with a located message.
+        String invalidDeclaration = "funcdef Func a,b c 2\nprint a\nblockend\n";
+        Seq<LStatement> invalidStatements = LAssembler.read(invalidDeclaration, true);
+        check(invalidStatements.size == 3 && invalidStatements.get(0) instanceof FuncDefStatement,
+            "an invalid return declaration did not parse as a funcdef card");
+        FuncDefStatement invalidDef = (FuncDefStatement)invalidStatements.get(0);
+        check("c".equals(invalidDef.returns), "the invalid declaration was not kept: '" + invalidDef.returns + "'");
+        String serialized = LAssembler.write(invalidStatements);
+        check(serialized.equals("funcdef Func a,b \"c\" 2\nprint a\nblockend\n"),
+            "the invalid declaration was not written quoted: " + serialized);
+        check(LAssembler.write(LAssembler.read(serialized, true)).equals(serialized),
+            "write -> parse -> write is not stable for an invalid declaration");
+        check(SugarCompiler.invalidStatements(invalidStatements)[0],
+            "an invalid return declaration is not marked red in the editor");
+        try{
+            SugarCompiler.compile(invalidDeclaration + "funccall Func \"1, 2\" ~\n", SugarCompiler.FuncMode.normal);
+            throw new AssertionError("an invalid return declaration was accepted by the compiler");
+        }catch(IllegalArgumentException expected){
+            check(expected.getMessage().contains("funcdef at statement 0")
+                    && expected.getMessage().contains("invalid return declaration 'c'"),
+                "the invalid declaration error is not located: " + expected.getMessage());
+        }
+
+        // A declaration that reads like an integer must not be mistaken for the legacy destIndex
+        // slot (the wire shape picks the meaning by "third slot is an integer").
+        FuncDefStatement numeric = new FuncDefStatement();
+        numeric.name = "f";
+        numeric.params = "a";
+        numeric.returns = "3";
+        numeric.destIndex = 2;
+        StringBuilder numericText = new StringBuilder();
+        numeric.write(numericText);
+        check(numericText.toString().equals("funcdef f a \"3\" 2"),
+            "an integer-looking declaration was not quoted: " + numericText);
+        LStatement numericBack = LAssembler.read(numericText.toString(), true).first();
+        check(numericBack instanceof FuncDefStatement back && "3".equals(back.returns) && back.destIndex == 2,
+            "an integer-looking declaration did not round-trip");
+
+        // An emptied name is another card state: the slot keeps its position as the "~"
+        // placeholder and comes back empty, so the editor can show the red card instead of
+        // failing to parse the line (all slots emptied: name, params, declaration).
+        FuncDefStatement unnamed = new FuncDefStatement();
+        unnamed.name = "";
+        unnamed.params = "";
+        unnamed.returns = "";
+        unnamed.destIndex = 2;
+        StringBuilder unnamedText = new StringBuilder();
+        unnamed.write(unnamedText);
+        check(unnamedText.toString().equals("funcdef ~ ~ 2"),
+            "emptied funcdef slots are not placeholders: " + unnamedText);
+        LStatement unnamedBack = LAssembler.read(unnamedText.toString(), true).first();
+        check(unnamedBack instanceof FuncDefStatement empty
+                && empty.name.isEmpty() && empty.params.isEmpty() && empty.returns.isEmpty(),
+            "an emptied funcdef did not come back empty");
     }
 
     private static void functionUnreachableCostsNothing(){

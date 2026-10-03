@@ -28,6 +28,7 @@ public final class SugarDecompilerTest{
         numericJumpChainIsThreadedForTheGate();
         realWorldJumpTableRecovers();
         editorOpensHandWrittenProgramsAsSugar();
+        unreadableSourceFallsBackToTheStoredProgram();
         nestedRoundTrip();
         metadataAndLineEndings();
         malformedInputIsPreserved();
@@ -862,6 +863,41 @@ public final class SugarDecompilerTest{
         SugarDecompiler.Result result = SugarDecompiler.decompile(raw);
         check(result.verified, expectedKeyword + " candidate did not recompile identically: " + result.notes);
         check(result.sugar.contains(expectedKeyword), expectedKeyword + " was not recovered: " + result.sugar);
+    }
+
+    /**
+     * The editor must always be able to open. When the source it intended to load does not parse
+     * — a kept draft, or a carrier whose sugar this version cannot read — the stored program is
+     * loaded instead of refusing, because a refusal is unrecoverable in-game: the draft stays and
+     * every later open fails the same way (reported 2026-10: an invalid funcdef return
+     * declaration, whose card text the parser rejected while the card itself accepted it).
+     */
+    private static void unreadableSourceFallsBackToTheStoredProgram(){
+        String code = SugarCompiler.compile("ifbegin x greaterThan 0 2\nset y 1\nblockend\nprint y\n");
+
+        // The reported card: an invalid funcdef declaration is a red card now, not a parse error,
+        // so the draft opens as-is and can be fixed.
+        String draft = "funcdef Func a,b c 2\nprint a\nblockend\n";
+        SugarDecompiler.OpenDecision kept = SugarDecompiler.openableSource(draft, code, true, false);
+        check(kept.source == draft && !kept.fallback && kept.failure == null,
+            "a draft with an invalid funcdef declaration must open as a red card, not fall back");
+
+        // A source this parser genuinely rejects: the stored program opens instead of an error.
+        String unreadable = "ifbegin  lessThan 5 3\nset x 1\n";
+        SugarDecompiler.OpenDecision fallback = SugarDecompiler.openableSource(unreadable, code, true, false);
+        check(fallback.fallback && code.equals(fallback.source),
+            "an unparseable source did not fall back to the stored program");
+        check(fallback.failure != null, "the fallback lost the parse error it has to report");
+
+        // Nothing to fall back to: the refusal stays, with the parse error as the reason.
+        SugarDecompiler.OpenDecision refused = SugarDecompiler.openableSource(unreadable, unreadable, true, false);
+        check(refused.source == null && refused.failure != null,
+            "an unparseable stored program must still refuse to open");
+
+        // Library sessions parse as library text (raised statement limit), not as a program.
+        String library = "funcdef f a value 2\nreturn \"a + 1\"\nblockend\n";
+        SugarDecompiler.OpenDecision libraryKept = SugarDecompiler.openableSource(library, library, true, true);
+        check(libraryKept.source == library && !libraryKept.fallback, "valid library text fell back");
     }
 
     private static void check(boolean condition, String message){

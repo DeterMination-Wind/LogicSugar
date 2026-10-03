@@ -215,6 +215,10 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 失败方向永远是"多显示原版代码"，绝不改写未知程序。新增恢复模式（跳转表、短路谓词、新数据结构）一律放在这道门之后；新功能若既不能进载体、也不能被推断，就要在文档写明「重开只显示原版」。
 
+**开屏永远能成功：`SugarDecompiler.openableSource(preferred, code, privileged, librarySession)`。** 开屏预检原先在源码解析失败时直接关掉编辑器并弹错——而草稿还在，于是**每次重开都撞同一面墙**，用户再也没有修程序的办法（2026-10 报：`funcdef` 返回声明填了 `c`，卡面接受、解析器拒绝，编辑器从此打不开）。现在决策分两步：首选源码（保留中的草稿，或 `openingSource` 的选择）能解析就照常载入；不能解析时改载**存储的编译产物**（编译器产出必然可解析），同时丢掉那份读不出来的草稿并弹提示。产物也解析不了（连处理器程序本身都坏了）时仍按原样拒绝，理由带在 `OpenDecision.failure` 里。与 `openingSource` 一样是纯静态方法，`decompileTest` 的 `unreadableSourceFallsBackToTheStoredProgram` 钉住三条分支——没有它，这段逻辑又只能靠肉眼。
+
+与之配套的是**卡片写入→解析必须闭合**：编辑器里任何字段值（包括清空、乱填）写出的行都必须能被自己的解析器读回来，否则草稿就是上面那种读不出来的文本。卡片解析器因此不再对「用户能编辑出来的字段值」抛错（`funcdef` 的返回声明/函数名、`span`/`array`/`matrix`/`arrayinit` 的名字与内存名）：它们把值原样留在卡上，由编译路径报带位置的具体错误（`funcdef` 走 `SugarFunctions.funcDefDeclarationProblem`），编辑器按同一条规则标红；`funcdef` 的非规范声明用引号写回，避免被当成旧形态的整数 `destIndex` 槽。
+
 `reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 198 个 fixture / 1246 个 gate 断言覆盖当前全部控制积木、全部声明卡、全部 `datacall` 操作和断言/调试卡：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且必须保持 100+，不得只改数字。
 
 **无边界跳转表（`switchbegin … raw`）与 `default` 分支**：手写 `@counter` 跳转表没有边界守卫，就是 `op add @counter @counter <v>` 后跟每条槽位一条无条件跳转行。用编译器的*带守卫*跳转表去还原它会多出两条指令并夹紧越界值，等于偷偷改写程序，所以形态写进源码：

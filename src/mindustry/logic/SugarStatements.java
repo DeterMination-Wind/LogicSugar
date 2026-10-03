@@ -715,10 +715,27 @@ public final class SugarStatements{
 
         @Override
         public void write(StringBuilder out){
-            out.append(collapsed ? "funcdefc " : "funcdef ").append(name).append(' ').append(optional(params)).append(' ');
+            // The name slot is always filled: LParser reuses a static token array, so an empty
+            // middle token shifts every following slot onto the previous line's leftovers.
+            out.append(collapsed ? "funcdefc " : "funcdef ").append(optional(name == null ? "" : name))
+                .append(' ').append(optional(params)).append(' ');
             // v5 shape appends the return declaration before the destIndex; an empty declaration
             // keeps the legacy three-token line byte-identical, so old saves round-trip untouched.
-            if(declaredReturns()) out.append(returns.trim()).append(' ');
+            //
+            // An unrecognized declaration is card state, not a parse error: it is written back
+            // (quoted, so an integer-looking value cannot be read as the legacy destIndex slot)
+            // and the editor marks the card red instead. Refusing it here is what made a single
+            // typo in this field unreadable, and an unreadable draft locks the editor for good
+            // (reported 2026-10: `返回 c` -> "Cannot open the logic editor").
+            String declaration = returns == null ? "" : returns.trim();
+            if(!declaration.isEmpty()){
+                String canonical = canonicalReturns(declaration);
+                if(canonical != null){
+                    out.append(canonical).append(' ');
+                }else{
+                    out.append('"').append(escapeQuoted(declaration)).append("\" ");
+                }
+            }
             out.append(destIndex);
         }
     }
@@ -1289,10 +1306,9 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
 
     public static LStatement parseFuncDef(String[] tokens, boolean collapsed){
         FuncDefStatement result = new FuncDefStatement();
-        result.name = tokens[1];
-        if(result.name == null || result.name.isEmpty()){
-            throw new IllegalArgumentException("Invalid funcdef statement: missing function name");
-        }
+        // Empty name: the slot is written as the "~" placeholder (see FuncDefStatement.write),
+        // and an empty name is a card state the editor marks red, not a parse error.
+        result.name = optionalValue(tokens[1]);
         result.params = optionalValue(tokens[2]);
         // v5 shape: `funcdef <name> <params> <ret> <destIndex>`. Legacy saves only carry
         // `funcdef <name> <params> <destIndex>`, and a destIndex is always an integer, so an
@@ -1302,7 +1318,7 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
             result.returns = "";
             result.destIndex = parseDestIndex(tokens[3]);
         }else{
-            result.returns = normalizeReturns(third);
+            result.returns = parseReturns(third);
             result.destIndex = parseDestIndex(tokens[4]);
         }
         result.collapsed = collapsed;
@@ -1320,13 +1336,40 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
         return true;
     }
 
-    /** Normalizes a funcdef return declaration: {@code ~}/void/none and value/val are accepted. */
-    public static String normalizeReturns(String token){
+    /** The canonical form of a known return declaration ({@code ~}/void/none, value/val),
+     *  or null when the token is not one. {@link #normalizeReturns} throws on null,
+     *  {@link #parseReturns} keeps the input so an invalid declaration stays visible. */
+    public static String canonicalReturns(String token){
         String value = token == null ? "" : token.trim();
         if(value.equals("~") || value.equalsIgnoreCase("void") || value.equalsIgnoreCase("none")) return "~";
         if(value.equalsIgnoreCase("value") || value.equalsIgnoreCase("val")) return "value";
+        return null;
+    }
+
+    /** Normalizes a funcdef return declaration, rejecting anything unknown. This is the strict
+     *  form for callers that must validate; the parse path uses {@link #parseReturns}, because a
+     *  stored declaration the editor accepted has to come back as a card (red) rather than as a
+     *  parse failure that locks the editor. */
+    public static String normalizeReturns(String token){
+        String value = token == null ? "" : token.trim();
+        String canonical = canonicalReturns(value);
+        if(canonical != null) return canonical;
+        if(value.isEmpty()) return "";
         throw new IllegalArgumentException("Invalid funcdef return declaration '" + token
             + "' (expected ~ for void or value for a value return)");
+    }
+
+    /** The declaration as parsed from the wire: known aliases collapse to their canonical form,
+     *  anything else is kept verbatim (quoted values are unescaped). Invalid declarations are
+     *  refused by the compile path ({@code SugarFunctions.funcDefDeclarationProblem}) and marked
+     *  red by the editor, never by the parser. */
+    public static String parseReturns(String token){
+        String value = token == null ? "" : token.trim();
+        if(value.length() >= 2 && value.charAt(0) == '"' && value.charAt(value.length() - 1) == '"'){
+            value = unescapeQuoted(value.substring(1, value.length() - 1));
+        }
+        String canonical = canonicalReturns(value);
+        return canonical != null ? canonical : value;
     }
 
     public static LStatement parseFuncCall(String[] tokens){
@@ -1346,15 +1389,17 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
         return result;
     }
 
+    /**
+     * Span/array/matrix/arrayinit declaration cards. An emptied name or memory field is written
+     * as the {@code ~} placeholder (see each card's {@code write}), so the line always has its
+     * full token count and parsing it back is exact. Reporting the problem is the registry's job
+     * ({@code ArrayRegistry.compileRegistry} for the compile path, {@code markInvalidStatements}
+     * for the editor's red marking) — a parse error here is what made a single cleared field
+     * unreadable and left the editor unable to reopen its own draft (2026-10 report).
+     */
     public static LStatement parseSpan(String[] tokens){
         SpanStatement result = new SpanStatement();
         result.name = optionalValue(tokens[1]);
-        if(result.name.isEmpty()){
-            throw new IllegalArgumentException("Invalid span statement: missing name");
-        }
-        if(tokens.length < 3){
-            throw new IllegalArgumentException("Invalid span statement: missing cell sum");
-        }
         result.expr = unescapeQuoted(stripQuotes(tokens[2]));
         return result;
     }
@@ -1362,13 +1407,7 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
     public static LStatement parseArray(String[] tokens){
         ArrayStatement result = new ArrayStatement();
         result.array = optionalValue(tokens[1]);
-        if(result.array.isEmpty()){
-            throw new IllegalArgumentException("Invalid array statement: missing array name");
-        }
         result.memory = optionalValue(tokens[2]);
-        if(result.memory.isEmpty()){
-            throw new IllegalArgumentException("Invalid array statement: missing memory cell");
-        }
         result.base = optionalValue(tokens[3]);
         result.size = optionalValue(tokens[4]);
         return result;
@@ -1377,13 +1416,7 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
     public static LStatement parseMatrix(String[] tokens){
         MatrixStatement result = new MatrixStatement();
         result.matrix = optionalValue(tokens[1]);
-        if(result.matrix.isEmpty()){
-            throw new IllegalArgumentException("Invalid matrix statement: missing matrix name");
-        }
         result.memory = optionalValue(tokens[2]);
-        if(result.memory.isEmpty()){
-            throw new IllegalArgumentException("Invalid matrix statement: missing memory cell");
-        }
         result.base = optionalValue(tokens[3]);
         result.rows = optionalValue(tokens[4]);
         result.cols = optionalValue(tokens[5]);
@@ -1393,9 +1426,6 @@ if(("expr".equals(tokens[4]) || "exprsc".equals(tokens[4])) && tokens[5].length(
     public static LStatement parseArrayInit(String[] tokens){
         ArrayInitStatement result = new ArrayInitStatement();
         result.array = optionalValue(tokens[1]);
-        if(result.array.isEmpty()){
-            throw new IllegalArgumentException("Invalid arrayinit statement: missing array name");
-        }
         for(int i = 0; i < result.values.length; i++){
             // 自定义解析器拿不到本行的 token 数量（LParser 复用静态 token 数组），
             // 超出本行的槽位读到的可能是残留值；卡片写盘时总是补满 8 个槽位，

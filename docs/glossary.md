@@ -215,7 +215,7 @@ v5 起「把一个值拷到另一个变量」统一用 `set <dst> <src>`（编�
 结果恒定、无信息量的操作不暴露目标变量，卡片可以写 `~`：`bitset_set`/`bitset_reset`/`chain_set_head`，加上本来就无结果的 `array_fill`/`array_copy`/`array_sort`/`array_sort_desc`/`array_reverse`/`array_swap`/`stack_clear`/`queue_clear`/`deque_clear`/`map_clear`/`set_clear`。旧存档若已带目标变量，编译时仍写进该变量，指令流不变。
 
 ### 返回声明
-`funcdef f a ~ 3`（void，体内不得值返回）与 `funcdef f a value 3`（必须值返回一次）；不写声明（`funcdef f a 3`）沿用按函数体推断。声明写在参数之后、`destIndex` 之前，第三种槽是整数即为旧形态，因此老存档字节不变。
+`funcdef f a ~ 3`（void，体内不得值返回）与 `funcdef f a value 3`（必须值返回一次）；不写声明（`funcdef f a 3`）沿用按函数体推断。声明写在参数之后、`destIndex` 之前，第三种槽是整数即为旧形态，因此老存档字节不变。无法识别的声明（如 `c`）是卡片状态：解析器原样保留并引号写回，编辑器标红，保存时编译报带位置的 `invalid return declaration`——不是解析错误，因此不会让编辑器打不开。
 
 ### logic-sugar-v2
 v5 的持久化格式标记：新存档写 `# @logic-sugar-v2 begin`/`… end` 注释块。`SugarCompiler.storedFormat()` 返回 2（当前）、1（v1 标记）、0（标记被原版往返冲掉、只剩载体）。

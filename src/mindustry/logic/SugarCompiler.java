@@ -1156,6 +1156,14 @@ public final class SugarCompiler{
             }
             // return is only legal inside a function body; mirror the compile-time
             // "return ... is outside a function" error in the editor (red marking)
+            if(statements.get(i) instanceof FuncDefStatement def
+                && SugarFunctions.funcDefDeclarationProblem(def, false) != null){
+                // The declaration itself (name, parameters, ~/value returns). Body-dependent
+                // errors (a `value` function without a value return, a `~` function with one)
+                // need the whole function and are reported by the compile path only, exactly
+                // like the editor's other declaration cards.
+                invalid[i] = true;
+            }
             if(statements.get(i) instanceof ReturnStatement ret){
                 if(funcOwner[i] < 0){
                     invalid[i] = true;

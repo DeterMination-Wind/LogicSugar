@@ -65,7 +65,8 @@ funcdef f a 3          旧三 token 形态：按函数体推断（不变）
 ```
 
 - 声明别名：`~` / `void` / `none` → `~`；`value` / `val` → `value`。
-- 判别方式：第三个槽是整数（`destIndex`）即为旧形态，否则是声明 —— 因此**旧存档字节不变**，也避免 LParser 复用 token 数组带来的陈旧 token 问题。
+- 判别方式：第三个槽是整数（`destIndex`）即为旧形态，否则是声明 —— 因此**旧存档字节不变**，也避免 LParser 复用 token 数组带来的陈旧 token 问题。无法识别的声明按原样引号写回（`funcdef f a "c" 3`），否则一个像整数的值会被读成旧形态的 `destIndex`。
+- 无法识别的声明是**卡片状态**，不是解析错误：解析器把它留在卡上，编辑器标红，编译时由 `SugarFunctions.funcDefDeclarationProblem` 报 `funcdef at statement N invalid return declaration '…'`。旧实现两边不一致——卡面接受、解析器抛错——于是这张卡自己的存档行读不回来，保留的草稿会把编辑器锁死。
 - 分析期校验：`~` 函数体内 `return <表达式>` 报错；对 `~` 函数写 `funccall f "1" r` 报错「declared void (~)」；`value` 函数从未值返回报错。
 - 调用点：`expandCall` **不会**为 void 函数生成结果拷贝（否则调用方会读到陈旧的 `_result`）。
 - `funcdef` 只存在于 Sugar 源码（载体 / 函数库）中，不会进入编译产物，因此不影响原版客户端与联机。

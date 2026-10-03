@@ -17,6 +17,7 @@ import arc.scene.ui.TextButton.TextButtonStyle;
 import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Table;
 import arc.struct.Seq;
+import arc.util.Log;
 import arc.util.Time;
 import mindustry.Vars;
 import mindustry.core.GameState;
@@ -1021,7 +1022,9 @@ public class SugarLogicDialog extends LogicDialog{
         // cannot grow without bound over a session
         drafts.keySet().removeIf(key -> key instanceof Building build && !build.isValid());
         Object key = draftKey(executor);
-        if(drafts.containsKey(key)){
+        boolean fromDraft = key != null && drafts.containsKey(key);
+        SugarDecompiler.OpeningMode announceMode = SugarDecompiler.OpeningMode.stored;
+        if(fromDraft){
             // a failed compile kept the user's work; trust it over any stored code
             editable = drafts.get(key);
         }else{
@@ -1029,12 +1032,10 @@ public class SugarLogicDialog extends LogicDialog{
             // trusted stored sugar as-is, a verified inference from vanilla mlog, or the code.
             SugarDecompiler.Opening opening = SugarDecompiler.openingSource(code, privileged, executor == null);
             editable = opening.source;
+            announceMode = opening.mode;
             if(opening.mode == SugarDecompiler.OpeningMode.inferred){
                 originalCode = code;
                 recoveredSugar = opening.source;
-                Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.recovered"));
-            }else if(opening.mode == SugarDecompiler.OpeningMode.raw){
-                Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.external.edit"));
             }
         }
         effectiveLibrary = SugarCompiler.effectiveLibrary(code, SugarFunctions.library(), FunctionLibrary.loadText());
@@ -1043,17 +1044,31 @@ public class SugarLogicDialog extends LogicDialog{
         // Never open the editor with code it cannot parse: LogicDialog's load fallback
         // (canvas.load("")) would present an empty canvas, and the stale-close guard treats
         // an untouched empty canvas as "edited", so closing would submit an empty program and
-        // silently wipe the processor. Pre-validate with the same parse the canvas performs.
-        try{
-            if(executor == null){
-                SugarFunctions.readLibrary(editable, privileged);
-            }else{
-                LAssembler.read(editable, privileged);
-            }
-        }catch(Throwable exception){
+        // silently wipe the processor. The decision is shared with the headless tests
+        // (SugarDecompiler.openableSource): parse what we intended to open, and fall back to the
+        // stored program when only that is readable, so an unreadable draft cannot lock the editor.
+        SugarDecompiler.OpenDecision decision = SugarDecompiler.openableSource(editable, code, privileged, executor == null);
+        if(decision.source == null){
             hide();
-            showCompileError(new IllegalArgumentException("Cannot open the logic editor: " + exception.getMessage()), false);
+            showCompileError(new IllegalArgumentException("Cannot open the logic editor: " + decision.failure), false);
             return;
+        }
+        if(decision.fallback){
+            final String reason = decision.failure;
+            if(fromDraft) drafts.remove(key);
+            editable = decision.source;
+            originalCode = null;
+            recoveredSugar = null;
+            showingOriginal = false;
+            clearOriginalViewCache();
+            announceMode = null;
+            Log.warn("[LogicSugar] the sugar source could not be parsed, opening the stored program: @", reason);
+            Core.app.post(() -> Vars.ui.showInfoFade(Core.bundle.format(fromDraft
+                ? "logicsugar.open.draftDropped" : "logicsugar.open.fallback", reason)));
+        }else if(announceMode == SugarDecompiler.OpeningMode.inferred){
+            Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.recovered"));
+        }else if(announceMode == SugarDecompiler.OpeningMode.raw){
+            Core.app.post(() -> Vars.ui.showInfoFade("@logicsugar.external.edit"));
         }
 
         Cons<String> submit = sugar -> submit(sugar, executor, modified, key, false);

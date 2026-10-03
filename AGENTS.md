@@ -36,7 +36,6 @@ this file only adds what is specific to this project.
   先看 `SugarAsserts.AssertTypeCard` 的注释与 `assertTypeTest`。
 
 ## Build & Test
-
 ```powershell
 cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest,
                                       # shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest,
@@ -169,6 +168,34 @@ program. It is a plain static method on purpose: the bug sat in UI code that no 
 could reach, and `decompileTest`'s `editorOpensHandWrittenProgramsAsSugar` now pins the
 decision for both editor privilege levels (an ordinary processor edits with `privileged ==
 false`, while recovery tests tend to pass `true`).
+
+### The editor must always open (`SugarDecompiler.openableSource`)
+
+The open preflight used to just refuse: if the intended source failed to parse, `show()` hid the
+dialog and reported the error. With a draft kept from a failed compile that is unrecoverable —
+the draft stays, every later open hits the same wall, and the user can never repair the program
+(reported 2026-10: a `funcdef` return declaration of `c`; the card accepted it, the parser
+rejected it). `openableSource(preferred, code, privileged, librarySession)` now decides:
+`preferred` (the draft, or whatever `openingSource` chose) when it parses; otherwise the stored
+`code` — which the compiler produced and therefore always parses — with `fallback = true` so the
+caller drops the unreadable draft and says so in a toast; `source == null` only when even the
+stored program does not parse, and then the old refusal (with the parse error as the reason)
+stays. Static for the same reason as `openingSource`; `decompileTest`'s
+`unreadableSourceFallsBackToTheStoredProgram` pins all three branches.
+
+That fallback is a safety net, not the primary fix: **every card's `write()` must be readable by
+the same card's parser, for every value the editor can produce.** A cleared or mistyped field is
+card state, not a parse error — parsers must not throw on it (they used to: `funcdef`'s return
+declaration and function name, `span`/`array`/`matrix`/`arrayinit` names and memory cells), the
+compile path reports the located error, and the editor marks the card red via
+`SugarCompiler.invalidStatements`. Watch the LParser trap while doing this: `tokens` is a reused
+static array, so a missing middle token silently shifts every following slot onto the previous
+line's leftovers — an empty slot must be written as the `~` placeholder (`optional()` on write,
+`optionalValue()` on parse). In `funcdef` the v5 shape picks the meaning of the third slot by
+"is it an integer", so a non-canonical declaration is written back **quoted**
+(`funcdef f a "c" 3`); without that, `returns = "3"` would come back as the legacy `destIndex`.
+The signature rule lives in `SugarFunctions.funcDefDeclarationProblem`, shared by the compile
+path (which throws it, located) and the editor's red marking, so the two can never disagree.
 
 ### Raw leap tables (`switchbegin … raw`) and the `default` case
 
@@ -367,6 +394,7 @@ by the card itself, and it has to keep the canvas/statement index parity:
     alone). `ExprTextImport.cardMarker` is the single serializer of the format: `ExprStatement.write`
     and the recovery both go through it. `exprCardTest`'s `markerSurvivesTextRewrites` pins the
     rewrite, the hoisting and the stale-marker refusal; `reconstructionMatrixTest`'s
+    `decl.exprcard.staleDest` fixture pins the carrier path.
 - **`foldAll` collapses a retry only when its temporaries are not *read* outside the chain — a
   definition is not a read.** `ExprHook.hasExternalReads` used to fail on any textual occurrence,
   so two identical chains (the second one produced by copying the card) redefined each other's
@@ -377,7 +405,6 @@ by the card itself, and it has to keep the canvas/statement index parity:
   type still counts every occurrence as a read — the failure direction stays “fold less, never fold
   wrong”. `exprCardTest`'s `duplicateChainsShareTempsWithoutBlockingEachOther`, `arrayTest` and
   `spanTest` pin both directions.
-    `decl.exprcard.staleDest` fixture pins the carrier path.
 - **Rich-text escaping in the card display: escape `[` only.** `ExprStatement.highlight` wraps each
   token in `[color]…[]`; Arc's markup parser treats `[[` as one literal `[` and leaves `]` alone,
   so escaping `]` as `]]` renders an extra bracket on the card (`result = list[1]` showed as
