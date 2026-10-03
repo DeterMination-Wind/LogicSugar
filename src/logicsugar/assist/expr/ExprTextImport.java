@@ -32,7 +32,8 @@ import java.util.regex.Pattern;
  * 而 README 与数组教程又把 {@code x = buf[3]} 写成源码示例。</p>
  *
  * <p>本类补上文本形态：{@link #plan(String)} 扫描待加载文本，把形如
- * {@code <标识符>[下标/成员] = <表达式>} 的行换成唯一哨兵 {@code set __ls_import_N 0}
+ * {@code <标识符>[下标/成员] = <表达式>} 的行——以及唯一可写的内建变量
+ * {@code @counter = <表达式>}——换成唯一哨兵 {@code set __ls_import_N 0}
  * （一对一替换，语句条数不变，因此 jump 下标 / 标签解析完全不受影响）；
  * {@link #applyToCanvas} 或 {@link #applyToStatements} 再把哨兵换回
  * {@link ExprStatement} 卡片。产物与用户从 Operations 分类拖一张 Expr 卡完全一致：
@@ -48,6 +49,8 @@ import java.util.regex.Pattern;
  *   <li>顶层 {@code #} 注释之后的文本不参与判定；含顶层 {@code ;}（一行多语句）、
  *       未闭合字符串、跨行字符串的行整行跳过。</li>
  *   <li>文本里已经出现保留前缀 {@link #sentinelPrefix} 时整个导入放弃（防哨兵名撞车）。</li>
+ *   <li>{@code @} 开头的目标只认 {@code @counter}（唯一可写的内建变量）；{@code @unit = 5}
+ *       这类写不进去的语句继续留给原版解析器（详见 {@link #assignTarget}）。</li>
  * </ul>
  *
  * <p>表达式本身非法（例如 {@code x = (a +}）时不再静默：卡片照常落地并标红，
@@ -61,9 +64,20 @@ public final class ExprTextImport{
     /** 哨兵写死的值；与名字一起用于识别「这是本类生成的语句」。 */
     private static final String sentinelValue = "0";
 
-    /** 赋值目标：标识符，可跟任意个 {@code .member} 或 {@code [expr]}（下标内允许空格/运算符）。 */
+    /**
+     * 赋值目标：标识符或 {@code @counter}，可跟任意个 {@code .member} 或 {@code [expr]}
+     * （下标内允许空格/运算符）。
+     *
+     * <p>{@code @counter} 是唯一“可写的”内建变量（{@code set}/{@code op} 写它等于跳转），用户
+     * 在文本框里天然会写 {@code @counter = 0} / {@code @counter = @counter + 1}；不认的话这两行会
+     * 被原版 {@code LParser} 静默落成 {@code InvalidStatement}（产物多一条 {@code noop}、编辑器里
+     * 一张红色「无效」卡，没有任何报错）——用户报过：展示地图的 @counter 指示线展台因此不画线。</p>
+     *
+     * <p>其余 {@code @xxx} 目标保持不认：{@code @unit = 5} 这类写法本来就写不进去（内建变量对
+     * 写操作是空操作），把它们变成卡片只会换来一张“能保存但没用”的卡，不如继续留给原版解析器。</p>
+     */
     private static final Pattern assignTarget = Pattern.compile(
-        "[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_@][A-Za-z0-9_]*|\\[[^\\[\\]]*\\])*");
+        "(?:@counter|[A-Za-z_][A-Za-z0-9_]*)(?:\\.[A-Za-z_@][A-Za-z0-9_]*|\\[[^\\[\\]]*\\])*");
 
     private ExprTextImport(){}
 
@@ -99,6 +113,28 @@ public final class ExprTextImport{
             expr.expr = assignment.expr();
             return expr;
         }
+    }
+
+    /**
+     * 能否把一张表达式卡写成单行文本形态 {@code dest = expr}（剪贴板载荷用）。
+     *
+     * <p>载荷必须“一条语句一行”：多行卡原本写出的是那一串 op，重新解析时语句条数会变，片段内的
+     * jump 相对下标随之错位，而且卡片只能靠折叠推断（表达式原文会被重建改写）。写成
+     * {@code dest = expr} 时 {@link #plan} 会一对一换成哨兵、粘贴后还原成同一张卡，语句条数、
+     * 下标与表达式原文都不变。</p>
+     *
+     * <p>保守：{@code plan} 会跳过含顶层 {@code #} / {@code ;} 与未闭合字符串的行；剪贴板内联形态还
+     * 额外拒掉 {@code @} 开头的目标。{@link #assignTarget} 现在认 {@code @counter}（文本导入需要），
+     * 但内联载荷可能被旧版 LogicSugar 读到，而旧版的文本导入不认 {@code @} 目标——那边会看到一张
+     * 无效卡。所以 {@code @counter} 目标退回 op 形态，由折叠推断恢复卡片（也有
+     * {@code statementClipboardTest} 钉着这个期望）。</p>
+     */
+    public static boolean canWriteInline(String dest, String expr){
+        if(dest == null || expr == null || expr.isEmpty()) return false;
+        if(dest.startsWith("@")) return false;
+        if(!assignTarget.matcher(dest).matches()) return false;
+        return expr.indexOf('#') < 0 && expr.indexOf(';') < 0
+            && expr.indexOf('\n') < 0 && expr.indexOf('\r') < 0;
     }
 
     /** 一条识别出来的赋值：目标（可能是 {@code buf[i]} / {@code p.hp}）与表达式文本。 */

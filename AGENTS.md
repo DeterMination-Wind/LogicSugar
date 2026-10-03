@@ -287,14 +287,18 @@ access in game while every shape-only test still passed).
 
 **Text import is another way into the same pipeline.** `SugarCanvas.load` runs
 `ExprTextImport.plan` first: a line that vanilla `LParser` cannot dispatch (`x = buf[3]`,
-`buf[i] = 5`, `result = (a + b) * 2`) is swapped for a unique `set __ls_import_N 0` sentinel
+`buf[i] = 5`, `result = (a + b) * 2`, `@counter = 0`) is swapped for a unique
+`set __ls_import_N 0` sentinel
 (one line for one line, so label/jump indices do not move) and the sentinel is replaced by an
 `ExprStatement` card after the parse. Everything after that is the normal
 `unfoldAll`/`foldAll` path, so products stay pure vanilla mlog and the carrier coverage above
 applies unchanged. Keep the conservative skip list in sync when adding sugar line forms (see
 `ExprTextImportSelfTest`): anything whose first token is already claimed by `LogicIO.read` or
 `LAssembler.customParsers`, comparisons (`==`/`!=`/`<=`/`>=`), strings, comments and one-line
-multi-statements must stay untouched.
+multi-statements must stay untouched. `@`-headed destinations are accepted only for the one
+writable builtin, `@counter` (`@unit = 5` stays with the vanilla parser — writing it is a no-op);
+the clipboard's one-line form (`canWriteInline`) deliberately still refuses `@` destinations,
+because a payload may be read by an older LogicSugar whose import does not know them.
 
 **An `ExprStatement` card must survive `save()` — treated as a block, not a formatting detail.**
 Every palette insert triggers `SugarCanvas.addAt → afterMutate → SugarLogicDialog.recordCanvasHistory

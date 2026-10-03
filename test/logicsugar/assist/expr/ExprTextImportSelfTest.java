@@ -32,6 +32,9 @@ import mindustry.logic.SugarStatements;
  *   <li>the issue-#12 case lowers to the documented {@code read x cell1 3} and carries no
  *       {@code noop}; carrier round trip stays byte-identical and passes {@code verifyRestore};</li>
  *   <li>{@code buf[i] = 5} and plain expressions ({@code x = (a + b) * 2});</li>
+ *   <li>{@code @counter = 0} ({@code @counter} is the only writable builtin; other
+ *       {@code @}-headed lines stay untouched) and its lowering carries no
+ *       {@code noop};</li>
  *   <li>a malformed expression stays a card and fails loudly instead of silently emitting mlog.</li>
  * </ul>
  */
@@ -46,6 +49,7 @@ public class ExprTextImportSelfTest{
         arraySubscriptImport();
         indexedWriteImport();
         plainExpressionImport();
+        counterWriteImport();
         invalidExpressionStaysCard();
         vanillaTextPassesThrough();
 
@@ -205,6 +209,38 @@ public class ExprTextImportSelfTest{
     // ===== helpers =====
 
     /** 文本导入的下半段：plan → LAssembler.read → 哨兵换卡（SugarCanvas.load 的同序子集）。 */
+    /**
+     * {@code @counter} 目标：用户报过的缺口——文本里写 {@code @counter = 0} 以前会被原版
+     * {@code LParser} 默默变成 {@code InvalidStatement}（展示地图的 @counter 指示线因此不画线）。
+     */
+    private static void counterWriteImport(){
+        checkSingle("@counter = 0", "@counter", "0");
+        checkSingle("@counter = @counter + 1", "@counter", "@counter + 1");
+        checkSingle("@counter = @counter - 1", "@counter", "@counter - 1");
+
+        // 唯一性：除 @counter 以外的 @ 目标保持交给原版解析器（写不进去的语句不做成卡片）。
+        check(ExprTextImport.plan("@unit = 5").isEmpty(), "@unit must stay untouched (not writable)");
+        check(ExprTextImport.plan("@time = 5").isEmpty(), "@time must stay untouched (not writable)");
+
+        // 落成真实指令而不是 noop；单行卡的自描述标记（注释行）随文本一起写出，
+        // 重开时由 ExprTextImport 把上一行认领回同一张卡。
+        Seq<LStatement> statements = imported("@counter = 0");
+        String lowered = unfold(statements);
+        String expected = "set @counter 0\n" + ExprStatement.cardMarkerPrefix + "@counter \"0\"";
+        check(lowered.equals(expected), "@counter write lowering mismatch:\n" + lowered);
+        String mlog = SugarCompiler.stripMarkers(compile(lowered));
+        check(!mlog.contains("noop"), "@counter write compiled to noop:\n" + mlog);
+        check(mlog.contains("set @counter 0"), "@counter write disappeared:\n" + mlog);
+
+        ExprStatement marked = exprAt(imported(lowered), 0);
+        check(marked.dest.equals("@counter") && marked.expr.equals("0"),
+            "card marker round trip drifted: " + marked.dest + " / " + marked.expr);
+
+        // 剪贴板内联形态仍拒 @ 目标（载荷可能被旧版读到，见 canWriteInline 注释）。
+        check(!ExprTextImport.canWriteInline("@counter", "0"),
+            "the inline clipboard form must keep refusing @-prefixed destinations");
+    }
+
     private static Seq<LStatement> imported(String text){
         ExprTextImport.Plan plan = ExprTextImport.plan(text);
         check(!plan.isEmpty(), "no expression statement detected in: " + text.replace("\n", "\\n"));

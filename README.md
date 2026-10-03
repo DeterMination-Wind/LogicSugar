@@ -37,7 +37,7 @@ Write common control flow as blocks; on save, everything compiles to plain vanil
 | Feature | Description |
 | --- | --- |
 | **Expressions in conditions** | Conditions of `if`, `elif`, `while`, and `for` (Expr mode) can directly use full expressions such as `hp < 25 && !shielded`. |
-| **Expr card** | Write `result = (a + b) * 2`: you can either drag an Expr card or paste the line directly into the code text; it imports as an Expr card, expands to equivalent instructions on save, folds back automatically on reopen, and invalid expressions are marked red immediately. |
+| **Expr card** | Write `result = (a + b) * 2`: you can either drag an Expr card or paste the line directly into the code text; it imports as an Expr card, expands to equivalent instructions on save, folds back automatically on reopen, and invalid expressions are marked red immediately. The one writable builtin works the same way (`@counter = 0`, `@counter = @counter + 1`). |
 | **Expressions anywhere** | Expressions can be written anywhere a value is expected, such as assignments, function arguments, and `return` values, including member access like `@unit.@health`. |
 | **Functions** | Define functions with parameters, call them, and return values; normal (subroutine) and inline modes can be switched in settings. |
 | **Function library** | Global functions shared by all processors, reducing repeated typing. Edit directly in settings; up to 10,000 statements. |
