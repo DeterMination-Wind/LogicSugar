@@ -44,7 +44,7 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
                                       # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest,
                                       # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest,
                                       # exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest,
-                                      # statementClipboardTest, originTest, counterJumpIndexTest, unitControlTest, spanTest
+                                      # statementClipboardTest, canvasSourceTest, unitControlTest, spanTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 
@@ -332,7 +332,7 @@ because a payload may be read by an older LogicSugar whose import does not know 
 **An `ExprStatement` card must survive `save()` — treated as a block, not a formatting detail.**
 Every palette insert triggers `SugarCanvas.addAt → afterMutate → SugarLogicDialog.recordCanvasHistory
 → canvas.save()`, and `save()` is a *pure text read* (`ExprHook.unfoldedText`) that never touches the
-canvas (`originTest`'s `saveIsAPureTextRead` pins the purity, `exprCardTest`'s
+canvas (`canvasSourceTest`'s `saveIsAPureTextRead` pins the purity, `exprCardTest`'s
 `unfoldedTextMatchesTheUnfoldedCanvas` pins the text). The card's text therefore has to be produced
 by the card itself, and it has to keep the canvas/statement index parity:
 
@@ -412,135 +412,13 @@ by the card itself, and it has to keep the canvas/statement index parity:
   `highlightTextIsUnchanged` case strips the markup and asserts the visible text equals what the
   user typed — keep new display code on that rule.
 
-## @counter indicator line (left-side mirrored jump line)
+## Editor rendering paths pinned by source nails
 
-`set @counter N` / `@counter += k` / `@counter -= k` (set / op / Expr cards) are jumps at runtime:
-`LExecutor.runOnce()` reads then post-increments (`instructions[(int)(counter.numval++)].run(this)`),
-so execution continues at instruction N. `mindustry.logic.CounterJumpOverlay` draws a mirrored
-jump line on the **left** of the writing card, pointing at the target card. Purely presentational —
-it never changes the saved product, so it is **not** subject to the multiplayer gate, and it must
-stay that way.
-
-Three load-bearing properties and one recorded bug; each fails silently:
-
-- **`Write.targets` holds instruction indices; `elementAt(i)` takes a statement index — never mix them.**
-  That mixup is the 2026-09 misalignment report: `set @counter 3` drew its line to the 4th card
-  because 3 was used as a statement index. Every target must go through
-  `provenance.originOf(...)` before it can name a card, and a target whose origin is `-1` (function
-  body, compiler-generated instruction) is unresolvable — badge only, never a guessed line.
-  `originTest`'s `counterTargetsResolveThroughProvenance` pins the conversion, and step 17 of
-  `docs/testing.md`'s manual checklist exists because no automated check can see *where* a line was
-  drawn. Generalisation worth carrying to other features: whenever an `int` could be two of
-  "instruction index / statement index / line number", say which in the name or the comment —
-  the same trap appears as `originOfLine`'s line numbers vs `origins`' instruction indices.
-- **The compile-time origin channel must not touch the product.**
-  `SugarFunctions.OriginRecording` records `[from, to)` line ranges per statement from *outside*
-  the emission code (`countLines(out)` before/after each statement in `lower`). It is deliberately
-  not an `Appendable`/`StringBuilder` wrapper — `StringBuilder` cannot be subclassed under
-  `--release 17`. `originTest` asserts `compileRecorded(...)` and `compile(...)` return
-  **byte-identical** products across every fixture and both FuncModes; keep that assertion green
-  for any change to `lower()`. Do not add per-emission-site bookkeeping: the range measurement is
-  the whole point.
-- **`markSynthetic` must not pre-allocate.** `synthetic.length` feeds the line-count ceiling in
-  `flatten`, so padding the array makes phantom lines real; `lineCount()` then exceeds the actual
-  text and `compileRecorded` returns null for *every* program. Same reason `flatten(totalLines)`
-  takes the body's true line count from the caller: the range table only knows how far the
-  *productive* statements reach, and the trailing label is in no range. The entry skip *does* have
-  a range; it is marked through `markSyntheticStatement` on its recorded range, because
-  with hoisted function bodies it is no longer the last output line.
-- **Statement attribution comes from `CompileProvenance`, not from `CounterJumpIndex.Write.statement`.**
-  The provenance channel is canvas-space: `FunctionSet.main` is the compacted visible list and
-  `lower` translates each visible index back through `FunctionSet.mainSource`, so a program with
-  `funcdef` cards does not shift every origin. The resolver treats negative provenance slots
-  (`sugar-functions` `syntheticOrigin`) as unknown and re-fills them from `__ls_stmt_<N>:` label
-  heuristics — correct only when a `mainToCanvas` mapping is supplied, because the label number is
-  the visible-main index, not the canvas index. The overlay uses
-  `provenance.originOf(write.instruction)`.
-
-Never guess a target: one target ⇒ solid line, several candidates ⇒ badge only (phantom lines on
-hover, `logicsugar.counterJump.candidates`), unresolvable ⇒ grey badge. Writes that belong to no
-card (function bodies, compiler-generated `@counter` shapes) get a grey chip under the statement
-area instead of silently disappearing.
-
-**It must look like the vanilla jump line, mirrored — including the rail allocation.** Anchor both
-endpoints at the cards' own **left edge** (local `x = 0` through `localToAscendantCoordinates` — the
-same coordinate discipline as `StructureGuideLayer`), use `Lines.stroke(Scl.scl(4f), color)` and the
-`Tex.logicNode` arrow at the target end: copy `JumpCurve.draw` / `drawCurve` and mirror the lateral
-direction (`x - rail` instead of `x + uiHeight`). Do not invent geometry — an early version put the
-endpoints on an "outside rail" (`-Scl.scl(5f)`), used a 3.2f stroke and a `Fill.circle`, which
-produced a line hanging off the cards that looked nothing like a jump line (2026-09 report). When a
-request says "like X", read X's code first and mirror it item by item.
-
-**The lateral distance is per-curve, from the lane allocator — never a fixed `bow`.** Vanilla's
-`uiHeight` is `Scl.scl(40) + Scl.scl(10) * predHeight` (portrait `20`/`8`), and `predHeight` comes
-from `StatementsTable.setJumpHeights` + `getJumpHeight`: an interval colouring that gives every
-overlapping jump its own rail and keeps nested spans closer to the cards. Copying only `drawCurve`
-and hard-coding `bow = 18f` therefore drew every `@counter` line on the *same* vertical rail, so
-they ran over one another (2026-09-25 report: "加一个类似 jump 的轨道算法让线不交叉"). The
-algorithm now lives in `logicsugar.assist.JumpLanes.assign(begin, end, flipped)` — a faithful mirror
-including the `reprBefore`/`reprAfter` representative merge, extracted as a pure function so it *is*
-testable headlessly (`counterJumpIndexTest`'s `jumpLanesSeparateOverlappingCurves`: disjoint spans
-share the innermost rail, touching spans may share, overlapping ones must not, nesting keeps the
-inner span closer, identical spans merge). `originTest.overlayRailsFollowLanes` pins that the overlay
-actually consults it. Vanilla smooths a rail change with `Mathf.lerp(target, current, pow(0.9,
-delta))`; keep that, or switching rails snaps. The arrow size must not be derived from `|tx - sx|`:
-both anchors sit on the same edge, so that is 0 and the arrow would never be drawn.
-
-**The target arrow is a double mirror — flip the x offset and the width together.** Vanilla draws
-`Tex.logicNode.draw(t.x + 0.75f * s, t.y - s / 2f, -s, s)`: libGDX normalises a negative width into
-`[t.x - 0.25s, t.x + 0.75s]` **and** mirrors the texture, so the arrow straddles the card's right
-edge and points into the card. Mirroring to our left edge means the x offset becomes `-0.75f * s`
-*and* the width becomes `+s` (the two mirrors cancel) — rect `[tx - 0.75s, tx + 0.25s]`, pointing
-into the card. Flipping only the x offset left the arrow floating 15–35 px outside the card with its
-texture still reversed, i.e. pointing *away* from the target (2026-09-25 report: "这个箭头位置对吗").
-`originTest.overlayRailsFollowLanes` pins the exact call.
-
-**Both axes of an anchor are element-local coordinates.** `localToAscendantCoordinates` adds the
-element's `x`/`y` (its offset inside the parent table) itself, so an anchor must not include them —
-`anchorY` returning `elem.y + getHeight()/2f` counted that offset twice and lifted each anchor by
-its own `elem.y`. The statements table is top-aligned, so the write card (late in the program, small
-`y`) stayed roughly put while the target card (earlier, large `y`) was thrown above the top of the
-screen: a line that leaves the cards and points at nothing (2026-09-25 report). Vanilla takes
-`hover.getHeight()/2f` for exactly this reason and `StructureGuideLayer` takes `0` / `getHeight()`.
-Only the X axis hid the mistake, because it wants no offset — which a local `0` already is.
-`originTest`'s `anchorsAreLocalCoordinates` nails the code (comments stripped, since the method's own
-comment names the wrong expression) so it cannot come back unnoticed.
-
-**The polling path must use `SugarCanvas.readonlyText()` for display-space indices; the program text (and every snapshot that has to be re-parsed) is `save()`.** The overlay polls the
-canvas text every third frame for its compile cache (`invalidate()` still forces an immediate rebuild), and the
-undo history polls it every few frames.
-`save()` is a pure read now (no element churn — see the `ExprStatement` section below), but its text
-is the **unfolded** program: a multi-line Expression card occupies several statements there, while
-the overlay's `elementAt(i)` and `SugarCompiler.CompileProvenance` index the **folded** canvas on
-screen. So the overlay keeps `readonlyText()` (same index space as the elements it draws into),
-while the undo/redo snapshots use `save()`: a folded snapshot keeps *canvas* statement indices
-inside jump/begin cards, and `canvas.load()` renumbers statements when it parses them back — jumps
-would silently retarget. `LCanvas.save()` on the
-read-only path is no better: it calls `saveUI()` on every statement and `JumpStatement.saveUI()`
-throws NPE when its target element is detached (that is what `SugarCanvas.normalizeJumpUI` exists
-for). Called from an `update()` callback, either one turns "one bad frame" into "the callback dies
-and the line never comes back" — the reported symptom was a long program drawing nothing, with a
-single flash right after an edit (2026-09-25). So: per-frame text ⇒ `readonlyText()` (null-safe,
-no folding), and the callback wraps both the snapshot and the drawing
-in `catch(Throwable)` with `noteOnce` logging (the compile/rebuild path included), because a purely
-visual feature that dies silently is undiagnosable by design. `originTest`'s
-`overlayUsesReadonlySnapshot` pins the readonly snapshot; `overlayFailureAndCandidateWiring` pins
-the rebuild log and the `hideAll` close wiring, `functionDefinitionsDoNotShiftOrigins` pins the
-canvas-index provenance behind funcdefs, `saveIsAPureTextRead` pins that the save path never
-unfolds/folds the canvas, and `addressLabelsDoNotOscillate` pins the layout-then-text-then-clear
-order every frame depends on.
-
-**A tooltip next to the pointer must not outlive the canvas.** The hover hint
-(`CounterJumpOverlay.updateHint`) is a `Label` on `Core.scene.root` so the pane cannot clip it, and
-that is exactly why its lifetime cannot depend on `SugarLogicDialog.hide()`: `hideAll(canvas)` only
-looks inside the *current* `CounterJumpOverlay`, while `LCanvas.rebuild()` / `load()` clear the
-jumps group and `install()` builds a fresh overlay instance — the previous instance's hint becomes
-an orphan that no close path can reach (2026-10 report: the “编译器入口 skip …” hint stayed next to
-the pointer after leaving the logic processor). The label therefore carries its own watchdog
-(`hint.update(this::guardHint)`): on the scene root it is always acted, so `hintOnScreen()` can
-check `layer.parent == null` (this instance's jumps group was replaced), the canvas scene, and the
-visibility chain of every ancestor. Keep the dialog's `hideAll()` call — it is the immediate path —
-but never rely on it for the last word.
+`canvasSourceTest` (`logicsugar.CanvasSourceTest`) pins the two `SugarCanvas` rendering paths that no
+headless test can see, both of which come from real reports: `save()` is a **pure text read**
+(`ExprHook.unfoldedText`, see the Expression-card section above — it is called periodically, so
+folding/unfolding there rebuilt the statement elements and stole focus from a field being edited),
+and the address label never alternates between the two index spaces:
 
 **The address label must not alternate between statement index and mlog address.** Vanilla's
 `DragLayout.layout()` calls `StatementElem.updateAddress(i)` (the *statement* index); our

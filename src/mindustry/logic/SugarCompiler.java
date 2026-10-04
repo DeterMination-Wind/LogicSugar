@@ -265,13 +265,6 @@ public final class SugarCompiler{
 
     private SugarCompiler(){}
 
-    /** 最近一次完成的 {@link SugarFunctions.OriginRecording} 与它记录的 lowered 正文，只给
-     *  {@link #compileRecorded} 用。与编译器其它编译期上下文一样是单线程状态，且不参与产物。 */
-    private static SugarFunctions.OriginRecording lastOriginRecording;
-    private static String lastLoweredText;
-    /** 最近一次编译的可见主程序下标到画布语句下标的映射；纯原版程序没有 __ls_stmt_ 标签，为 null。 */
-    private static int[] lastMainSource;
-
     /** Extracts the sugar source from stored code. The persistence carrier is authoritative;
      *  without one (v2.0.0 legacy programs) the comment marker block is used. Scanning from
      *  the end, a sharded carrier is assembled first (continuous {@code __ls_sugar_N}
@@ -658,51 +651,26 @@ public final class SugarCompiler{
 
             StringBuilder out = new StringBuilder();
             SugarFunctions.CallIds ids = new SugarFunctions.CallIds();
-            // 来源通道在 lower 之前装（lower 进入时读这个静态通道）；finally 弹出，异常路径与
-            // 嵌套编译都不会把通道留给下一次编译。记录只往旁路写数据，产物逐字节不变。
-            SugarFunctions.OriginRecording origin = SugarFunctions.pushOriginRecording();
-            try{
-                if(mode == FuncMode.normal){
-                    SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
-                    java.util.List<SugarFunctions.Function> hoisted = functions.hoistOrder();
-                    if(!hoisted.isEmpty()){
-                        // Normal-mode function bodies sit right after the main program. A call site's
-                        // return point (the `set <result> <retName>` after its jump) is inside main;
-                        // once main runs past it, the instruction stream would fall through into the
-                        // shared function body and re-execute it every tick (caller variables like
-                        // <result> keep incrementing). Jump past all bodies at the end of main.
-                        // 从这里往后的每一行都是编译器自己产生的（前导跳、函数体、返回跳板）：
-                        // 整段标成 synthetic，@counter 指示线才不会把函数体的下标指到调用方积木上。
-                        // lower() 自己已经把函数体标过了，这里是幂等的兜底，覆盖入口标签行等
-                        // lower() 不负责的行。
-                        int tail = SugarFunctions.countLines(out);
-                        out.append("jump __ls_end always x false\n");
-                        for(SugarFunctions.Function function : hoisted){
-                            out.append(function.entryName()).append(":\n");
-                            SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name, switchStrategy, assertEmit);
-                            out.append(function.exitName()).append(":\n");
-                            out.append("set @counter ").append(function.retName()).append('\n');
-                        }
-                        out.append("__ls_end:\n");
-                        origin.markSynthetic(tail, SugarFunctions.countLines(out));
+            if(mode == FuncMode.normal){
+                SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
+                java.util.List<SugarFunctions.Function> hoisted = functions.hoistOrder();
+                if(!hoisted.isEmpty()){
+                    // Normal-mode function bodies sit right after the main program. A call site's
+                    // return point (the `set <result> <retName>` after its jump) is inside main;
+                    // once main runs past it, the instruction stream would fall through into the
+                    // shared function body and re-execute it every tick (caller variables like
+                    // <result> keep incrementing). Jump past all bodies at the end of main.
+                    out.append("jump __ls_end always x false\n");
+                    for(SugarFunctions.Function function : hoisted){
+                        out.append(function.entryName()).append(":\n");
+                        SugarFunctions.lower(function.body, "func_" + function.name + "_", functions, mode, out, ids, function.name, switchStrategy, assertEmit);
+                        out.append(function.exitName()).append(":\n");
+                        out.append("set @counter ").append(function.retName()).append('\n');
                     }
-                }else{
-                    SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
+                    out.append("__ls_end:\n");
                 }
-                // 循环里逐条语句 close 过区间，但末尾的收尾标签不在任何区间里，所以正文总行数由
-                // 调用方给出（否则记录会比正文少一行，compileRecorded 只能返回 null）。
-                // 入口 skip 是编译器自己追加的语句（用户没写过它），@counter = 0 指向程序开头
-                // 这件事对用户没有信息量：整段标成 synthetic，指示线不会为它画线。
-                // 不能按 “输出的最后一行” 推断：normal 模式 hoist 函数体时最后一行是 __ls_end 标签，
-                // 而 skip 是 main 的最后一条语句；用它自己记录的发射区间来标记。
-                if(!librarySource && entrySkip && !functions.main.isEmpty()){
-                    int skip = functions.main.size - 1;
-                    if(skip < functions.mainSource.length) origin.markSyntheticStatement(functions.mainSource[skip]);
-                }
-                // 扁平化放在这里：所有语句区间与 synthetic 标记都已写完，之后不再新增正文。
-                origin.flatten(SugarFunctions.countLines(out));
-            }finally{
-                SugarFunctions.popOriginRecording();
+            }else{
+                SugarFunctions.lower(functions.main, "", functions, mode, out, ids, null, switchStrategy, assertEmit);
             }
 
             // Jump-thread the lowered label text (before marker/carriers): a jump whose target
@@ -710,13 +678,6 @@ public final class SugarCompiler{
             // final destination directly. Semantics-preserving; merges stacked structure-exit
             // defaults and jump-table hole rows that would otherwise hop twice at runtime.
             String lowered = threadAlwaysJumpTargets(out.toString());
-            // 记录通道经 pop 已不可达，这里留住刚完成的那一份给 compileRecorded 取用。
-            // 嵌套编译会覆盖它们，所以紧邻赋值、compileRecorded 立即读取；覆盖只丢掉"来源"，
-            // 产物与异常行为都不受影响。lowtext 是穿线后的正文，行号与记录口径一致
-            //（threadAlwaysJumpTargets 只改 jump 的操作数，不增删行）。
-            lastOriginRecording = origin;
-            lastLoweredText = lowered;
-            lastMainSource = functions.mainSource;
 
             // Persistence carriers: real "set" statements appended after the marker block. They
             // survive the vanilla parse/save round trip that drops the comment markers, and are
@@ -788,106 +749,6 @@ public final class SugarCompiler{
             ExprIntrinsics.restoreUserFunctions(previousUserFunctions);
             ExprIntrinsics.restoreDeclaredKinds(previousDeclaredKinds);
         }
-    }
-
-    /**
-     * 一次编译的产物加上"来源通道"：产物正文的每一条指令对应画布上哪条语句。
-     *
-     * <p>给 {@code @counter} 指示线用。{@code @counter = N} 的 N 是最终产物的指令下标（见
-     * {@link LExecutor} 的"先读后自增"语义），要把它指回一张积木卡就必须知道这个对应关系，
-     * 而它无法从积木顺序推出来：声明卡产出 0 条指令、{@code for} 的 step 与回跳落在
-     * {@code blockend} 卡上、normal 模式函数体整体后置到 main 之后。</p>
-     *
-     * <p>{@code origins[i]} 是产物第 i 条指令（与 {@code stripMarkers(code)} 的指令流同一
-     * 口径，不含标签行、注释标记块与载体行）的发射语句下标。
-     * {@link SugarFunctions#syntheticOrigin} 表示这条指令由编译器自己产生（入口 skip、函数
-     * 返回跳板、hoist 前导跳、函数体），不属于任何画布积木。来源未知时为 -1。</p>
-     */
-    public static final class CompileProvenance{
-        public final String code;
-        public final int[] origins;
-        /** 可见主程序下标 -> 画布语句下标的映射，供 CounterJumpIndex 回填 __ls_stmt_&lt;N&gt; 标签；
-         *  纯原版程序没有这类标签，为 null。 */
-        public final int[] mainToCanvas;
-
-        CompileProvenance(String code, int[] origins, int[] mainToCanvas){
-            this.code = code;
-            this.origins = origins;
-            this.mainToCanvas = mainToCanvas;
-        }
-
-        /** {@code origins} 的长度，即产物正文的指令条数（不含标签、标记块与载体）。 */
-        public int instructions(){ return origins.length; }
-
-        /** 该指令由画布上哪条语句发射；越界返回 -1。 */
-        public int originOf(int instruction){
-            return instruction < 0 || instruction >= origins.length ? -1 : origins[instruction];
-        }
-    }
-
-    /** {@link #compile(String, FuncMode, SugarFunctions.LibraryIndex, String, SwitchStrategy, AssertEmit)}
-     *  的带来源版本：产物本身完全相同（同一个 private compile 调用，逐字节一致），额外返回
-     *  逐条指令的来源。产物超过指令上限时与普通路径一样抛 {@link IllegalArgumentException}。 */
-    public static CompileProvenance compileRecorded(String sugar, FuncMode mode, SugarFunctions.LibraryIndex library,
-                                                    String libraryText, SwitchStrategy switchStrategy, AssertEmit assertEmit,
-                                                    boolean privileged){
-        String source = withEntrySkip(sugar);
-        // 纯原版程序（编辑器里最常见的形态）走 compile() 的 containsSugar 提前返回：产物就是
-        // 源码本身，逐行对应，因此来源可以在这里直接算出来，不必进 lower。少了这条路径，
-        // @counter 指示线在纯原版程序上就只剩角标。
-        //
-        // 注意这条路径没有入口 skip：{@link #entrySkipLine} 只是为了让 __ls_* 载体不执行，
-        // 而纯原版程序根本没有载体，compile() 因此原样返回源码 —— 每条指令都对应一条用户语句，
-        // 逐行 1:1 映射即可，不需要把任何一行标成 synthetic。
-        if(!containsSugar(SugarFunctions.readLibrary(source, privileged))){
-            String code = compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged);
-            String[] lines = code.split("\n", -1);
-            int[] origins = new int[countInstructions(new StringBuilder(code))];
-            int at = 0;
-            for(int line = 0; line < lines.length && at < origins.length; line++){
-                if(isLabelLine(lines[line])) continue;
-                // 画布语句 = 非标签行按顺序，第 i 条非标签行发射第 i 条指令；行号会被标签行
-                // 推后，不能拿来当语句下标（程序开头的标签会让整份来源全部偏位）。
-                origins[at] = at;
-                at++;
-            }
-            return new CompileProvenance(code, origins, null);
-        }
-
-        String code = compile(sugar, mode, library, libraryText, switchStrategy, assertEmit, privileged);
-        SugarFunctions.OriginRecording recording = lastOriginRecording;
-        String text = lastLoweredText;
-        // 通道没能建立、或记录与产物对不上（理论上不会：push/pop 配对，穿线不增删行）时宁可
-        // 没有来源，也不能让编辑器崩：返回 null 由调用方退化成"只显示角标、不画线"。
-        if(recording == null || text == null || recording.lineCount() != countLines(text)) return null;
-
-        // 行号 -> 指令下标：跳过标签行（标签占行号不占指令下标）。得到的数组与
-        // stripMarkers(code) 的指令流逐条对齐，载体行追加在正文之后所以不影响前缀。
-        String[] lines = text.split("\n", -1);
-        int[] origins = new int[countInstructions(new StringBuilder(text))];
-        int at = 0;
-        for(int line = 0; line < lines.length && at < origins.length; line++){
-            if(isLabelLine(lines[line])) continue;
-            origins[at++] = recording.originOfLine(line);
-        }
-        return new CompileProvenance(code, origins, lastMainSource);
-    }
-
-    /** 标签行判定：去掉首尾空白后以 {@code ':'} 结尾、无空格、长度 >= 2 的单 token 行，
-     *  与 {@link #threadAlwaysJumpTargets} 收集标签时用的是同一条规则。 */
-    private static boolean isLabelLine(String line){
-        String bare = line == null ? "" : line.trim();
-        return bare.length() >= 2 && bare.endsWith(":") && !bare.contains(" ");
-    }
-
-    /** {@code text} 的行数，与 {@link SugarFunctions.OriginRecording} 的记录口径一致
-     *  （每个 {@code '\n'} 结束一行）。 */
-    private static int countLines(CharSequence text){
-        int total = 0;
-        for(int i = 0; i < text.length(); i++){
-            if(text.charAt(i) == '\n') total++;
-        }
-        return total;
     }
 
     /** The merged library for editing a stored program: embedded functions first, then

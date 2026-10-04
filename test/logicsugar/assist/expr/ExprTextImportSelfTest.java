@@ -211,7 +211,7 @@ public class ExprTextImportSelfTest{
     /** 文本导入的下半段：plan → LAssembler.read → 哨兵换卡（SugarCanvas.load 的同序子集）。 */
     /**
      * {@code @counter} 目标：用户报过的缺口——文本里写 {@code @counter = 0} 以前会被原版
-     * {@code LParser} 默默变成 {@code InvalidStatement}（展示地图的 @counter 指示线因此不画线）。
+     * {@code LParser} 默默变成 {@code InvalidStatement}（展示地图里这行因此显示成红色无效卡）。
      */
     private static void counterWriteImport(){
         checkSingle("@counter = 0", "@counter", "0");

@@ -9,7 +9,7 @@
 行 1  表达式与函数 6. Expr 卡        7. 随处表达式            8. funcdef 9. 函数库 10. 单位控制卡
 行 2  数据结构 I   11. array          12. 数组批量运算          13. matrix  14. span   15. record
 行 3  数据结构 II  16. stack/queue/deque 17. bitset            18. map/uset 19. list/heap 20. chain
-行 4  调试与编辑   21. 处理器状态指示 22. 断言（调试构建）      23. @counter 指示线 24. 反编译重建 25. 编辑器辅助
+行 4  调试与编辑   21. 处理器状态指示 22. 断言（调试构建）      23. 跳转线着色 24. 反编译重建 25. 编辑器辅助
 ```
 
 ## 怎么跑
@@ -134,8 +134,8 @@ tools/maplab/
 `），因此 Windows 上 `core.autocrlf` 检出的
   仓库也能直接跑；同时 `tools/maplab/.gitattributes` 把 `*.ls` / `library.txt` 钉成 `eol=lf`。
 - **认不出的语句直接让生成失败**：文本导入层认不出的行会被原版解析器默默落成 `InvalidStatement`：
-  产物里多一条 `noop`、编辑器里多一张红色的「无效」卡，载体里也照样存着（用户报过的 @counter
-  指示线不画线就是这个原因）。`LabCompiler.rejectUnparsedLines` 会对**用户文本 / 画布文本 / 编译产物**
+  产物里多一条 `noop`、编辑器里多一张红色的「无效」卡，载体里也照样存着（用户报过的红色无效卡
+  就是这个原因）。`LabCompiler.rejectUnparsedLines` 会对**用户文本 / 画布文本 / 编译产物**
   逐行解析，命中就拿行号和原文报错。典型例子是 `@unit = 5` 这类写不进去的内建变量目标
   （`@counter` 是唯一被文本导入接受的内建变量）。
 - 同一位演示者不要既让 `unitfor` 遍历某类单位、又给那类单位打自定义 flag：LogicSugar 的单位卡用

@@ -538,8 +538,8 @@ public class SugarLogicDialog extends LogicDialog{
     private String readonlyCanvasText(){
         if(canvas == null) return "";
         // 历史快照必须是能重新解析的**程序文本**（展开态）：{@code save()} 现在就是纯文本读取，
-        // 一个积木元素都不动。折叠态快照（readonlyText）里多行表达式卡占多条语句，而 jump/begin
-        // 记的是画布语句下标，{@code canvas.load()} 回灌时会静默改掉跳转目标。
+        // 一个积木元素都不动。折叠态文本里多行表达式卡占多条语句，而 jump/begin 记的是画布语句
+        // 下标，{@code canvas.load()} 回灌时会静默改掉跳转目标。
         return canvas.save();
     }
 
@@ -1143,8 +1143,6 @@ public class SugarLogicDialog extends LogicDialog{
         }
         clearCompiledCopyCache();
         clearOriginalViewCache();
-        // 快照回调在画布脱离舞台后不再运行，而悬停提示挂在 scene root 上，必须在这里主动收掉。
-        CounterJumpOverlay.hideAll(canvas);
         super.hide();
     }
 

@@ -273,52 +273,14 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 | 跨处理器剪贴板 | `assist.StatementClipboard` + `assist.SelectionClipboardUi` | 编辑菜单「复制选区 / 粘贴选区」，Ctrl+C/V 驱动同一实现。**剪贴板放糖源码而不是编译后的 mlog**，片段落进另一个处理器后仍可继续编辑；唯一必须区别对待的是 `jump`——跨程序时旧的数字目标是另一程序的指令下标，因此复制与粘贴**双侧拒绝**。块配对由 `pairBlockEnds` 在插入前校验，之后每帧 `syncStatementIndices` 自愈。全程只有语句与字符串，无画布依赖（`statementClipboardTest` 无头跑）。入口不绑死在自家对话框上：接管档由 `SugarLogicDialog` 每帧 `tick`，共存档由 `CoexistCanvas` 对对方对话框 `tick`——否则不切到接管就没有这项功能。让位档不挂。快捷键只能轮询不能事件驱动：`UI.update()` 会把焦点清成 `null`，挂在对话框上的 capture 监听器再也收不到，而 arc 的 `handle()` 不停止冒泡、`TextField` 也保护不了自己；两件事由 `Core.scene.hasField()` 一次问清（原版无 Ctrl+C/V 键位）。后打开的对话框盖住时，快捷键只交给最上面那张 |
 | 提示折行 | `assist.TextWrap` + `assist.SugarTooltip` | arc 的 `Tooltip` 只把容器**位置**夹进舞台，比屏幕宽的容器仍会两边溢出 ⇒ 提前把**文字**折行（按 `min(屏宽×0.5, 560 design)` 预折、resize 时重折）。规则是纯函数（测量函数可替换，`textWrapTest` 用字符数精确断言）：只在空格断、超长单词硬断不丢字符、markup 标签绝不拆开、幂等 |
 | 跳转线着色 | `assist.JumpLineColor` | 按目标着色三模式：关闭 / 分散色 / 积木色 |
-| @counter 指示线 | `mindustry.logic.CounterJumpOverlay` + `assist.CounterJumpIndex` + `SugarCompiler.compileRecorded` | 写入 `@counter` 的积木（set 的 `@counter = N`、op 的 `+=` / `-=`、Expr 卡）在**左侧**画类 Jump 的镜像跳转线指向目标积木，位置在结构引导线**更外侧**。纯展示，不改保存产物，因此不受联机门禁限制。见下节 |
 | 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
 | 复制变量/打印缓冲 | `assist.VarClipboard` | 全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示入口。**入口在编辑菜单，不在底部按钮行**——原先两个固定宽按钮正是把底栏顶出窄窗口的原因，能力由 `SugarLogicDialog.installInspectionCopy()` 装配（旧的 public `VarClipboard.addButtons(Table, LogicDialog)` 已移除，能力迁到私有装配点） |
 | 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器（`Groups.build`，视野外按 hitbox 裁剪）：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；扫描预算按帧时长换算（`min(delta*60,5) × 每帧扫描数`，低帧率不爆发）；设置三滑杆（阈值 0 关闭 / 每帧扫描数 1–5000 档位 / 警告特效）+ 断点三开关（禁用断点 / 断言失败即断点 / 断点分离视角） |
 | 单位 flag 显示 | `assist.UnitFlags` | 设置可选；drawOver 遍历 `Groups.unit`，在单位正上方绘制逻辑 `flag`。默认使用红色；打开 `logicsugar.colorizeUnitFlags` 后，不同 flag 按首次遇到顺序优先使用 10 种高对比度颜色，超出后分配高饱和度随机色；默认 0 / 非有限值不显示，视野外与迷雾中的单位跳过。纯展示，不改保存产物 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
-| 卡片左侧序号 | `SugarCanvas` | 用户看到的是 Sugar 视图。卡片左侧的数字是积木序号（声明卡和结构语句各占一行），不是处理器指令下标。`Stopped at #N` 才是 `LExecutor.counter` |
+| 卡片左侧序号 | `SugarCanvas` | 用户看到的是 Sugar 视图。`updateMlogAddresses()` 把左侧标签写成 **mlog 指令下标**（多行 Expr 卡写指令区间 `1->2`），覆盖原版的积木序号；`Stopped at #N` 才是 `LExecutor.counter` |
 | 编辑期标红 | `SugarCanvas.invalidSignature()` | 标红刷新走**签名门控**：`SugarCanvas` 比较语句的 `invalidSignature()` 是否变化来决定重标，不再按 `if`/`while`/`for` 显式列 `conditionExpr`——原实现漏掉声明卡与运算卡，改字段后不重标红；新增卡种从此不需要再改 `SugarCanvas` |
 | 撤销/重做 | `assist.EditHistory` + `SugarLogicDialog` | 快照栈（最多 80 层）记录 `canvas.save()`（展开态程序文本：折叠态文本里多行卡的语句序号与 jump/begin 记的画布下标不一致，回灌会改掉跳转目标）；桌面 Ctrl+Z / Ctrl+Y，移动端底部 Undo/Redo 按钮。纯编辑器状态，不改保存产物 |
-
-### @counter 指示线（左侧镜像跳转线）
-
-原版 `jump` 卡片的跳转按钮在卡片**最右侧**（`StatementElem` 顶行：语句名 → `add().growX()` → 地址标签 → 操作按钮 → `JumpStatement` 的 `JumpButton`），`LCanvas.JumpCurve` 的曲线从目标积木折回源积木，所以原版跳转线整体在右侧。写 `@counter` 与 `jump` 在运行时是同一件事（`LExecutor.runOnce()` 先读后自增：`instructions[(int)(counter.numval++)].run(this)`，越界或负数在下一轮被重置为 0 ⇒ `set @counter N` 之后从指令 N 继续执行），因此本功能在**左侧**画出镜像的指示线。
-
-**画法照抄原版 `JumpCurve`，只把方向镜像**，两处都必须是原版格式（2026-09 报告：早期版本自创了"外侧轨道 + 细线 + 圆点"，既不在积木上、也不是 Jump 的样子）：
-
-- **端点 = 积木的正左侧**（元素局部坐标 `x = 0`，即左边缘的垂直中点），与结构引导线（`SugarCanvas.StructureGuideLayer` 取 `elem.inset + 6`）同一套坐标做法 —— 用一个 `Vec2` 交给 `localToAscendantCoordinates` 换算，缩进与 scroll 都由那一步带出来。**不要**取"所有卡片最左边缘"这类全局量：它只由最外层卡片决定，嵌套卡片右移后会错位，轨道还可能被推出 pane 左边界而被裁掉。
-- **线宽 `Scl.scl(4f)`、目标端画 `Tex.logicNode` 箭头**，与 `JumpCurve.drawCurve` / `JumpCurve.draw` 一致。唯一差别是背包方向：原版按钮贴右缘、曲线朝右凸（`x + uiHeight`），本功能贴左缘、朝左凸（`x - bow`）。多候选时线更细更淡，表示"目标不唯一"。
-
-**难点是"目标积木是哪一张"，而它不是积木序号。** `@counter` 的值是**最终产物**的指令下标，产物与画布积木不是一一对应：声明卡产出 0 条指令、`for` 的 step 与回跳落在 `blockend` 卡上、normal 模式函数体整体后置到 main 之后还要加尾部 `jump __ls_end`。所以链路分三层：
-
-1. **`SugarFunctions.OriginRecording`（编译期来源通道）** — `lower()` 在每条语句前后量一次 `out` 的长度，只把 `[from, to)` 区间记进旁路；函数体与编译器自己发射的指令（入口 skip、hoist 前导跳、返回跳板）标成 `syntheticOrigin = -2`。**它绝不包装也不改写产物**（`StringBuilder` 在 `--release 17` 下无法被继承，因此不是 `Appendable` 包装），带记录与不带记录的编译产物逐字节相同 —— `originTest` 用逐字节比较钉住这一点。两个易踩的坑：`markSynthetic` **不能**预留数组容量（`synthetic.length` 参与行数计算，预留的空洞会被当成真实行，曾让 `compileRecorded` 因行数不匹配整体返回 null）；`flatten(totalLines)` 必须由调用方给出正文总行数（区间表只知道"有产出的语句"覆盖到哪里；末尾的收尾标签不在任何区间里）。入口 skip 现在有区间，由 `markSyntheticStatement` 按它自己的记录区间标成 synthetic：normal 模式 hoist 函数体后它不是输出的最后一行，不能按"最后一行"猜。
-2. **`SugarCompiler.compileRecorded(...)`** — 与 `compile(...)` 同一个 private 实现（`lastOriginRecording` 紧邻赋值，嵌套编译只会覆盖"来源"、不影响产物），产出 `CompileProvenance{code, origins[], mainToCanvas}`；`origins[i]` 是产物第 i 条指令的画布语句下标（`analyze` 压过的可见主程序下标在 `lower` 里经 `mainSource` 换算回来），口径与 `stripMarkers(code)` 的指令流一致（不含标签行、标记块与载体）。纯原版程序走 `containsSugar` 的提前返回，那条路径逐行 1:1 直接给出来源，且**没有入口 skip**（skip 只为让 `__ls_*` 载体不执行，纯原版程序没有载体）。
-3. **`assist.CounterJumpIndex`** — 纯文本工作，无画布依赖（`counterJumpIndexTest` 无头跑）：去标记块与载体行 → `LAssembler.read/write` 让标签变成数字目标 → 按 `MlogCFG.writes()` 的位置读 `@counter` 写入 → 算出目标。`set @counter <literal>` 给绝对目标，`op add/sub @counter @counter <k>` 给相对目标（`instruction + 1 ± k`，`+1` 是执行器的后自增），`op add @counter @counter <var>` 是 switch 跳转表、`set @counter __ls_*` 是函数返回跳板、末尾的 `set @counter 0` 是入口 skip，这三类只报形态不报目标。标签回填需要可选的 `mainToCanvas` 映射：`__ls_stmt_<N>` 的 N 是 lowering 的可见主程序下标，带 funcdef 的程序里不等于画布下标。
-
-**归属一律走来源通道，不用解析器的标签启发式。** `CounterJumpIndex` 拿到 `provenance` 时会把负值槽位当作"未知"再用 `__ls_stmt_<N>:` 标签补（没有来源时是唯一可用手段），但编辑器这边已经有确切答案，因此 `CounterJumpOverlay` 用 `provenance.originOf(write.instruction)` 定位卡片。
-
-**`targets` 是指令下标，`elementAt(i)` 要的是语句下标 —— 两者绝不能混用。** 2026-09 的错位报告就是这里：`set @counter 3` 的线画到了第 4 张卡上，因为 3 被直接当语句下标用了。每个目标都必须先过一遍 `provenance.originOf(...)` 才能落到积木上；来源为 `-1`（函数体、编译器自己发射的指令）就是不可解析 —— 只画角标，绝不猜一条线。`originTest` 的 `counterTargetsResolveThroughProvenance` 钉住这条换算。
-
-**绝不猜。** 目标唯一 ⇒ 实线（绿）；多候选 ⇒ 只画角标（琥珀），悬停该卡片时按候选画虚影线（`logicsugar.counterJump.candidates` 设置，默认开）；不可解析 ⇒ 灰色角标。角标本身可以点两下（悬停浮层），它回答"这张卡会改 `@counter`、执行将继续在指令 N"。**归属不到的写入不会消失**：函数体内部与编译器发射的 `@counter` 写出现在画布底部一列灰色小标（最多 6 行）上，悬停给出原因 —— 函数体里的下标只有在 hoisting 之后的产物里才有意义，指到调用方的某张卡上是错的。
-
-**已知限制（明说，不装作支持）**：
-
-- **函数体内部的 `@counter` 写只有底部小标，没有线。** normal 模式下函数体是所有调用点共享的一份、整体后置，`set @counter N` 的 N 是"后置后产物"里的下标；同一个函数在不同调用顺序下 N 的含义不变但"从哪进来"不可表达。`SugarDecompiler.firstDynamicCounterWrite` 正是把这类写（除三种已知形状外）当作 dynamic counter write 并放弃整个程序的结构化还原 —— 本功能与反编译器口径一致：认得出、标出来，但不假装能指到卡片。
-- **`@counter` 写在 `for`/`while`/`if` 体内是可以画线的**（目标按产物下标解析，`originOf` 能给出正确的卡片），但那是"跳进/跳出结构"，会绕过循环条件或 exit 标签 —— 线本身不判断这是不是用户想要的，属于作者意图问题。
-- **相对写入在 Expr 卡展开成多行时目标是一组候选**：卡片的指令区间有多个可能起点，因此按候选处理（琥珀 + 悬停列虚影线）。
-- 目标落在折叠块内部时不画线（端点不可见 ⇒ 该曲线不绘制）。
-
-#### 已踩过的坑（本功能实现过程中真实发生，别重犯）
-
-1. **指令下标当语句下标用 → 线画到完全无关的积木上（2026-09 错位报告）。** `CounterJumpIndex.Write.targets` 是**产物指令下标**，`elementAt(i)` 要的是 `statements.getChildren()` 的**积木序号**。第一版把 `targets[0]` 直接塞进曲线的 `targetStatement`，于是 `set @counter 3` 的线指到第 4 张卡；两条线一起错位后，其中一条横跨整个程序，画面上就是一根贯穿全高的竖线。**修法**：目标解析只在 `rebuild()` 里做一次，且必须经 `provenance.originOf(target)` 换算；`originOf` 为 `-1` 就是不可解析（函数体、编译器自己发射的指令）⇒ 只留角标，绝不猜一条线。
-   *为什么没被自测抓住*：静态检查、编译、归属断言全绿 —— 两个 int 空间在类型上无从区分，而"线画在哪张卡上"只有画出来才看得见。所以除了 `originTest` 的换算断言，这条还进了 [testing.md](testing.md) 的手测清单。
-   *同源教训*：只要一个 `int` 可能同时是"指令下标／语句下标／行号"中的两种，就必须在变量名或注释里写清是哪一种。本功能里同时存在三种口径，是同一个陷阱的三个面：`originOfLine(line)` 收**正文行号**（标签行也占一行）、`CompileProvenance.origins[i]` 是**指令下标**（跳过标签行）、`Write.targets` 也是**指令下标**（但与语句下标空间不同）。混用任意两种都不会编译报错。
-2. **`markSynthetic` 预留数组容量 → `compileRecorded` 对所有程序返回 null。** `synthetic.length` 参与 `flatten` 的行数上限计算，`Arrays.copyOf(..., length * 2 + 8)` 预留出来的空洞被当成真实行，`lineCount()` 于是大于正文行数，编译入口的一致性检查直接失败。**修法**：数组按需增长到 `high`，绝不预留。排查方式是打印 `flatten` 的三个输入（`totalLines` / 区间上界 / `synthetic.length`）—— 光看产物与归属断言的输出猜不出来。
-3. **纯原版程序没有入口 skip。** `entrySkipLine` 只是为了让 `__ls_*` 载体不执行，而纯原版程序没有载体，`compile()` 因此原样返回源码。第一版按"sugar 路径也有 skip"的假设把最后一条指令标成 synthetic，导致纯原版程序最下面那张卡的角标消失。**教训**：`withEntrySkip` 是否真的落地取决于 `containsSugar` 走哪条分支，两条路径要各自断言（`originTest` 的 `vanillaProgramIsOneToOne`）。
-4. **自创了"外侧轨道 + 细线 + 圆点"，而不是 Jump 的格式。** 第一版把端点外移到积木之外的 `-Scl.scl(5f)`（一列独立的"轨道"），线宽用 3.2f，目标端画 `Fill.circle`。结果是线悬在积木外面、既不像 Jump 也不贴在积木上（2026-09 报告："不应该是从积木的正左侧指向目标积木吗？不应该是 Jump 跳转线格式吗？"）。**教训**：这类"照原版的样子做"的需求，先去读原版那段代码（`JumpCurve.draw` / `drawCurve`），把 `Lines.stroke(Scl.scl(4f), color)`、`Tex.logicNode` 箭头、端点取法逐项抄下来再改方向；不要凭"看起来差不多"自己发明一套几何。
 
 ### 底部按钮行布局
 

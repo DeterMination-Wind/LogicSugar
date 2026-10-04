@@ -499,8 +499,8 @@ public final class EditorConflictTest{
      * ("点击裸表按钮后切换颜色意义不明", 2026-09-25).</p>
      *
      * <p>Colour is pinned too, because both plausible tints are already spoken for in this mod:
-     * red marks invalid statements, and amber is {@code CounterJumpOverlay}'s "several candidate
-     * targets". A mode toggle shows its state in words, like {@code condition.expr} and the fold
+     * red marks invalid statements, and amber is reserved for “several candidate targets”.
+     * A mode toggle shows its state in words, like {@code condition.expr} and the fold
      * buttons do.</p>
      */
     private static void switchCardModeToggleRebuildsItsRow() throws IOException{

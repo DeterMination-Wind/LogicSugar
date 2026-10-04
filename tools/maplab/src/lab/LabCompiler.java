@@ -124,7 +124,7 @@ final class LabCompiler{
      * {@code noop}），产物里多一条无意义指令，编辑器里多一张红色的「无效」卡，载体里也照样存着。
      * 用户报过：{@code @counter = 0} 直接写在源码里——{@code ExprTextImport} 的赋值目标只接受
      * {@code [A-Za-z_]} 开头，{@code @} 开头的内建变量不算，于是最后一行变成「无效」卡，
-     * {@code @counter} 指示线没有写入指令可画。展示地图里这种静默降级比编译报错更贵，所以直接失败。</p>
+     * 程序实际跑出来少一步回跳。展示地图里这种静默降级比编译报错更贵，所以直接失败。</p>
      */
     static void rejectUnparsedLines(String text, String where){
         String[] lines = text.replace("\r\n", "\n").split("\n", -1);

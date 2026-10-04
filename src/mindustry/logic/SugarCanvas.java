@@ -150,33 +150,6 @@ public class SugarCanvas extends LCanvas{
         return ExprHook.unfoldedText(this);
     }
 
-    /**
-     * 屏幕形态（折叠态）的文本快照：给按“显示语句下标”索引积木的旁路用
-     * （{@link CounterJumpOverlay} 用 {@code elementAt(i)} 找卡片，而它的编译产物按
-     * {@code SugarCompiler.CompileProvenance} 映射回同一套下标）。
-     *
-     * <p>为什么不用 {@link #save()}：{@code save()} 给的是<b>展开态</b>文本（多行 Expr 卡在
-     * 那里是 N 条语句），而绘制侧索引的是屏幕上的折叠态——一张多行卡 = 一条语句，两套下标
-     * 空间对不上。这里逐条 {@link #normalizeJumpUI} 再拼文本，等价于原版 {@code LCanvas.save()}
-     * （{@code saveUI()} + {@code LAssembler.write()}），但 ①不触发任何折叠、②不会因为
-     * {@code jump} 的目标元素已脱离而抛 NPE。第二点尤其重要：本方法是在每帧回调里被调的，
-     * 一次抛出就会让那条回调静默死掉，指示线此后整场不再绘制（2026-09-25「长逻辑里
-     * @counter 渲染罢工，编辑一下只闪一帧」的报告）。</p>
-     *
-     * <p>注意它是折叠态文本：含多行卡的画布不一定能直接当程序文本去编译（jump 的目标下标
-     * 与解析后的语句序号对不上）。要拿“能重新解析的程序文本”用 {@link #save()}。</p>
-     */
-    public String readonlyText(){
-        if(statements == null) return "";
-        Seq<LStatement> list = new Seq<>();
-        for(Element child : statements.getChildren()){
-            if(!(child instanceof StatementElem elem) || elem.st == null) continue;
-            normalizeJumpUI(elem.st);
-            list.add(elem.st);
-        }
-        return LAssembler.write(list);
-    }
-
     /** Reads {@code LCanvas.privileged} via reflection: it is package-private and the mod class
      *  loader cannot access it directly (IllegalAccessError) even though the package names match.
      *  Unreadable degrades to non-privileged, so a privileged statement is refused rather than
@@ -188,12 +161,6 @@ public class SugarCanvas extends LCanvas{
         }catch(IllegalAccessException e){
             return false;
         }
-    }
-
-    /** {@link #editingPrivileged()} 的公开入口，给同包的 {@link CounterJumpOverlay} 这类
-     *  辅助渲染用（它们不是 LCanvas 的子类，跨 classloader 不能直接读 protected 成员）。 */
-    public boolean privilegedSession(){
-        return editingPrivileged();
     }
 
     @Override
@@ -469,8 +436,6 @@ public class SugarCanvas extends LCanvas{
         guideLayer.fillParent = true;
         guideLayer.cullable = false;
         jumpLayer.addChildAt(0, guideLayer);
-        // @counter 指示线（左侧镜像跳转线）。install 自身幂等，重复调用无副作用。
-        CounterJumpOverlay.install(this);
     }
 
     /** Returns the jump overlay for both modern and legacy LCanvas layouts. */
@@ -569,9 +534,6 @@ public class SugarCanvas extends LCanvas{
     }
 
     private void notifyMutate(){
-        // 语句增删改都会改变编译产物，@counter 指示线的缓存随之失效（invalidate 自身幂等，
-        // 没有 overlay 时是空遍历）。
-        CounterJumpOverlay.invalidate(this);
         if(suppressHistory || afterMutate == null) return;
         afterMutate.run();
     }
@@ -589,8 +551,6 @@ public class SugarCanvas extends LCanvas{
         statements.invalidate();
         statements.validate();
         refreshJumpLayer(this);
-        // 外部重排（框选粘贴/移动、撤销重做）不走 notifyMutate，这里单独失效指示线缓存。
-        CounterJumpOverlay.invalidate(this);
     }
 
     public static boolean canLink(BeginStatement begin, StatementElem target){

@@ -430,7 +430,7 @@ public class ExprHook{
      * 写一条语句并补换行；jump / begin 卡里记的<b>画布</b>语句下标换算成<b>文本</b>语句下标。
      *
      * <p>{@code destIndex} 只是 {@code dest} 的 UI 镜像（{@code setupUI()} 按它重建），所以可以
-     * 临时改写；写完在 {@code finally} 里还原，读文本的其它人（结构引导线、指示线）看到的仍是
+     * 临时改写；写完在 {@code finally} 里还原，读文本的其它人（结构引导线、撤销快照）看到的仍是
      * 画布下标的原值。越界（目标已删除等）原样写出，编译器的报错口径与旧实现一致。</p>
      */
     private static void appendStatement(StringBuilder out, LStatement statement, int[] textIndex){

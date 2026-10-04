@@ -845,9 +845,8 @@ public class ExprCompiler{
         TempStack temps = new TempStack();
         boolean previousCounterFold = foldCounterConstants;
         // 目标就是 @counter 时打开常量折叠：`@counter = 5*2` 必须编译成一条 `set @counter 10`，
-        // 否则产物是 `op mul _0 5 2` + `set @counter _0`，编辑器看到的目标是个变量，
-        // @counter 指示线只能报"取决于运行期值"（2026-09 报告）。范围刻意收窄到这一个目标：
-        // 其他表达式卡的产物保持原样，不动任何既有存档的载体校验。
+        // 否则产物是 `op mul _0 5 2` + `set @counter _0`，跳转目标被藏进一个临时变量（2026-09 报告）。
+        // 范围刻意收窄到这一个目标：其他表达式卡的产物保持原样，不动任何既有存档的载体校验。
         foldCounterConstants = isCounterName(dest);
         try{
             String result = compileNode(ast, ops, temps);

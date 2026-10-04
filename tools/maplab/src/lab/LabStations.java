@@ -12,7 +12,7 @@ import java.util.List;
  *   行 1  表达式/函数 Expr 卡 · 随处表达式 · funcdef · 函数库 · 单位控制卡
  *   行 2  数据结构 I  array · 批量运算 · matrix · span · record
  *   行 3  数据结构 II stack/queue/deque · bitset · map/uset · list/heap · chain
- *   行 4  调试与编辑  状态指示 · 断言 · @counter 指示线 · 反编译重建 · 编辑器辅助
+ *   行 4  调试与编辑  状态指示 · 断言 · 跳转线着色 · 反编译重建 · 编辑器辅助
  * </pre>
  */
 final class LabStations{
@@ -190,12 +190,12 @@ final class LabStations{
                 + "[scarlet]这是调试构建：含非原版指令，联机与纯原版客户端会显示成无效语句。\n"
                 + "[]把设置里的断言构建改回 strip 重新保存，即可还原成原版兼容程序。").build());
 
-        out.add(station("counter-line", "23. @counter 指示线 / 跳转线着色", 4, 2, "logic-processor", null)
-            .info("[accent]23. @counter 指示线与跳转线着色[]\n"
-                + "写入 @counter 的卡片（赋值 / 运算 / Expr 卡）左侧会画一条指向目标卡片的\n"
-                + "镜像箭头线；多个候选目标时只显示徽标，悬停才画候选线。\n"
-                + "本程序最后一行是 Expr 卡 @counter = 0，跳回第一张卡；\n"
-                + "while 的回跳是原版 jump 线（按目标着色）。").build());
+        out.add(station("jump-lines", "23. 跳转线着色", 4, 2, "logic-processor", null)
+            .info("[accent]23. 跳转线着色[]\n"
+                + "结构语句的回跳与分支都编译成原版 jump，编辑器里画成跳转线；\n"
+                + "设置里「跳转线着色」三档：关闭 / 按目标分散配色 / 用目标积木的分类色。\n"
+                + "本程序有 while 回跳与 if / else 两条分支的跳转线。\n"
+                + "[lightgray]切到 Original 视图能看到它们对应的 jump 指令。").build());
 
         out.add(station("rebuild", "24. 从源码重建（反编译）", 4, 3, "logic-processor", null)
             .vanillaCode()

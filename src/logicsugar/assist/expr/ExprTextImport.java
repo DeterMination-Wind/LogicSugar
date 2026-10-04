@@ -71,7 +71,7 @@ public final class ExprTextImport{
      * <p>{@code @counter} 是唯一“可写的”内建变量（{@code set}/{@code op} 写它等于跳转），用户
      * 在文本框里天然会写 {@code @counter = 0} / {@code @counter = @counter + 1}；不认的话这两行会
      * 被原版 {@code LParser} 静默落成 {@code InvalidStatement}（产物多一条 {@code noop}、编辑器里
-     * 一张红色「无效」卡，没有任何报错）——用户报过：展示地图的 @counter 指示线展台因此不画线。</p>
+     * 一张红色「无效」卡，没有任何报错）——用户报过（展示地图里这行因此显示成红色无效卡）。</p>
      *
      * <p>其余 {@code @xxx} 目标保持不认：{@code @unit = 5} 这类写法本来就写不进去（内建变量对
      * 写操作是空操作），把它们变成卡片只会换来一张“能保存但没用”的卡，不如继续留给原版解析器。</p>

@@ -331,7 +331,7 @@ public class ExprCardSelfTest{
     /**
      * {@code @counter} 目标的纯常量折叠（2026-09 报告）：{@code @counter = 5*2} 必须只产出一条
      * {@code set @counter 10}。否则产物是 {@code op mul _0 5 2} + {@code set @counter _0}，
-     * 编辑器看到的目标是个变量，左侧指示线只能报"目标取决于运行期值"。
+     * 跳转目标被藏进一个临时变量。
      *
      * <p>范围刻意收窄：只有 {@code @counter} 目标折叠。普通目标的产物逐字保持原样 ——
      * 折叠它们会改动既有存档的产物，让载体校验失败。</p>

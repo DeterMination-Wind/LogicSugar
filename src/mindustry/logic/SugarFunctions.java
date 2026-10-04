@@ -246,8 +246,6 @@ public final class SugarFunctions{
         public final LibraryIndex library;
         /** Main program statements with function definitions removed and indices remapped. */
         public Seq<LStatement> main = new Seq<>();
-        /** mainSource[i] 是 main[i] 在原始画布语句表里的下标（analyze 剥掉 funcdef 前后用）。 */
-        public int[] mainSource = new int[0];
         /** Resolved callee names of the main program. */
         public final List<String> mainCalls = new ArrayList<>();
         /** Names reachable from the main program (transitive closure). */
@@ -283,127 +281,6 @@ public final class SugarFunctions{
     public static final class CallIds{
         private int next;
         public int next(){ return next++; }
-    }
-
-    // ===== 编译期来源通道（@counter 指示线用；绝不改变产物） ==============================
-
-    /** 一条指令由编译器自己产生（入口 skip、函数返回跳板、hoist 前导跳、函数体），
-     *  不是画布上任何积木的产物。{@link OriginRecording} 用它标记这类行。 */
-    public static final int syntheticOrigin = -2;
-
-    /**
-     * 逐行记录"产物正文的每一行是画布上第几条语句发射的"。
-     *
-     * <p>存在的理由：{@code @counter = N} 里的 N 是<b>最终产物</b>的指令下标，而产物与画布
-     * 积木不是一一对应的（声明卡产出 0 条、for 的 step/回跳落在 end 卡上、normal 模式函数体
-     * 整体后置），所以编辑器要在左侧画一条指向目标积木的线，就必须知道这个对应关系。</p>
-     *
-     * <p><b>它不是产物的一部分。</b>实现上不包装 {@code out}（{@code StringBuilder} 在
-     * {@code --release 17} 下无法被继承），而是在 {@link #lower} 的每条语句前后量一次
-     * {@code out} 的长度，只把区间记进本通道 —— 产物一个字符都不改。不变量：带记录的编译与
-     * 不带记录的编译产物逐字节相同，{@code originTest} 钉住这一点。</p>
-     */
-    public static final class OriginRecording{
-        /** 每条语句发射的正文区间，按语句下标索引；未发射任何行的语句为 null。 */
-        private final List<int[]> ranges = new ArrayList<>();
-        /** 编译器自己发射的正文行（入口 skip、函数体、返回跳板、hoist 前导跳）。 */
-        private boolean[] synthetic = new boolean[0];
-        /** 扁平化后的按行归属表。 */
-        private int[] lineOwner = new int[0];
-        private int lines;
-
-        /** 第 {@code line} 行由哪条语句发射；{@link #syntheticOrigin} 表示编译器自己发射的；
-         *  越界或未记录返回 -1。 */
-        public int originOfLine(int line){
-            return line < 0 || line >= lineOwner.length ? -1 : lineOwner[line];
-        }
-
-        /** 已记录的正文行数。 */
-        public int lineCount(){ return lines; }
-
-        /** 关闭一条语句的区间（左闭右开）。 */
-        private void close(int statement, int from, int to){
-            if(to <= from) return;
-            while(ranges.size() <= statement) ranges.add(null);
-            ranges.set(statement, new int[]{from, to});
-        }
-
-        /** 把 [{@code from}, {@code to}) 行标成编译器自己发射。可在 lower 之外调用（hoist 段），
-         *  幂等；区间越界会被裁到已记录的范围。
-         *  <p>数组按需增长，但<b>不能</b>预留容量：{@code synthetic.length} 参与
-         *  {@link #flatten} 的行数上限计算，预留出来的空洞会被当成真实行。</p> */
-        public void markSynthetic(int from, int to){
-            int low = Math.max(from, 0);
-            int high = Math.max(to, low);
-            if(high > synthetic.length) synthetic = Arrays.copyOf(synthetic, high);
-            for(int line = low; line < high; line++) synthetic[line] = true;
-        }
-
-        /** 把某条语句发射过的所有行标成 synthetic（入口 skip 用）。语句下标与 close() 同一空间
-         *  （画布下标）；没有发射过行时不操作。必须在 flatten() 之前调用。 */
-        public void markSyntheticStatement(int statement){
-            if(statement < 0 || statement >= ranges.size()) return;
-            int[] range = ranges.get(statement);
-            if(range != null) markSynthetic(range[0], range[1]);
-        }
-
-        /**
-         * 所有语句关闭之后调一次：把区间表摊平成按行查询的形状。
-         *
-         * <p>{@code totalLines} 是<b>产物正文的完整行数</b>（{@code countLines(out)}），必须由
-         * 调用方给出：区间表只知道"有产出的语句"覆盖到哪里，末尾的收尾标签与入口 skip 不在
-         * 任何区间里，靠区间推会少算。synthetic 优先于语句区间 —— 函数体与入口 skip 即使落在
-         * 某条语句的区间内，也不能指到主程序的积木上。</p>
-         */
-        public void flatten(int totalLines){
-            lines = Math.max(totalLines, Math.max(countLinesOf(ranges), synthetic.length));
-            lineOwner = new int[lines];
-            Arrays.fill(lineOwner, -1);
-            for(int statement = 0; statement < ranges.size(); statement++){
-                int[] range = ranges.get(statement);
-                if(range == null) continue;
-                for(int line = range[0]; line < range[1] && line < lines; line++){
-                    if(!(line < synthetic.length && synthetic[line])) lineOwner[line] = statement;
-                }
-            }
-            for(int line = 0; line < lines && line < synthetic.length; line++){
-                if(synthetic[line]) lineOwner[line] = syntheticOrigin;
-            }
-        }
-
-        private int countLinesOf(List<int[]> source){
-            int total = 0;
-            for(int[] range : source){
-                if(range != null) total = Math.max(total, range[1]);
-            }
-            return total;
-        }
-    }
-
-    /** 记录通道的当前实例；编译器入口推入、finally 弹出，避免嵌套编译互相覆盖。
-     *  与编译器其它编译期上下文一样是单线程状态。 */
-    private static OriginRecording originRecording;
-
-    /** 推入一个新的记录通道并返回它。调用方必须用 {@link #popOriginRecording} 配对弹出。 */
-    public static OriginRecording pushOriginRecording(){
-        originRecording = new OriginRecording();
-        return originRecording;
-    }
-
-    /** 弹出当前记录通道并返回刚被弹出的那个（没有则返回 null）。 */
-    public static OriginRecording popOriginRecording(){
-        OriginRecording current = originRecording;
-        originRecording = null;
-        return current;
-    }
-
-    /** {@code text} 的行数（与记录口径一致：每个 {@code '\n'} 结束一行）。 */
-    static int countLines(CharSequence text){
-        int total = 0;
-        for(int i = 0; i < text.length(); i++){
-            if(text.charAt(i) == '\n') total++;
-        }
-        return total;
     }
 
     /**
@@ -535,15 +412,12 @@ public final class SugarFunctions{
 
         // --- 8. visible main list: strip definitions, remap indices ------------------------
         int[] visibleIndex = new int[n];
-        int[] mainSource = new int[n];
         Arrays.fill(visibleIndex, -1);
         for(int i = 0; i < n; i++){
             if(ownerBody[i] >= 0 || endOf[i] >= 0 || beginOf[i] >= 0) continue;
             visibleIndex[i] = set.main.size;
-            mainSource[set.main.size] = i;
             set.main.add(statements.get(i));
         }
-        set.mainSource = Arrays.copyOf(mainSource, set.main.size);
         for(int i = 0; i < n; i++){
             if(visibleIndex[i] < 0) continue;
             LStatement statement = statements.get(i);
@@ -1837,11 +1711,6 @@ public final class SugarFunctions{
     public static void lower(Seq<LStatement> statements, String prefix, FunctionSet functions, FuncMode mode,
                              StringBuilder out, CallIds ids, String funcName, SugarCompiler.SwitchStrategy strategy,
                              SugarCompiler.AssertEmit assertEmit){
-        // @counter 指示线用的来源通道。记录是旁路：下面每处新增代码只往通道里写数据，
-        // 产物一个字符都不改（originTest 用逐字节比较钉住这一点）。
-        OriginRecording recording = originRecording;
-        int recordedFrom = recording == null ? 0 : countLines(out);
-
         int[] switchOwner = switchOwners(statements);
         int[] breakOwner = breakOwners(statements);
         int[] continueOwner = continueOwners(statements);
@@ -1866,7 +1735,6 @@ public final class SugarFunctions{
         }
 
         for(int i = 0; i < statements.size; i++){
-            int statementFrom = recording == null ? 0 : countLines(out);
             if(statementLabels[i]) out.append(label(prefix, "stmt_", i)).append(":\n");
             if(optimizedOperations[i] != null){
                 out.append(optimizedOperations[i]);
@@ -2059,24 +1927,10 @@ public final class SugarFunctions{
                 statement.write(out);
                 out.append('\n');
             }
-            // 本语句（含它内联展开的调用、switch 分派等所有行）在此收口。区间按左闭右开记录，
-            // 未发射任何行的语句（声明卡、空 for 头……）不占区间，查询时归到前一语句之后。
-            if(recording != null){
-                // 主程序列表是 analyze 压过的可见列表（funcdef 及其函数体已剥掉），来源通道必须
-                // 记录画布下标，否则带函数的程序会把指示线画到别的卡片上。函数体走自己的语句表，
-                // 整段随后标成 synthetic，下标无需换算。
-                int owner = funcName == null && i < functions.mainSource.length ? functions.mainSource[i] : i;
-                recording.close(owner, statementFrom, countLines(out));
-            }
         }
         // 收尾标签属于"块结束之前的那段结构"，不是编译器凭空产生的指令，所以先打完它：
-        // 此后从本方法返回的控制流（hoist 前导跳、函数体、返回跳板）一律由调用方自己按需覆盖，
-        // 默认都算编译器自身发射。
+        // 此后从本方法返回的控制流（hoist 前导跳、函数体、返回跳板）一律由调用方自己收尾。
         if(statementLabels[statements.size]) out.append(label(prefix, "stmt_", statements.size)).append(":\n");
-        // 本条 lower 的尾部（收尾标签之后、函数返回跳板与入口 skip）不属于任何画布积木。
-        // 函数体整段也在这里标掉：它用的是自己的语句表，下标搬到主程序那边就是错的。
-        // 不调 flatten()：扁平化必须等所有区间与 synthetic 标记写完，由编译入口统一做。
-        if(recording != null && funcName != null) recording.markSynthetic(recordedFrom, countLines(out));
     }
 
     /** Lowers one persistent intrinsic card through the normal expression provider chain. */

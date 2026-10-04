@@ -602,7 +602,6 @@ public class LogicSugarMod extends Mod{
         LogicSugarSettings.addHideVarsPref(table);
         LogicSugarSettings.addBoxSelectPrefs(table);
         LogicSugarSettings.addCompactCardsPref(table);
-        LogicSugarSettings.addCounterJumpPrefs(table);
         JumpLineColor.buildSettings(table);
     }
 }
