@@ -4,6 +4,7 @@ import arc.struct.Seq;
 import logicsugar.LogicSugarMod;
 import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ExprFoldHarness;
 import logicsugar.assist.expr.ExprHook;
 import logicsugar.assist.expr.ExprStatement;
 import logicsugar.assist.expr.SpanAccess;
@@ -110,6 +111,7 @@ public final class SpanTest{
         expectFail("span b \"mem1 + mem2\"\nset x 1\n", "unknown link names");
 
         expressionCardFoldRoundTrip();
+        variableReadFoldsOnReopen();
         foldChainWiring();
         spanBuiltinsStayConsistent();
         try{
@@ -229,6 +231,57 @@ public final class SpanTest{
                 + "read x __ls_span_b __ls_span_r";
             check(spanFoldBack(lookalike) == null, "a hand-written idiv/select lookalike must not fold");
         });
+    }
+
+    /**
+     * 变量下标重开（2026-10 复核）：上一条只把展开文本交给 {@code ExprCompiler.rebuild}，
+     * 看不见链在哪里断——而真实重开时先过链收集。span 变量寻址的两端都会被旧口径挡在链外：
+     * 前导段以固定 scratch 名（{@code __ls_span_q/r}，不是临时变量形态）收尾，read 又落在
+     * building scratch 上（不是 span 成员块，{@code isArrayMemory} 认不出来），于是链在
+     * {@code idiv} 那一行就断掉（它的目标不是 {@code _n} 临时变量），read 永远留在链外，
+     * 载体里的展开文本重开后折不回卡片（只有常量下标那种单行 read 能折）。
+     * 这里用生产折叠的那一份判定（{@code ExprFoldHarness}）跑「声明卡 + 展开文本」的重开。
+     */
+    private static void variableReadFoldsOnReopen(){
+        withSpanRegistry(SPAN + "array buf big 0 128\n", () -> {
+            check("x = buf[i]".equals(foldBody("x", "buf[i]")), "variable span read must fold on reopen");
+            check("x = buf[i]+1".equals(foldBody("x", "buf[i] + 1")),
+                "a span read inside a larger expression must fold on reopen");
+            check("buf[i] = 7".equals(foldBody("buf[i]", "7")), "span assignment must fold on reopen");
+            check("x = buf[64]".equals(foldBody("x", "buf[64]")), "constant span read must fold on reopen");
+            for(LStatement statement : LAssembler.read(textOf(ExprCompiler.compile("x", "buf[i]", name -> false, false)), true)){
+                if(statement instanceof LStatements.ReadStatement read){
+                    check(ExprHook.foldsMemoryLine(read),
+                        "a span scratch read must be a fold chain line: " + read.target + " " + read.address);
+                }
+            }
+        });
+        withSpanRegistry(SPAN + "matrix m big 0 2 2\n", () -> {
+            check("x = m[i][j]".equals(foldBody("x", "m[i][j]")), "span matrix read must fold on reopen");
+        });
+        // 没有 span 声明时 scratch 名不是任何结构的内存块：链不入、也不会被误折
+        ArrayRegistry emptyRegistry = ArrayRegistry.compileRegistry(
+            LAssembler.read("set x 1\n", true), Collections.emptySet());
+        ArrayRegistry previousEmpty = ArrayRegistry.enter(emptyRegistry);
+        try{
+            check(!ExprHook.foldsMemoryLine((LStatements.ReadStatement)LAssembler.read(
+                    "read x __ls_span_b __ls_span_r", true).first()),
+                "without a span declaration the scratch read must stay out of the fold chain");
+            String prologue = "op idiv __ls_span_q i 64\nop mod __ls_span_r i 64\n"
+                + "select __ls_span_b equal __ls_span_q 0 cell1 0\n"
+                + "select __ls_span_b equal __ls_span_q 1 cell2 __ls_span_b\n"
+                + "read x __ls_span_b __ls_span_r";
+            check(ExprFoldHarness.bodyOf(prologue).equals(prologue),
+                "a span prologue without a span declaration must stay vanilla:\n" + ExprFoldHarness.bodyOf(prologue));
+        }finally{
+            ArrayRegistry.restore(previousEmpty);
+        }
+    }
+
+    /** 「声明卡 + 一张表达式卡的展开文本」重开后的正文（声明卡不计）。 */
+    private static String foldBody(String dest, String expr){
+        return ExprFoldHarness.bodyOf(SPAN + "array buf big 0 128\n"
+            + textOf(ExprCompiler.compile(dest, expr, name -> false, false)));
     }
 
     /**

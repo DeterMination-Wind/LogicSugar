@@ -234,12 +234,17 @@ public class ContainerModule extends DataModule{
         }
     }
 
-    /** 隐藏状态变量名：栈 {@code __ls_stk_}、队列 {@code __ls_que_}、双端队列 {@code __ls_deq_}。 */
-    public static String stateVar(String kind, String name, String field){
-        String prefix = KIND_DEQUE.equals(kind) ? "__ls_deq_"
+    /** 隐藏状态变量前缀：栈 {@code __ls_stk_}、队列 {@code __ls_que_}、双端队列 {@code __ls_deq_}。 */
+    public static String statePrefix(String kind){
+        return KIND_DEQUE.equals(kind) ? "__ls_deq_"
             : KIND_QUEUE.equals(kind) ? "__ls_que_"
             : "__ls_stk_";
-        return prefix + name + "_" + field;
+    }
+
+    /** 隐藏状态变量名：栈 {@code __ls_stk_<name>_top}（元素个数）、队列/双端队列
+     *  {@code __ls_que_/__ls_deq_<name>_head|_tail|_count}。 */
+    public static String stateVar(String kind, String name, String field){
+        return statePrefix(kind) + name + "_" + field;
     }
 
     // ===== 静态编译期上下文 =====

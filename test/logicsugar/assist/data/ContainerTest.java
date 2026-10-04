@@ -2,8 +2,13 @@ package logicsugar.assist.data;
 
 import arc.Core;
 import arc.struct.Seq;
+import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ContainerIntrinsics;
 import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ExprFoldHarness;
+import logicsugar.assist.expr.ExprHook;
+import logicsugar.assist.expr.ExprIntrinsics;
+import logicsugar.assist.expr.ExprStatement;
 import mindustry.Vars;
 import mindustry.logic.GlobalVars;
 import mindustry.logic.LAssembler;
@@ -61,6 +66,7 @@ public class ContainerTest{
         cardTitlesFollowLocalizationToggle();
         outputIsPureVanilla();
         roundTripAndVerification();
+        getterFold();
 
         DataModules.clearModules();
         System.out.println("LogicSugar Container self-test passed.");
@@ -862,6 +868,186 @@ public class ContainerTest{
             null, null, SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
         check(SugarCompiler.matchesStoredStream(recompiled, compiled),
             "recompiled container program drifted from the stored stream");
+    }
+
+    // ===== getter 展开链的折回（重建） =====
+
+    /**
+     * getter 卡的折回（2026-10 报告：「Expr 里 {@code stack.top()} 这类 getter 重建不出来」，
+     * 画布上留下一条 {@code _1 = 8+head-(count<=0)*(9+head)} 的地址运算卡）。
+     *
+     * <p>多行表达式卡在保存文本里只是展开后的原版指令（{@code write()} 不给多行卡写自描述
+     * 标记——那会改变语句条数），因此重开时唯一的还原途径就是 {@code ExprHook} 的折叠：
+     * 链收集要把落在容器内存块上的 {@code read} 算作链元素，数据模块反向层
+     * （{@code ContainerIntrinsics.foldAt}）再把整段折回 getter。这里用与 {@code foldAll}
+     * 同一份判定（{@code collectChain} + {@code foldPlan}）跑「声明卡 + 展开文本」的重开，
+     * 覆盖全部 getter/别名/函数形式、非零 base/size、以及 getter 参与更大表达式的形态。</p>
+     */
+    private static void getterFold(){
+        // peek 类：方法糖、别名与函数形式展开逐字相同，折回统一收敛到规范写法
+        getterRoundTrip("stack s cell1 3 4", "x", "s.top()", "x = s.top()");
+        getterRoundTrip("stack s cell1 3 4", "x", "s.peek()", "x = s.top()");
+        getterRoundTrip("stack s cell1 3 4", "x", "speek(s)", "x = s.top()");
+        getterRoundTrip("queue q cell2 12 3", "x", "q.front()", "x = q.front()");
+        getterRoundTrip("queue q cell2 12 3", "x", "q.peek()", "x = q.front()");
+        getterRoundTrip("queue q cell2 12 3", "x", "qpeek(q)", "x = q.front()");
+        getterRoundTrip("deque d cell3 5 4", "x", "d.front()", "x = d.front()");
+        getterRoundTrip("deque d cell3 5 4", "x", "d.peekfront()", "x = d.front()");
+        getterRoundTrip("deque d cell3 5 4", "x", "dpeekf(d)", "x = d.front()");
+        getterRoundTrip("deque d cell3 5 4", "x", "d.back()", "x = d.back()");
+        getterRoundTrip("deque d cell3 5 4", "x", "d.peekback()", "x = d.back()");
+        getterRoundTrip("deque d cell3 5 4", "x", "dpeekb(d)", "x = d.back()");
+
+        // getter 参与更大表达式：峰/栈尾只是链里的一段，整条链折成一张卡
+        getterRoundTrip("queue q cell2 8 4", "x", "q.front() + 1", "x = q.front()+1");
+        getterRoundTrip("queue q cell2 8 4", "x", "1 - q.front()", "x = 1-q.front()");
+        getterRoundTrip("queue q cell2 8 4", "hit", "q.front() > 0", "hit = q.front()>0");
+        getterRoundTrip("queue q cell2 8 4", "x", "(q.front() + a) * 2", "x = (q.front()+a)*2");
+        getterRoundTrip("deque d cell3 0 4", "x", "d.front() + d.back()", "x = d.front()+d.back()");
+        // size 类展开只有一行（op add <dest> <count> 0），混在别的 getter 的链里时同样要折回；
+        // 单独一张卡走的是自描述标记（见下）
+        getterRoundTrip("queue q cell2 0 4", "x", "q.front() + q.size()", "x = q.front()+q.size()");
+        getterRoundTrip("stack s cell1 0 8", "x", "s.top() * ssize(s)", "x = s.top()*s.size()");
+
+        // 不折回的场合：没有声明上下文、内存块上不是 getter 形状、形状差一个操作数
+        check(!foldedBody(expansionOnly("queue q cell2 0 4", "x", "q.front()"))
+                .contains("q.front()"),
+            "without a container declaration the getter chain must stay vanilla");
+        withRegistry("queue q cell2 0 4", () -> {
+            List<LStatement> raw = listOf("queue q cell2 0 4\nset a 2\nread x cell2 a\n");
+            check(foldedBody(raw).equals("set a 2\nread x cell2 a"),
+                "a hand-written read on the container memory must not fold: " + foldedBody(raw));
+        });
+        withRegistry("queue q cell2 0 4", () -> {
+            // 与 q.front() 的展开只差一个操作数（mul 的第二个操作数）：形状探针必须拒绝
+            String lookalike = "op lessThanEq _0 __ls_que_q_count 0\n"
+                + "op add _1 0 __ls_que_q_head\n"
+                + "op add _2 _1 1\n"
+                + "op mul _0 _0 _1\n"
+                + "op sub _1 _1 _0\n"
+                + "read x cell2 _1\n";
+            check(!foldedBody(listOf("queue q cell2 0 4\n" + lookalike)).contains("q.front()"),
+                "a lookalike chain with a different operand must not fold");
+        });
+
+        // 两张 getter 卡：先折回的那张卡展开行里的临时变量不能把后一张判成链外读取
+        withRegistry("queue q cell2 0 4", () -> {
+            String expansion = textOf(ExprCompiler.compile("a", "q.front()")) + "\n"
+                + textOf(ExprCompiler.compile("b", "q.front() + 1"));
+            check(foldedBody(listOf("queue q cell2 0 4\n" + expansion)).equals("a = q.front()\nb = q.front()+1"),
+                "two getter cards must both fold back");
+        });
+
+        // getter 结果当数组下标：数组视角与容器反向层在同一条链上协作
+        withRegistry("queue q cell2 0 4", () -> {
+            ArrayRegistry previous = ArrayRegistry.enter(ArrayRegistry.compileRegistry(
+                new Seq<>(listOf("array buf cell1 0 8").toArray(new LStatement[0])), null));
+            try{
+                String expansion = textOf(ExprCompiler.compile("x", "buf[q.front()]"));
+                check(foldedBody(listOf("array buf cell1 0 8\nqueue q cell2 0 4\n" + expansion))
+                        .equals("x = buf[q.front()]"),
+                    "a getter used as an array subscript must fold: "
+                        + foldedBody(listOf("array buf cell1 0 8\nqueue q cell2 0 4\n" + expansion)));
+            }finally{
+                ArrayRegistry.restore(previous);
+            }
+        });
+
+        // 链收集接线：落在容器内存块上的 read 必须入链，否则整条链被链外读取判定拦下
+        withRegistry("queue q cell2 0 4", () -> {
+            check(ExprHook.foldsMemoryLine(listOf("read x cell2 _1").get(0)),
+                "a read on a container memory must be a fold chain line");
+            check(ExprIntrinsics.declaresMemory("cell2"), "the container must declare its memory block");
+            check(!ExprIntrinsics.declaresMemory("cell9"), "an undeclared memory block must not be claimed");
+            List<LStatement> statements = listOf("queue q cell2 0 4\nread x cell2 _1\n");
+            ExprHook.Chain chain = ExprHook.collectChain(statements, 1);
+            check(chain.length() == 1 && chain.ops.size() == 1 && chain.ops.get(0) instanceof ExprCompiler.ReadLine,
+                "the container read must be collected as a one-line chain");
+            check(ExprHook.foldPlan(statements, chain) == null,
+                "a lone read is not a getter expansion and must not fold");
+        });
+        // 没有声明上下文时 read 不入链（手写普通 read 不受影响）
+        check(!ExprHook.foldsMemoryLine(listOf("read x cell2 _1").get(0)),
+            "without a container declaration the read must stay out of the fold chain");
+
+        // size 类单独一张卡：展开只有一行，走 ExprStatement 的自描述标记（重开时还原成卡片）
+        withRegistry("stack s cell1 0 8", () -> {
+            check(!ExprHook.foldsBackAlone(ExprCompiler.compile("x", "ssize(s)")),
+                "a size getter must rely on the card marker, not on the single-line array gate");
+            check(ExprHook.keepsCard(ExprCompiler.compile("x", "ssize(s)")),
+                "a one-line size getter must keep the Expr card");
+            check(writeOf("x", "s.size()").contains(ExprStatement.cardMarkerPrefix + "x \"s.size()\""),
+                "a size getter card must write its self-describing marker:\n" + writeOf("x", "s.size()"));
+        });
+
+        // 端到端（用户看到的那条路径）：载体里存的就是展开文本，restore 后再折叠必须回到 getter 卡
+        getterCarrierRoundTrip("stack s cell1 3 4", "x", "s.top()", "s.top()");
+        getterCarrierRoundTrip("queue q cell2 8 4", "x", "q.front() + 1", "q.front()+1");
+        getterCarrierRoundTrip("deque d cell3 5 4", "x", "d.back()", "d.back()");
+    }
+
+    /**
+     * 载体重开（报告场景的最短路径）：多行 getter 卡的保存文本就是展开后的原版指令，载体里
+     * 存的也是它（`write()` 不给多行卡写标记）；`restore()` 把这段文本原样交回来，重开时靠折叠
+     * 折回 getter 卡，而折回的卡再写回文本逐字等于载体里那段展开——中间任一环变了，
+     * 保存产物或语句下标就会变。
+     */
+    private static void getterCarrierRoundTrip(String declaration, String dest, String expr, String foldedExpr){
+        withRegistry(declaration, () -> {
+            String expansion = textOf(ExprCompiler.compile(dest, expr));
+            String restored = SugarCompiler.restore(compile(declaration + "\n" + expansion));
+            check(restored.equals(declaration + "\n" + expansion),
+                "the carrier must preserve the getter expansion verbatim:\n" + restored);
+            // 折回的表达式文本是重建器的规范写法（运算符两侧不留空白），不是用户原样的空白
+            check(foldedBody(listOf(restored)).equals(dest + " = " + foldedExpr),
+                "reopen (carrier restore + fold) did not recover the getter:\n" + restored
+                    + "\nfolded: " + foldedBody(listOf(restored)));
+            check(writeOf(dest, expr).equals(expansion),
+                "a folded getter card must write back the same expansion:\n" + writeOf(dest, expr));
+        });
+    }
+
+    /** 「声明卡 + 一张 getter 卡的展开文本」重开 → 折叠后的正文。 */
+    private static void getterRoundTrip(String declaration, String dest, String expr, String expected){
+        withRegistry(declaration, () -> {
+            String body = foldedBody(listOf(declaration + "\n" + textOf(ExprCompiler.compile(dest, expr))));
+            check(expected.equals(body),
+                "getter fold mismatch for '" + dest + " = " + expr + "'\n  expected: " + expected
+                    + "\n  actual: " + body);
+        });
+    }
+
+    /** 只有展开行、没有声明卡的程序（载体缺失的手写/复制场景）。 */
+    private static List<LStatement> expansionOnly(String declaration, String dest, String expr){
+        return withRegistryGet(declaration, () -> listOf(textOf(ExprCompiler.compile(dest, expr))));
+    }
+
+    private static <T> T withRegistryGet(String declarations, java.util.function.Supplier<T> body){
+        ContainerModule.Registry registry = ContainerModule.compileRegistry(listOf(declarations), null);
+        ContainerModule.Registry previous = ContainerModule.enter(registry);
+        try{
+            return body.get();
+        }finally{
+            ContainerModule.leave(previous);
+        }
+    }
+
+    /**
+     * 折叠后的程序正文：走 {@link ExprFoldHarness}（与生产 {@code foldAll} 同一份链收集 +
+     * 折回判定，只有画布元素换成语句列表），声明卡按元数据跳过。
+     */
+    private static String foldedBody(List<LStatement> input){
+        return ExprFoldHarness.body(ExprFoldHarness.fold(input));
+    }
+
+    /** 一张表达式卡 {@code write()} 写出的文本（单行卡带自描述标记）。 */
+    private static String writeOf(String dest, String expr){
+        ExprStatement card = new ExprStatement();
+        card.dest = dest;
+        card.expr = expr;
+        StringBuilder out = new StringBuilder();
+        card.write(out);
+        return out.toString();
     }
 
     // ===== helpers =====

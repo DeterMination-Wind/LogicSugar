@@ -204,6 +204,15 @@ public final class ArrayRegistry{
         return byName.isEmpty() && matrices.isEmpty();
     }
 
+    /**
+     * 是否存在任何 span 声明。折叠链的 read/write 判定用它：变量逻辑地址的寻址永远是
+     * {@code read/write x __ls_span_b __ls_span_r}（内存名是程序级固定 scratch，不是成员块），
+     * 只有确实声明了 span 时这种行才可能由 span 视角解释。
+     */
+    public boolean hasSpans(){
+        return !spans.isEmpty();
+    }
+
     /** 声明在同一内存块上的全部数组（区间互不重叠，严格构建保证）。 */
     public List<ArrayInfo> byMemory(String memory){
         List<ArrayInfo> result = new ArrayList<>();

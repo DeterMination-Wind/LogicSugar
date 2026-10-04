@@ -4,7 +4,9 @@ import logicsugar.assist.data.ContainerModule;
 import mindustry.logic.SugarCompiler;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -214,6 +216,179 @@ public final class ContainerIntrinsics implements ExprIntrinsics.Provider{
             if(m.equals("size") || m.equals("count")) return "deque_size";
         }
         return null;
+    }
+
+    // ===== 反向：展开链 → getter（折叠层）=====
+
+    /** 隐藏状态变量字段名（{@link ContainerModule#stateVar} 的 field）：预筛一行是否提到容器。 */
+    private static final String[] STATE_FIELDS = {
+        ContainerModule.FIELD_TOP, ContainerModule.FIELD_HEAD,
+        ContainerModule.FIELD_TAIL, ContainerModule.FIELD_COUNT
+    };
+    /** 隐藏状态变量前缀：预筛的廉价第一道（不含 {@code __ls_} 前缀的行不可能提到容器状态）。 */
+    private static final String[] STATE_PREFIXES = {
+        ContainerModule.statePrefix(ContainerModule.KIND_STACK),
+        ContainerModule.statePrefix(ContainerModule.KIND_QUEUE),
+        ContainerModule.statePrefix(ContainerModule.KIND_DEQUE)
+    };
+
+    /**
+     * 反向折叠的候选 getter 方法名（与 {@link #methodIntrinsic} 的别名表同源）：
+     * 只读 getter 折回这一种写法，别名（{@code peek}/{@code peekfront}/…）与函数形式
+     * （{@code speek(s)}/…）展开出的指令流与规范形式逐字相同，因此统一收敛到规范写法。
+     */
+    private static List<String> getterMethods(String kind){
+        if(ContainerModule.KIND_STACK.equals(kind)) return Arrays.asList("top", "size");
+        if(ContainerModule.KIND_QUEUE.equals(kind)) return Arrays.asList("front", "size");
+        if(ContainerModule.KIND_DEQUE.equals(kind)) return Arrays.asList("front", "back", "size");
+        return Collections.emptyList();
+    }
+
+    /**
+     * 折叠层反向钩子：链上一段以 {@code index} 结尾的行 → 容器 getter 节点
+     * （{@code s.top()} / {@code s.size()} / {@code q.front()} / {@code d.front()} / {@code d.back()}）。
+     *
+     * <p>形状不手写模式表，而是「用正向展开重新编译候选 getter 再逐行比对」
+     * （{@link #sameLowering}）。正向 lowering 改了、容器状态变量名或 base/size 语义变了，
+     * 比对立刻不成立——反向层不会静默失效，{@code containerTest} 的（种类 × getter）全表
+     * 自测会红。反过来，比对成立意味着这一段就是同一条 getter 编译出来的指令流，
+     * {@code ExprCompiler} 的重新编译门因此恒能通过（它比的是同一份展开）。</p>
+     *
+     * <p>预筛只认两种行（其余行直接返回 null，不编译探针）：落在已声明容器内存块上的
+     * {@code read} 行（peek 类展开的末尾行），或提到某个容器隐藏状态变量的行
+     * （{@code size} 类展开只有一行 {@code op add <dest> <count|top> 0}，它也可能出现在
+     * 别的卡片的链里，例如 {@code x = q.front() + q.size()}）。真匹配不上时返回 null，
+     * 折叠保持原样。</p>
+     */
+    @Override
+    public ExprIntrinsics.Fold foldAt(List<ExprCompiler.Line> ops, int index){
+        if(index < 0 || index >= ops.size()) return null;
+        for(ContainerModule.Info info : containerCandidates(ops.get(index))){
+            for(String method : getterMethods(info.kind)){
+                List<ExprCompiler.Line> pattern = lowerGetter(info.name + "." + method + "()");
+                if(pattern == null || pattern.size() > index + 1) continue;
+                if(!sameLowering(pattern, ops, index)) continue;
+                return new ExprIntrinsics.Fold(new ExprCompiler.Method(
+                    new ExprCompiler.Var(info.name), method, Collections.<ExprCompiler.Node>emptyList()), pattern.size());
+            }
+        }
+        return null;
+    }
+
+    /** 该内存块是否是某个已声明容器的内存（折叠链的 read 行判定）。 */
+    @Override
+    public boolean declaresMemory(String memory){
+        return !containersOn(memory).isEmpty();
+    }
+
+    /**
+     * 当前声明上下文里内存块等于 {@code memory} 的容器（同一内存块上可能有多个容器区间）。
+     * 走 {@link ContainerModule#active()}：编译路径用本次编译的注册表，编辑器折叠路径回退到
+     * 画布声明卡。声明卡不参与折叠，因此折叠过程中这张表是稳定的；代价是每次查询扫一遍画布，
+     * 所以调用方按行预筛（见 {@link #containerCandidates}），只有可疑的行才走到这里。
+     */
+    private static List<ContainerModule.Info> containersOn(String memory){
+        if(memory == null || memory.isEmpty()) return Collections.emptyList();
+        ContainerModule.Registry registry = ContainerModule.active();
+        if(registry == null || registry.isEmpty()) return Collections.emptyList();
+        List<ContainerModule.Info> result = new ArrayList<>(2);
+        for(ContainerModule.Info info : registry.all()){
+            if(memory.equals(info.memory)) result.add(info);
+        }
+        return result;
+    }
+
+    /**
+     * 这一行可能属于哪个容器的 getter 展开（形状探针的预筛）：
+     * {@code read} 行按内存块认（peek 类展开的末尾行），其余行按隐藏状态变量名认。
+     */
+    private static List<ContainerModule.Info> containerCandidates(ExprCompiler.Line line){
+        if(line instanceof ExprCompiler.ReadLine read) return containersOn(read.a);
+        // 廉价预筛：折叠会对链上每一行调到这里，而注册表查询在编辑器里是一次画布扫描，
+        // 所以先用状态变量前缀把绝大多数行挡回去（普通 op 行不含 __ls_stk_/__ls_que_/__ls_deq_）。
+        String text = line.toText();
+        boolean mentionsState = false;
+        for(String prefix : STATE_PREFIXES){
+            if(text.contains(prefix)){
+                mentionsState = true;
+                break;
+            }
+        }
+        if(!mentionsState) return Collections.emptyList();
+        ContainerModule.Registry registry = ContainerModule.active();
+        if(registry == null || registry.isEmpty()) return Collections.emptyList();
+        List<ContainerModule.Info> result = new ArrayList<>(1);
+        for(ContainerModule.Info info : registry.all()){
+            for(String field : STATE_FIELDS){
+                if(text.contains(info.stateVar(field))){
+                    result.add(info);
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 用正向展开编译一段 getter 文本（形状探针）。结果只读：探针的目标变量名不参与比对
+     * （窗口末行的结果槽是通配），失败（声明/名字非法等）返回 null，反向层不报错、只放弃本次折叠。
+     */
+    private static List<ExprCompiler.Line> lowerGetter(String form){
+        try{
+            return ExprCompiler.compile("result", form);
+        }catch(RuntimeException e){
+            return null;
+        }
+    }
+
+    /**
+     * 正向展开 pattern 与链尾逐行比对。pattern 里的临时变量槽（{@code _0, _1, …}）是捕获位：
+     * 同一槽位必须对应同一个实际操作数，编号可以不同（同一段展开在不同表达式里编号本来就不同）；
+     * 其余槽位按字面量比较——容器状态变量名、内存块与 base/size 字面量都在其中，因此这段链
+     * 只可能属于这一个容器。末行的结果槽是通配：卡片的目标变量由链尾自己决定。
+     */
+    private static boolean sameLowering(List<ExprCompiler.Line> pattern, List<ExprCompiler.Line> ops, int index){
+        int offset = index + 1 - pattern.size();
+        Map<String, String> captured = new HashMap<>();
+        for(int i = 0; i < pattern.size(); i++){
+            String[] expected = tokens(pattern.get(i));
+            String[] actual = tokens(ops.get(offset + i));
+            if(expected == null || actual == null || expected.length != actual.length) return false;
+            boolean last = i == pattern.size() - 1;
+            int result = last ? resultSlot(pattern.get(i)) : -1;
+            for(int k = 0; k < expected.length; k++){
+                String slot = expected[k];
+                // 带引号的槽位（funccall 实参串）不能按空白切分比较；getter 展开里没有这样的行
+                if(slot.indexOf('"') >= 0 || actual[k].indexOf('"') >= 0) return false;
+                if(k == result) continue; // 窗口末行的结果槽：卡片的目标变量自由
+                if(ExprCompiler.isTemp(slot)){
+                    String bound = captured.get(slot);
+                    if(bound == null) captured.put(slot, actual[k]);
+                    else if(!bound.equals(actual[k])) return false;
+                }else if(!slot.equals(actual[k])){
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 一行指令的结果槽下标（窗口末行的目标变量是通配）；没有结果槽返回 -1。
+     * 槽位与 {@code toText()} 的空白切分一致：{@code op <op> <dest> a b} → 2，
+     * {@code read/sensor <dest> …} → 1，{@code funccall <name> "args" <dest>} → 3。
+     */
+    private static int resultSlot(ExprCompiler.Line line){
+        if(line instanceof ExprCompiler.ReadLine || line instanceof ExprCompiler.SensorLine) return 1;
+        if(line instanceof ExprCompiler.OpLine) return 2;
+        if(line instanceof ExprCompiler.CallLine) return 3;
+        return -1;
+    }
+
+    /** 一行指令的比对槽位（空白切分，与 {@code toText()} 同源）；切不出槽位返回 null。 */
+    private static String[] tokens(ExprCompiler.Line line){
+        String text = line.toText().trim();
+        return text.isEmpty() ? null : text.split("\\s+");
     }
 
     /** 注入函数的 sugar 源文本（每项一个完整 funcdef 块）。 */

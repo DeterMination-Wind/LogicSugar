@@ -305,7 +305,12 @@ All three parts are load-bearing and pinned by `spanTest`:
 - `ExprHook.hasExternalReads` must exclude `SpanAccess.scratchNames()`. Those three names are
   program-level scratch that every expansion rewrites right before its own access, so another
   span card mentioning them is not an external read — without the exclusion two adjacent span
-  cards refuse each other's fold and neither ever comes back.
+  cards refuse each other's fold and neither ever comes back. The scratch writes themselves must
+  not end a chain either (`ExprHook.appendChainLine` keeps `__ls_span_q/r` destinations open like
+  temps), and the `read`/`write` whose memory is the building scratch has to enter the chain
+  (`ExprHook.foldsMemoryLine` → `isSpanScratch`); missing either half meant only the *constant*
+  index form ever folded — a text-level fold test cannot see it, because it never runs the chain
+  collection (`spanTest`'s `variableReadFoldsOnReopen` now does).
 
 The constant form is a trap of its own: `ExprStatement.write()` skips the `# @ls-expr-card`
 marker whenever `foldsBackAlone` is true, i.e. it trusts "foldAll's array gate can fold this
@@ -313,6 +318,67 @@ alone". For a span read that is only true because the span view exists, so `span
 `foldsBackAlone` and `rebuild` together. Runtime coverage is `dataRuntimeTest.spanRuntime`: the
 expansion must select a **building object** (a numeric-only `select` would break every span
 access in game while every shape-only test still passed).
+
+### Data-structure getters: the fold's provider reverse hook (`Provider.foldAt`)
+
+A container getter card (`x = q.front()`, `s.top()`, `d.back()`) is multi-line, so its saved text is
+the expansion and carries no marker: the same recovery layer as the span case applies, and the
+2026-10 report ("the getter cannot be reconstructed from the Expr card") was this layer missing.
+An `op add _1 <base> <head>` … `read x cell2 _1` chain either refused to fold or was folded into a
+stray address-computation card (`_1 = 8+__ls_que_q_head-(__ls_que_q_count<=0)*(9+__ls_que_q_head)`).
+The pieces:
+
+- **The gate is the same one.** `ExprCompiler.resolveArrayFolds` first tries the array/matrix/span
+  views (unchanged), then hands the line to `ExprIntrinsics.tryFoldAt`, and every surviving
+  candidate still has to pass `verifyArrayFold`'s recompile-and-compare (`foldPlan`). A provider
+  therefore cannot fold anything the compiler would not re-emit identically.
+- **`Provider.foldAt(ops, index)`** returns the source node plus the window length counting back
+  from `index` (the last line is *replaced* by the node, the lines before it are marked consumed).
+  `ContainerIntrinsics.foldAt` does not hand-write shape tables: it recompiles the canonical getter
+  forms (`s.top()` / `s.size()` / `q.front()` / `d.front()` / `d.back()`) and compares them line by
+  line, with the pattern's `_0, _1, …` slots acting as capture positions (same slot ⇒ same actual
+  operand, the numbering itself may differ) and the window's last result slot wildcarded. Forward
+  lowering changes therefore break the reverse match loudly instead of silently retiring it; the
+  `(kind × getter)` table in `containerTest`'s `getterFold` fails if it ever does.
+- **`Provider.declaresMemory`** is the chain-collection half: a `read` on a structure's declared
+  memory must enter the fold chain (`ExprHook.foldsMemoryLine`), otherwise the chain breaks before
+  it and `hasExternalReads` sees the address temporary as an outside read. `foldAt` staying
+  silent for a claimed read is the safe direction: the chain is skipped, nothing is rewritten.
+- **Aliases collapse to the canonical form.** `s.peek()`, `speek(s)`, `q.peek()`, `qpeek(q)`,
+  `d.peekfront()` … all compile to the same stream, so they fold back as `s.top()` / `q.front()` /
+  `d.back()`. The `size` family (`s.size()`, `ssize(s)`, `q.count()`) is one line: a lone card keeps
+  relying on `cardMarkerPrefix`, and inside a larger chain (`x = q.front() + q.size()`) the same
+  provider hook claims that line in place (`lines == 1`, nothing consumed).
+- **`ExprHook.hasExternalReads` scans an Expr card's source, not its expansion.** The expansion's
+  `_0/_1…` are the card's own scratch; scanning the text made the first folded card classify every
+  later chain with the same temporary names as an "external read", so the second card never came
+  back (the plain-op duplicate case was already fixed in 2026-10, the card case was not).
+
+**Fold decisions must be reachable headlessly.** `ExprHook.isChainLine` / `collectChain` /
+`foldPlan` are the whole decision, public on purpose; the canvas loop only adds element surgery and
+the canvas-only jump-target check. `test/logicsugar/assist/expr/ExprFoldHarness.java` runs that same
+pair over a statement list, which is what `containerTest` and `spanTest` assert against — a
+text-level `rebuild` test cannot see a chain that never gets collected (that blind spot is why the
+span variable-index and container getter gaps survived their own tests).
+
+**Deliberately still "show vanilla": the mutating container operations.** `spop` / `qpop` /
+`dpopf` / `dpopb` / `spush` / `qpush` / `dpushb` / `dpushf` have no `foldAt` entry. Their chains
+write the hidden state variables (which `hasExternalReads` treats as outside reads as soon as the
+container is used anywhere else) and the `read` that ends them is not a getter window, so such a
+card still reopens as raw ops — exactly as it did before this layer existed, and that is the
+accepted direction. Adding them means extending `getterMethods` plus a matching handler that
+re-emits the state writes, not inventing a new recovery path.
+
+### Multi-cell `span` (continued) — the variable-address chain is load-bearing
+
+Beyond the prologue/select rules above, two chain-collection details decide whether a **variable**
+index expression (`x = buf[i]`, `buf[i] = 5`, `m[i][j]`) survives a reopen at all: the prologue's
+`op idiv`/`op mod` destinations are program-level scratch rather than `_n` temps, so they must not
+end the chain (`ExprHook.appendChainLine`), and the trailing `read`/`write` sits on the building
+scratch, not on a span member, so `isArrayMemory` cannot see it (`ExprHook.isSpanScratch`, gated on
+the span registry being non-empty). Only the constant-index form (a one-line `read x cell1 3`) ever
+folded without both. `spanTest`'s `variableReadFoldsOnReopen` pins read/write/matrix through the
+real chain collection.
 
 **Text import is another way into the same pipeline.** `SugarCanvas.load` runs
 `ExprTextImport.plan` first: a line that vanilla `LParser` cannot dispatch (`x = buf[3]`,

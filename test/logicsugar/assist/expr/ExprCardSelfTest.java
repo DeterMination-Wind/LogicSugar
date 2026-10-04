@@ -531,6 +531,20 @@ public class ExprCardSelfTest{
         redefined.add(LAssembler.read("op mul z " + temp + " 3", true).first());
         check(!ExprHook.hasExternalReads(redefined, 0, 2, chain),
             "a value that comes from an outside definition is not a read of the folded chain");
+
+        // 已经折回的卡片（画布上是 ExprStatement）不能把后面的链拦住：它的展开行里同样是
+        // 那批临时变量，但那是卡片自己的 scratch；扫的必须是卡片源码（expr/dest）
+        List<LStatement> withCard = new ArrayList<>();
+        withCard.add(newExprCard("y", "ceil(rand(10))"));
+        withCard.addAll(duplicate.subList(2, 4));
+        check(!ExprHook.hasExternalReads(withCard, 1, 3, chain),
+            "a folded card's own expansion must not count as an external read");
+        // 但卡片源码里真的读了那个临时变量名时仍然要拦住（用户可能手写 _0）
+        List<LStatement> cardReader = new ArrayList<>();
+        cardReader.add(newExprCard("y", temp + " + 1"));
+        cardReader.addAll(duplicate.subList(2, 4));
+        check(ExprHook.hasExternalReads(cardReader, 1, 3, chain),
+            "a card whose expression reads the chain temp must still block the fold");
     }
 
     private static LStatements.OperationStatement opLine(String text){

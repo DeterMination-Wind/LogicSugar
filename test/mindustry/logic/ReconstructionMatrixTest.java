@@ -214,6 +214,21 @@ public final class ReconstructionMatrixTest{
         // 没有标记时单行卡与普通 set/op 积木在文本里无法区分，保存一次就会退化成积木。
         addCarrier("decl.exprcard", "stack s cell1 0 4\nset result 0\n"
             + ExprStatement.cardMarkerPrefix + "result \"0\"\n", ExprStatement.cardMarkerPrefix);
+        // size 类 getter 的展开只有一行，走的就是上面那条标记路（重开时按标记里的 expr 还原成
+        // `x = s.size()` 卡）；多行 getter（top/front/back）的展开不带标记，靠 ExprHook 的折叠折回。
+        // 两个 getter fixture 钉住载体确实把展开文本原样留住（折叠本身在 containerTest 的
+        // getterFold 里跑，那里有声明上下文与真实链收集）。
+        addCarrier("decl.exprcard.getter.size", "stack s cell1 3 4\n"
+            + "op add x __ls_stk_s_top 0\n" + ExprStatement.cardMarkerPrefix + "x \"s.size()\"\n",
+            ExprStatement.cardMarkerPrefix + "x \"s.size()\"");
+        addCarrier("decl.exprcard.getter", "queue q cell2 8 4\n"
+            + "op lessThanEq _0 __ls_que_q_count 0\n"
+            + "op add _1 8 __ls_que_q_head\n"
+            + "op add _2 _1 1\n"
+            + "op mul _0 _0 _2\n"
+            + "op sub _1 _1 _0\n"
+            + "read x cell2 _1\n",
+            "read x cell2 _1");
         // 过期 destIndex 会让 restore() 按嵌套重写语句文本；单行卡的自描述标记（它唯一的存在证据）
         // 必须活过这次重写，否则重开时卡片静默退化成普通 set 积木。
         addCarrier("decl.exprcard.staleDest",

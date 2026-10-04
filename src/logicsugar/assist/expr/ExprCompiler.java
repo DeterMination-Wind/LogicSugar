@@ -1382,35 +1382,45 @@ public class ExprCompiler{
      *        子表达式已展开进 AST，被消费的地址计算行记在 {@link #consumed} 里）。</li>
      *  </ul> */
     static final class ArrayFold{
-        static final ArrayFold CONSUMED = new ArrayFold(null, null, null, null, null, null);
+        static final ArrayFold CONSUMED = new ArrayFold(null, null, null, null, null, null, null);
         final ArrayRegistry.ArrayInfo info;
         final ArrayRegistry.MatrixInfo matrix;
         final String indexOperand;
         final Node row, col;
         final List<Line> consumed;
+        /** 非 null 时直接折回这个节点（数据模块的反向层：容器 getter 等，见
+         *  {@link ExprIntrinsics.Provider#foldAt}），没有数组/矩阵归属。 */
+        final Node node;
 
         ArrayFold(ArrayRegistry.ArrayInfo info, String indexOperand, Line consumed){
             this(info, null, indexOperand, null, null,
-                consumed == null ? null : Collections.singletonList(consumed));
+                consumed == null ? null : Collections.singletonList(consumed), null);
         }
 
         ArrayFold(ArrayRegistry.MatrixInfo matrix, Node row, Node col, List<Line> consumed){
-            this(null, matrix, null, row, col, consumed);
+            this(null, matrix, null, row, col, consumed, null);
+        }
+
+        /** 数据模块反向层给出的节点（容器 getter 等）。 */
+        ArrayFold(Node node){
+            this(null, null, null, null, null, null, node);
         }
 
         private ArrayFold(ArrayRegistry.ArrayInfo info, ArrayRegistry.MatrixInfo matrix, String indexOperand,
-                          Node row, Node col, List<Line> consumed){
+                          Node row, Node col, List<Line> consumed, Node node){
             this.info = info;
             this.matrix = matrix;
             this.indexOperand = indexOperand;
             this.row = row;
             this.col = col;
             this.consumed = consumed;
+            this.node = node;
         }
     }
 
-    /** 折叠解析结果 → 下标 AST（一维 {@code buf[i]} 或矩阵 {@code m[i][j]}）。 */
+    /** 折叠解析结果 → AST：数据模块反向层的节点、一维 {@code buf[i]} 或矩阵 {@code m[i][j]}。 */
     private static Node foldNode(ArrayFold fold){
+        if(fold.node != null) return fold.node;
         if(fold.matrix != null){
             return new Index(new Index(new Var(fold.matrix.name), fold.row), fold.col);
         }
@@ -1433,50 +1443,70 @@ public class ExprCompiler{
      * 变量地址沿链内 {@code op add}/{@code op mul} 定义链反解（{@code base + row*cols + col}
      * 的三种编译器形态的逆）。任何无法唯一确定的归属都返回 null——宁可少折回也不能折错，
      * 最终由 {@link #verifyArrayFold} 的重新编译比对兜底。
+     *
+     * <p>数组/矩阵/span 都解释不了的一条 {@code read} 行，最后交给数据模块的反向层
+     * （{@link ExprIntrinsics#tryFoldAt}）：容器 getter 的展开带一条落在容器内存块上的 read，
+     * 通用规则认不出来，不认领的话整条链要么折不出来、要么被折成地址运算的裸表达式
+     * （见 {@link logicsugar.assist.expr.ContainerIntrinsics#foldAt}）。</p>
      */
     private static Map<Line, ArrayFold> resolveArrayFolds(List<Line> ops){
         ArrayRegistry registry = ArrayRegistry.active();
-        if(registry == null || registry.isEmpty()) return null;
         Map<Line, ArrayFold> folds = null;
         for(int p = 0; p < ops.size(); p++){
             Line line = ops.get(p);
-            String memory, address;
+            String memory = null, address = null;
+            boolean memoryLine = false;
             if(line instanceof ReadLine read){
                 memory = read.a;
                 address = read.b;
+                memoryLine = true;
             }else if(line instanceof WriteLine write){
                 memory = write.memory;
                 address = write.address;
-            }else{
-                continue;
+                memoryLine = true;
             }
-            ArrayFold fold = resolveArrayFold(registry, memory, address, ops, p);
-            if(fold == null) fold = resolveMatrixFold(registry, memory, address, ops, p);
+            ArrayFold fold = null;
             List<Line> spanConsumed = null;
-            if(fold == null){
-                // span 展开（内存名是 span 成员或固定 scratch）：换一个视角再解一次，
-                // 前导段行随折叠一起消费；多条 span 都能解释时按不可判定放弃
-                for(SpanFoldView view : spanFoldViews(ops, p, memory, address)){
-                    ArrayFold candidate = resolveArrayFold(registry, view.memory, view.address, ops, p);
-                    if(candidate == null) candidate = resolveMatrixFold(registry, view.memory, view.address, ops, p);
-                    if(candidate == null) continue;
-                    if(fold != null){
-                        fold = null;
-                        spanConsumed = null;
-                        break;
+            if(memoryLine && registry != null && !registry.isEmpty()){
+                fold = resolveArrayFold(registry, memory, address, ops, p);
+                if(fold == null) fold = resolveMatrixFold(registry, memory, address, ops, p);
+                if(fold == null){
+                    // span 展开（内存名是 span 成员或固定 scratch）：换一个视角再解一次，
+                    // 前导段行随折叠一起消费；多条 span 都能解释时按不可判定放弃
+                    for(SpanFoldView view : spanFoldViews(ops, p, memory, address)){
+                        ArrayFold candidate = resolveArrayFold(registry, view.memory, view.address, ops, p);
+                        if(candidate == null) candidate = resolveMatrixFold(registry, view.memory, view.address, ops, p);
+                        if(candidate == null) continue;
+                        if(fold != null){
+                            fold = null;
+                            spanConsumed = null;
+                            break;
+                        }
+                        fold = candidate;
+                        spanConsumed = view.prologue;
                     }
-                    fold = candidate;
-                    spanConsumed = view.prologue;
                 }
             }
-            if(fold == null) continue;
-            if(folds == null) folds = new IdentityHashMap<>();
-            folds.put(line, fold);
-            if(fold.consumed != null){
-                for(Line consumed : fold.consumed) folds.put(consumed, ArrayFold.CONSUMED);
+            if(fold != null){
+                if(folds == null) folds = new IdentityHashMap<>();
+                folds.put(line, fold);
+                if(fold.consumed != null){
+                    for(Line consumed : fold.consumed) folds.put(consumed, ArrayFold.CONSUMED);
+                }
+                if(spanConsumed != null){
+                    for(Line consumed : spanConsumed) folds.put(consumed, ArrayFold.CONSUMED);
+                }
+                continue;
             }
-            if(spanConsumed != null){
-                for(Line consumed : spanConsumed) folds.put(consumed, ArrayFold.CONSUMED);
+            // 数据模块的反向层：链上一段以本行为尾的展开 → 源代码节点（容器 getter 等）。
+            // 任意行都可能被认领（size getter 的展开就只有一行 op add），因此不做行类别筛选，
+            // 预筛由 provider 自己做（只有可疑的行才会去编译形状探针）。
+            ExprIntrinsics.Fold getter = ExprIntrinsics.tryFoldAt(ops, p);
+            if(getter == null) continue;
+            if(folds == null) folds = new IdentityHashMap<>();
+            folds.put(line, new ArrayFold(getter.node));
+            for(int k = p - getter.lines + 1; k < p; k++){
+                folds.put(ops.get(k), ArrayFold.CONSUMED);
             }
         }
         return folds;
@@ -1872,13 +1902,15 @@ public class ExprCompiler{
             }
             return new Call(call.name, args);
         }
+        // 折叠解析命中的行直接折回它的节点（数组/矩阵下标、span 寻址、数据模块反向层的
+        // getter 等）：这些行的语义就是那个源代码节点，不能再走下面的通用简化规则——
+        // 例如 q.size() 的展开就是 `op add <dest> <count> 0`，通用规则会把它简化成隐藏状态
+        // 变量 __ls_que_q_count，卡片就带着内部名出去了。
+        ArrayFold fold = folds == null ? null : folds.get(op);
+        if(fold != null && fold != ArrayFold.CONSUMED) return foldNode(fold);
         if(!(op instanceof OpLine opLine)) return null;
-        // read 指令行 → 数组/矩阵下标节点（buf[i] / m[i][j]）；未命中注册表（含手写 read）返回 null 不折叠
-        if(op instanceof ReadLine read){
-            ArrayFold fold = folds == null ? null : folds.get(read);
-            if(fold == null || fold == ArrayFold.CONSUMED) return null;
-            return foldNode(fold);
-        }
+        // read 指令行未命中注册表（含手写 read）：不折叠，保持原样
+        if(op instanceof ReadLine) return null;
         // sensor 指令 → 成员访问节点（unit.Health）
         if(op instanceof SensorLine){
             return new Member(operandToNode(opLine.a), memberDisplay(opLine.b));

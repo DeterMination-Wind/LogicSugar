@@ -87,82 +87,19 @@ public class ExprHook{
         saveUIAll(canvas);
 
         boolean changed = false;
+        List<LStatement> statements = statementList(children);
         int i = 0;
-        while(i < children.size){
-            if(!(children.get(i) instanceof StatementElem) ||
-               !isChainLine(((StatementElem)children.get(i)).st)){
+        while(i < statements.size()){
+            LStatement first = statements.get(i);
+            if(first == null || !isChainLine(first)){
                 i++;
                 continue;
             }
 
-            List<ExprCompiler.Line> ops = new ArrayList<>();
-            int j = i;
-            while(j < children.size){
-                if(!(children.get(j) instanceof StatementElem)) break;
-                StatementElem elem = (StatementElem)children.get(j);
-                LStatement st = elem.st;
-                if(st instanceof AssertBoundsCard && isAutoAssert(st)){
-                    // 自动断言卡随链生成（位于下标计算之后、read/write 之前）：作为链内
-                    // 透明元素跳过——不进入 ops，但折叠时随链一起移除，下次展开按折回后的
-                    // 表达式重建。用户手写断言卡不是链元素（链在此断开）。
-                    j++;
-                    continue;
-                }
-                if(st instanceof OperationStatement opStmt){
-                    ops.add(new ExprCompiler.OpLine(
-                        opStmt.op.name(), opStmt.dest, opStmt.a, opStmt.b));
-                    if(!ExprCompiler.isTemp(opStmt.dest)){
-                        j++;
-                        break;
-                    }
-                }else if(st instanceof SensorStatement sensor){
-                    // sensor 语句也可入链：sensor _0 unit @health + op mul x _0 2
-                    // → unit.health * 2。仅折叠 type 为 @LAccess 常量的 sensor
-                    // （变量 type 是动态属性传感，语义上不等价于成员访问）。
-                    if(!sensor.type.startsWith("@") || ExprCompiler.resolveMember(sensor.type) == null){
-                        break;
-                    }
-                    ops.add(new ExprCompiler.SensorLine(sensor.to, sensor.from, sensor.type));
-                    if(!ExprCompiler.isTemp(sensor.to)){
-                        j++;
-                        break;
-                    }
-                }else if(st instanceof FuncCallStatement call && isFoldableCall(call)){
-                    // funccall 入链：call foo(a) _1 + op mul x _1 2 → foo(a) * 2
-                    // 仅折叠实参为纯值（temp/变量/数字）的调用——带嵌套表达式的实参
-                    // 无法无损重建（实参文本需要重新解析），保持原样积木。
-                    ops.add(new ExprCompiler.CallLine(call.name, call.args, call.result));
-                    if(!ExprCompiler.isTemp(call.result)){
-                        j++;
-                        break;
-                    }
-                }else if(st instanceof ReadStatement read && isArrayMemory(read.target)){
-                    // 注册表命中的 read 行入链（数组下标读）：read _0 cell1 i 参与折叠，
-                    // 经 opToNode 折回 buf[i]。用户手写的普通 read（memory 未命中注册表）
-                    // 不受影响；read 的 dest 非 temp 时它是链的最后一行。
-                    ops.add(new ExprCompiler.ReadLine(read.output, read.target, read.address));
-                    if(!ExprCompiler.isTemp(read.output)){
-                        j++;
-                        break;
-                    }
-                }else if(st instanceof SelectStatement sel && foldsSpanPrologue(sel)){
-                    // span 展开的前导行（select building slot）：不是积木，但必须留在链里。
-                    // 它永远不结束链：这些 scratch 不是用户表达式的一部分，折叠时由
-                    // ExprCompiler 作为 consumed 行消费掉。
-                    ops.add(new ExprCompiler.SelectLine(sel.result, sel.op.name(), sel.comp0, sel.comp1, sel.a, sel.b));
-                }else if(st instanceof WriteStatement write && isArrayMemory(write.target)){
-                    // 注册表命中的 write 行：下标赋值的终结行（没有 dest），链到此为止。
-                    // 整条链（含地址计算 op add）交给 rebuildAssignment 折回 buf[i] = value。
-                    ops.add(new ExprCompiler.WriteLine(write.input, write.target, write.address));
-                    j++;
-                    break;
-                }else{
-                    break;
-                }
-                j++;
-            }
-
-            int chainLen = j - i;
+            Chain chain = collectChain(statements, i);
+            List<ExprCompiler.Line> ops = chain.ops;
+            int j = chain.end;
+            int chainLen = chain.length();
             // 整条链只有自动断言卡（无指令行）时无事可做
             if(ops.isEmpty()){
                 i = j;
@@ -174,42 +111,15 @@ public class ExprHook{
             boolean arrayEdge = ops.get(0) instanceof ExprCompiler.ReadLine
                 || ops.get(0) instanceof ExprCompiler.WriteLine;
             if(chainLen >= 2 || (chainLen == 1 && arrayEdge)){
-                // 安全检查：若有 jump 指向链中间 [i+1, i+chainLen-1]，放弃折叠。
+                // jump 安全检查（画布专有）：若有 jump 指向链中间 [i+1, i+chainLen-1]，放弃折叠。
                 // 场景：别人没装插件时写的 jump 指向 op 链中间，折叠会改变语义。
                 // 指向链首 i 是允许的，折叠后仍指向 expr 积木。
-                // 链内临时变量被链外语句读取时同样放弃（折叠会删除这些变量，值也会变）。
-                // 链内的自动断言卡随链移除（下次展开重建），不参与链外读取判定。
-                if(hasJumpInRange(canvas, i + 1, i + chainLen - 1) || hasExternalReads(children, i, j, ops)){
-                    i = j; // 跳过整条链，不折叠
-                    continue;
-                }
-                String expr = null;
-                String dest = null;
-                ExprCompiler.Line last = ops.get(ops.size() - 1);
-                if(last instanceof ExprCompiler.WriteLine){
-                    // 下标赋值链：write <value> <memory> <address> 结尾 → dest=buf[i], expr=value
-                    String[] pair = ExprCompiler.rebuildAssignment(ops);
-                    if(pair != null){
-                        dest = pair[0];
-                        expr = pair[1];
-                    }
-                }else{
-                    expr = ExprCompiler.rebuild(ops);
-                    if(expr != null){
-                        dest = ExprCompiler.lineDest(last);
-                    }
-                }
-                if(expr != null){
-                    // 折回安全门：数组/矩阵折回结果重新编译后必须与原链指令流逐行一致，
-                    // 否则保持原样（宁可少折回也不能折错；链内没有数组折叠时该门恒通过）。
-                    if(!ExprCompiler.verifyArrayFold(ops, dest, expr, ExprStatement.functionChecker())){
-                        expr = null;
-                    }
-                }
-                if(expr != null){
+                Plan plan = hasJumpInRange(canvas, i + 1, i + chainLen - 1)
+                    ? null : foldPlan(statements, chain);
+                if(plan != null){
                     ExprStatement exprStmt = new ExprStatement();
-                    exprStmt.dest = dest == null ? "result" : dest;
-                    exprStmt.expr = expr;
+                    exprStmt.dest = plan.dest() == null ? "result" : plan.dest();
+                    exprStmt.expr = plan.expr();
                     exprStmt.lastOps = ops;
 
                     for(int k = 0; k < chainLen; k++){
@@ -219,8 +129,10 @@ public class ExprHook{
                     canvas.addAt(i, exprStmt);
 
                     changed = true;
+                    // 画布已变：链下标的基准一起重建（下标口径与 collectChain 保持同一份语句列表）
+                    statements = statementList(children);
                 }else{
-                    // rebuild 失败（如链不完整），跳过整条链，
+                    // 链外读取 / rebuild 失败（如链不完整）/ 安全门拒绝：跳过整条链，
                     // 避免 i++ 后从链中间重新查找子链导致误折叠
                     i = j;
                     continue;
@@ -240,12 +152,167 @@ public class ExprHook{
         }
     }
 
+    /** 一条链折回卡片的结果：目标文本（{@code dest}）与表达式文本（{@code expr}）。 */
+    public record Plan(String dest, String expr){}
+
+    /**
+     * 一条已收集的链能不能折回卡片：链外读取判定 + 逆向重建（{@code rebuild} /
+     * {@code rebuildAssignment}）+ 重新编译比对安全门。画布版 {@code foldAllInContext} 与自测
+     * 共用这一处，因此“哪些链能折回”不会在两边漂（链收集同样共用 {@link #collectChain}）。
+     *
+     * <p>画布专有的 jump 安全检查由调用方先做（{@code foldAllInContext} 的
+     * {@code hasJumpInRange}）。链内的自动断言卡属于链范围，不参与链外读取判定。</p>
+     *
+     * @return {@code null} = 保持原样（链外读取 / 重建失败 / 安全门拒绝）
+     */
+    public static Plan foldPlan(List<LStatement> statements, Chain chain){
+        List<ExprCompiler.Line> ops = chain.ops;
+        if(ops.isEmpty()) return null;
+        // 链内临时变量被链外语句读取时放弃折叠（折叠会删除这些变量，值也会变）
+        if(hasExternalReads(statements, chain.start, chain.end, ops)) return null;
+
+        String dest;
+        String expr;
+        ExprCompiler.Line last = ops.get(ops.size() - 1);
+        if(last instanceof ExprCompiler.WriteLine){
+            // 下标赋值链：write <value> <memory> <address> 结尾 → dest=buf[i], expr=value
+            String[] pair = ExprCompiler.rebuildAssignment(ops);
+            if(pair == null) return null;
+            dest = pair[0];
+            expr = pair[1];
+        }else{
+            expr = ExprCompiler.rebuild(ops);
+            if(expr == null) return null;
+            dest = ExprCompiler.lineDest(last);
+        }
+        // 折回安全门：数组/矩阵/span/数据模块反向层（容器 getter 等）的折回结果重新编译后
+        // 必须与原链指令流逐行一致，否则保持原样（宁可少折回也不能折错；链内没有任何折回时该门恒通过）。
+        if(!ExprCompiler.verifyArrayFold(ops, dest, expr, ExprStatement.functionChecker())) return null;
+        return new Plan(dest, expr);
+    }
+
+    /** 画布元素 → 语句列表（null 表示非语句元素）。链收集与链外读取判定共用同一份下标口径。 */
+    private static List<LStatement> statementList(Seq<Element> children){
+        List<LStatement> statements = new ArrayList<>(children.size);
+        for(Element child : children){
+            statements.add(child instanceof StatementElem elem ? elem.st : null);
+        }
+        return statements;
+    }
+
+    /** 折叠链：语句下标区间 {@code [start, end)} 加它折出的指令链。 */
+    public static final class Chain{
+        public final int start, end;
+        public final List<ExprCompiler.Line> ops;
+
+        Chain(int start, int end, List<ExprCompiler.Line> ops){
+            this.start = start;
+            this.end = end;
+            this.ops = ops;
+        }
+
+        public int length(){
+            return end - start;
+        }
+    }
+
+    /**
+     * 从 {@code statements[start]} 开始收集折叠链的判定结果（无画布版）。
+     *
+     * <p>画布折叠（{@link #foldAll}）与自测走同一条收集路径：一条语句能不能入链、入链后链
+     * 是否到此结束，只在 {@link #appendChainLine} 一处。这是“重开时卡片能不能折回”的第一道
+     * 判据，而它在无头环境里看不见——自测因此用真正在跑的那一份，而不是自己再写一遍。</p>
+     */
+    public static Chain collectChain(List<LStatement> statements, int start){
+        List<ExprCompiler.Line> ops = new ArrayList<>();
+        int j = start;
+        while(j < statements.size()){
+            LStatement st = statements.get(j);
+            if(st == null) break;
+            if(st instanceof AssertBoundsCard && isAutoAssert(st)){
+                // 自动断言卡随链生成（位于下标计算之后、read/write 之前）：作为链内
+                // 透明元素跳过——不进入 ops，但折叠时随链一起移除，下次展开按折回后的
+                // 表达式重建。用户手写断言卡不是链元素（链在此断开）。
+                j++;
+                continue;
+            }
+            ChainStep step = appendChainLine(ops, st);
+            if(step == ChainStep.NONE) break;
+            j++;
+            if(step == ChainStep.TAIL) break;
+        }
+        return new Chain(start, j, ops);
+    }
+
+    /** 链收集的单步：{@code NONE} = 该语句不属于链（链在此断开）、{@code MORE} = 已入链且链继续、
+     *  {@code TAIL} = 已入链且链到此结束（该行写的是非临时目标）。 */
+    private enum ChainStep{ NONE, MORE, TAIL }
+
+    /** 一条语句并入折叠链（{@link #collectChain} 逐条调用它）。 */
+    private static ChainStep appendChainLine(List<ExprCompiler.Line> ops, LStatement st){
+        if(st instanceof OperationStatement opStmt){
+            ops.add(new ExprCompiler.OpLine(
+                opStmt.op.name(), opStmt.dest, opStmt.a, opStmt.b));
+            // span 前导段的两个固定 scratch 名（__ls_span_q/r）不是临时变量形态，但它们同样是
+            // 展开的内部寄存器（不是用户表达式的一部分）：链不能在这里结束，否则变量下标的
+            // span 寻址永远凑不齐（前导段 + 它自己的 read/write），卡片折不回来。
+            return ExprCompiler.isTemp(opStmt.dest) || SpanAccess.scratchNames().contains(opStmt.dest)
+                ? ChainStep.MORE : ChainStep.TAIL;
+        }
+        if(st instanceof SensorStatement sensor){
+            // sensor 语句也可入链：sensor _0 unit @health + op mul x _0 2
+            // → unit.health * 2。仅折叠 type 为 @LAccess 常量的 sensor
+            // （变量 type 是动态属性传感，语义上不等价于成员访问）。
+            if(!sensor.type.startsWith("@") || ExprCompiler.resolveMember(sensor.type) == null){
+                return ChainStep.NONE;
+            }
+            ops.add(new ExprCompiler.SensorLine(sensor.to, sensor.from, sensor.type));
+            return ExprCompiler.isTemp(sensor.to) ? ChainStep.MORE : ChainStep.TAIL;
+        }
+        if(st instanceof FuncCallStatement call){
+            // funccall 入链：call foo(a) _1 + op mul x _1 2 → foo(a) * 2
+            // 仅折叠实参为纯值（temp/变量/数字）的调用——带嵌套表达式的实参
+            // 无法无损重建（实参文本需要重新解析），保持原样积木。
+            if(!isFoldableCall(call)) return ChainStep.NONE;
+            ops.add(new ExprCompiler.CallLine(call.name, call.args, call.result));
+            return ExprCompiler.isTemp(call.result) ? ChainStep.MORE : ChainStep.TAIL;
+        }
+        if(st instanceof ReadStatement read){
+            // 注册表命中的 read 行入链（数组/矩阵/span 下标读，或容器 getter 展开末尾那条
+            // 落在容器内存块上的 read）：经 opToNode 折回 buf[i] / s.top()。用户手写的普通
+            // read（memory 未命中任何注册表）不受影响；read 的 dest 非 temp 时它是链的最后一行。
+            if(!foldsMemoryLine(read)) return ChainStep.NONE;
+            ops.add(new ExprCompiler.ReadLine(read.output, read.target, read.address));
+            return ExprCompiler.isTemp(read.output) ? ChainStep.MORE : ChainStep.TAIL;
+        }
+        if(st instanceof SelectStatement sel){
+            // span 展开的前导行（select building slot）：不是积木，但必须留在链里。
+            // 它永远不结束链：这些 scratch 不是用户表达式的一部分，折叠时由
+            // ExprCompiler 作为 consumed 行消费掉。
+            if(!foldsSpanPrologue(sel)) return ChainStep.NONE;
+            ops.add(new ExprCompiler.SelectLine(sel.result, sel.op.name(), sel.comp0, sel.comp1, sel.a, sel.b));
+            return ChainStep.MORE;
+        }
+        if(st instanceof WriteStatement write){
+            // 注册表命中的 write 行：下标赋值的终结行（没有 dest），链到此为止。
+            // 整条链（含地址计算 op add）交给 rebuildAssignment 折回 buf[i] = value。
+            if(!foldsMemoryLine(write)) return ChainStep.NONE;
+            ops.add(new ExprCompiler.WriteLine(write.input, write.target, write.address));
+            return ChainStep.TAIL;
+        }
+        return ChainStep.NONE;
+    }
+
     // ===== 展开：ExprStatement → op 链 =====
 
     /** 语句能否作为表达式链的节点：op 语句、type 为 @LAccess 常量的 sensor 语句、
-     *  实参为纯值的 funccall 语句、memory 命中数组注册表的 read/write 语句（链首）、
-     *  以及展开时随链生成的自动越界断言卡（链内透明元素，折叠时一并移除）。 */
-    private static boolean isChainLine(LStatement st){
+     *  实参为纯值的 funccall 语句、memory 命中数组/span/结构注册表的 read/write 语句、
+     *  span 前导段 select，以及展开时随链生成的自动越界断言卡（链内透明元素，折叠时一并移除）。
+     *
+     *  <p>链收集（{@link #collectChain}）与自测共用这一道判据：它决定“哪些行会被折进卡片”，
+     *  也决定了链在哪里断掉——而链在外面断掉的行会被 {@link #hasExternalReads} 当成“链外读取”，
+     *  正是 getter 类展开以前折不回来的原因。</p> */
+    public static boolean isChainLine(LStatement st){
         if(st instanceof OperationStatement) return true;
         if(st instanceof SensorStatement sensor){
             return sensor.type.startsWith("@") && ExprCompiler.resolveMember(sensor.type) != null;
@@ -256,12 +323,50 @@ public class ExprHook{
         if(st instanceof AssertBoundsCard) return isAutoAssert(st);
         // read/write 行只有在注册表把 memory 解析到已声明数组时才入链：
         // 用户手写的普通 read/write 与纯原版 mlog（无声明卡）不受影响
-        if(st instanceof ReadStatement read) return isArrayMemory(read.target);
-        if(st instanceof WriteStatement write) return isArrayMemory(write.target);
+        if(st instanceof ReadStatement || st instanceof WriteStatement) return foldsMemoryLine(st);
         // span 展开的前导行（select building slot）：不是积木，但必须参与折叠，
         // 否则 `x = buf[i]` 保存一次就永久退化成前导段 + 一条原版 read 积木
         if(st instanceof SelectStatement sel) return foldsSpanPrologue(sel);
         return false;
+    }
+
+    /**
+     * {@code read}/{@code write} 行能否作为折叠链的元素：memory 命中数组/矩阵/span 注册表，
+     * 或落在某个数据结构声明的内存块上（{@link ExprIntrinsics#declaresMemory}）。
+     * 链收集（{@link #isChainLine}）与自测共用这一处判定。
+     *
+     * <p>为什么要管结构内存块：容器 getter（{@code s.top()} / {@code q.front()} / {@code d.back()}）
+     * 的多行展开以一条落在容器内存块上的 {@code read} 结尾。read 不入链时链在它前面断掉，
+     * 而链外读取判定又把地址临时变量当成外部读取，整条链永远折不回来；多行卡片在保存文本里
+     * 不带自描述标记，于是 getter 卡保存一次就永久退化成裸指令（2026-10 报告：Expr 里
+     * {@code stack.top()} 这类 getter 重建不出来，画布上留下一条 {@code _1 = 8+head-(...)}
+     * 的地址运算卡）。入链后由数据模块的反向层（{@link ExprIntrinsics.Provider#foldAt}）
+     * 把整段折回 getter，重新编译比对门仍然是唯一出口。</p>
+     */
+    public static boolean foldsMemoryLine(LStatement statement){
+        if(statement instanceof ReadStatement read){
+            return isArrayMemory(read.target) || isSpanScratch(read.target, read.address)
+                || ExprIntrinsics.declaresMemory(read.target);
+        }
+        // write 行只有数组/矩阵/span 下标赋值这一种形态：容器/记录的写都在注入函数体里，
+        // 展开链上不会出现落在结构内存块上的 write
+        if(statement instanceof WriteStatement write){
+            return isArrayMemory(write.target) || isSpanScratch(write.target, write.address);
+        }
+        return false;
+    }
+
+    /**
+     * span 变量逻辑地址的寻址行（{@code read/write x __ls_span_b __ls_span_r}）：前导段用的是
+     * 程序级固定 scratch，内存名不是 span 成员块，{@link #isArrayMemory} 认不出来。它同样必须
+     * 入链——否则 {@code ExprCompiler} 的 span 视角永远凑不齐（前导段 select 在链内、这条
+     * read 在链外），变量下标的表达式卡（{@code x = buf[i]}）重开后折不回卡片。只声明确实有
+     * span 时才放行（这两个名字是保留的，手写程序不会用到）。
+     */
+    private static boolean isSpanScratch(String memory, String address){
+        if(!SpanAccess.BUILDING.equals(memory) || !SpanAccess.SLOT.equals(address)) return false;
+        ArrayRegistry registry = ArrayRegistry.active();
+        return registry != null && registry.hasSpans();
     }
 
     /**
@@ -802,18 +907,6 @@ public class ExprHook{
         return false;
     }
 
-    /** 检查链外语句是否读取了链内临时变量（折叠会删除这些临时变量）。
-     *  保守实现：用序列化文本做标识符边界匹配，宁可少折叠也不改变语义。
-     *  链内的自动断言卡属于链范围（{@code [chainStart, chainEnd)}），不算链外读取。 */
-    private static boolean hasExternalReads(Seq<Element> children, int chainStart, int chainEnd,
-                                            List<ExprCompiler.Line> ops){
-        List<LStatement> statements = new ArrayList<>(children.size);
-        for(Element child : children){
-            statements.add(child instanceof StatementElem elem ? elem.st : null);
-        }
-        return hasExternalReads(statements, chainStart, chainEnd, ops);
-    }
-
     /** 链外读取检查（语句列表口径，画布遍历与自测共用；null 表示非语句元素）。
      *  链内临时变量被链外语句引用时折叠会删除这些变量、值也会变，必须放弃折叠。
      *
@@ -822,7 +915,15 @@ public class ExprHook{
      *  两条链都折不回来——卡片在保存后永久退化成裸 op 积木（2026-10 报告：「复制 Expr 积木后，
      *  马上转为了编译后形态」）。现在的口径：某条语句里除了它自己定义的那一次出现，多出来的
      *  都算读；而读之前已有链外定义时（例如另一条链的第一行 {@code op rand _0 10}），读到的
-     *  不是被折叠链的值，不算外部读取。</p> */
+     *  不是被折叠链的值，不算外部读取。</p>
+     *
+     *  <p><b>表达式卡按源码扫，不按展开文本扫</b>：卡片的展开行（{@code write()} 写出的那串
+     *  {@code op}/{@code read}）是它自己的内部实现，那些临时变量是卡片自己的 scratch，与外层
+     *  链的同名临时变量无关。按展开文本扫会把这一层混进去：先折回的那张卡（它现在就是一条
+     *  {@code ExprStatement}）会把后面所有用同名 {@code _0/_1…} 的链全部判成“链外读取”，
+     *  第二张卡永远折不回来。卡片与外界的接口只有源码里的目标变量（定义）和表达式里出现的
+     *  名字（读），因此这里扫 {@code expr} 并拿 {@code dest} 当定义——用户真在表达式里写了
+     *  {@code _0} 时依旧是“读”，保守方向不变。</p> */
     public static boolean hasExternalReads(List<LStatement> statements, int chainStart, int chainEnd,
                                            List<ExprCompiler.Line> ops){
         Set<String> temps = new HashSet<>();
@@ -843,9 +944,18 @@ public class ExprHook{
             if(idx >= chainStart && idx < chainEnd) continue;
             LStatement st = statements.get(idx);
             if(st == null) continue;
+            boolean card = st instanceof ExprStatement;
             StringBuilder text = new StringBuilder();
-            st.write(text);
-            String writes = definesVariable(st);
+            if(card){
+                ExprStatement exprCard = (ExprStatement)st;
+                if(exprCard.expr != null) text.append(exprCard.expr);
+            }else{
+                st.write(text);
+            }
+            String writes = card ? ((ExprStatement)st).dest : definesVariable(st);
+            // 这条语句自己写下的变量是定义（卡片的目标、op/read/funccall/set 的目标）：
+            // 此后读到的不是被折叠链的值。
+            if(writes != null && temps.contains(writes)) defined.add(writes);
             for(String temp : temps){
                 int occurrences = countIdentifier(text, temp);
                 if(occurrences == 0) continue;

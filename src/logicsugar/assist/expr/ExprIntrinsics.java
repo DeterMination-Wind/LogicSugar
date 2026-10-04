@@ -90,6 +90,52 @@ public final class ExprIntrinsics{
         default String indexIntrinsic(String kind){
             return null;
         }
+        /**
+         * 该内存块是否是本 provider 的已声明结构（容器声明的内存块、span 的成员块…）。
+         * 折叠链把「落在结构内存块上的 {@code read}」也算作链节点，这样 {@link #foldAt}
+         * 才有机会把整段展开折回源代码卡片。默认 false：没有反向层的 provider 让这类 read
+         * 留在链外——链里多一条折不回来的 read 只会让整条链一起放弃折叠。
+         */
+        default boolean declaresMemory(String memory){
+            return false;
+        }
+        /**
+         * 反向折叠：展开链里下标 {@code index} 处的行 + 它前面同属这段展开的行 → 源代码节点；
+         * null = 本 provider 不认领。
+         *
+         * <p>通用规则能还原的展开（纯 {@code op} 链、数组/矩阵下标、span 寻址）不需要这个钩子；
+         * 它存在的理由是那些「展开里带结构私有内存读或隐藏状态变量、通用规则解释不了」的
+         * getter：容器 {@code s.top()} / {@code q.size()} / {@code d.back()} 这一类的多行展开，
+         * 重开时唯一的还原途径就是编辑器折叠（多行卡片在保存文本里不带自描述标记），没有反向层
+         * 就永久退化成裸指令，甚至被折成一条地址运算的临时变量卡。</p>
+         *
+         * <p>窗口以 {@code index} 结尾：{@code lines} 是从 {@code index} 往前数的行数（含
+         * {@code index} 自身），{@code index} 之前那几行会被标记为已消费（它们只是展开的中间行），
+         * {@code index} 这一行由节点取代。单行展开就是 {@code lines == 1}。实现方自己负责
+         * 快速预筛（只有可疑的行才该去编译形状探针）。</p>
+         *
+         * <p>折回结果仍然要过 {@code ExprCompiler} 的重新编译比对门（见
+         * {@code verifyArrayFold}）：形状没对上、或重编译指令流不同，一律保持原样。</p>
+         */
+        default Fold foldAt(List<Line> ops, int index){
+            return null;
+        }
+    }
+
+    /**
+     * {@link Provider#foldAt} 的结果：还原出的源代码节点 + 该展开占用的行数。
+     * {@code lines} 是从 {@code index} 往前数的窗口长度（含 {@code index} 行自身），调用方据此把
+     * {@code [index - lines + 1, index]} 里除末行以外的整段标记为折叠已消费；节点里不应再引用
+     * 这些行写出的临时变量（它们会随展开一起消失）。
+     */
+    public static final class Fold{
+        final Node node;
+        public final int lines;
+
+        public Fold(Node node, int lines){
+            this.node = node;
+            this.lines = lines;
+        }
     }
 
     /** analyze 阶段的 名字→结构种类 轻量声明表（由 SugarCompiler 安装；编辑器路径为空）。 */
@@ -198,6 +244,35 @@ public final class ExprIntrinsics{
             all.add(index);
             List<Line> lines = provider.expandCall(intrinsic, all, ctx);
             if(lines != null && !lines.isEmpty()) return lines;
+        }
+        return null;
+    }
+
+    /**
+     * 该内存块是否属于某个 provider 的已声明结构（折叠链的 read 行判定用）。
+     * 与 {@link #tryFoldAt} 成对：声明了内存的 provider 必须能给出反向折叠，
+     * 否则那条 read 只会把整条链拖成「折不回来」。
+     */
+    public static boolean declaresMemory(String memory){
+        if(memory == null || memory.isEmpty()) return false;
+        for(Provider provider : providers){
+            if(provider.declaresMemory(memory)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 反向折叠：{@code ops} 里下标 {@code index} 处的行（及它前面同属这段展开的行）
+     * → 源代码节点；null = 没有 provider 认领。结果做形状校验（窗口必须落在链内），
+     * provider 实现不再各自判边界。
+     */
+    public static Fold tryFoldAt(List<Line> ops, int index){
+        if(ops == null || index < 0 || index >= ops.size()) return null;
+        for(Provider provider : providers){
+            Fold fold = provider.foldAt(ops, index);
+            if(fold == null || fold.node == null) continue;
+            if(fold.lines < 1 || fold.lines > index + 1) continue;
+            return fold;
         }
         return null;
     }
