@@ -7,7 +7,7 @@ import mindustry.graphics.Pal;
  * 变量视图一行里的数据类型：决定该行按数值还是按对象解释、用什么颜色显示，以及
  * 在存储快照时如何分类统计。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1 ({@code cardillan.mlogassertions.data.ValueType}),
+ * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.data.ValueType}),
  * verbatim. {@link #title} 是<b>线格式</b>的一部分：{@link MemoryText} 导出的内存表把类型
  * 写成 title，导入时要求字符串完全相等才认得出（{@code MemoryText.type(String)}），
  * 所以这些英文名不能翻译、不能改名。{@link #paddedTitle} 与两个 shade 只用于显示。</p>

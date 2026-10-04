@@ -29,11 +29,12 @@ import mindustry.world.blocks.logic.MemoryBlock;
  * 快照选择对话框：列出某块建筑的全部快照，或一批同组快照里的每一块；
  * 每行显示快照时间、包含的变量类型分布条，点击即切换 {@link VarsDialog} 正在浏览的视图。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1
+ * <p>Ported from upstream MlogAssertions v0.11.3
  * ({@code cardillan.mlogassertions.ui.SnapshotsDialog})，行为与布局逐字保留（包括
  * {@code setup()} 只在列表非空时 {@code cont.clear()}、展开行只在{@code group} 为 false 时给出
- * 等细节）。用户可见文本走 {@code logicsugar.vars.*} bundle 键（{@link L10n#text}：
- * 键缺失时用英文 fallback）。</p>
+ * 等细节），含 v0.11.2 的两处变化：图标按实体取且可能为 null（单位/队伍）时跳过；
+ * 点击 recording 主快照直接进入它的逐指令子快照列表。用户可见文本走
+ * {@code logicsugar.vars.*} bundle 键（{@link L10n#text}：键缺失时用英文 fallback）。</p>
  */
 public class SnapshotsDialog extends BaseDialog{
     VarsDialog vars;
@@ -107,13 +108,16 @@ public class SnapshotsDialog extends BaseDialog{
         b.clearChildren();  // ? - from arc
         b.margin(12f);
         int groupSize = groupSize(snapshot);
-        Building build = snapshot.building();
 
         b.table(t -> {
             if(group){
-                Image image = new Image(new TextureRegionDrawable(build.block.uiIcon),
-                        Vars.mobile ? Color.white : Color.lightGray).setScaling(Scaling.fit);
-                t.add(image).size(40f).right().top().pad(4f).padRight(14f);
+                // 单位/队伍等实体没有图集图标，拿不到就不画（上游 v0.11.2）
+                arc.graphics.g2d.TextureRegion icon = snapshot.icon();
+                if(icon != null){
+                    Image image = new Image(new TextureRegionDrawable(icon),
+                            Vars.mobile ? Color.white : Color.lightGray).setScaling(Scaling.fit);
+                    t.add(image).size(40f).right().top().pad(4f).padRight(14f);
+                }
             }else{
                 t.image(snapshot.type().icon).color(Pal.accent).size(48f).right().top().padRight(10f);
             }
@@ -164,7 +168,11 @@ public class SnapshotsDialog extends BaseDialog{
         }).center().width(width).padTop(10f).margin(8f);
 
         b.clicked(() -> {
-            if(parent == null){
+            if(snapshot.recording() != null){
+                // recording 主快照：进入它自己的逐指令子快照列表
+                SnapshotList list = SnapshotList.list(snapshot.recording());
+                vars.setup(list);
+            }else if(parent == null){
                 snapshots.select(snapshot);
                 vars.setup(snapshots);
             }else{

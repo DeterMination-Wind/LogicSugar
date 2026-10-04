@@ -363,8 +363,9 @@ public final class ProcessorStatus{
         LExecutor.LInstruction[] instructions = block.executor.instructions;
 
         if(ix >= 0 && ix < instructions.length){
-            LExecutor.LInstruction instruction = instructions[ix];
-            if(instruction instanceof AssertInstructions.AssertInstruction){
+            // profiler 会把指令包装成转发器，任何 instanceof 判断前必须先解包（见 InstrumentationEngine.unwrap）
+            LExecutor.LInstruction instruction = logicsugar.profile.InstrumentationEngine.unwrap(instructions[ix]);
+            if(instruction instanceof AssertInstructions.DevToolsInstruction){
                 // assertion instructions own their message lifecycle; a scan that saw
                 // "not a stop/wait" would wipe the failure message every frame
                 return;
@@ -432,7 +433,9 @@ public final class ProcessorStatus{
         int sides = 60;
         int ix = (int)block.executor.counter.numval;
         LExecutor.LInstruction[] instructions = block.executor.instructions;
-        if(ix >= 0 && ix < instructions.length && instructions[ix] instanceof LExecutor.WaitI w){
+        LExecutor.LInstruction instruction = ix >= 0 && ix < instructions.length
+            ? logicsugar.profile.InstrumentationEngine.unwrap(instructions[ix]) : null;
+        if(instruction instanceof LExecutor.WaitI w){
             float total = (float)w.value.num();
             float current = w.curTime;
             float arc = current / total;

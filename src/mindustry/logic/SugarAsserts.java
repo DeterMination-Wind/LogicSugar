@@ -28,6 +28,7 @@ import mindustry.type.UnitType;
 import mindustry.type.Weather;
 import mindustry.ui.Styles;
 import mindustry.world.Block;
+import logicsugar.profile.ProfilingCommand;
 import logicsugar.vars.SnapshotType;
 import mindustry.world.blocks.logic.CanvasBlock;
 import mindustry.world.blocks.logic.LogicBlock;
@@ -39,18 +40,19 @@ import java.util.Arrays;
 
 /**
  * Assertion statement set for runtime checks and debugging, ported from the upstream
- * MlogAssertions mod (cardillan/mlogassertions, currently v0.11.1) with its wire format, so
+ * MlogAssertions mod (cardillan/mlogassertions, currently v0.11.3) with its wire format, so
  * programs compiled in debug mode run identically under either mod and Mindcode-generated
  * code round-trips through the editor. The one extension is {@code asserttype}'s null
  * type — see {@link AssertTypeCard}.
  *
- * <p>Synced from v0.8.2 to v0.11.1: the generic {@code assert} card, the failure messages
+ * <p>Synced from v0.8.2 to v0.11.3: the generic {@code assert} card, the failure messages
  * that name the compared values, {@code asserttype}'s expanded data-type taxonomy and its
  * {@code <type> <value>} token order (v0.10; the older {@code <value> <type>} text is still
- * read), {@code assertprints}' buffer truncation, and the {@code {1}}/{@code {name}}
- * message placeholders (the older {@code [[1]} form still renders). Upstream's snapshot
- * instruction and the Vars/Memory/Properties screens are not ported — see
- * {@code docs/architecture.md}.</p>
+ * read), {@code assertprints}' buffer truncation, and the {@code {1}}/{@code name}
+ * message placeholders (the older {@code [[1]} form still renders). The snapshot card now
+ * carries v0.11.2's {@code steps} slot and {@code recording} type, and the
+ * {@code profile}/{@code restart} cards of v0.11.3 are present; the Vars/Memory/Properties
+ * screens live in {@code logicsugar.vars} — see {@code docs/architecture.md}.</p>
  *
  * <p>The cards serialize to the custom instruction tokens themselves ({@code assertBounds
  * ...}), which double as the sugar source format. The compiler decides their fate at
@@ -58,7 +60,9 @@ import java.util.Arrays;
  * the persistence carrier and saved mlog stays vanilla-parseable — while {@code emit}
  * (debug build) writes them into the program as real instructions. Emitted instructions
  * are unparseable on vanilla clients (they degrade to InvalidStatement placeholders), so
- * the emit mode is an explicit opt-in setting.</p>
+ * the emit mode is an explicit opt-in setting. v0.11.3 also brings the {@code profile} and
+ * {@code restart} cards; {@code restart} has real side effects on the target processor
+ * (code reload + variable reset), so it is documented as single-player debugging only.</p>
  *
  * <p>Coexistence: if another mod already owns an opcode in {@code LAssembler.customParsers}
  * (e.g. MlogAssertions loaded first), the affected cards are not registered at all —
@@ -104,6 +108,8 @@ public final class SugarAsserts{
         register(ErrorCard::new, ErrorCard.opcode, SugarAsserts::parseError);
         register(LogCard::new, LogCard.opcode, SugarAsserts::parseLog);
         register(BreakpointCard::new, BreakpointCard.opcode, SugarAsserts::parseBreakpoint);
+        register(ProfileCard::new, ProfileCard.opcode, SugarAsserts::parseProfile);
+        register(RestartCard::new, RestartCard.opcode, SugarAsserts::parseRestart);
     }
 
     private static void register(Prov<LStatement> prov, String opcode, Func<String[], LStatement> parser){
@@ -127,7 +133,7 @@ public final class SugarAsserts{
     public static final String[] opcodes = {
         AssertConditionCard.opcode, AssertBoundsCard.opcode, AssertEqualsCard.opcode, AssertFlushCard.opcode,
         AssertPrintsCard.opcode, AssertTypeCard.opcode, ErrorCard.opcode, LogCard.opcode, BreakpointCard.opcode,
-        SnapshotCard.opcode
+        SnapshotCard.opcode, ProfileCard.opcode, RestartCard.opcode
     };
 
     /** Whether a sugar source line starts with one of the assertion opcodes (cheap scan
@@ -259,15 +265,24 @@ public final class SugarAsserts{
 
     /** Creates a snapshot of a block (or of every logic block on the map) at run time.
      *
-     *  <p>Ported from upstream v0.10. Like every card in this family it is stripped by
-     *  default (the sugar survives in the carrier) and only written into the program as a
-     *  real {@code snapshot} line in a debug ({@code emit}) build, because a vanilla client
-     *  cannot parse the instruction. Creating a snapshot is a client-side act (it never
-     *  changes the saved program), so it is allowed in multiplayer.</p> */
+     *  <p>Ported from upstream v0.10; v0.11.2 added the {@code recording} type, which
+     *  records the target processor's next {@code steps} instructions, and with it the
+     *  {@code steps} slot — the wire format is now
+     *  {@code snapshot <type> <block> <steps> <message>} (the older three-payload-token
+     *  form still parses, see {@link SugarAsserts#parseSnapshot}). Like every card in this
+     *  family it is stripped by default (the sugar survives in the carrier) and only written
+     *  into the program as a real {@code snapshot} line in a debug ({@code emit}) build,
+     *  because a vanilla client cannot parse the instruction. Creating a snapshot is a
+     *  client-side act (it never changes the saved program), so it is allowed in
+     *  multiplayer.</p> */
     public static class SnapshotCard extends AssertCard{
         public static final String opcode = "snapshot";
+        /** The {@code steps} slot's default, also used when an old line without the slot is
+         *  read back (upstream v0.11.2's {@code SnapshotStatement} default). */
+        public static final String DEFAULT_STEPS = "20";
         public SnapshotType type = SnapshotType.isolated;
         public String block = "@this";
+        public String steps = DEFAULT_STEPS;
         public String message = "";
 
         @Override
@@ -283,7 +298,12 @@ public final class SugarAsserts{
                         build(table);
                     }));
                 }, Styles.logict, () -> {}).size(120f, 40f).pad(4f).color(row.color).left();
-                if(type != SnapshotType.global){
+                if(type == SnapshotType.recording){
+                    tag(row, "asserts.snapshot.next", "next");
+                    input(row, steps, s -> steps = s, NUM_W);
+                    tag(row, "asserts.snapshot.steps", "steps of");
+                    input(row, block, s -> block = s, VAR_W);
+                }else if(type != SnapshotType.global){
                     tag(row, "asserts.snapshot.of", "of");
                     input(row, block, s -> block = s, VAR_W);
                 }
@@ -296,13 +316,22 @@ public final class SugarAsserts{
 
         @Override
         public LInstruction build(LAssembler builder){
-            return new logicsugar.assist.AssertInstructions.SnapshotI(type, builder.var(block), builder.var(message));
+            return new logicsugar.assist.AssertInstructions.SnapshotI(type, builder.var(block),
+                builder.var(effectiveSteps()), builder.var(message));
+        }
+
+        /** The steps value written to the wire: a cleared field counts as the default, so the
+         *  slot is never empty and the old-text fallback in {@link SugarAsserts#parseSnapshot}
+         *  stays reserved for real legacy lines. */
+        public String effectiveSteps(){
+            return steps == null || steps.isEmpty() ? DEFAULT_STEPS : steps;
         }
 
         @Override
         public void write(StringBuilder out){
             out.append(opcode).append(' ').append(type.name()).append(' ')
-                .append(optional(block)).append(' ').append(optional(message));
+                .append(optional(block)).append(' ').append(optional(effectiveSteps())).append(' ')
+                .append(optional(message));
         }
     }
 
@@ -548,7 +577,7 @@ public final class SugarAsserts{
         public MessageCard(String opcode, boolean hasLevel, String defaultTemplate){
             this.opcode = opcode;
             this.hasLevel = hasLevel;
-            // Upstream v0.11.1 makes the counter a variable reference ({@code {@counter}}
+            // Upstream v0.11.3 makes the counter a variable reference ({@code {@counter}}
             // renders as the instruction index) and leaves p1..p9 free for user params.
             // LogicSugar ≤5.5 used "[[1]" with p1 bound to @counter; that form still
             // renders (legacy placeholder support in AssertInstructions).
@@ -678,6 +707,82 @@ public final class SugarAsserts{
         }
     }
 
+    /** Starts, stops or clears the profiler of a processor (upstream v0.11.3). The target block
+     *  defaults to {@code @this}; a non-processor target is ignored at run time. Like every card
+     *  in this family it is stripped by default and only emitted in a debug ({@code emit}) build.
+     *  Profiling itself is pure local observation — every client profiles its own view — so it
+     *  needs no multiplayer gate. */
+    public static class ProfileCard extends AssertCard{
+        public static final String opcode = "profile";
+        public ProfilingCommand command = ProfilingCommand.start;
+        public String block = "@this";
+
+        @Override
+        public void build(Table table){
+            table.clearChildren();
+            Color tint = table.color;
+            line(table, tint, row -> {
+                tag(row, "asserts.profile.card", "profile");
+                row.button(b -> {
+                    b.add(command.display());
+                    b.clicked(() -> showSelect(b, ProfilingCommand.all, command, o -> {
+                        command = o;
+                        build(table);
+                    }));
+                }, Styles.logict, () -> {}).size(96f, 40f).pad(4f).color(row.color).left();
+                tag(row, "asserts.profile.of", "of");
+                input(row, block, s -> block = s, VAR_W);
+            }, false);
+        }
+
+        @Override public String name(){ return cardText("asserts.profile.card", "Profile"); }
+        @Override public String typeName(){ return "Profile"; }
+
+        @Override
+        public LInstruction build(LAssembler builder){
+            return new logicsugar.assist.AssertInstructions.ProfileI(command, builder.var(block));
+        }
+
+        @Override
+        public void write(StringBuilder out){
+            out.append(opcode).append(' ').append(command.name()).append(' ').append(optional(block));
+        }
+    }
+
+    /** Restarts the target processor, resetting its variables, so profiling or snapshot recording
+     *  of its initialization code can be started from another processor (upstream v0.11.3).
+     *
+     *  <p>Side effects (single-player debugging only, see {@link #opcodes}): the target's program
+     *  is reloaded and its variables reset. The card is stripped by default and multiplayer
+     *  forces strip, so the instruction never reaches a saved multiplayer map.</p> */
+    public static class RestartCard extends AssertCard{
+        public static final String opcode = "restart";
+        public String block = "@this";
+
+        @Override
+        public void build(Table table){
+            table.clearChildren();
+            Color tint = table.color;
+            line(table, tint, row -> {
+                tag(row, "asserts.restart.card", "restart");
+                input(row, block, s -> block = s, VAR_W);
+            }, false);
+        }
+
+        @Override public String name(){ return cardText("asserts.restart.card", "Restart"); }
+        @Override public String typeName(){ return "Restart"; }
+
+        @Override
+        public LInstruction build(LAssembler builder){
+            return new logicsugar.assist.AssertInstructions.RestartI(builder.var(block));
+        }
+
+        @Override
+        public void write(StringBuilder out){
+            out.append(opcode).append(' ').append(optional(block));
+        }
+    }
+
     private static final Log.LogLevel[] levels = {
         Log.LogLevel.err, Log.LogLevel.warn, Log.LogLevel.info, Log.LogLevel.debug,
     };
@@ -754,12 +859,43 @@ public final class SugarAsserts{
         return result;
     }
 
+    /** Reads a {@code snapshot} line in either wire shape: the current four-payload-token
+     *  form ({@code type block steps message}, upstream ≥v0.11.2 and LogicSugar ≥5.8.0) or
+     *  the legacy three-token form ({@code type block message}, upstream ≤v0.11.1 and
+     *  LogicSugar ≤5.7.2) whose {@code steps} slot simply does not exist.
+     *
+     *  <p>The shape cannot be detected from the token count: {@code LParser} hands custom
+     *  parsers its reused static 16-slot array and never says how many of those slots the
+     *  current line wrote, so the slots past the line are stale leftovers (the project-wide
+     *  trap documented in {@code docs/architecture.md}). Instead the <em>writing</em> of the
+     *  slot decides: legacy messages are either the empty placeholder {@code ~}, a quoted
+     *  string, the literal {@code null} (upstream's collapsed message placeholder) or empty;
+     *  everything else — including a number, which the current card writes by default — is
+     *  read as the {@code steps} slot, and the message is then the following slot. The
+     *  ambiguous case is a legacy message that is a bare variable name without quotes; it
+     *  reads as a {@code steps} value. That is preferred over the alternative (treating a
+     *  variable {@code steps} as a message), because it keeps the values a current editor
+     *  writes intact and only degrades display metadata of old, hand-unquoted lines.</p> */
     public static LStatement parseSnapshot(String[] tokens){
         SnapshotCard result = new SnapshotCard();
         result.type = parseEnum(SnapshotType.class, tokens[1], SnapshotCard.opcode + " type");
         result.block = optionalValue(tokens[2]);
-        result.message = optionalValue(tokens[3]);
+        String slot = tokens[3];
+        if(isLegacyMessageSlot(slot)){
+            result.message = optionalValue(slot);
+            result.steps = SnapshotCard.DEFAULT_STEPS;
+        }else{
+            result.steps = optionalValue(slot);
+            result.message = optionalValue(tokens[4]);
+        }
         return result;
+    }
+
+    /** Whether the fourth payload token of a {@code snapshot} line can only be the legacy
+     *  message slot (see {@link #parseSnapshot}). */
+    private static boolean isLegacyMessageSlot(String slot){
+        if(slot == null || slot.isEmpty() || slot.equals("~") || slot.equals("null")) return true;
+        return slot.charAt(0) == '"';
     }
 
     public static LStatement parseError(String[] tokens){
@@ -779,6 +915,19 @@ public final class SugarAsserts{
         result.op = parseEnum(ConditionOp.class, tokens[1], BreakpointCard.opcode + " op");
         result.value = optionalValue(tokens[2]);
         result.compare = optionalValue(tokens[3]);
+        return result;
+    }
+
+    public static LStatement parseProfile(String[] tokens){
+        ProfileCard result = new ProfileCard();
+        result.command = parseEnum(ProfilingCommand.class, tokens[1], ProfileCard.opcode + " command");
+        result.block = optionalValue(tokens[2]);
+        return result;
+    }
+
+    public static LStatement parseRestart(String[] tokens){
+        RestartCard result = new RestartCard();
+        result.block = optionalValue(tokens[1]);
         return result;
     }
 
@@ -808,7 +957,7 @@ public final class SugarAsserts{
     /** Runtime data types an {@link AssertTypeCard} can assert, mirroring the classification
      *  the game itself shows for logic variables.
      *
-     *  <p>Ported from upstream MlogAssertions v0.11.1 ({@code AssertionDataType}): what was a
+     *  <p>Ported from upstream MlogAssertions v0.11.3 ({@code AssertionDataType}): what was a
      *  flat list of six names now has per-content and per-building sub-types plus the
      *  property/readable/writable/senseable interface types. A general kind matches a
      *  reference to any instance of it, the numbered sub-types narrow that down. The wire

@@ -7,7 +7,7 @@ import arc.util.Align;
  * 变量视图的会话级显示状态。上游把它散放在 {@code VarsDialog} 的静态字段里；这里单独成类，
  * 由 LogicSugar 的设置项写入，由变量对话框读取。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1 ({@code cardillan.mlogassertions.ui.VarsDialog}
+ * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.ui.VarsDialog}
  * 的静态字段 + {@code Constants.COLOR_LIMIT}）。{@link #COLOR_LIMIT} 是「数值落在颜色区间」
  * 的上界（white 的位模式，见 {@link BaseVariableValues#type}），不是可由用户修改的显示偏好。</p>
  */

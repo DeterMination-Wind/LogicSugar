@@ -4,16 +4,20 @@ import arc.struct.Queue;
 import arc.struct.Seq;
 import logicsugar.assist.L10n;
 import logicsugar.vars.Snapshot;
+import logicsugar.vars.SnapshotType;
 import logicsugar.vars.Snapshots;
 import logicsugar.vars.VariableValues;
-import mindustry.gen.Building;
+import mindustry.logic.Senseable;
 
 /**
  * {@link VarsDialog} 正在浏览的「视图序列」：一块建筑的活数据 + 它的快照队列，
  * 或者一批同组快照（{@code snapshot} 指令一次创建出来的所有块）。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1
- * ({@code cardillan.mlogassertions.ui.SnapshotList})。两处对上游的偏离：</p>
+ * <p>Ported from upstream MlogAssertions v0.11.3
+ * ({@code cardillan.mlogassertions.ui.Snapshots}；上游 v0.11.2 把本接口从
+ * {@code SnapshotList} 改名为 {@code Snapshots}，LogicSugar 保留原名以避免与数据层的
+ * {@link Snapshots} 撞名——两者行为逐字一致，含 {@code recording()} 与 recording 的位置
+ * 文本）。两处对上游的偏离：</p>
  * <ul>
  * <li>接口本身从包内可见改为 {@code public}：集成代码（逻辑编辑器按钮、三方快照入口）
  * 在别的包里构造 {@link VarsDialog}/{@link SnapshotsDialog} 并把本类型传进去，
@@ -30,6 +34,8 @@ import mindustry.gen.Building;
 public interface SnapshotList{
     /** 是否是一批同组快照的列表（而不是某块建筑的活数据 + 快照）。 */
     boolean group();
+    /** 是否是 recording 主快照内部的逐指令子快照列表（标题与位置文本改用指令序号）。 */
+    boolean recording();
     String title();
     VariableValues liveData();
 
@@ -50,18 +56,23 @@ public interface SnapshotList{
     Seq<Snapshot> list();
 
     /** 某块建筑的活视图 + 快照队列（新快照在队首）。 */
-    static SnapshotList forBuild(final Building building){
+    static SnapshotList forBuild(final Senseable entity){
         return new SnapshotList(){
             static final int OBSOLETE = -2;
             static final int LIVE = -1;
 
-            final VariableValues live = Snapshots.liveView(building);
-            final Queue<Snapshot> queue = Snapshots.get(building);
+            final VariableValues live = Snapshots.liveView(entity);
+            final Queue<Snapshot> queue = Snapshots.get(entity);
             VariableValues view = live;
             int index = LIVE;
 
             @Override
             public boolean group(){
+                return false;
+            }
+
+            @Override
+            public boolean recording(){
                 return false;
             }
 
@@ -165,7 +176,8 @@ public interface SnapshotList{
             public boolean remove(){
                 if(updateIndex() < 0) return false;
 
-                queue.removeIndex(index);
+                // 删除同时扣回 recording 子快照的额度（上游 v0.11.2）
+                Snapshots.delete(queue.removeIndex(index));
                 if(index > queue.size) index--;
                 return true;
             }
@@ -204,14 +216,21 @@ public interface SnapshotList{
         };
     }
 
-    /** 一批同组快照（{@code snapshot} 指令一次创建的所有块）。 */
+    /** 一批同组快照（{@code snapshot} 指令一次创建的所有块，或一份 recording 主快照的
+     *  逐指令子快照）。 */
     static SnapshotList list(Seq<Snapshot> snapshots){
         return new SnapshotList(){
+            final boolean recording = snapshots.size > 0 && snapshots.first().type() == SnapshotType.recording;
             int index = 0;
 
             @Override
             public boolean group(){
                 return true;
+            }
+
+            @Override
+            public boolean recording(){
+                return recording;
             }
 
             @Override
@@ -227,7 +246,10 @@ public interface SnapshotList{
 
             @Override
             public String pos(){
-                return L10n.text("logicsugar.vars.pos.index", "{0}/{1}", index + 1, snapshots.size);
+                // recording 的第一份就是主快照本身（初始状态），所以序号从 0 起
+                return recording
+                        ? index + "/" + (snapshots.size - 1)
+                        : L10n.text("logicsugar.vars.pos.index", "{0}/{1}", index + 1, snapshots.size);
             }
 
             @Override

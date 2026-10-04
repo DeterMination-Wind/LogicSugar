@@ -37,10 +37,11 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 ## 发布前本地必做步骤
 
 1. 确认版本号：`build.gradle` 与 `mod.json` 同步为发布身份（`LogicSugar` / `<version>`）。
-2. 全量自测绿：`./gradlew check`（四十七个任务全过，见 [testing.md](testing.md)）。
+2. 全量自测绿：`./gradlew check`（四十八个任务全过，见 [testing.md](testing.md)）。
 3. 本地完整构建：`./gradlew.bat clean deploy`（需要 Android SDK 的 D8 + `android.jar`）。
 4. 撰写发布正文（初稿可存为 `release_notes_v<version>.md`）：中英对照、只写当前版本，格式见下节「发布正文风格」；发布后删除该文件，正文以 GitHub Release 为准。
 5. 核实产物：`build/libs/LogicSugar-v<version>.jar` 存在且含 `classes.dex`；`-desktop.jar` / `-android.jar` / d8-input jar 不进入发布流程。
+6. 兼容性段落（发布正文必写）：需要跨版本调试产物的用户看这条——含 `snapshot`/`profile`/`restart` 行的程序属于 `AssertEmit=emit` 的单机调试构建；同一程序在只有原版或旧版逻辑编辑器的环境里仍可运行（旧文本形式不变），但 ≤5.7.2 的 LogicSugar 打开新的 5 槽 `snapshot` 行时会把 `steps` 值当成消息显示（纯显示降级，程序照常运行），而 LogicSugar ≥5.8.0 读取旧的 3 载荷 token 文本仍然无损。
 
 ## 发布正文风格（Release body）
 

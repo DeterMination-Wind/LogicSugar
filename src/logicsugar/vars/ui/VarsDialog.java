@@ -16,6 +16,7 @@ import arc.scene.ui.layout.Cell;
 import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Table;
 import arc.util.Align;
+import arc.util.Log;
 import arc.util.Nullable;
 import arc.util.Time;
 import logicsugar.assist.L10n;
@@ -32,7 +33,9 @@ import mindustry.gen.Building;
 import mindustry.gen.Icon;
 import mindustry.gen.Tex;
 import mindustry.graphics.Pal;
+import mindustry.logic.Senseable;
 import mindustry.logic.SugarCanvas;
+import mindustry.ui.FileChooser;
 import mindustry.ui.Styles;
 import mindustry.ui.dialogs.BaseDialog;
 
@@ -42,7 +45,7 @@ import java.util.Arrays;
  * 变量 / 内存 / 属性视图对话框：列出某一时刻的变量表，可以前后翻看该建筑的历史快照，
  * 也可以还原快照、创建快照、清理内存，以及微调显示方式。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1
+ * <p>Ported from upstream MlogAssertions v0.11.3
  * ({@code cardillan.mlogassertions.ui.VarsDialog})，布局、按钮顺序、禁用规则与快捷键
  * 全部逐字保留。与上游的差异只有下面四处，都是集成约定而不是行为改动：</p>
  *
@@ -79,7 +82,7 @@ public class VarsDialog extends BaseDialog{
      *  为 null 时 {@link #setup()} 不显示那个按钮。 */
     public static @Nullable Runnable globalsOpener;
 
-    private Building building;
+    private Senseable entity;
 
     // A list of snapshots that can be browsed through
     private SnapshotList snapshots;
@@ -133,6 +136,17 @@ public class VarsDialog extends BaseDialog{
         setup();
     }
 
+    /** Escapes a value for display in an Arc label: a {@code [} would otherwise start a
+     *  color-markup tag (a string value holding {@code list[1]} rendered as a truncated
+     *  label). Only {@code [} has to be doubled — {@code ]} is literal in Arc's markup —
+     *  the same rule {@code ExprStatement.highlight} follows.
+     *
+     *  <p>Ported from upstream MlogAssertions v0.11.3; the profiler's source column reuses
+     *  this function. Strings only: numeric/textual values never contain markup.</p> */
+    public static String escape(String s){
+        return s.indexOf('[') < 0 ? s : s.replace("[", "[[");
+    }
+
     public void setup(boolean updated){
         if(updated){
             setup();
@@ -160,7 +174,7 @@ public class VarsDialog extends BaseDialog{
     }
 
     private void createSnapshot(){
-        Snapshots.create(snapshots.view().building(), tr("logicsugar.vars.usersnapshot", "User snapshot"));
+        Snapshots.create(snapshots.view().entity(), tr("logicsugar.vars.usersnapshot", "User snapshot"));
         rebuildTitle(titleTable);
     }
 
@@ -169,7 +183,7 @@ public class VarsDialog extends BaseDialog{
         if(snapshots.view() instanceof Snapshot snapshot){
             if(snapshot.writeTo(snapshots.liveData())){
                 Vars.ui.showInfo(tr("logicsugar.vars.restored", "The processor's state has been restored from the snapshot."));
-                setup(SnapshotList.forBuild(snapshot.building()));
+                setup(SnapshotList.forBuild(snapshot.entity()));
                 return;
             }
         }
@@ -178,6 +192,14 @@ public class VarsDialog extends BaseDialog{
 
     private void removeSnapshot(){
         setup(snapshots.remove());
+    }
+
+    /** 实体图标；没有图集图标的 Senseable（队伍、内容物等）用原版的逻辑图标兜底。
+     *  上游直接 {@code t.image(view.icon())}，图标为 null 时会在绘制阶段 NPE；
+     *  这是相对上游的一处防御性偏离（不影响任何有图标的实体）。 */
+    private static Cell<Image> entityIcon(Table table, VariableValues view){
+        arc.graphics.g2d.TextureRegion icon = view.icon();
+        return icon == null ? table.image(Icon.logic) : table.image(icon);
     }
 
     private Table titleTable;
@@ -201,8 +223,8 @@ public class VarsDialog extends BaseDialog{
                 t.button(Icon.left, Styles.defaulti, this::prev).size(48f, 64f).pad(5f).disabled(!snapshots.hasPrev());
             }
 
-            if(snapshots.group()){
-                t.image(view.building().block.uiIcon).size(64f).pad(5f);
+            if(snapshots.group() && !snapshots.recording()){
+                entityIcon(t, view).size(64f).pad(5f);
 
                 t.table(left -> {
                     noWrapLabel(left, view.buildingDescMulti()).growX().top().left();
@@ -216,12 +238,12 @@ public class VarsDialog extends BaseDialog{
             }else{
                 t.table(title -> {
                     title.table(tBlock -> {
-                        tBlock.image(view.building().block.uiIcon).size(Vars.iconLarge).padRight(5f);
+                        entityIcon(tBlock, view).size(Vars.iconLarge).padRight(5f);
                         tBlock.table(text -> {
-                            noWrapLabel(text, view.buildingDesc()).color(Color.white).growX().get().setAlignment(Align.left);
+                            noWrapLabel(text, view.entityDesc()).color(Color.white).growX().get().setAlignment(Align.left);
                             text.row();
                             text.table(tProperties -> {
-                                noWrapLabel(tProperties, view.buildingPos()).color(Color.gray).growX().get().setAlignment(Align.left);
+                                noWrapLabel(tProperties, view.entityPos()).color(Color.gray).growX().get().setAlignment(Align.left);
                                 if(snapshot != null){
                                     tProperties.add(snapshot.time()).color(Color.gray).growX().get().setAlignment(Align.right);
                                 }
@@ -234,8 +256,11 @@ public class VarsDialog extends BaseDialog{
                         if(view.live()){
                             tSnapshot.add(tr("logicsugar.vars.live", "Live")).color(Pal.accent).top().growX().get().setAlignment(Align.left);
                         }else{
-                            noWrapLabel(tSnapshot, tr("logicsugar.vars.snapshot.label", "#{0}: {1} {2}",
-                                            snapshot.id(), snapshot.type().charIcon, snapshot.name()))
+                            // recording 的子快照名字里已经带着「序号: 指令文本」，不再重复 id/类型
+                            String name = snapshots.recording() ? snapshot.name()
+                                : tr("logicsugar.vars.snapshot.label", "#{0}: {1} {2}",
+                                    snapshot.id(), snapshot.type().charIcon, snapshot.name());
+                            noWrapLabel(tSnapshot, name)
                                     .color(Pal.accent).growX().get().setAlignment(Align.left);
 
                             Label l = tSnapshot.add(snapshots.pos()).color(Pal.accent).growX().padLeft(10f).get();
@@ -265,6 +290,12 @@ public class VarsDialog extends BaseDialog{
 
             t.button(Icon.filters, style, this::viewOptions);
             t.button(Icon.edit, style, this::editCommands);
+            // profiler（上游 v0.11.2）：只对处理器视图可用；入口同时出现在标题栏与 Edit 菜单
+            t.button(Icon.chartBar, style, () -> {
+                if(view.entity() instanceof mindustry.world.blocks.logic.LogicBlock.LogicBuild build){
+                    new logicsugar.profile.ui.ProfileDialog(build).show();
+                }
+            }).get().setDisabled(() -> !(view.entity() instanceof mindustry.world.blocks.logic.LogicBlock.LogicBuild));
 
             // Play/pause the game
             Image icon = new Image(Vars.state.isPlaying() ? Icon.pause : Icon.play);
@@ -289,8 +320,8 @@ public class VarsDialog extends BaseDialog{
 
             // Select a snapshot from the current block's list of snapshots
             t.button(Icon.folderOpen, style,
-                            () -> new SnapshotsDialog(VarsDialog.this, snapshots.group() ? SnapshotList.forBuild(building) : snapshots).show())
-                    .get().setDisabled(() -> !Snapshots.hasSnapshots(building));
+                            () -> new SnapshotsDialog(VarsDialog.this, snapshots.group() ? SnapshotList.forBuild(entity) : snapshots).show())
+                    .get().setDisabled(() -> !Snapshots.hasSnapshots(entity));
 
             // Select a snapshot from a group snapshot
             t.button(Icon.logic, style,
@@ -299,13 +330,10 @@ public class VarsDialog extends BaseDialog{
 
             // Create a snapshot
             t.button(Icon.box, style, this::createSnapshot).disabled(snapshot != null);
-
-            if(!compact){
-                t.button(Icon.download, style, this::restoreSnapshot).disabled(snapshot == null || snapshot.dataType() == BlockDataType.properties);
-                t.button(Icon.trash, style, this::removeSnapshot).disabled(!snapshots.canRemove());
-            }
-
             t.button(Icon.infoCircle, style, this::help);
+
+            // 恢复/删除固定在 Edit 菜单里（v0.11.2 起这里不再按紧凑布局隐藏）；
+            // 处理器的 profiler 入口另在标题栏，见 ProfileDialog。
 
             if(compact){
                 t.button(Icon.right, style, this::next).padLeft(15f).get().setDisabled(() -> !snapshots.hasNext());
@@ -352,7 +380,7 @@ public class VarsDialog extends BaseDialog{
         VariableValues view = snapshots.view();
         view.setView(false, false, false);
         lastSnapshotId = view instanceof Snapshot s ? s.id() : -1;
-        building = view.building();
+        entity = view.entity();
 
         length = view.size();
         counter = new float[length];
@@ -420,7 +448,9 @@ public class VarsDialog extends BaseDialog{
 
                                     String text = view.formatted(index, VarsOptions.hex, VarsOptions.fullPrecision ? 16 : VarsOptions.significantDigits);
                                     ValueType type = view.type(index);
-                                    valueLabel.setText(text);
+                                    // 只有字符串值可能含『[』；其余值是数字或游戏自带的富文本
+                                    // （颜色样本等），转义会把它们原本的着色标签弄坏。
+                                    valueLabel.setText(type == ValueType.string ? escape(text) : text);
                                     valueLabel.setAlignment(VarsOptions.alignment);
                                     typeLabel.setText(type.paddedTitle);
 
@@ -514,14 +544,11 @@ public class VarsDialog extends BaseDialog{
                         : tr("logicsugar.vars.help.navigate.keys", "Navigate to the previous/next snapshot (also the PgUp/PgDn and Home/End keys)."));
                 help(t, Icon.filters, tr("logicsugar.vars.help.filters", "Customize the view (for the duration of the session)."));
                 help(t, Icon.edit, tr("logicsugar.vars.help.edit", "Export, import or modify the data of this block."));
+                help(t, Icon.chartBar, tr("logicsugar.vars.help.profiler", "Profile the current processor's execution."));
                 help(t, Icon.pause, Icon.play, tr("logicsugar.vars.help.pause", "Pause/resume the game."));
                 help(t, Icon.folderOpen, tr("logicsugar.vars.help.folder", "Show a list of this block's snapshots."));
                 help(t, Icon.logic, tr("logicsugar.vars.help.logic", "Navigate to a different block contained in this snapshot."));
                 help(t, Icon.box, tr("logicsugar.vars.help.snapshot", "Create a new snapshot of this block and all connected blocks."));
-                if(!compact){
-                    help(t, Icon.download, tr("logicsugar.vars.help.restore", "Restore the current processor or memory block's state from a snapshot."));
-                    help(t, Icon.trash, tr("logicsugar.vars.help.delete", "Delete the current snapshot."));
-                }
                 help(t, Icon.infoCircle, tr("logicsugar.vars.help.help", "Show this help."));
 
                 t.add(tr("logicsugar.vars.help.editcommands", "Edit commands")).colspan(3).color(Pal.accent).center().padBottom(15F).get().setAlignment(Align.center);
@@ -529,15 +556,15 @@ public class VarsDialog extends BaseDialog{
 
                 help(t, Icon.cancel, tr("logicsugar.vars.help.clearmemory", "Reset memory block to all zeroes."));
                 help(t, Icon.copy, tr("logicsugar.vars.help.copyvariables", "Copy variable values to Clipboard."));
-                help(t, Icon.download, tr("logicsugar.vars.help.importvariables", "Import memory block values from Clipboard."));
-                if(compact){
-                    help(t, Icon.download, tr("logicsugar.vars.help.restore", "Restore the current processor or memory block's state from a snapshot."));
-                    help(t, Icon.trash, tr("logicsugar.vars.help.delete", "Delete the current snapshot."));
-                }
+                help(t, Icon.upload, tr("logicsugar.vars.help.exportfile", "Export values to a file."));
+                help(t, Icon.paste, tr("logicsugar.vars.help.importvariables", "Import memory block values from Clipboard."));
+                help(t, Icon.download, tr("logicsugar.vars.help.importfile", "Import memory block values from a file."));
+                help(t, Icon.undo, tr("logicsugar.vars.help.restore", "Restore the current processor or memory block's state from the selected snapshot."));
+                help(t, Icon.trash, tr("logicsugar.vars.help.delete", "Delete the current snapshot."));
                 help(t, Icon.trash, tr("logicsugar.vars.help.deleteall", "Delete all snapshots of this block (they may still be accessible as part of connected or global snapshots)."));
 
                 t.defaults().size(180f, 60f).growX().colspan(3).pad(15f);
-                t.button(tr("@back", "Back"), Icon.left, Styles.flatt, dialog::hide).center().marginLeft(12f).name("back");
+                t.button(tr("@back", "Back"), Icon.left, Styles.defaultt, dialog::hide).center().marginLeft(12f).name("back");
             }).pad(10f).padRight(30f);
         });
 
@@ -605,6 +632,14 @@ public class VarsDialog extends BaseDialog{
                 TextButton.TextButtonStyle style = Styles.flatt;
                 t.defaults().size(360f, 60f).left();
 
+                // 快照关闭时标题栏不存在，profiler 入口由 Edit 菜单承担（上游 v0.11.2）
+                if(Snapshots.maxSnapshots <= 0 && entity instanceof mindustry.world.blocks.logic.LogicBlock.LogicBuild build){
+                    t.button(tr("logicsugar.profile.title", "Profiler"), Icon.chartBar, style, () -> {
+                        new logicsugar.profile.ui.ProfileDialog(build).show();
+                        dialog.hide();
+                    }).marginLeft(12f).row();
+                }
+
                 if(snapshots.view().dataType() == BlockDataType.memory && snapshots.view().live()){
                     t.button(tr("logicsugar.vars.clearmemory", "Clear memory"), Icon.cancel, style, () -> {
                         snapshots.view().clear();
@@ -618,35 +653,60 @@ public class VarsDialog extends BaseDialog{
                     dialog.hide();
                 }).marginLeft(12f).row();
 
-                if(snapshots.view().dataType() == BlockDataType.memory && snapshots.view().live()){
-                    t.button(tr("logicsugar.vars.importvariables", "Import values from Clipboard"), Icon.download, style, () -> {
-                        String text = Core.app.getClipboardText();
-                        String error = MemoryText.validate(text, length);
-                        if(error == null) error = MemoryText.read(text, length, snapshots.view());
-
-                        if(error != null){
-                            Vars.ui.showInfoFade(tr("logicsugar.vars.importfailed", "Invalid lines: {0}", error));
-                            return;
+                t.button(tr("logicsugar.vars.exportvariablesfile", "Export values to a file"), Icon.upload, style, () -> {
+                    FileChooser.save("txt").name("memory_export.txt").submit(file -> {
+                        try{
+                            file.writeString(MemoryText.write(snapshots.view(), VarsOptions.hex));
+                        }catch(Exception e){
+                            Log.err("LogicSugar: error writing the memory export", e);
+                            Vars.ui.showErrorMessage(tr("logicsugar.vars.filewritefailed", "Error writing file {0}", file.absolutePath()));
                         }
+                    });
+                    dialog.hide();
+                }).marginLeft(12f).row();
 
-                        Arrays.fill(counter, reset / 2);
+                if(snapshots.view().dataType() == BlockDataType.memory && snapshots.view().live()){
+                    t.button(tr("logicsugar.vars.importvariables", "Import values from Clipboard"), Icon.paste, style, () -> {
+                        String text = Core.app.getClipboardText();
+                        if(text == null || text.length() == 0){
+                            Vars.ui.showErrorMessage(tr("logicsugar.vars.emptyclipboard", "The clipboard is empty."));
+                        }else{
+                            importData(text);
+                        }
+                        dialog.hide();
+                    }).marginLeft(12f).row();
+
+                    t.button(tr("logicsugar.vars.importvariablesfile", "Import values from a file"), Icon.download, style, () -> {
+                        FileChooser.open("txt").submit(file -> {
+                            try{
+                                String text = file.readString();
+
+                                if(text == null){
+                                    Vars.ui.showErrorMessage(tr("logicsugar.vars.filereadfailed", "Error reading file {0}", file.absolutePath()));
+                                }else{
+                                    importData(text);
+                                }
+                            }catch(Exception e){
+                                Log.err("LogicSugar: error reading the memory import", e);
+                                Vars.ui.showErrorMessage(tr("logicsugar.vars.filereadfailed", "Error reading file {0}", file.absolutePath()));
+                            }
+                        });
                         dialog.hide();
                     }).marginLeft(12f).row();
                 }
 
-                if(compact){
-                    if(snapshots.view().dataType() != BlockDataType.properties && snapshots.view() instanceof Snapshot snapshot){
-                        t.button(tr("logicsugar.vars.restorecurrent", "Restore current snapshot"), Icon.download, style, this::restoreSnapshot).marginLeft(12f).row();
-                    }
+                // 恢复/删除不再只在紧凑布局下出现（上游 v0.11.2）：非紧凑布局里也能从这里到达
+                if(snapshots.view().dataType() != BlockDataType.properties && snapshots.view() instanceof Snapshot snapshot){
+                    t.button(tr("logicsugar.vars.restorecurrent", "Restore current snapshot"), Icon.undo, style, this::restoreSnapshot).marginLeft(12f).row();
+                }
 
-                    if(snapshots.canRemove()){
-                        // Can't remove snapshots from snapshot groups
-                        t.button(tr("logicsugar.vars.deletecurrent", "Delete current snapshot"), Icon.trash, style, this::removeSnapshot).marginLeft(12f).row();
-                    }
+                if(snapshots.canRemove()){
+                    // Can't remove snapshots from snapshot groups
+                    t.button(tr("logicsugar.vars.deletecurrent", "Delete current snapshot"), Icon.trash, style, this::removeSnapshot).marginLeft(12f).row();
                 }
 
                 t.button(tr("logicsugar.vars.deleteall", "Delete all snapshots of this block"), Icon.trash, style, () -> {
-                    Snapshots.deleteBuilding(snapshots.view().building());
+                    Snapshots.deleteEntity(snapshots.view().entity());
                     dialog.hide();
                     first();
                 }).marginLeft(12f).row();
@@ -657,6 +717,20 @@ public class VarsDialog extends BaseDialog{
 
         dialog.addCloseListener();
         dialog.show();
+    }
+
+    /** 读入内存表文本（剪贴板与文件共用），失败时报错且不动目标。 */
+    private void importData(String text){
+        String error = MemoryText.validate(text, length);
+        if(error == null){
+            error = MemoryText.read(text, length, snapshots.view());
+        }
+
+        if(error != null){
+            Vars.ui.showErrorMessage(tr("logicsugar.vars.importfailed", "Invalid lines: {0}", error));
+        }else{
+            Arrays.fill(counter, reset / 2);
+        }
     }
 
     private void refreshView(boolean update){

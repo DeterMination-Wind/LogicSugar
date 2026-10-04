@@ -20,6 +20,7 @@ public class VarsAccessTest{
         anotherBlockRestartsTheCount();
         disabledOrEmptyTapsNeverTrigger();
         snapshotTypeTokensStayWireStable();
+        processorRowOrderStaysWireAligned();
         defaultsAreSane();
         bundleCoversEveryKey();
         System.out.println("LogicSugar vars access self-test passed.");
@@ -72,11 +73,12 @@ public class VarsAccessTest{
     }
 
     private static void snapshotTypeTokensStayWireStable(){
-        // 这三个 token 就是 mlog 行里写的字（snapshot 卡与解析器共用），改名字等于改存档格式
+        // 这些 token 就是 mlog 行里写的字（snapshot 卡与解析器共用），改名字等于改存档格式
         check(SnapshotType.isolated.name().equals("isolated"), "isolated token drifted");
         check(SnapshotType.connected.name().equals("connected"), "connected token drifted");
+        check(SnapshotType.recording.name().equals("recording"), "recording token drifted (upstream v0.11.2)");
         check(SnapshotType.global.name().equals("global"), "global token drifted");
-        check(SnapshotType.all.length == 3, "unexpected snapshot type count: " + SnapshotType.all.length);
+        check(SnapshotType.all.length == 4, "unexpected snapshot type count: " + SnapshotType.all.length);
         // 显示名有英文兜底（bundle 缺键时也要能看）；图标来自游戏图集，无头环境下拿不到，不断言
         for(SnapshotType type : SnapshotType.all){
             check(type.display() != null && !type.display().isEmpty(), "no display name for " + type);
@@ -91,9 +93,48 @@ public class VarsAccessTest{
         check(VarsOptions.updateFrequency >= 1, "update frequency default must be >= 1: " + VarsOptions.updateFrequency);
     }
 
+    /**
+     * {@link ProcessorVars} 的合成行序与 {@code start} 的位置是一份「隐式契约」：
+     * {@code sum of rows} 与 profiler/快照靠名字对齐，且 {@code start} 之前的行不过滤、不参与
+     * 「用户变量」排序。无头环境里造不出一块处理器（{@code LogicBlock} 的构造会读
+     * {@code Vars.content}），所以这里扫源码把行序钉住：
+     * {@code Text buffer → Time waited → Accumulator → counter → unit → ipt}，
+     * 并且 {@code start = length} 必须在所有合成行之后。
+     */
+    private static void processorRowOrderStaysWireAligned(){
+        String source = readSource("src/logicsugar/vars/ProcessorVars.java");
+
+        int textBuffer = source.indexOf("logicsugar.vars.var.textbuffer");
+        int timeWaited = source.indexOf("logicsugar.vars.var.timewaited");
+        int accumulator = source.indexOf("logicsugar.vars.var.accumulator");
+        int counter = source.indexOf("store(executor.counter);");
+        int unit = source.indexOf("store(executor.unit);");
+        int ipt = source.indexOf("store(executor.ipt);");
+        int start = source.indexOf("start = length;");
+
+        check(textBuffer >= 0 && timeWaited > textBuffer, "Text buffer 必须是第一个合成行");
+        check(accumulator > timeWaited, "Accumulator 必须紧随 Time waited（上游 v0.11.2 的行序）");
+        check(counter > accumulator && unit > counter && ipt > unit, "@counter/@unit/@ipt 的行序漂移了");
+        check(start > ipt, "start = length 必须在所有合成行之后（首个用户变量下标）");
+
+        // 合成行多了一行，数组容量必须同步 +5（textbuffer/timewaited/accumulator + counter/unit/ipt）
+        check(source.contains("new LVar[executor.vars.length + 5"),
+            "ProcessorVars 的行数组容量没给 Accumulator 留位置");
+    }
+
     private static Building block(){
         return new Building(){
         };
+    }
+
+    private static String readSource(String file){
+        try{
+            return new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(file)),
+                java.nio.charset.StandardCharsets.UTF_8);
+        }catch(java.io.IOException e){
+            throw new AssertionError("cannot read " + file + " (working directory: "
+                + System.getProperty("user.dir") + ")", e);
+        }
     }
 
 
@@ -167,7 +208,7 @@ public class VarsAccessTest{
     /** 参与取词扫描的源文件（新增界面/卡片文件时一并加进来）。 */
     private static String[] sourceFiles(){
         java.util.List<String> files = new java.util.ArrayList<>();
-        for(String dir : new String[]{"src/logicsugar/vars"}){
+        for(String dir : new String[]{"src/logicsugar/vars", "src/logicsugar/profile"}){
             try(java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.walk(java.nio.file.Paths.get(dir))){
                 stream.filter(p -> p.toString().endsWith(".java")).sorted()
                     .forEach(p -> files.add(p.toString().replace('\\', '/')));

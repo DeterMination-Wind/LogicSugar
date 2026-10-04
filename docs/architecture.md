@@ -116,12 +116,17 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ## 断言子系统（调试构建）
 
-`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions（当前基线 **v0.11.1**，线格式兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：九条自定义指令 `assert` / `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `asserttype` / `error` / `log` / `breakpoint`，断言失败时程序在失败行自旋（`counter` 回退 + `yield`），消息由 `ProcessorStatus` 绘制在处理器上方。失败文本按上游 v0.11 语义生成：消息留空（线上写 `~`）时用带比较值的本地化默认文本（`logicsugar.asserts.assertFailedWithValues` / `equalFailedWithValues` / `boundsFailedWithValues`），写了消息则原样显示；消息内 `{1}`… 引用比较值，`{变量名}` 取该变量当前值（`{@counter}` 渲染为失败行号），LogicSugar ≤5.5 的 `[[1]` 旧写法仍被识别（`AssertInstructions.formatMessage`）。`assert` 是通用的条件断言（`ConditionOp` + 值 + 比较值 + 可选消息），上游 v0.11.0 新增。`breakpoint` 语义与上游一致（视角居中到处理器、按设置临时分离视角、冻结全部 accumulator 并在本帧更新结束后归还，暂停期间消息持续绘制），但**联机（`Vars.net.active()`）下拒绝暂停**（上游 v0.10 起的门禁）：显式 `breakpoint` 直接跳过，断言失败退回「自旋 + 处理器上方消息」的非断点路径（与上游「静默丢弃断言」不同，见 `AssertInstructions.assertion` 注释）。设置「断言失败即断点」（`logicsugar.assertsAreBreakpoints`）可让断言失败改为在失败指令处暂停；「禁用断点」（`logicsugar.disableBreakpoints`）让 breakpoint 与断点化断言直接跳过。
+`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions（当前基线 **v0.11.3**，线格式兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：九条自定义指令 `assert` / `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `asserttype` / `error` / `log` / `breakpoint`，断言失败时程序在失败行自旋（`counter` 回退 + `yield`），消息由 `ProcessorStatus` 绘制在处理器上方。失败文本按上游 v0.11 语义生成：消息留空（线上写 `~`）时用带比较值的本地化默认文本（`logicsugar.asserts.assertFailedWithValues` / `equalFailedWithValues` / `boundsFailedWithValues`），写了消息则原样显示；消息内 `{1}`… 引用比较值，`{变量名}` 取该变量当前值（`{@counter}` 渲染为失败行号），LogicSugar ≤5.5 的 `[[1]` 旧写法仍被识别（`AssertInstructions.formatMessage`）。`assert` 是通用的条件断言（`ConditionOp` + 值 + 比较值 + 可选消息），上游 v0.11.0 新增。`breakpoint` 语义与上游一致（视角居中到处理器、按设置临时分离视角、冻结全部 accumulator 并在本帧更新结束后归还，暂停期间消息持续绘制），但**联机（`Vars.net.active()`）下拒绝暂停**（上游 v0.10 起的门禁）：显式 `breakpoint` 直接跳过，断言失败退回「自旋 + 处理器上方消息」的非断点路径（与上游「静默丢弃断言」不同，见 `AssertInstructions.assertion` 注释）。设置「断言失败即断点」（`logicsugar.assertsAreBreakpoints`）可让断言失败改为在失败指令处暂停；「禁用断点」（`logicsugar.disableBreakpoints`）让 breakpoint 与断点化断言直接跳过。
 
-- **asserttype 线格式**：上游 v0.10 起顺序为 `<type> <value> <message>`（本 mod 同）；类型表与上游 v0.11.1 对齐（24 种：基础类型 + 内容物细分 item / block / bulletType / liquid / statusEffect / unitType / weather / team / unitCommand / unitStance + building 细分 processor / memory / message / display / canvas + property / readable / writable / senseable），LogicSugar 额外支持 `none`（线上写 `null`）——上游 `AssertionDataType` 无法断言空值。旧的 `<value> <type>` 顺序仍可读取（`parseAssertType` 以「哪个 token 是类型名」判定；两个都是类型名时按新序），保存时统一写新序。类型分类是层级而非互斥：`senseable` 同时匹配单位/建筑/队伍，失败消息用 `AssertionDataType.actualType` 取最窄匹配（如 building 而不是 senseable）。
-- **assertprints 缓冲语义**：按上游 v0.11.1，在比较前就把缓冲区截断到记录位置——失败重试不再累积输出，也不把被检查区域的文本留给下一条 `assertprints`。
+- **asserttype 线格式**：上游 v0.10 起顺序为 `<type> <value> <message>`（本 mod 同）；类型表与上游 v0.11.3 对齐（24 种：基础类型 + 内容物细分 item / block / bulletType / liquid / statusEffect / unitType / weather / team / unitCommand / unitStance + building 细分 processor / memory / message / display / canvas + property / readable / writable / senseable），LogicSugar 额外支持 `none`（线上写 `null`）——上游 `AssertionDataType` 无法断言空值。旧的 `<value> <type>` 顺序仍可读取（`parseAssertType` 以「哪个 token 是类型名」判定；两个都是类型名时按新序），保存时统一写新序。类型分类是层级而非互斥：`senseable` 同时匹配单位/建筑/队伍，失败消息用 `AssertionDataType.actualType` 取最窄匹配（如 building 而不是 senseable）。
+- **assertprints 缓冲语义**：按上游 v0.11，在比较前就把缓冲区截断到记录位置——失败重试不再累积输出，也不把被检查区域的文本留给下一条 `assertprints`。
 - **失败消息的默认文本不含消息槽**：上游把消息槽当作 `{0}` 传给默认文本，导致默认消息里印出 `null`；LogicSugar 只渲染比较值（`assertionText` 注释记录了这处有意偏离）。
-- **`snapshot` 指令**：与其它断言卡同一家族（`SugarAsserts.SnapshotCard` + `AssertInstructions.SnapshotI`），线格式 `snapshot <type> <block> <message>`（`isolated`/`connected`/`global`），strip/emit 与载体覆盖同其它断言卡。它是纯客户端动作（不改保存产物），因此不受联机门禁限制。
+- **`snapshot` 指令**：与其它断言卡同一家族（`SugarAsserts.SnapshotCard` + `AssertInstructions.SnapshotI`）。线格式为 `snapshot <type> <block> <steps> <message>`（上游 v0.11.2 起；`isolated` / `connected` / `recording` / `global`），**旧的三载荷 token 文本仍可读取**（上游 ≤v0.11.1、LogicSugar ≤5.7.2 没有 `steps` 槽，第 4 槽就是消息）。因为原版 `LParser` 不告诉自定义解析器本行有多少个 token（复用的静态数组，见 AGENTS.md 的既有陷阱），`parseSnapshot` 不是按数量而是按**第 4 个 token 的写法**分流：`~` / 引号字符串 / `null` / 空 视为旧式消息（`steps` 取默认值），其余按 `steps` 槽读、消息取第 5 槽——所以「变量形式的 `steps`」优先于「旧式未加引号消息」这个真正二义的情形；清空的 `steps` 字段写盘时归一为默认 `20`，`steps` 槽永远不会写出空值。`recording`（记录目标处理器接下来 `steps` 条指令，每条一份子快照）的运行时语义见下面的 Profiler 一节。strip/emit 与载体覆盖同其它断言卡；它是纯客户端动作（不改保存产物），因此不受联机门禁限制。
+
+### 残余风险与不跟随的上游改动
+
+- **不认识的外来 token 仍会中止整段解析**。原版 `LParser` 只把 `LogicIO.read(tokens, tok)` 包在 try/catch 里，自定义解析器抛出的异常（未知类型名等 `IllegalArgumentException`）会中止整个程序的解析，编辑器因此拒绝打开（`snapshot recording` 在本次改动之前就是这种情形）。本次只消除了这一个具体缺口：新增 `recording` 类型与 `steps` 槽、并让旧文本继续可读；**不引入「把解析异常吞成 InvalidStatement」的兜底**，否则用户手打错 token 的定位报错会退化成静默的 noop 卡片（`SugarAssertsTest.parseFailureIsACleanError` 钉住这条）。上游以后新增的枚举 token 仍会以同样方式暴露，`SugarDecompiler.openableSource` 只会把载体文本换成存储的程序。
+- **不跟随上游 v0.11.2/v0.11.3 的身份类改动**：设置键前缀（上游改 `mlogdevtools-*`）、mod 改名（Mlog Dev Tools）、Gradle Groovy → KTS、`README_zh` 均不跟。这些是打包/更新身份，改了等于让既有用户的设置与更新检查失效；需要同步的是线格式与指令语义。上游的 `max-instructions`（指令预算覆盖）**明确不移植**：处理器保存产物 ≤1000 条是项目硬不变式。
 
 - **双身份序列化**：卡片 `write()` 直接输出指令 token，既是编辑器卡片也是 mlog 指令行；空槽位按 LogicSugar 惯例写 `~` 保持定长 token（上游无此约定，仅空字段场景降级）。
 - **AssertEmit 开关**（设置项 `logicsugar.assertEmit`，默认 `strip`，**仅单机/编辑器生效**）：`strip` 把断言编译掉——sugar（含断言）随载体保存，mlog 保持原版可解析；`emit`（调试构建）把断言写回为真实指令，**原版客户端会将其降级为 InvalidStatement 占位**（程序能跑但断言静默失效）。联机会话（`Vars.net.active()`，已连接或自建）下 `currentAssertEmit()` 一律强制 `strip`——兼容底线在代码层强制，不依赖用户自觉；显式 `compile(..., AssertEmit)` 重载仅供验证矩阵与自测使用。
@@ -130,14 +135,27 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ## 变量/内存/属性界面与快照（调试工具）
 
-移植自上游 MlogAssertions v0.11.1 的「Vars / Memory / Properties」三合一对话框与快照子系统。三者共用
+移植自上游 MlogAssertions v0.11.3 的「Vars / Memory / Properties」三合一对话框与快照子系统。三者共用
 同一个 `VarsDialog`，标题由数据源决定（`BlockDataType`：`变量`/`内存`/`属性`）；快照也是同一种数据源，
 因此浏览快照与浏览活数据用的是同一套渲染。
 
 - **数据层 `logicsugar.vars`**（无 UI 依赖）：`VariableValues`（活值/快照共用的读取接口）、
   `ProcessorVars`/`MemoryVars`/`SensorVars`、`Snapshot` + `ProcessorSnapshot`/`MemorySnapshot`/`SensorSnapshot`、
-  `Snapshots`（每方块一份队列、上限、创建/删除）、`MemoryText`（内存块文本的导出/导入）、`VarsOptions`
-  （会话级显示状态与 `COLOR_LIMIT`）、`SnapshotType`。
+  `Snapshots`（每实体一份队列、上限、创建/删除、recording 子快照计账）、`MemoryText`（内存块文本的导出/导入）、
+  `VarsOptions`（会话级显示状态与 `COLOR_LIMIT`）、`SnapshotType`。
+- **Senseable 化（上游 v0.11.2）**：数据源从建筑放宽到任意 `Senseable`（建筑、单位、队伍、内容物），
+  `VariableValues` 的 `entity()/entityDesc()/entityPos()/icon()` 按实体分派，`connected` 快照还会把
+  挂在该处理器上的 `LogicAI` 单位算进连通集合。两处与上游的已知差异：非建筑/单位实体的图标为 null，
+  对话框会拿不到图就不画（`SnapshotsDialog`）或退回逻辑图标（`VarsDialog`），而不是像上游那样在绘制时 NPE；
+  `SensorVars.hasItems()` 保留上游写法（对任何 Senseable 都为真，单位视图也会列出物品/液体行），
+  因为同一份快照的行号必须与上游一一对应。
+- **tick 显示**：时间列从「毫秒拼出的 h:mm:ss.mmm」改为 `Vars.state.tick` 的两位小数文本（上游 v0.11.2），
+  与游戏时钟一一对应；`ValueType.dead` 负责把失效（已拆除/已死）的建筑与单位与正常的 building/unit 区分开。
+- **recording 快照与队列计账**：`snapshot recording <block> <steps>` 创建一份「初始连通快照 + 接下来
+  N 条指令的逐指令子快照」；子快照由主快照的 `recording()` 列表访问，默认变量过滤是触发指令的变量表
+  （`ProcessorVars.selectedVars`）。上限记的是「队列条目 + 子快照」总数：`Snapshots.SnapshotRecord.size`
+  在子快照创建时 `register()` 递增，条目离场时按 `recording().size` 整批扣回（与上游一致的计账口径，
+  `varsTest` 钉住）。
 - **界面层 `logicsugar.vars.ui`**：`VarsDialog`、`SnapshotList`（活数据 + 快照队列的导航视图）、
   `SnapshotsDialog`（快照列表）、`EllipsisLabel`，以及两个入口类见下。
 - **三个入口**：
@@ -156,6 +174,49 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - **不改变保存产物**：界面与快照都只存在于客户端内存；快照不随地图保存，关图即丢。失败自动快照、断点自动快照、
   上限与三击窗口等设置在自有设置页与 Neon 聚合页（`bekBuildSettings`）**两处**注册（AGENTS.md 双形态要求），
   设置值由 `VarsAccess.applySettings` / `ProcessorStatus.applySettings` 读入运行期字段。
+- **字符串转义与大字符串**：变量表里只有 `ValueType.string` 的值会做 `[` → `[[` 转义
+  （`VarsDialog.escape`，与 `ExprStatement.highlight` 同规则；`]` 是字面量，转义会多渲染一个括号）；
+  `EllipsisLabel` 把原文截到 256 字符（`maxStringLength`）后才测量，二分上界就是截断后的长度，
+  MB 级字符串也只做 O(log n) 次 layout。
+- **内存值的文件导入/导出**：`Edit` 菜单里的导出/导入文件与剪贴板导入走同一个 `MemoryText` 与
+  `importData`（两段式：先 `validate` 再 `read`，部分失败不写坏内存）；恢复/删除快照固定在
+  `Edit` 菜单里，不再按紧凑布局隐藏。
+
+## Profiler（性能分析器）
+
+`logicsugar.profile` + `logicsugar.profile.ui`，移植自上游 MlogAssertions v0.11.3：统计每条指令的执行
+次数/消耗的指令预算、分支比例与覆盖率，界面入口在变量界面的 📊 按钮与 `Edit` 菜单（快照关闭时标题栏
+不存在，两处都要留），设置项 `logicsugar.startProfilerImmediately` 控制空数据页是否直接开始统计。
+
+- **只改运行期的指令数组，不碰保存产物**：`Instrumentation` 把 `LExecutor.instructions` 的每条指令换成
+  转发包装器，`InstrumentedWait` 另外继承原版 `WaitI`（让原版的 `instanceof WaitI` 判断与 wait 指示弧
+  继续可用，包装器每步同步 `curTime`）。包装只发生在本地进程，处理器保存的 mlog 一个字不变；
+  保存产物 ≤1000 条的硬不变式不受影响（`profile`/`restart`/`snapshot recording` 这些定制行仍只在
+  `emit` + 单机时落进程序文本）。
+- **`unwrap` 约定（新增任何读取 `executor.instructions` 的代码都必须遵守）**：包装器是**另一个类**，
+  直接 `instanceof` 会全部失效。所有读点先调 `InstrumentationEngine.unwrap(...)`：`ProcessorStatus.check`
+  （断言/停机/等待分诊）、`ProcessorStatus.drawWait`、`ProcessorVars.timeWaited`、
+  `ProcessorSnapshot.writeTo`。漏一处的表现是「profiler 开着时处理器状态消息被自己的扫描清掉」或
+  「等待时间显示 0」，`processorStatusTest` 给扫描加了保护。
+- **源码列与反射降级**：源码列用原版 `LParser` 解析 `build.code` 得到语句文本（v1 = upstream parity，
+  不映射回 sugar 行——载体的 sugar 源码是后续增强）。`LParser` 的构造器/`parse()` 都是包内可见，
+  跨类加载器只能反射；初始化或解析失败时源码列退化为 `unknown instruction`，计数、配额、分支、
+  recording 全部照常（`profilerTest` 钉住这条降级路径）。
+- **联机口径**：profiler 是本地只读观测（没有跨端语义），联机下允许使用，每个客户端只看自己的统计；
+  `restart` 会重载目标处理器并清空它的变量，属于调试副作用，只在 `emit` 构建里存在，而联机强制
+  `strip`，所以它不会进入多人地图的保存产物。
+- **recording 快照的运行期**：`snapshot recording` 指令创建主快照（初始连通状态）并把
+  `snapshotSteps = min(steps, snapshotLimit)` 交给 `Instrumentation`；此后每执行一条指令就补一份子快照，
+  主快照自己作为 `recording()` 的第 0 项，所以子列表从「第一条被记录指令之前的状态」开始。
+- **图标与 Neon 资产同步**：6 张自绘图标在 `assets/sprites/ui/*.png`，图集名是 `<mod.name>-<文件名>`，
+  所以运行时前缀必须按「实际加载我们的那个 mod」拼（`ProfilerIcons`：先 `Vars.mods.getMod(LogicSugarMod.class)`，
+  聚合形态下按类加载器反查宿主 mod，最后按图集探测）。**Neon 聚合必须同步这批资源**：
+  `Neon/tools/submods.json` 的 `ls` 项要有 `extraResourceDirs: ["src/main/resources/sprites/ui"]` +
+  `sourceExtraResourceDirs: ["assets/sprites/ui"]`，改图标或新增资源目录后重跑 `update_submods.py`，
+  并用 `unzip -l` 确认产物里有 `sprites/ui/*.png`。
+- **旧版 arc 编译陷阱**：Neon 聚合把工作区里的旧 arc 放在编译类路径最前面，旧版 `Cell` 没有
+  `wrap(boolean)`（只有无参 `wrap()`），新增界面代码里对 Label 一律 `Label.setWrap(...)`
+  （`varsUiTest` 的源码钉子挡住同类编译失败）。
 
 ## 函数与全局函数库
 

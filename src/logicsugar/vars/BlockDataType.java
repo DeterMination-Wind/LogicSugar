@@ -5,7 +5,7 @@ import arc.Core;
 /**
  * 变量视图的三种数据来源，以及各自的列宽上限（对话框布局用）。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1 ({@code cardillan.mlogassertions.data.BlockDataType}).
+ * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.data.BlockDataType}).
  * 上游直接读 bundle 的 {@code variables}（Mindustry 核心包里的 "Vars"）、
  * {@code varsdialog.memory}、{@code varsdialog.properties}；这里改读 LogicSugar 自己的
  * {@code logicsugar.vars.blocktype.*} 键（中文由 LogicSugar 的 bundle 提供），键不存在时

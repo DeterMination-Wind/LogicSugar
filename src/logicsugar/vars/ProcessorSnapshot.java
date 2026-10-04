@@ -9,15 +9,18 @@ import mindustry.world.blocks.logic.LogicBlock.LogicBuild;
  * 处理器变量的一份快照：{@link #create} 时把每个 {@link LVar} 连同它的 id/isobj/constant
  * 及当前值复制出来，所以之后处理器继续跑也不会改变快照内容。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1 ({@code cardillan.mlogassertions.data.ProcessorSnapshot}),
- * verbatim。{@link #writeTo} 要求活处理器的变量表与快照逐行同名同 id（程序改过就拒绝写回），
- * 并恢复文本缓冲与 {@code wait} 指令的计时。</p>
+ * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.data.ProcessorSnapshot}):
+ * v0.11.2 给快照加了 recording 子快照列表（只对 {@link SnapshotType#recording} 非 null）
+ * 与 {@code selectedVars} 默认过滤。{@link #writeTo} 要求活处理器的变量表与快照逐行同名同 id
+ * （程序改过就拒绝写回），并恢复文本缓冲与 {@code wait} 指令的计时。</p>
  */
 public class ProcessorSnapshot extends ProcessorVars implements Snapshot{
     public String name;
     public final SnapshotType type;
     public final int id;
     public final Seq<Snapshot> group;
+    /** recording 快照逐指令录下的子快照（v0.11.2）；其余类型为 null。 */
+    public final Seq<Snapshot> recording;
 
     public final String textBuffer;
     public final float timeWaited;
@@ -33,6 +36,7 @@ public class ProcessorSnapshot extends ProcessorVars implements Snapshot{
         this.type = type;
         this.id = id;
         this.group = group;
+        this.recording = type == SnapshotType.recording ? new Seq<>() : null;
         this.textBuffer = executor.textBuffer.toString();
         this.timeWaited = timeWaited();
         this.name = name;
@@ -80,6 +84,11 @@ public class ProcessorSnapshot extends ProcessorVars implements Snapshot{
     }
 
     @Override
+    public Seq<Snapshot> recording(){
+        return recording;
+    }
+
+    @Override
     public boolean writeTo(VariableValues liveData){
         if(liveData instanceof ProcessorVars processor){
             if(processor.data.length != data.length) return false;
@@ -96,7 +105,9 @@ public class ProcessorSnapshot extends ProcessorVars implements Snapshot{
             processor.executor.textBuffer.append(textBuffer);
 
             int counter = (int)processor.executor.counter.numval;
-            if(counter >= 0 && counter < executor.instructions.length && executor.instructions[counter] instanceof LExecutor.WaitI w){
+            LExecutor.LInstruction instruction = counter >= 0 && counter < executor.instructions.length
+                ? logicsugar.profile.InstrumentationEngine.unwrap(executor.instructions[counter]) : null;
+            if(instruction instanceof LExecutor.WaitI w){
                 w.curTime = (float)timeWaited;
             }
 
@@ -109,5 +120,11 @@ public class ProcessorSnapshot extends ProcessorVars implements Snapshot{
     @Override
     public float[] typeDistribution(){
         return typeDistribution;
+    }
+
+    /** recording 快照的默认变量过滤（触发指令的变量表），由创建方设置。 */
+    @Override
+    public void setDefaultFilter(LVar[] vars){
+        selectedVars = vars;
     }
 }

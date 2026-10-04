@@ -25,14 +25,19 @@ this file only adds what is specific to this project.
   只能靠设置描述与文档把后果讲清（见 bundle 的 maxInstructions/assertEmit 描述）。
 - 新功能提案先按此底线分类：不碰保存产物 → 正常实现；碰保存产物 → 必须加联机门禁，
   并在 bundle 与 `docs/architecture.md` 说明单机限定。
-- **上游同步基线**：断言/断点子系统与调试工具（Vars / Memory / Properties 界面、快照）对齐
-  cardillan/MlogAssertions **v0.11.1**（本地副本 `../_upstream/MlogAssertions-pr`，`git fetch upstream`
-  更新）。上游的指令上限覆盖（`max-instructions`）**不得**移植。UI/快照部分落在 `logicsugar.vars`
-  （数据）与 `logicsugar.vars.ui`（对话框/入口），不改变保存产物，因此不受联机底线约束；
+- **上游同步基线**：断言/断点子系统与调试工具（Vars / Memory / Properties 界面、快照、Profiler）对齐
+  cardillan/MlogAssertions **v0.11.3**（参考源码 `../_upstream/MlogAssertions-0.11.3`，由
+  `gh api repos/cardillan/MlogAssertions/tarball/refs/tags/v0.11.3` 取得；本地那份
+  `../_upstream/MlogAssertions-pr` 停在 v0.8.2，只当历史参考，不要 `git fetch upstream`）。
+  上游的指令上限覆盖（`max-instructions`）**不得**移植。UI/快照部分落在 `logicsugar.vars`
+  （数据）与 `logicsugar.vars.ui`（对话框/入口）、Profiler 落在 `logicsugar.profile`，
+  不改变保存产物，因此不受联机底线约束；
   但**方块配置面板必须与 MindustryX 共存**：探测到 fork 自带 `LogicSupport` 时先调用方块自己的
-  `buildConfiguration` 再追加本 mod 的按钮（原则要求，不要改成替换）。线格式例外有两处：
-  `asserttype` 的 `null` 类型是 LogicSugar 扩展（上游 `AssertionDataType` 不识别），以及上游
-  v0.10 起 `asserttype` 的 token 顺序为 `<type> <value>`（旧序仍可读，保存统一写新序）——改这一块前
+  `buildConfiguration` 再追加本 mod 的按钮（原则要求，不要改成替换）。线格式例外有三处：
+  `asserttype` 的 `null` 类型是 LogicSugar 扩展（上游 `AssertionDataType` 不识别）、上游
+  v0.10 起 `asserttype` 的 token 顺序为 `<type> <value>`（旧序仍可读，保存统一写新序）、
+  以及 `snapshot` 的 5 槽文本（上游 v0.11.2 起 `type block steps message`；旧 3 载荷 token
+  文本按第 4 槽写法分流仍可读）——改这一块前
   先看 `SugarAsserts.AssertTypeCard` 的注释与 `assertTypeTest`。
 
 ## Build & Test
@@ -44,7 +49,7 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
                                       # mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest,
                                       # bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest,
                                       # exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest,
-                                      # statementClipboardTest, canvasSourceTest, unitControlTest, spanTest
+                                      # statementClipboardTest, canvasSourceTest, unitControlTest, spanTest, profilerTest
 ./gradlew check jar                   # build + dev jar at build/libs/ (copy to 构建/LogicSugar/LogicSugar-dev.jar)
 ```
 

@@ -1,13 +1,14 @@
 package logicsugar.vars;
 
 import arc.struct.Seq;
+import mindustry.logic.LVar;
 import mindustry.world.blocks.logic.MemoryBlock.MemoryBuild;
 
 /**
  * 一块内存单元的快照：{@code super(build, false)} 让 {@link MemoryVars} 复制两个数组
  * （而不是持有活数组的引用），所以快照之后内存被改写也不会影响它。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1 ({@code cardillan.mlogassertions.data.MemorySnapshot}),
+ * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.data.MemorySnapshot}),
  * verbatim。</p>
  */
 public class MemorySnapshot extends MemoryVars implements Snapshot{
@@ -49,6 +50,11 @@ public class MemorySnapshot extends MemoryVars implements Snapshot{
     }
 
     @Override
+    public Seq<Snapshot> recording(){
+        return null;
+    }
+
+    @Override
     public boolean writeTo(VariableValues liveData){
         if(liveData instanceof MemoryVars memory){
             if(memory.length != length) return false;
@@ -66,5 +72,10 @@ public class MemorySnapshot extends MemoryVars implements Snapshot{
     public float[] typeDistribution(){
         if(typeDistribution == null) typeDistribution = computeTypeDistribution();
         return typeDistribution;
+    }
+
+    @Override
+    public void setDefaultFilter(LVar[] vars){
+        // 内存槽位没有「指令变量」的概念
     }
 }

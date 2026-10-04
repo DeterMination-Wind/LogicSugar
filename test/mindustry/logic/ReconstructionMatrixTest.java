@@ -355,7 +355,14 @@ public final class ReconstructionMatrixTest{
         addCarrier("assert.log", "log info \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "log info");
         addCarrier("assert.breakpoint", "breakpoint always x false\nset x 1\n", "breakpoint always x false");
         // snapshot is client-side only but still a card: its sugar has to survive the carrier
-        addCarrier("assert.snapshot", "snapshot connected cell1 \"name\"\nset x 1\n", "snapshot connected cell1");
+        // (current five-slot text, and the legacy three-payload-token text a <=5.7.2 save carries)
+        addCarrier("assert.snapshot", "snapshot connected cell1 20 \"name\"\nset x 1\n", "snapshot connected cell1 20 \"name\"");
+        addCarrier("assert.snapshot.legacy", "snapshot isolated @unit \"old\"\nset x 1\n", "snapshot isolated @unit \"old\"");
+        // the v0.11.2 recording type carries its own steps slot
+        addCarrier("assert.snapshot.recording", "snapshot recording @this 8 \"rec\"\nset x 1\n", "snapshot recording @this 8");
+        // profiler control instructions (v0.11.3): carrier-only cards like the rest of the family
+        addCarrier("assert.profile", "profile start cell1\nset x 1\n", "profile start cell1");
+        addCarrier("assert.restart", "restart cell1\nset x 1\n", "restart cell1");
     }
 
     /**

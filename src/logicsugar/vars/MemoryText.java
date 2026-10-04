@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 /**
  * 变量表 ↔ 剪贴板文本：导出 {@link #write} 与导入 {@link #read}/{@link #validate}。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1 ({@code cardillan.mlogassertions.data.MemoryText}),
+ * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.data.MemoryText}),
  * verbatim（含表头文本与全部转义规则）。表是制表符分隔的三列：地址（十进制）、类型
  * （{@link ValueType#title}）、值（mlog 字面量）；没有字面量的非有限数写成
  * {@code null}，字符串带引号并用反斜杠转义（{@code \n}、{@code \t}、引号、反斜杠，

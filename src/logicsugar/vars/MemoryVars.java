@@ -12,7 +12,7 @@ import java.util.Arrays;
  * （{@code numberMemory}），要么持一个对象（{@code objectMemory}，用盘外的 sentinel
  * 表示「这是数值槽」），与 mlog 的 {@code read}/{@code write} 语义一致。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1 ({@code cardillan.mlogassertions.data.MemoryVars}).
+ * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.data.MemoryVars}).
  * 两个数组与 sentinel 是 v160 {@code MemoryBuild} 的私有字段，只能反射读取。</p>
  *
  * <p><b>老 fork 兼容</b>：只有 v160 才有对象内存（{@code objectMemory}/{@code numberMemory}）；

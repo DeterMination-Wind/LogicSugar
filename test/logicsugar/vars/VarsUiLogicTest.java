@@ -3,6 +3,7 @@ package logicsugar.vars;
 import arc.func.Cons;
 import arc.struct.Seq;
 import logicsugar.assist.L10n;
+import logicsugar.vars.ui.EllipsisLabel;
 import logicsugar.vars.ui.SnapshotList;
 import logicsugar.vars.ui.SnapshotsDialog;
 import logicsugar.vars.ui.VarsDialog;
@@ -42,8 +43,159 @@ public final class VarsUiLogicTest{
         groupListTitleAndPosition();
         singleSnapshotList();
         integrationApiShape();
+        recordingListPositionText();
+        restoreAndDeleteReachableWithoutCompact();
+        uiCodeAvoidsOldArcIncompatibilities();
+        escapeOnlyDoublesOpeningBrackets();
+        ellipsisLabelBoundsHugeStrings();
 
         System.out.println("LogicSugar vars UI logic self-test passed.");
+    }
+
+    /** recording 主快照的子列表：{@code pos()} 用「子序号/总数」且标题/类型不参与导航。 */
+    private static void recordingListPositionText(){
+        Seq<Snapshot> subs = new Seq<>();
+        subs.add(new FakeSnapshot(5, "0: set x 1", SnapshotType.recording));
+        subs.add(new FakeSnapshot(5, "1: op add y x 1", SnapshotType.recording));
+        subs.add(new FakeSnapshot(5, "2: jump 0 always", SnapshotType.recording));
+
+        SnapshotList list = SnapshotList.list(subs);
+        check(list.recording(), "首份是 recording 时列表标记为 recording（标题不带 id/类型）");
+        checkEquals("0/2", list.pos(), "recording 序号从 0 起（第一份就是主快照自身的初始状态）");
+        checkEquals("Snapshot #5: 0: set x 1", list.title(), "标题仍取第一份的 id/名字（上游行为）");
+        check(list.next(), "next() 进入第一条指令的子快照");
+        checkEquals("1/2", list.pos(), "next() 后的序号");
+        check(list.last(), "last() 跳到最后一格");
+        checkEquals("2/2", list.pos(), "最后一格的序号");
+
+        // 普通组列表的位置文本仍是 1 起算的 index+1/size
+        Seq<Snapshot> group = new Seq<>();
+        group.add(new FakeSnapshot(7, "first"));
+        group.add(new FakeSnapshot(7, "second"));
+        SnapshotList plain = SnapshotList.list(group);
+        check(!plain.recording(), "普通组列表不是 recording");
+        checkEquals("1/2", plain.pos(), "普通组列表沿用 1 起算的位置文本");
+    }
+
+    /** 恢复/删除必须在不进入紧凑布局时也能到达（v0.11.2 把两者从标题栏移进 Edit 菜单），
+     *  且 profiler 的两个入口点（标题栏 + Edit 菜单）都要在——快照关闭时标题栏不存在。 */
+    private static void restoreAndDeleteReachableWithoutCompact(){
+        String source = readSource("src/logicsugar/vars/ui/VarsDialog.java");
+        String edit = logicsugar.SourceNails.methodBody(source, "private void editCommands(){");
+        String title = logicsugar.SourceNails.methodBody(source, "private void rebuildTitle(Table titleTable){");
+
+        check(edit.contains("this::restoreSnapshot"), "Edit 菜单里必须有恢复快照入口");
+        check(edit.contains("this::removeSnapshot"), "Edit 菜单里必须有删除快照入口");
+        check(!edit.contains("if(compact)"), "恢复/删除不能再被紧凑布局门控（v0.11.2）");
+        check(edit.contains("Snapshots.deleteEntity"), "删除全部快照使用 deleteEntity(Senseable)");
+        check(edit.contains("FileChooser.save") && edit.contains("FileChooser.open"),
+            "内存值的文件导出/导入入口");
+        check(edit.contains("importData("), "剪贴板与文件共用同一个 importData");
+
+        // 标题栏不再放恢复/删除（它们只在 Edit 菜单里）
+        check(!title.contains("this::restoreSnapshot") && !title.contains("this::removeSnapshot"),
+            "标题栏不应再有恢复/删除按钮");
+
+        // profiler 入口：标题栏按钮（非处理器禁用）+ Edit 菜单里的项
+        check(title.contains("ProfileDialog"), "标题栏必须有 profiler 入口");
+        check(title.contains("setDisabled"), "标题栏的 profiler 入口必须对非处理器视图禁用");
+        check(edit.contains("ProfileDialog"), "Edit 菜单必须有 profiler 入口（快照关闭时标题栏不存在）");
+
+        // 设置行的注册：LogicSugarSettings.addVarsPrefs 是自有设置页与 Neon 聚合页共用的唯一注册点
+        String settings = readSource("src/logicsugar/LogicSugarSettings.java");
+        check(logicsugar.SourceNails.methodBody(settings, "static void addVarsPrefs(").contains("settingStartProfilerImmediately"),
+            "profiler 设置行必须由 addVarsPrefs 注册（自有设置页 + Neon 聚合页共用）");
+        check(logicsugar.SourceNails.methodBody(settings, "private static void build(").contains("addVarsPrefs"),
+            "自有设置页必须调用 addVarsPrefs");
+        String mod = readSource("src/logicsugar/LogicSugarMod.java");
+        check(logicsugar.SourceNails.methodBody(mod, "public void bekBuildSettings(").contains("addVarsPrefs"),
+            "Neon 聚合页必须调用 addVarsPrefs（双形态要求）");
+    }
+
+    /** 读仓库源文件（SourceNails 的容错包装：读不到直接断言失败，不吞异常）。 */
+    private static String readSource(String file){
+        try{
+            return logicsugar.SourceNails.readSource(file);
+        }catch(java.io.IOException e){
+            throw new AssertionError("cannot read " + file + ": " + e, e);
+        }
+    }
+
+    /**
+     * Neon 聚合构建把工作区里的旧版 arc 放在编译类路径最前面，旧版 {@code Cell} 没有
+     * {@code wrap(boolean)}（只有无参 {@code wrap()}），新增界面代码用了它就会在 Neon 构建里
+     * 编译失败（本次 profiler 的 ProfileDialog 就这样撞过一次）。对 Label 用
+     * {@code Label.setWrap(...)}，对卡片用无参 {@code wrap()}。
+     */
+    private static void uiCodeAvoidsOldArcIncompatibilities(){
+        for(String file : new String[]{
+            "src/logicsugar/vars/ui/VarsDialog.java",
+            "src/logicsugar/vars/ui/SnapshotsDialog.java",
+            "src/logicsugar/profile/ui/ProfileDialog.java"
+        }){
+            String source = withoutComments(readSource(file));
+            check(!source.contains(".wrap(true)") && !source.contains(".wrap(false)"),
+                file + " 使用了旧版 arc 没有的 Cell.wrap(boolean)（Neon 聚合构建会编译失败）");
+        }
+    }
+
+    /** 一段源码去掉注释（整行与行尾），只留可执行文本：源码钉子不叮注释里的反例写法。 */
+    private static String withoutComments(String source){
+        StringBuilder out = new StringBuilder();
+        for(String line : source.split("\n", -1)){
+            String bare = line.trim();
+            if(bare.startsWith("//") || bare.startsWith("*") || bare.startsWith("/*")) continue;
+            int comment = line.indexOf("//");
+            if(comment >= 0) line = line.substring(0, comment);
+            out.append(line).append('\n');
+        }
+        return out.toString();
+    }
+
+    // ===== 显示时的转义与截断（无头可测的部分） =====
+
+    /** 字符串值里的 {@code [} 在 Arc 的富文本里是标记起点，必须写成 {@code [[}；
+     *  {@code ]} 是字面量，不能写成 {@code ]]}（那样会多渲染一个括号）。 */
+    private static void escapeOnlyDoublesOpeningBrackets(){
+        checkEquals("value", VarsDialog.escape("value"), "普通文本不变");
+        checkEquals("list[[1]", VarsDialog.escape("list[1]"), "'[' 写成 '[['（与 ExprStatement.highlight 同一规则）");
+        checkEquals("[[[[", VarsDialog.escape("[["), "连续 '[' 全部加倍");
+        checkEquals("a]b", VarsDialog.escape("a]b"), "']' 是字面量，不得转义");
+        checkEquals("", VarsDialog.escape(""), "空串不变");
+        check(VarsDialog.escape("x[").equals("x[["), "含 '[' 时走 replace 分支");
+        String plain = "no brackets here";
+        check(VarsDialog.escape(plain) == plain, "不含 '[' 时原样返回同一个对象（不浪费分配）");
+    }
+
+    /** v0.11.3 的修复：MB 级字符串只在 256 字符以内测量，二分次数与长度无关。 */
+    private static void ellipsisLabelBoundsHugeStrings(){
+        String huge = "x".repeat(1_000_000);
+        checkEquals(huge.substring(0, EllipsisLabel.maxStringLength), EllipsisLabel.truncate(huge),
+            "超长原文只保留 maxStringLength 个字符");
+        // 截断是 Marker 感知的（subSequence 而不是拆分代理对）
+        checkEquals("abc", EllipsisLabel.truncate("abc"), "短文本原样保留");
+        checkEquals("", EllipsisLabel.truncate(null), "null 视为空串");
+
+        // 二分：只允许 O(log n) 次测量，且 1MB 与 256 字符的代价相同
+        int[] calls = {0};
+        int fit = EllipsisLabel.fittingPrefix(huge.length(), length -> {
+            calls[0]++;
+            return length <= 123;
+        });
+        check(fit == 123, "二分必须找到最后一个满足条件的长度: " + fit);
+        check(calls[0] < 24, "1MB 字符串的二分测量次数应小于 24，实际 " + calls[0]);
+
+        calls[0] = 0;
+        int none = EllipsisLabel.fittingPrefix(1_000_000, length -> {
+            calls[0]++;
+            return false;
+        });
+        check(none == 0, "一个都放不下时返回 0: " + none);
+        check(calls[0] < 24, "放不下时的二分次数同样有限，实际 " + calls[0]);
+
+        // 上界就是传入的长度（原来的 min(200, ...) 会让长文本永远截不到 200 以上）
+        int all = EllipsisLabel.fittingPrefix(300, length -> true);
+        check(all == 300, "放得下时返回完整长度（上界不再是 200）: " + all);
     }
 
     // ===== 一组快照的导航 =====
@@ -141,10 +293,10 @@ public final class VarsUiLogicTest{
         checkPublicMethod(VarsDialog.class, "setup", boolean.class);
         checkPublicConstructor(SnapshotsDialog.class, VarsDialog.class, SnapshotList.class);
 
-        checkPublicStaticMethod(SnapshotList.class, "forBuild", Building.class);
+        checkPublicStaticMethod(SnapshotList.class, "forBuild", mindustry.logic.Senseable.class);
         checkPublicStaticMethod(SnapshotList.class, "list", Seq.class);
 
-        for(String name : new String[]{"group", "title", "liveData", "pos", "view", "next", "prev", "first", "last", "hasNext", "hasPrev", "canRemove", "remove", "list"}){
+        for(String name : new String[]{"group", "recording", "title", "liveData", "pos", "view", "next", "prev", "first", "last", "hasNext", "hasPrev", "canRemove", "remove", "list"}){
             checkPublicMethod(SnapshotList.class, name);
         }
         checkPublicMethod(SnapshotList.class, "select", VariableValues.class);
@@ -211,11 +363,17 @@ public final class VarsUiLogicTest{
     private static final class FakeSnapshot extends BaseVariableValues implements Snapshot{
         private final int id;
         private final String name;
+        private final SnapshotType type;
 
         FakeSnapshot(int id, String name){
+            this(id, name, null);
+        }
+
+        FakeSnapshot(int id, String name, SnapshotType type){
             super(null);
             this.id = id;
             this.name = name;
+            this.type = type;
         }
 
         @Override
@@ -272,7 +430,7 @@ public final class VarsUiLogicTest{
 
         @Override
         public SnapshotType type(){
-            return null;
+            return type;
         }
 
         @Override
@@ -291,6 +449,11 @@ public final class VarsUiLogicTest{
         }
 
         @Override
+        public Seq<Snapshot> recording(){
+            return null;
+        }
+
+        @Override
         public float[] typeDistribution(){
             return new float[ValueType.values().length];
         }
@@ -298,6 +461,10 @@ public final class VarsUiLogicTest{
         @Override
         public boolean writeTo(VariableValues liveData){
             return false;
+        }
+
+        @Override
+        public void setDefaultFilter(mindustry.logic.LVar[] vars){
         }
     }
 }

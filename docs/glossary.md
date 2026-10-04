@@ -189,6 +189,41 @@ Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[
 ### 跨逻辑剪贴板（StatementClipboard）
 编辑菜单「复制选区 / 粘贴选区」（Ctrl+C/V 驱动同一实现）。**剪贴板放糖源码而不是编译后的 mlog**，片段落进另一个处理器后仍可继续编辑；片段文本带自描述头 `# @ls-fragment`，粘贴侧据此识别并 `rebase`。跨程序时 `jump` 的数字目标是另一程序的指令下标，因此**双侧拒绝**；块配对由 `pairBlockEnds` 在插入前校验，之后每帧 `syncStatementIndices` 自愈。入口是 `SelectionClipboardUi`：接管档挂在自家对话框，共存档挂在对方对话框里的画布上，不要求把冲突设置切成接管；让位档停用糖编辑器，没有这项功能。
 
+## 调试与观测
+
+### 快照（snapshot）与快照类型
+对一块实体（处理器/内存/单位/队伍/内容物）在某一时刻的变量表存档；快照不随地图保存，关图即丢。
+四种类型：`isolated`（只该实体）、`connected`（实体 + 变量引用的建筑/单位 + 挂在该处理器上的
+`LogicAI` 单位）、`recording`（初始连通快照 + 接下来 `steps` 条指令的逐指令子快照）、
+`global`（地图上全部逻辑块）。线上写 `snapshot <type> <block> <steps> <message>`；旧的三载荷 token
+文本（上游 ≤v0.11.1、LogicSugar ≤5.7.2）按第 4 个 token 的写法分流仍可读，详见[架构总览](architecture.md)。
+
+### 队列计账（SnapshotRecord）
+每个实体一份快照队列 + 一个额度计数：普通快照占 1 格，recording 主快照按它的子快照数占格（子快照创建时
+`register()` 递增，条目离场时按 `recording().size` 整批扣回）。因此「快照上限」对 recording 是「总共能保留
+多少条指令记录」，而不是「多少个列表条目」。
+
+### Instrumentation（本地包装器）
+profiler 把处理器的运行期指令数组换成转发包装器的那个对象（`logicsugar.profile.Instrumentation`）：
+每条指令的执行次数/指令预算/分支次数、覆盖率与丢配额，以及 recording 子快照的抓取。它**只存在于本地进程**，
+不进入保存产物；读 `executor.instructions` 的代码必须先 `InstrumentationEngine.unwrap(...)` 才能做
+`instanceof`（包装器是另一个类）。
+
+### 执行配额（instruction quota）与丢配额（lost quota）
+处理器每帧的执行预算由 `maxInstructionScale * ipt` 封顶，`accumulator` 是剩余额度。profiler 的「时间」列
+就是每条指令消耗的额度（普通一步 1，`yield` 时按 `accumulator + edelta*ipt - scale*ipt` 估算）；这个估算值
+累计到 `lostQuota` 就是「丢配额」——被等待/让出丢掉、无法用在本帧指令上的预算。
+
+### 源码列（profiler source column）与反射降级
+profiler 界面第一列显示的是指令文本，来自原版 `LParser` 对 `build.code` 的解析（v1 不映射回 sugar 行）。
+`LParser` 在跨类加载器下只能反射构造/调用；反射失败或解析失败时这一列退化为 `unknown instruction`，
+其余统计照常，绝不因可选功能让游戏崩。
+
+### profile / restart 指令
+`profile <start|stop|clear> <block>` 启停/清空目标处理器的统计；`restart <block>` 重载目标处理器并清空它的变量
+（用于从另一个处理器开始录制初始化代码，`accumulator < 2` 时先 `counter-- + yield` 保证下一帧真的从头跑）。
+两条指令都只在 `emit`（单机调试构建）下写进程序文本，联机强制 `strip`，因此不会进入多人地图的保存产物。
+
 ## 构建与发布
 
 ### D8 / classes.dex

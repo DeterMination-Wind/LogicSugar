@@ -25,6 +25,9 @@ public final class LogicSugarSettings{
     public static final String settingFuncMode = "logicsugar.funcMode";
     public static final String settingSwitchStrategy = "logicsugar.switchStrategy";
     public static final String settingAssertEmit = "logicsugar.assertEmit";
+    /** Profiler 的空数据页是否直接开始统计（也就是「Do not show again」勾选框写入的键）。
+     *  默认 false：profiler 是观测工具，不能不经用户同意就开始包装指令。 */
+    public static final String settingStartProfilerImmediately = "logicsugar.startProfilerImmediately";
 
     /** The page this mod owns. Kept so its descriptions can be re-flowed whenever the page is
      *  opened: the line breaks depend on the window width, which can change while the game runs. */
@@ -319,6 +322,9 @@ public final class LogicSugarSettings{
             return i >= 16 ? Core.bundle.get("logicsugar.vars.fullDigits", "all digits") : Integer.toString(i);
         });
         table.pref(new VarsAlignmentSetting("logicsugar.varsAlignment", logicsugar.vars.VarsOptions.alignment));
+        // profiler（上游 v0.11.3 的 start-profiler-immediatelly）：默认关闭；在 Vars 界面的
+        // 「Do not show again」勾选它，下一次打开 profiler 页面就直接开始统计。
+        table.checkPref(settingStartProfilerImmediately, false);
     }
 
     /** 变量表数值列的对齐方式（左/中/右循环，存 arc 的 {@code Align} 常量）。 */

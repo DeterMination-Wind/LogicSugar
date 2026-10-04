@@ -3,9 +3,12 @@ package logicsugar.vars;
 import arc.Core;
 import arc.func.Cons;
 import arc.graphics.Color;
+import arc.struct.Seq;
 import arc.util.Align;
 import mindustry.Vars;
 import mindustry.core.GameState;
+import mindustry.gen.Building;
+import mindustry.logic.LVar;
 
 import java.util.Arrays;
 
@@ -31,6 +34,10 @@ public final class VarsDataTest{
         Vars.state = new GameState();
 
         valueTypeClassification();
+        senseableEntityView();
+        deadEntityClassification();
+        snapshotRecordAccounting();
+        recordingSelectionFilter();
         memoryTextRoundTrip();
         memoryTextRejectsBadLines();
         memoryTextSkipsUnimportable();
@@ -79,6 +86,175 @@ public final class VarsDataTest{
         checkEquals("link", ValueType.link.title, "link.title");
         checkEquals("unit", ValueType.unit.title, "unit.title");
         checkEquals("building", ValueType.building.title, "building.title");
+    }
+
+    // ===== Senseable 化（v0.11.2）与快照计账 =====
+
+    /**
+     * v0.11.2 把变量视图的数据源从建筑放宽到 {@link mindustry.logic.Senseable}：
+     * 非建筑实体的描述退到类名、位置为空、图标为 null，而时间文本来自游戏 tick。
+     *
+     * <p>无头限制：真正的单位需要游戏内容（{@code UnitType} 构造要读 {@code Vars.content}），
+     * 所以这里用「只实现 Senseable + Posc 的替身」验证分派规则；单位/建筑的图标走
+     * {@code uiIcon} 一行，不在无头自检的覆盖范围内（手工清单覆盖）。</p>
+     */
+    private static void senseableEntityView(){
+        Vars.state.tick = 1234;
+        // 无头限制：能同时实现 Senseable 与 Posc 的只有游戏里的 Building/Unit，两者的构造
+        // 都要读 Vars.content（建筑/单位类型），所以这里只覆盖「非建筑实体」的分派；
+        // 建筑/单位的描述/位置/图标由手工清单覆盖。
+        MemoryView view = new MemoryView(1, new PlainEntity());
+
+        check(view.entity() != null, "entity() 返回构造时传入的实体");
+        checkEquals("PlainEntity", view.entityDesc(), "非建筑/单位的实体退到类名");
+        checkEquals("", view.entityPos(), "非 Posc 实体的位置是空串");
+        checkEquals("PlainEntity", view.buildingDescMulti(), "非 Posc 实体的多行描述不能是 null（上游此处有个未赋值的笔误，这里修正）");
+        check(view.icon() == null, "非建筑/单位没有图集图标（调用方必须判空）");
+        checkEquals(String.format("%,.2f", 1234.0), view.time(), "时间文本来自 Vars.state.tick（v0.11.2 起不再是用毫秒拼的 h:mm:ss）");
+    }
+
+    /** 失效（已拆除）的建筑在类型列上显示为 {@code dead}，而不是 building。 */
+    private static void deadEntityClassification(){
+        MemoryView view = new MemoryView(2);
+        view.set(0, new Building(){
+            @Override
+            public boolean dead(){
+                return true;
+            }
+        });
+        view.set(1, new Building(){
+        });
+
+        checkEquals("dead", view.type(0).name(), "失效建筑的类型是 dead");
+        checkEquals("building", view.type(1).name(), "正常建筑的类型是 building");
+    }
+
+    /**
+     * recording 快照的额度计账：队列条目与子快照共用 {@code snapshotSize} 上限；
+     * 裁剪队列条目时按 {@code recording().size} 一次性扣回（上游 v0.11.2 的语义）。
+     */
+    private static void snapshotRecordAccounting(){
+        Snapshots.SnapshotRecord record = new Snapshots.SnapshotRecord();
+
+        // 一条普通快照占 1 格，一条带 4 个子快照的 recording 主快照占 4 格
+        record.add(new FakeSnapshot(1));
+        check(record.size == 1, "普通快照占 1 格: " + record.size);
+        record.add(new FakeSnapshot(4));
+        check(record.size == 5, "recording 主快照按其子快照数占格: " + record.size);
+
+        // 子快照创建时的 register() 也要计数（上游 Instrumentation.createSnapshot 的调用）
+        record.register();
+        check(record.size == 6, "recording 子快照要计入上限: " + record.size);
+
+        // 上限 3：4 格的 recording（连带普通快照）先被裁，总额度回到 <= 3
+        record.adjustSize(3);
+        check(record.size <= 3, "裁剪后不能超过上限: " + record.size);
+        check(record.queue.size == 0, "4 格的 recording 与 1 格的普通快照都不该留下: " + record.queue.size);
+
+        // 只裁普通条目的情形：上限 4，队列为普通 1 格 + recording 4 格；
+        // 裁剪先弹队尾（普通快照），recording 因为恰好等于额度而留住
+        Snapshots.SnapshotRecord partial = new Snapshots.SnapshotRecord();
+        partial.add(new FakeSnapshot(1));
+        partial.add(new FakeSnapshot(4));
+        partial.adjustSize(4);
+        check(partial.size == 4, "裁剪后的额度正好是上限: " + partial.size);
+        check(partial.queue.size == 1 && partial.queue.first().recording() != null,
+            "普通快照应先于 recording 被裁: " + partial.queue.size);
+
+        // 删除主快照时按 recording().size 整批扣回子快照额度（add 时按当时的 recording 大小记账，
+        // 之后每录一条子快照再 register 一次）
+        Snapshots.SnapshotRecord other = new Snapshots.SnapshotRecord();
+        FakeSnapshot master = new FakeSnapshot(3);
+        other.add(master);
+        other.register();
+        check(other.size == 4, "主快照 add 与子快照 register 分开计账: " + other.size);
+        other.removed(master);
+        check(other.size == 1, "removed 按 recording 子快照数扣回: " + other.size);
+
+        other.clear();
+        check(other.size == 0 && other.queue.size == 0, "clear 同时清队列与额度");
+    }
+
+    /** recording 快照的默认变量过滤：{@code selectedVars} 为 null 时不过滤。 */
+    private static void recordingSelectionFilter(){
+        LVar a = var("a"), b = var("b");
+
+        check(ProcessorVars.keepUserVar(a, null), "没有默认过滤时全部保留");
+        check(ProcessorVars.keepUserVar(a, new LVar[]{a}), "指令用到的变量保留");
+        check(!ProcessorVars.keepUserVar(b, new LVar[]{a}), "指令没用到的变量被过滤");
+        check(!ProcessorVars.keepUserVar(b, new LVar[0]), "空过滤表不保留任何用户变量");
+    }
+
+    private static LVar var(String name){
+        return new LVar(name);
+    }
+
+    /** 只实现 Senseable 的实体替身（既不是建筑/单位，也不是 Posc）。 */
+    private static class PlainEntity implements mindustry.logic.Senseable{
+        @Override
+        public double sense(mindustry.logic.LAccess access){
+            return 0;
+        }
+
+        @Override
+        public Object senseObject(mindustry.logic.LAccess access){
+            return null;
+        }
+    }
+
+    /**
+     * 变量数据层的快照替身：复用 {@link MemoryView} 的变量表实现，只补快照特有的部分。
+     * {@code recordingSize} > 0 时 {@link #recording()} 返回相应条数的子快照列表（内容无关紧要）。
+     */
+    private static final class FakeSnapshot extends MemoryView implements Snapshot{
+        private final int recordingSize;
+
+        FakeSnapshot(int recordingSize){
+            super(0);
+            this.recordingSize = recordingSize;
+        }
+
+        @Override
+        public Seq<Snapshot> recording(){
+            if(recordingSize <= 0) return null;
+            Seq<Snapshot> seq = new Seq<>();
+            for(int i = 0; i < recordingSize; i++) seq.add(this);
+            return seq;
+        }
+
+        @Override
+        public SnapshotType type(){
+            return SnapshotType.connected;
+        }
+
+        @Override
+        public String name(){
+            return "fake";
+        }
+
+        @Override
+        public int id(){
+            return 0;
+        }
+
+        @Override
+        public Seq<Snapshot> group(){
+            return null;
+        }
+
+        @Override
+        public float[] typeDistribution(){
+            return new float[ValueType.values().length];
+        }
+
+        @Override
+        public boolean writeTo(VariableValues liveData){
+            return false;
+        }
+
+        @Override
+        public void setDefaultFilter(LVar[] vars){
+        }
     }
 
     // ===== 导出 / 导入往返 =====
@@ -218,7 +394,7 @@ public final class VarsDataTest{
         check(BlockDataType.processor.maxColWidth == 10000f, "processor 列宽上限");
         check(BlockDataType.memory.maxColWidth == 550f, "memory 列宽上限");
         check(BlockDataType.properties.maxColWidth == 750f, "properties 列宽上限");
-        check(SnapshotType.all.length == 3, "快照类型（isolated/connected/global）未变");
+        check(SnapshotType.all.length == 4, "快照类型（isolated/connected/recording/global，v0.11.2 起）未变");
     }
 
     private static void varsOptionsDefaults(){
@@ -265,14 +441,18 @@ public final class VarsDataTest{
      * 这里不需要活建筑）。语义与上游 MemoryVars 一致：{@code set(index, null)} 写的是
      * 「空对象槽」，与数值槽是两个不同的状态。
      */
-    private static final class MemoryView extends BaseVariableValues{
+    private static class MemoryView extends BaseVariableValues{
         private static final Object numberSlot = new Object();
 
         private final Object[] objectMemory;
         private final double[] numberMemory;
 
         MemoryView(int capacity){
-            super(null);
+            this(capacity, null);
+        }
+
+        MemoryView(int capacity, mindustry.logic.Senseable entity){
+            super(entity);
             objectMemory = new Object[capacity];
             numberMemory = new double[capacity];
             Arrays.fill(objectMemory, numberSlot);

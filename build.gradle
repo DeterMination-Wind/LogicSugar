@@ -1,6 +1,6 @@
 apply plugin: "java"
 
-version = "5.7.2"
+version = "5.8.0"
 sourceSets{
     main.java.srcDirs = ["src"]
     test.java.srcDirs = ["test"]
@@ -366,9 +366,17 @@ tasks.register("spanTest", JavaExec){
     mainClass = "mindustry.logic.SpanTest"
 }
 
+// Profiler: the wrapper unwrap contract, the pure step/quota math, and the reflection fallback
+// that degrades the source column to "unknown instruction" without breaking the rest.
+tasks.register("profilerTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.profile.ProfileInstrumentationTest"
+}
+
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, assertMessageTest, varsTest, varsUiTest, varsAccessTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, statementClipboardTest, canvasSourceTest, unitControlTest, spanTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, assertMessageTest, varsTest, varsUiTest, varsAccessTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, statementClipboardTest, canvasSourceTest, unitControlTest, spanTest, profilerTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

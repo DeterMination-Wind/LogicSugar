@@ -12,14 +12,15 @@ import java.util.Comparator;
 
 /**
  * 一块处理器的变量视图：最前面几行是 LogicSugar 自己合成的 {@code Text buffer}、
- * {@code Time waited}、{@code @counter}、{@code @unit}、{@code @ipt}（特权处理器还有
- * {@code @queryResult}），后面是程序的普通变量（{@code executor.vars[1..]}，跳过
- * {@code vars[0]}）。
+ * {@code Time waited}、{@code Accumulator}、{@code @counter}、{@code @unit}、{@code @ipt}
+ * （特权处理器还有 {@code @queryResult}），后面是程序的普通变量（{@code executor.vars[1..]}，
+ * 跳过 {@code vars[0]}）。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1 ({@code cardillan.mlogassertions.data.ProcessorVars}),
+ * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.data.ProcessorVars}),
  * 去掉对上游 UI 的依赖。两处偏差：合成行的名字（会显示在表里）改读 LogicSugar 的 bundle；
  * 排序用的 {@code mindcodeOrder} 保持原样。隐藏临时变量（{@code *tmp*}）与链接变量的
- * 过滤开关来自 {@link VarsOptions}，由 {@link #setView} 接收。</p>
+ * 过滤开关来自 {@link VarsOptions}，由 {@link #setView} 接收；{@code selectedVars} 是
+ * recording 快照的默认过滤（上游 v0.11.2）。</p>
  */
 public class ProcessorVars extends BaseVariableValues{
     public final LExecutor executor;
@@ -28,18 +29,24 @@ public class ProcessorVars extends BaseVariableValues{
     public final int start;
     public int length;
 
+    /** recording 快照的默认过滤：非 null 时只显示这些名字的用户变量（上游 v0.11.2）。
+     *  该快照的 {@code setDefaultFilter} 在创建时把它设为触发指令的变量表。 */
+    public LVar[] selectedVars = null;
+
     LVar id;
 
     public ProcessorVars(LogicBuild build){
         super(build);
         this.executor = build.executor;
-        this.data = new LVar[executor.vars.length + 4 + (executor.privileged ? 1 : 0)];
+        this.data = new LVar[executor.vars.length + 5 + (executor.privileged ? 1 : 0)];
         length = 0;
 
         // 合成行的名字就是表里的行标签，所以走 bundle；快照与活视图在同一会话里取到
         // 同一份文本，ProcessorSnapshot.writeTo 的名字比对不受影响。
         store(objvar(Core.bundle.get("logicsugar.vars.var.textbuffer", "Text buffer"), () -> cachedTextBuffer()));
         store(numvar(Core.bundle.get("logicsugar.vars.var.timewaited", "Time waited"), () -> (double)timeWaited()));
+        // 上游 v0.11.2：处理器剩余的指令预算；profiler 的「丢配额」就是在这里观察到的。
+        store(numvar(Core.bundle.get("logicsugar.vars.var.accumulator", "Accumulator"), () -> (double)executor.build.accumulator));
         store(executor.counter);
         store(executor.unit);
         store(executor.ipt);
@@ -88,7 +95,7 @@ public class ProcessorVars extends BaseVariableValues{
 
         rawId = text;
         formattedId = new String(buffer, 0, l);
-        formattedIdMulti = new String(bufferM, 0, l) + " [gray](" + buildingPos() + ")";
+        formattedIdMulti = new String(bufferM, 0, l) + " [gray](" + entityPos() + ")";
     }
 
     @Override
@@ -97,8 +104,8 @@ public class ProcessorVars extends BaseVariableValues{
     }
 
     @Override
-    public String buildingDesc(){
-        if(id == null || !(id.obj() instanceof String text)) return super.buildingDesc();
+    public String entityDesc(){
+        if(id == null || !(id.obj() instanceof String text)) return super.entityDesc();
         if(rawId != text) updateDesc(text);
         return formattedId;
     }
@@ -154,7 +161,11 @@ public class ProcessorVars extends BaseVariableValues{
 
     protected float timeWaited(){
         int counter = (int)executor.counter.numval;
-        return counter >= 0 && counter < executor.instructions.length && executor.instructions[counter] instanceof LExecutor.WaitI w ? w.curTime : 0;
+        // profiler 会将 wait 指令包装成转发器，先解包再判断（InstrumentedWait 虽然继承 WaitI，
+        // 但统一走解包能保证读到的是原版对象自己的状态）
+        LExecutor.LInstruction instruction = counter >= 0 && counter < executor.instructions.length
+            ? logicsugar.profile.InstrumentationEngine.unwrap(executor.instructions[counter]) : null;
+        return instruction instanceof LExecutor.WaitI w ? w.curTime : 0;
     }
 
     @Override
@@ -169,12 +180,25 @@ public class ProcessorVars extends BaseVariableValues{
             if(data[i] == null) continue;
             if(filtered && isTemp(data[i].name)) continue;
             if(hideLinks && data[i].constant && data[i].name.charAt(0) != '@') continue;
+            // recording 快照的默认过滤只作用于用户变量（合成行始终可见）
+            if(i >= start && !keepUserVar(data[i], selectedVars)) continue;
             view[length++] = data[i];
         }
 
         if(sorted){
             Arrays.sort(view, start, length, mindcodeOrder);
         }
+    }
+
+    /** recording 默认过滤的判定：{@code selectedVars} 为 null 时不过滤；否则只保留名字被
+     *  触发指令用到的变量。单独抽出供无头自检直接验证（{@code ProcessorVars} 本身需要活处理器）。 */
+    static boolean keepUserVar(LVar var, LVar[] selectedVars){
+        if(selectedVars == null) return true;
+        // A typical instruction only has a handful of variables
+        for(int i = 0; i < selectedVars.length; i++){
+            if(selectedVars[i].name.equals(var.name)) return true;
+        }
+        return false;
     }
 
     private enum VariableClass{

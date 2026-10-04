@@ -1,80 +1,99 @@
 package logicsugar.vars;
 
 import arc.Core;
+import arc.graphics.g2d.TextureRegion;
 import mindustry.Vars;
 import mindustry.ctype.Content;
 import mindustry.ctype.MappableContent;
 import mindustry.game.Team;
 import mindustry.gen.Building;
+import mindustry.gen.Posc;
 import mindustry.gen.Unit;
+import mindustry.logic.Senseable;
 
 import static logicsugar.vars.VarsOptions.COLOR_LIMIT;
 
 /**
- * 变量视图的公共部分：时间戳/时间文本、建筑描述、数值与对象的格式化文本，以及
+ * 变量视图的公共部分：时间文本、实体描述/位置/图标、数值与对象的格式化文本，以及
  * 「一行是什么类型」的判定。上游把颜色上限放在 {@code Constants}，这里改读
  * {@link VarsOptions#COLOR_LIMIT}（同一常量）。
  *
- * <p>Ported from upstream MlogAssertions v0.11.1 ({@code cardillan.mlogassertions.data.BaseVariableValues}),
+ * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.data.BaseVariableValues}),
  * 去掉对上游 UI（{@code VarsDialog}）的依赖，其余行为逐字保留。</p>
+ *
+ * <p>v0.11.2 的两处行为变化：数据源从 {@code Building} 放宽到 {@link Senseable}（单位/队伍/
+ * 内容物也能建快照），以及时间戳从「毫秒格式的时间串」改成 {@code Vars.state.tick} 的
+ * 两位小数文本（{@link #tick}）——旧格式的 `h:mm:ss.mmm` 只在一天内的会话里才有意义，
+ * 而 tick 与游戏时钟一一对应。</p>
  *
  * <p>两个不是线格式的显示占位符（{@code [content]} / {@code [object]}）改成读
  * LogicSugar 的 bundle；{@code "null"} 保持原样，因为它是 mlog 字面量，
  * {@link MemoryText} 导入时要靠它还原「非有限数」与「空对象」。</p>
  */
 public abstract class BaseVariableValues implements VariableValues{
-    public final long timestamp = (long)(Vars.state.tick / 60.0 * 1000.0);
-    public final Building build;
+    /** 快照/活视图创建时的游戏 tick（{@link #time()} 的两位小数文本来源）。 */
+    public final double tick = Vars.state.tick;
+    /** 数据源；单位、队伍、内容物等任何 Senseable 都可以。 */
+    public final Senseable entity;
 
-    public BaseVariableValues(Building build){
-        this.build = build;
+    public BaseVariableValues(Senseable entity){
+        this.entity = entity;
     }
 
     @Override
-    public long timestamp(){
-        return timestamp;
+    public Senseable entity(){
+        return entity;
     }
 
+    /** 实体的显示名：建筑/单位用本地化名字，其余类型退到类名。 */
     @Override
-    public Building building(){
-        return build;
+    public String entityDesc(){
+        if(entity instanceof Building b) return b.block.localizedName;
+        if(entity instanceof Unit u) return u.type.localizedName;
+        return entity.getClass().getSimpleName();
     }
 
+    private String entityPos;
     @Override
-    public String buildingDesc(){
-        return build.block.localizedName;
-    }
-
-    private String buildingPos;
-    @Override
-    public String buildingPos(){
-        if(buildingPos == null){
-            buildingPos = String.format("%.0f,\u00a0%.0f", build.x() / Vars.tilesize, build.y() / Vars.tilesize);
+    public String entityPos(){
+        if(entityPos == null){
+            if(entity instanceof Posc p){
+                entityPos = String.format("%.0f,\u00a0%.0f", p.x() / Vars.tilesize, p.y() / Vars.tilesize);
+            }else{
+                entityPos = "";
+            }
         }
-        return buildingPos;
+        return entityPos;
     }
 
     private String buildingDescMulti;
     @Override
     public String buildingDescMulti(){
         if(buildingDescMulti == null){
-            buildingDescMulti = String.format("%s\n[gray](%.0f,\u00a0%.0f)", build.block.localizedName, build.x() / Vars.tilesize, build.y() / Vars.tilesize);
+            if(entity instanceof Posc p){
+                buildingDescMulti = String.format("%s\n[gray](%.0f,\u00a0%.0f)", entityDesc(), p.x() / Vars.tilesize, p.y() / Vars.tilesize);
+            }else{
+                // 上游这里写成 buildingPos = entityDesc()（没赋值给 buildingDescMulti，返回 null）。
+                // 无头/非 Posc 实体（队伍、内容物）也走同一条路径，null 会让标题栏的
+                // noWrapLabel 直接炸，所以这里修正为赋值给本字段（唯一的对上游偏离）。
+                buildingDescMulti = entityDesc();
+            }
         }
         return buildingDescMulti;
+    }
+
+    /** 建筑/单位的图集图标（无头环境与其它 Senseable 返回 null，调用方必须判空）。 */
+    @Override
+    public TextureRegion icon(){
+        return entity instanceof Building b ? b.block.uiIcon :
+                entity instanceof Unit unit ? unit.type.uiIcon :
+                        null;
     }
 
     private String time;
     @Override
     public String time(){
-        if(time == null){
-            if(timestamp > 86_400_000){
-                int days = (int)(timestamp / 86_400_000);
-                long millis = timestamp % 86_400_000;
-                time = String.format("%dd %d:%02d:%02d.%03d", days, millis / 3_600_000, millis / 60_000 % 60, millis / 1000 % 60, millis % 1000);
-            }else{
-                time = String.format("%d:%02d:%02d.%03d", timestamp / 3_600_000, timestamp / 60_000 % 60, timestamp / 1000 % 60, timestamp % 1000);
-            }
-        }
+        if(time == null) time = String.format("%,.2f", tick);
         return time;
     }
 
@@ -143,6 +162,8 @@ public abstract class BaseVariableValues implements VariableValues{
         return " #" + Integer.toHexString(id);
     }
 
+    /** 一行的数据类型。注意 {@link ValueType#dead}：失效（已拆除/已死）的
+     *  建筑与单位仍然是一个对象槽，只是类型退到 dead。 */
     @Override
     public ValueType type(int index){
         if(isLink(index)){

@@ -4,6 +4,8 @@ import arc.Core;
 import arc.func.Func;
 import arc.graphics.Color;
 import arc.util.Log;
+import logicsugar.profile.ProfilingCommand;
+import logicsugar.vars.Snapshot;
 import logicsugar.vars.SnapshotType;
 import logicsugar.vars.Snapshots;
 import mindustry.Vars;
@@ -11,42 +13,49 @@ import mindustry.gen.Building;
 import mindustry.logic.ConditionOp;
 import mindustry.logic.LExecutor;
 import mindustry.logic.LVar;
+import mindustry.logic.Senseable;
 import mindustry.logic.SugarAsserts.AssertionDataType;
 import mindustry.logic.SugarAsserts.AssertionType;
 import mindustry.world.blocks.logic.LogicBlock.LogicBuild;
 
 /**
  * Runtime instruction classes for LogicSugar's assertion statement set, ported from the
- * upstream MlogAssertions mod (cardillan/mlogassertions, currently v0.11.1, wire-format
+ * upstream MlogAssertions mod (cardillan/mlogassertions, currently v0.11.3, wire-format
  * compatible). Failure reporting goes through {@link ProcessorStatus}, which draws the
  * message above the processor and keeps the program looping on the failing instruction
  * (counter rewind + yield) until the condition passes or the processor is reconfigured. With
  * the {@code assertsAreBreakpoints} setting, a failed assertion pauses the game at the
  * instruction instead (upstream behavior).
  *
- * <p>Synced from v0.8.2 to v0.11.1: the generic {@code assert} instruction, failure texts
+ * <p>Synced from v0.8.2 to v0.11.3: the generic {@code assert} instruction, failure texts
  * that name the compared values, {@code asserttype}'s expanded taxonomy, {@code assertprints}'
  * buffer truncation, the {@code {1}}/{@code {name}} message placeholders and the refusal to
  * pause the game in multiplayer. The placeholder engine lives in
  * {@link #formatMessage(Func, String, boolean, Object, Object[])} so it is testable without a
  * live executor ({@code AssertMessageTest}).</p>
  *
- * <p>Every class implements the {@link AssertInstruction} marker so the map overlay skips
+ * <p>Every class implements the {@link DevToolsInstruction} marker so the map overlay skips
  * these blocks during its scan: the instruction owns its message lifecycle, and a scan
- * that saw "not a stop/wait" would wipe the failure message every frame.</p>
+ * that saw "not a stop/wait" would wipe the failure message every frame. Upstream v0.11.3
+ * extends the same marker with {@code vars()} — the variable slots an instruction touches,
+ * which the profiler's recording snapshots collect ({@code profile.InstrumentationEngine}).
+ * The name follows upstream; pre-5.8.0 builds called it {@code AssertInstruction}.</p>
  */
 public final class AssertInstructions{
     private AssertInstructions(){}
 
-    /** Marker interface for assertion instructions (overlay scan skip). */
-    public interface AssertInstruction{
+    /** Marker interface for assertion/debug instructions: the overlay scan skips them, and
+     *  {@code vars()} lists the variable slots the instruction reads or writes (in the
+     *  instruction's own field order, {@code null} slots included) for snapshot recording. */
+    public interface DevToolsInstruction extends LExecutor.LInstruction{
+        LVar[] vars();
     }
 
     /** The generic {@code assert} instruction: the condition must hold, otherwise the
      *  program stops on the instruction. The message argument is optional — when it is not a
      *  non-empty string the failure text is built from the localized default, which names
      *  the compared values and the operator. */
-    public static class AssertI implements LExecutor.LInstruction, AssertInstruction{
+    public static class AssertI implements DevToolsInstruction{
         public ConditionOp op = ConditionOp.notEqual;
         public LVar value, compare;
         public LVar message;
@@ -62,6 +71,11 @@ public final class AssertInstructions{
         }
 
         @Override
+        public LVar[] vars(){
+            return new LVar[]{value, compare, message};
+        }
+
+        @Override
         public final void run(LExecutor exec){
             if(op.test(value, compare)){
                 ProcessorStatus.reset(exec.build);
@@ -72,7 +86,7 @@ public final class AssertInstructions{
         }
     }
 
-    public static class AssertBoundsI implements LExecutor.LInstruction, AssertInstruction{
+    public static class AssertBoundsI implements DevToolsInstruction{
         public AssertionType type = AssertionType.any;
         public LVar multiple;
         public LVar min;
@@ -94,6 +108,11 @@ public final class AssertInstructions{
         }
 
         public AssertBoundsI(){
+        }
+
+        @Override
+        public LVar[] vars(){
+            return new LVar[]{multiple, min, value, max, message};
         }
 
         @Override
@@ -120,7 +139,7 @@ public final class AssertInstructions{
         }
     }
 
-    public static class AssertEqualsI implements LExecutor.LInstruction, AssertInstruction{
+    public static class AssertEqualsI implements DevToolsInstruction{
         public LVar expected;
         public LVar actual;
         public LVar message;
@@ -135,6 +154,11 @@ public final class AssertInstructions{
         }
 
         @Override
+        public LVar[] vars(){
+            return new LVar[]{expected, actual, message};
+        }
+
+        @Override
         public final void run(LExecutor exec){
             if(ConditionOp.strictEqual.test(expected, actual)){
                 ProcessorStatus.reset(exec.build);
@@ -144,7 +168,7 @@ public final class AssertInstructions{
         }
     }
 
-    public static class AssertFlushI implements LExecutor.LInstruction{
+    public static class AssertFlushI implements DevToolsInstruction{
         public LVar flushIndex;
 
         public AssertFlushI(LVar flushIndex){
@@ -155,12 +179,17 @@ public final class AssertInstructions{
         }
 
         @Override
+        public LVar[] vars(){
+            return new LVar[]{flushIndex};
+        }
+
+        @Override
         public final void run(LExecutor exec){
             flushIndex.setnum(exec.textBuffer.length());
         }
     }
 
-    public static class AssertPrintsI implements LExecutor.LInstruction, AssertInstruction{
+    public static class AssertPrintsI implements DevToolsInstruction{
         public LVar flushIndex;
         public LVar expected;
         public LVar message;
@@ -175,13 +204,18 @@ public final class AssertInstructions{
         }
 
         @Override
+        public LVar[] vars(){
+            return new LVar[]{flushIndex, expected, message};
+        }
+
+        @Override
         public final void run(LExecutor exec){
             int flushIndex = this.flushIndex.numi();
             if(flushIndex < 0 || flushIndex > exec.textBuffer.length()){
                 assertion(exec, "logicsugar.asserts.invalidFlushIndex", "");
             }else{
                 String text = exec.textBuffer.substring(flushIndex);
-                // Upstream v0.11.1: always rewind to the recorded position, so a failing
+                // Upstream v0.11.3: always rewind to the recorded position, so a failing
                 // assertion neither grows the buffer on every retry nor leaves the output
                 // of the checked region behind for the next assertprints.
                 exec.textBuffer.setLength(flushIndex);
@@ -198,7 +232,7 @@ public final class AssertInstructions{
     /** Asserts the runtime data type of a value. The failure message automatically appends
      *  which type was expected and what the value actually holds, using the same taxonomy as
      *  the game's variable panel — e.g. "expected unit, got null". */
-    public static class AssertTypeI implements LExecutor.LInstruction, AssertInstruction{
+    public static class AssertTypeI implements DevToolsInstruction{
         public AssertionDataType expectedType = AssertionDataType.number;
         public LVar actualValue;
         public LVar message;
@@ -213,6 +247,11 @@ public final class AssertInstructions{
         }
 
         @Override
+        public LVar[] vars(){
+            return new LVar[]{actualValue, message};
+        }
+
+        @Override
         public final void run(LExecutor exec){
             if(expectedType.matches(actualValue)){
                 ProcessorStatus.reset(exec.build);
@@ -223,7 +262,7 @@ public final class AssertInstructions{
         }
     }
 
-    public static class BreakpointI implements LExecutor.LInstruction, AssertInstruction{
+    public static class BreakpointI implements DevToolsInstruction{
         public ConditionOp op = ConditionOp.notEqual;
         public LVar value, compare;
 
@@ -237,6 +276,11 @@ public final class AssertInstructions{
         }
 
         @Override
+        public LVar[] vars(){
+            return new LVar[]{value, compare};
+        }
+
+        @Override
         public void run(LExecutor exec){
             if(op.test(value, compare)){
                 breakpoint(exec.build, Core.bundle.format("logicsugar.breakpoint.message", exec.counter.numval - 1));
@@ -244,7 +288,7 @@ public final class AssertInstructions{
         }
     }
 
-    public static class ErrorI implements LExecutor.LInstruction, AssertInstruction{
+    public static class ErrorI implements DevToolsInstruction{
         public LVar[] vars = new LVar[10];
 
         public ErrorI(LVar[] vars){
@@ -255,6 +299,11 @@ public final class AssertInstructions{
         }
 
         @Override
+        public LVar[] vars(){
+            return vars;
+        }
+
+        @Override
         public final void run(LExecutor exec){
             ProcessorStatus.setMessage(exec.build, () -> buildMessage(exec, "", true, vars[0], vars));
             exec.counter.numval--;
@@ -262,7 +311,7 @@ public final class AssertInstructions{
         }
     }
 
-    public static class LogI implements LExecutor.LInstruction, AssertInstruction{
+    public static class LogI implements DevToolsInstruction{
         public Log.LogLevel level = Log.LogLevel.info;
         public LVar[] vars = new LVar[10];
 
@@ -275,23 +324,34 @@ public final class AssertInstructions{
         }
 
         @Override
+        public LVar[] vars(){
+            return vars;
+        }
+
+        @Override
         public final void run(LExecutor exec){
             Log.log(level, buildMessage(exec, "[LogicSugar] ", true, vars[0], vars));
         }
     }
 
-    /** Creates a snapshot of a block through the snapshot subsystem. Purely client-side: it
+    /** Creates a snapshot of an entity through the snapshot subsystem. Purely client-side: it
      *  never changes the saved program, so it needs no multiplayer gate. The name is the
      *  card's message when that is a non-empty string, otherwise the localized
-     *  "Mlog &lt;type&gt; snapshot" default. Portable: an invalid/dead block is ignored inside
-     *  {@link Snapshots#create}. */
-    public static class SnapshotI implements LExecutor.LInstruction, AssertInstruction{
+     *  "Mlog &lt;type&gt; snapshot" default. Portable: an invalid/dead entity is ignored inside
+     *  {@link Snapshots#create}.
+     *
+     *  <p>v0.11.2's {@code recording} type records the target processor's next {@code steps}
+     *  instructions: the created snapshot is the initial connected state, each executed
+     *  instruction adds a sub-snapshot, and the master is its own first recording entry
+     *  (so the sub-list starts with the state before the first recorded instruction).</p> */
+    public static class SnapshotI implements DevToolsInstruction{
         public SnapshotType type = SnapshotType.isolated;
-        public LVar block, message;
+        public LVar block, steps, message;
 
-        public SnapshotI(SnapshotType type, LVar block, LVar message){
+        public SnapshotI(SnapshotType type, LVar block, LVar steps, LVar message){
             this.type = type;
             this.block = block;
+            this.steps = steps;
             this.message = message;
         }
 
@@ -299,11 +359,100 @@ public final class AssertInstructions{
         }
 
         @Override
+        public LVar[] vars(){
+            return new LVar[]{block, steps, message};
+        }
+
+        @Override
         public void run(LExecutor exec){
-            if(block.obj() instanceof Building building){
-                Snapshots.create(building, type, isCustomMessage(message)
+            if(block.obj() instanceof Senseable senseable){
+                Snapshot master = Snapshots.create(senseable, type, isCustomMessage(message)
                     ? formatMessage(exec::optionalVar, "", false, message, new Object[0])
                     : L10n.text("logicsugar.vars.snapshot.mlogname", "Mlog {0} snapshot", type.name()));
+
+                if(master != null && type == SnapshotType.recording && senseable instanceof LogicBuild build){
+                    master.recording().add(master);
+                    logicsugar.profile.InstrumentationEngine.startInstructionSnapshots(build, steps.numi(), master);
+                }
+            }
+        }
+    }
+
+    /** Starts/stops/clears the profiler of a target processor (upstream v0.11.3). Like every
+     *  other debugging instruction it only exists as real mlog in an {@code emit} build; it is
+     *  pure local observation, so it needs no multiplayer gate (each client profiles its own
+     *  view). */
+    public static class ProfileI implements DevToolsInstruction{
+        public ProfilingCommand type = ProfilingCommand.start;
+        public LVar target;
+
+        public ProfileI(ProfilingCommand type, LVar target){
+            this.type = type;
+            this.target = target;
+        }
+
+        public ProfileI(){
+        }
+
+        @Override
+        public LVar[] vars(){
+            return new LVar[]{target};
+        }
+
+        @Override
+        public void run(LExecutor exec){
+            if(target.obj() instanceof LogicBuild build){
+                switch(type){
+                    case start -> logicsugar.profile.InstrumentationEngine.startProfiling(build);
+                    case stop -> logicsugar.profile.InstrumentationEngine.stopProfiling(build);
+                    case clear -> logicsugar.profile.InstrumentationEngine.clearProfilingData(build);
+                }
+            }
+        }
+    }
+
+    /** Restarts the target processor (code reload + variables reset), so profiling or snapshot
+     *  recording of its initialization code can be started from another processor (upstream
+     *  v0.11.3).
+     *
+     *  <p>Side effects worth documenting: this replaces the running program of another block
+     *  and resets its variables. It is a debugging instruction that only exists in an
+     *  {@code emit} build, and multiplayer matches force {@code strip} (see
+     *  {@code docs/architecture.md}): the instruction row never reaches a saved program of a
+     *  multiplayer-safe map.</p> */
+    public static class RestartI implements DevToolsInstruction{
+        public LVar target;
+
+        public RestartI(LVar target){
+            this.target = target;
+        }
+
+        public RestartI(){
+        }
+
+        @Override
+        public LVar[] vars(){
+            return new LVar[]{target};
+        }
+
+        @Override
+        public void run(LExecutor exec){
+            if(target.obj() instanceof LogicBuild build){
+                if(build.accumulator < 2f){
+                    // Make sure the accumulator allows executing this instruction and the following one,
+                    // so resetting a processor and activating snapshotting on it happens in one frame.
+                    exec.counter.numval--;
+                    exec.yield = true;
+                    return;
+                }
+
+                // 'build.updateCode' doesn't trigger the ConfigEvent, so restart profiling explicitly
+                logicsugar.profile.Instrumentation instrumentation =
+                    logicsugar.profile.InstrumentationEngine.getInstrumentation(build);
+                build.updateCode(build.code);
+                if(instrumentation != null && instrumentation.profiling){
+                    logicsugar.profile.InstrumentationEngine.startProfiling(build);
+                }
             }
         }
     }
@@ -357,7 +506,7 @@ public final class AssertInstructions{
      *  the localized default describing the values.
      *
      *  <p>The message slot is the first entry of {@code values} (that is how the instructions
-     *  are called), so the default text renders {@code values[1..]} only. Upstream v0.11.1
+     *  are called), so the default text renders {@code values[1..]} only. Upstream v0.11.3
      *  passes the whole array to its default texts, which makes them print the message slot
      *  ("null" for the default card) instead of the compared value — LogicSugar renders the
      *  values and leaves the stray slot out.</p> */
@@ -388,7 +537,7 @@ public final class AssertInstructions{
      * <ul>
      *   <li>{@code {1}}..{@code {9}} — the corresponding value argument. When {@code message}
      *       is the first argument the numbering starts at the following slot ({@code {1}} is
-     *       the compared value), which is upstream v0.11.1's rule and what the cards
+     *       the compared value), which is upstream v0.11.3's rule and what the cards
      *       document.</li>
      *   <li>{@code {name}} — the value of that variable at failure time. {@code {@counter}}
      *       resolves to the failing instruction's index (the counter points at the
@@ -488,7 +637,7 @@ public final class AssertInstructions{
             long color = Double.doubleToLongBits(value.numval) & 0xFFFFFFFFL;
             return '%' + Integer.toHexString((int)color);
         }else if((long)value.numval == value.numval){
-            // Upstream v0.11.1: a whole number is printed without the decimal part, so
+            // Upstream v0.11.3: a whole number is printed without the decimal part, so
             // "got 5.0" no longer appears next to "expected 5".
             return String.valueOf((long)value.numval);
         }else{

@@ -26,15 +26,19 @@ public class SugarAssertsTest{
         assertTypeRoundTripAndClassification();
         assertConditionCardRoundTrip();
         snapshotCardRoundTrip();
+        profileAndRestartCards();
         System.out.println("LogicSugar SugarAsserts self-test passed.");
     }
 
     private static void wireFormatMatchesMlogAssertions(){
-        // token layout transcribed from MlogAssertions' LogicStatements.write() (v0.11.1)
+        // token layout transcribed from MlogAssertions' LogicStatements.write() (v0.11.3)
         checkLine("assert equal x false ~",
             compileLine("assert equal x false ~"));
-        checkLine("snapshot isolated @unit ~",
-            compileLine("snapshot isolated @unit ~"));
+        // the snapshot line carries the v0.11.2 `steps` slot before the message
+        checkLine("snapshot isolated @unit 20 ~",
+            compileLine("snapshot isolated @unit 20 ~"));
+        checkLine("snapshot recording @this 50 \"rec\"",
+            compileLine("snapshot recording @this 50 \"rec\""));
         checkLine("assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"msg\"",
             compileLine("assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"msg\""));
         checkLine("assertequals 0 i \"should be 0\"",
@@ -49,6 +53,11 @@ public class SugarAssertsTest{
             compileLine("log info \"Logging a message at #{@counter}.\" null null null null null null null null null"));
         checkLine("breakpoint always x false",
             compileLine("breakpoint always x false"));
+        // v0.11.3's profiler control cards
+        checkLine("profile start @this",
+            compileLine("profile start @this"));
+        checkLine("restart @this",
+            compileLine("restart @this"));
     }
 
     private static void writeParseWriteIsIdempotent(){
@@ -64,6 +73,8 @@ public class SugarAssertsTest{
             "error \"boom [[2]\" @counter x1 null null null null null null null",
             "log err \"logged [[1]\" @counter null null null null null null null null null",
             "breakpoint lessThan x 10",
+            "profile clear cell1",
+            "restart cell1",
         };
         for(String line : lines){
             String once = compileLine(line);
@@ -224,15 +235,16 @@ public class SugarAssertsTest{
         check(SugarAsserts.AssertionDataType.actualType(objectVar("o", new Object())).equals("unknown"), "actual type of an unknown object");
     }
 
-    /** The {@code snapshot} card (upstream v0.10): wire format, emit lowering and carrier
-     *  round trip. Creating a snapshot is client-side only, so strip mode leaves the saved
-     *  program untouched. */
+    /** The {@code snapshot} card: the v0.11.2 five-slot wire format, the tolerant read of
+     *  the legacy four-slot text, emit lowering and the carrier round trip. Creating a
+     *  snapshot is client-side only, so strip mode leaves the saved program untouched. */
     private static void snapshotCardRoundTrip(){
         String sugar = "set x 1\nsnapshot connected cell1 \"named\"\n";
         String emitted = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
             SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
         String mlog = SugarCompiler.stripMarkers(emitted);
-        check(mlog.contains("snapshot connected cell1 \"named\""), "emit mode did not write the snapshot instruction");
+        // legacy sugar text (no steps slot) is normalized to the current five-slot form
+        check(mlog.contains("snapshot connected cell1 20 \"named\""), "emit mode did not write the snapshot instruction");
         check(SugarCompiler.verifyRestore(emitted, sugar), "snapshot debug build failed carrier verification");
 
         String stripped = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
@@ -244,7 +256,60 @@ public class SugarAssertsTest{
         // comparison for snapshot-only programs
         check(SugarAsserts.containsAssertStatements(sugar), "snapshot opcode not recognized as an assertion");
         // a global snapshot has no target block; "~" keeps the token count fixed
-        checkLine("snapshot global ~ ~", compileLine("snapshot global ~ ~"));
+        checkLine("snapshot global ~ 20 ~", compileLine("snapshot global ~ ~"));
+
+        // 1) legacy text (upstream <=v0.11.1 / LogicSugar <=5.7.2): three payload tokens, the
+        //    last one is the message, so the steps slot takes the card default
+        SugarAsserts.SnapshotCard legacy =
+            (SugarAsserts.SnapshotCard)parseOne("snapshot isolated @unit \"old name\"");
+        check(legacy.type == logicsugar.vars.SnapshotType.isolated, "legacy snapshot type not parsed");
+        check(legacy.message.equals("\"old name\""), "legacy snapshot message not parsed: " + legacy.message);
+        check(legacy.steps.equals("20"), "legacy snapshot should take the default steps: " + legacy.steps);
+        checkLine("snapshot isolated @unit 20 \"old name\"", writeOne(legacy));
+
+        // a legacy line whose message is the empty placeholder keeps the token count and the
+        // default name handling
+        SugarAsserts.SnapshotCard emptyMessage = (SugarAsserts.SnapshotCard)parseOne("snapshot connected cell1 ~");
+        check(emptyMessage.message.isEmpty(), "~ did not decode to an empty message");
+        checkLine("snapshot connected cell1 20 ~", writeOne(emptyMessage));
+
+        // 2) current text: type block steps message in either direction
+        SugarAsserts.SnapshotCard current =
+            (SugarAsserts.SnapshotCard)parseOne("snapshot connected cell1 5 \"named\"");
+        check(current.steps.equals("5"), "steps not parsed: " + current.steps);
+        check(current.message.equals("\"named\""), "message not parsed: " + current.message);
+        checkLine("snapshot connected cell1 5 \"named\"", writeOne(current));
+
+        // a variable steps slot survives (the shape is chosen by the slot's writing, not by
+        // its content), and a cleared field is normalized back to the default on write
+        SugarAsserts.SnapshotCard variableStep =
+            (SugarAsserts.SnapshotCard)parseOne("snapshot recording @this n \"variable\"");
+        check(variableStep.steps.equals("n"), "variable steps not parsed: " + variableStep.steps);
+        checkLine("snapshot recording @this n \"variable\"", writeOne(variableStep));
+        variableStep.steps = "";
+        checkLine("snapshot recording @this 20 \"variable\"", writeOne(variableStep));
+
+        // 3) recording snapshot: type token, recording layout and emit lowering
+        check(logicsugar.vars.SnapshotType.recording.name().equals("recording"), "wire token drifted");
+        check(logicsugar.vars.SnapshotType.all.length == 4, "recording missing from the type list");
+        checkLine("snapshot recording @this 8 ~", compileLine("snapshot recording @this 8 ~"));
+        String recSugar = "set x 1\nsnapshot recording @this 8 \"rec\"\n";
+        String recEmitted = SugarCompiler.compile(recSugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
+        check(SugarCompiler.stripMarkers(recEmitted).contains("snapshot recording @this 8 \"rec\""),
+            "recording instruction not emitted");
+        check(SugarCompiler.verifyRestore(recEmitted, recSugar), "recording debug build failed carrier verification");
+        check(SugarCompiler.restore(SugarCompiler.compile(recSugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip)).contains("snapshot recording @this 8"),
+            "carrier lost the recording snapshot");
+
+        // an unknown type token stays a located error (LParser turns it into InvalidStatement)
+        try{
+            parseOne("snapshot bogus @this 5 ~");
+            check(false, "unknown snapshot type did not fail parsing");
+        }catch(RuntimeException e){
+            check(e.getMessage() != null && e.getMessage().contains("snapshot"), "unclean parse error: " + e);
+        }
     }
 
     /** The generic {@code assert} card: emit-mode lowering plus the carrier round trip. */
@@ -264,6 +329,49 @@ public class SugarAssertsTest{
         // the opcode must be part of the assert set, otherwise verifyRestore skips the emit
         // shape comparison for assert-only programs
         check(SugarAsserts.containsAssertStatements(sugar), "assert opcode not recognized as an assertion");
+    }
+
+    /** The {@code profile} / {@code restart} cards (upstream v0.11.3): wire format, emit
+     *  lowering, carrier round trip and the located error for an unknown command. */
+    private static void profileAndRestartCards(){
+        SugarAsserts.ProfileCard profile =
+            (SugarAsserts.ProfileCard)parseOne("profile stop processor1");
+        check(profile.command == logicsugar.profile.ProfilingCommand.stop, "profile command not parsed");
+        check(profile.block.equals("processor1"), "profile target not parsed: " + profile.block);
+        checkLine("profile stop processor1", writeOne(profile));
+
+        SugarAsserts.ProfileCard clear = (SugarAsserts.ProfileCard)parseOne("profile clear @this");
+        check(clear.command == logicsugar.profile.ProfilingCommand.clear, "profile clear not parsed");
+
+        SugarAsserts.RestartCard restart = (SugarAsserts.RestartCard)parseOne("restart processor1");
+        check(restart.block.equals("processor1"), "restart target not parsed: " + restart.block);
+        checkLine("restart processor1", writeOne(restart));
+
+        // emit / carrier round trips go through the same assert-set machinery
+        String sugar = "set x 1\nprofile start @this\nrestart cell1\n";
+        check(SugarAsserts.containsAssertStatements(sugar), "profile/restart opcodes not recognized as assertions");
+        String emitted = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.emit);
+        String mlog = SugarCompiler.stripMarkers(emitted);
+        check(mlog.contains("profile start @this"), "emit mode did not write the profile instruction");
+        check(mlog.contains("restart cell1"), "emit mode did not write the restart instruction");
+        check(SugarCompiler.verifyRestore(emitted, sugar), "profiler debug build failed carrier verification");
+
+        String stripped = SugarCompiler.compile(sugar, SugarCompiler.FuncMode.normal, SugarFunctions.library(), null,
+            SugarCompiler.SwitchStrategy.auto, SugarCompiler.AssertEmit.strip);
+        check(!SugarCompiler.stripMarkers(stripped).contains("profile "), "strip mode leaked the profile instruction");
+        check(!SugarCompiler.stripMarkers(stripped).contains("restart "), "strip mode leaked the restart instruction");
+        String restored = SugarCompiler.restore(stripped);
+        check(restored.contains("profile start @this") && restored.contains("restart cell1"),
+            "carrier lost the profiler cards:\n" + restored);
+
+        // an unknown command stays a located error (LParser turns it into InvalidStatement)
+        try{
+            parseOne("profile bounce @this");
+            check(false, "unknown profile command did not fail parsing");
+        }catch(RuntimeException e){
+            check(e.getMessage() != null && e.getMessage().contains("profile"), "unclean parse error: " + e);
+        }
     }
 
     private static LVar objectVar(String name, Object value){
