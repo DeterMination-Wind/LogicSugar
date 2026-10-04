@@ -1,10 +1,10 @@
 {
   "displayName": "Logic Sugar",
-  "name": "LogicSugar-dev",
+  "name": "LogicSugar",
   "author": "DeterMination-Wind",
   "main": "logicsugar.LogicSugarMod",
   "description": "Adds structured for, while, switch, and function blocks to the logic editor while storing vanilla-compatible mlog.",
-  "version": "0.0.0",
+  "version": "5.7.1",
   "hidden": true,//意为该模组是多人游戏支持模组，千万不要删除这一项
   "minGameVersion": "160.1",
   "java": true
