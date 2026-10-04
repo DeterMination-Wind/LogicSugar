@@ -779,51 +779,66 @@ public final class ArrayRegistry{
     public static ArrayRegistry canvasRegistry(LCanvas canvas){
         try{
             if(canvas == null || canvas.statements == null) return null;
-            ArrayRegistry registry = new ArrayRegistry();
+            Seq<LStatement> statements = new Seq<>(canvas.statements.getChildren().size);
             for(Element child : canvas.statements.getChildren()){
-                if(!(child instanceof LCanvas.StatementElem elem)) continue;
-                if(elem.st instanceof SpanStatement card){
-                    try{
-                        registry.addSpan(card, 0, new HashSet<>(), null);
-                    }catch(RuntimeException ignored){
-                        // 宽松口径：不合法的 span 留给标红，不进入容量表
-                    }
-                }
+                statements.add(child instanceof LCanvas.StatementElem elem ? elem.st : null);
             }
-            for(Element child : canvas.statements.getChildren()){
-                if(!(child instanceof LCanvas.StatementElem elem)) continue;
-                if(elem.st instanceof ArrayStatement card){
-                    String name = card.array == null ? "" : card.array.trim();
-                    String memory = card.memory == null ? "" : card.memory.trim();
-                    Long base = parseIntLiteral(card.base);
-                    Long size = parseIntLiteral(card.size);
-                    // 宽松口径：名字合法、未被占用、内存块非空、区间字面量合法才登记；
-                    // 其余问题（重叠、与函数重名等）留给编译期严格校验与编辑期标红
-                    if(!isIdentifier(name) || name.startsWith("__ls_")) continue;
-                    if(memory.isEmpty() || registry.byName.containsKey(name) || registry.matrices.containsKey(name)
-                        || registry.spans.containsKey(name)) continue;
-                    if(base == null || size == null || base < 0 || base > Integer.MAX_VALUE
-                        || size < 1 || size > Integer.MAX_VALUE) continue;
-                    registry.byName.put(name, new ArrayInfo(name, memory, (int)(long)base, (int)(long)size));
-                }else if(elem.st instanceof MatrixStatement card){
-                    String name = card.matrix == null ? "" : card.matrix.trim();
-                    String memory = card.memory == null ? "" : card.memory.trim();
-                    Long base = parseIntLiteral(card.base);
-                    Long rows = parseIntLiteral(card.rows);
-                    Long cols = parseIntLiteral(card.cols);
-                    if(!isIdentifier(name) || name.startsWith("__ls_")) continue;
-                    if(memory.isEmpty() || registry.byName.containsKey(name) || registry.matrices.containsKey(name)
-                        || registry.spans.containsKey(name)) continue;
-                    if(base == null || rows == null || cols == null || base < 0 || base > Integer.MAX_VALUE
-                        || rows < 1 || rows > Integer.MAX_VALUE || cols < 1 || cols > Integer.MAX_VALUE) continue;
-                    registry.matrices.put(name, new MatrixInfo(name, memory, (int)(long)base, (int)(long)rows, (int)(long)cols));
-                }
-            }
-            return registry;
+            return lenientRegistry(statements);
         }catch(Throwable t){
             // 无头自测环境（Vars.ui 未初始化等）：视同没有编辑器上下文
             return null;
         }
+    }
+
+    /**
+     * 宽松口径建表：从一份语句列表就地收集 span/array/matrix 声明卡，跳过不合法的卡片
+     * （留给编译期严格校验与编辑期标红）。画布折叠（{@link #canvasRegistry(LCanvas)}）与
+     * 文本还原（{@code ExprTextImport} 的标记认领）共用这一处：两边对「哪些名字指哪些 cell」
+     * 的口径不会漂，文本路径也因此不再依赖「当前画布恰好是这份程序」。
+     *
+     * <p>与严格口径一样，span 先建表再建数组/矩阵（容量与别名冲突检查要看得见 span）。</p>
+     */
+    public static ArrayRegistry lenientRegistry(Seq<LStatement> statements){
+        ArrayRegistry registry = new ArrayRegistry();
+        if(statements == null) return registry;
+        for(LStatement st : statements){
+            if(st instanceof SpanStatement card){
+                try{
+                    registry.addSpan(card, 0, new HashSet<>(), null);
+                }catch(RuntimeException ignored){
+                    // 宽松口径：不合法的 span 留给标红，不进入容量表
+                }
+            }
+        }
+        for(LStatement st : statements){
+            if(st instanceof ArrayStatement card){
+                String name = card.array == null ? "" : card.array.trim();
+                String memory = card.memory == null ? "" : card.memory.trim();
+                Long base = parseIntLiteral(card.base);
+                Long size = parseIntLiteral(card.size);
+                // 宽松口径：名字合法、未被占用、内存块非空、区间字面量合法才登记；
+                // 其余问题（重叠、与函数重名等）留给编译期严格校验与编辑期标红
+                if(!isIdentifier(name) || name.startsWith("__ls_")) continue;
+                if(memory.isEmpty() || registry.byName.containsKey(name) || registry.matrices.containsKey(name)
+                    || registry.spans.containsKey(name)) continue;
+                if(base == null || size == null || base < 0 || base > Integer.MAX_VALUE
+                    || size < 1 || size > Integer.MAX_VALUE) continue;
+                registry.byName.put(name, new ArrayInfo(name, memory, (int)(long)base, (int)(long)size));
+            }else if(st instanceof MatrixStatement card){
+                String name = card.matrix == null ? "" : card.matrix.trim();
+                String memory = card.memory == null ? "" : card.memory.trim();
+                Long base = parseIntLiteral(card.base);
+                Long rows = parseIntLiteral(card.rows);
+                Long cols = parseIntLiteral(card.cols);
+                if(!isIdentifier(name) || name.startsWith("__ls_")) continue;
+                if(memory.isEmpty() || registry.byName.containsKey(name) || registry.matrices.containsKey(name)
+                    || registry.spans.containsKey(name)) continue;
+                if(base == null || rows == null || cols == null || base < 0 || base > Integer.MAX_VALUE
+                    || rows < 1 || rows > Integer.MAX_VALUE || cols < 1 || cols > Integer.MAX_VALUE) continue;
+                registry.matrices.put(name, new MatrixInfo(name, memory, (int)(long)base, (int)(long)rows, (int)(long)cols));
+            }
+        }
+        return registry;
     }
 
     /** 空注册表哨兵：显式表示"没有数组上下文"。enter 后 {@link #active()} 不再回退到

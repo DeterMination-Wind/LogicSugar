@@ -52,6 +52,7 @@ public class ExprTextImportSelfTest{
         counterWriteImport();
         invalidExpressionStaysCard();
         vanillaTextPassesThrough();
+        markerAttachmentUsesTheTextsOwnDeclarations();
 
         System.out.println("LogicSugar expression text-import self-test passed.");
     }
@@ -212,6 +213,64 @@ public class ExprTextImportSelfTest{
     }
 
     // ===== helpers =====
+
+    /**
+     * 标记认领要用<b>这份文本自己</b>的声明上下文：只有注释标记块、没有载体的产物里，数组声明
+     * 只以 {@code # @logic-sugar-line array …} 的注释形态存在；若按空注册表重新编译标记里的
+     * {@code buf[3]}，会得到 {@code read x buf 3}，与恢复出的 {@code read x cell1 3} 对不上，
+     * 数组卡就静默退化成原版 read 积木。认领仍要求语句逐字存在：声明不在标记块里时，同样的标记
+     * 绝不能认领那条原版 read。
+     */
+    private static void markerAttachmentUsesTheTextsOwnDeclarations(){
+        // 一张 x = buf[3] 卡（带自己的标记）的存档产物
+        StringBuilder cardText = new StringBuilder();
+        ArrayRegistry previous = ArrayRegistry.enter(ArrayRegistry.compileRegistry(
+            LAssembler.read("array buf cell1 0 8", true), null));
+        try{
+            ExprStatement card = new ExprStatement();
+            card.dest = "x";
+            card.expr = "buf[3]";
+            card.write(cardText);
+        }finally{
+            ArrayRegistry.restore(previous);
+        }
+        check(cardText.toString().equals("read x cell1 3\n" + ExprStatement.cardMarkerPrefix + "x \"buf[3]\""),
+            "the fixture card must write a single read line plus its marker:\n" + cardText);
+
+        String product = withoutCarrierVariables(compile("array buf cell1 0 8\n" + cardText + "\n"));
+        check(!product.contains("set __ls_sugar"), "the fixture must carry no carrier:\n" + product);
+        check(product.contains("# @logic-sugar-line array buf cell1 0 8"),
+            "the declaration must survive inside the marker block:\n" + product);
+
+        // 恢复出的正文只有那条指令：标记必须按标记块里的声明重新编译后才能认领它
+        String recovered = "read x cell1 3\n";
+        String attached = ExprTextImport.attachCardMarkers(recovered, product);
+        check(attached.equals(recovered + ExprStatement.cardMarkerPrefix + "x \"buf[3]\"\n"),
+            "the marker was not attached with the text's own declarations:\n" + attached);
+        ExprTextImport.Plan plan = ExprTextImport.plan(attached);
+        Seq<LStatement> statements = LAssembler.read(plan.text(), true);
+        ExprTextImport.applyToStatements(statements, plan);
+        check(statements.get(0) instanceof ExprStatement recoveredCard
+                && recoveredCard.dest.equals("x") && recoveredCard.expr.equals("buf[3]"),
+            "the attached marker did not restore the array card");
+
+        // 反向：标记块里的声明被拿掉时，那条 read 不是这张卡展开出来的，绝不能认领
+        String noDeclaration = product.replace("# @logic-sugar-line array buf cell1 0 8\n", "");
+        check(!noDeclaration.equals(product), "the fixture no longer contains the declaration line this test edits");
+        check(ExprTextImport.attachCardMarkers(recovered, noDeclaration).equals(recovered),
+            "a marker without its declaration claimed a vanilla read line");
+    }
+
+    /** 去掉载体变量行（{@code set __ls_sugar}/{@code set __ls_lib}），保留指令与注释标记块。 */
+    private static String withoutCarrierVariables(String code){
+        StringBuilder out = new StringBuilder();
+        for(String line : code.replace("\r\n", "\n").split("\n", -1)){
+            String trimmed = line.trim();
+            if(trimmed.startsWith("set __ls_sugar") || trimmed.startsWith("set __ls_lib")) continue;
+            out.append(line).append('\n');
+        }
+        return out.toString();
+    }
 
     /** 文本导入的下半段：plan → LAssembler.read → 哨兵换卡（SugarCanvas.load 的同序子集）。 */
     /**

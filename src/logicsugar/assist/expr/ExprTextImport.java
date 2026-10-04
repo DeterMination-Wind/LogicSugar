@@ -260,6 +260,22 @@ public final class ExprTextImport{
         List<String[]> markers = cardMarkers(source);
         if(text == null || text.isEmpty() || markers.isEmpty()) return text;
 
+        // 标记里的表达式要按声明上下文重新编译才能与语句逐字对上（{@code buf[3]} →
+        // {@code read x cell1 3}）。重开/推断时 {@code ArrayRegistry.active()} 是空的或上一份
+        // 画布，上下文只能来自这份文本自己（声明语句 + 注释标记块里的源文本）：
+        // 数组/矩阵/span 的声明卡不产指令，产物里它们只以注释形态存在。
+        ArrayRegistry previous = ArrayRegistry.enter(textDeclarations(source));
+        try{
+            return attachCardMarkersInContext(text, markers);
+        }finally{
+            ArrayRegistry.restore(previous);
+        }
+    }
+
+    /**
+     * {@link #attachCardMarkers} 的循环主体（调用方已进入 {@code source} 自带的声明上下文）。
+     */
+    private static String attachCardMarkersInContext(String text, List<String[]> markers){
         String[] lines = text.replace("\r\n", "\n").split("\n", -1);
         boolean[] claimed = new boolean[lines.length];
         Map<Integer, String> insertAfter = new LinkedHashMap<>();
@@ -285,6 +301,38 @@ public final class ExprTextImport{
             if(i + 1 < lines.length) out.append('\n');
         }
         return out.toString();
+    }
+
+    /**
+     * 这份文本自带的声明上下文（span/array/matrix），供标记认领时重新编译下标表达式。
+     *
+     * <p>{@link #singleLineUnfolding} 把 {@code x = buf[3]} 编译成什么取决于当时的声明：没有
+     * 上下文时会退化成 {@code read x buf 3}，与恢复出的 {@code read x cell1 3} 对不上，卡片
+     * 就默默丢了（2026-10 报告的同一类缺口）。上下文有两个来源：正文里的声明语句（编辑器
+     * 载入的还原文本），以及注释标记块里的源文本（声明卡不产指令，产物里只以
+     * {@code # @logic-sugar-line array …} 的注释形态存在）。宽松建表：不合法的声明留给标红；
+     * 认领仍要求语句逐字存在，所以上下文错了的方向永远是“少认领”。</p>
+     */
+    private static ArrayRegistry textDeclarations(String source){
+        Seq<LStatement> statements = new Seq<>();
+        String normalized = source.replace("\r\n", "\n");
+        parseInto(statements, normalized);
+        StringBuilder marked = new StringBuilder();
+        for(String raw : normalized.split("\n", -1)){
+            String inner = SugarCompiler.markerSourceOf(raw.trim());
+            if(inner != null) marked.append(inner).append('\n');
+        }
+        if(marked.length() > 0) parseInto(statements, marked.toString());
+        return ArrayRegistry.lenientRegistry(statements);
+    }
+
+    /** 解析一段文本并追加到语句列表；解析失败（半截文本、超出解析上限）当作没有这些声明。 */
+    private static void parseInto(Seq<LStatement> statements, String text){
+        if(text == null || text.isEmpty()) return;
+        try{
+            statements.addAll(LAssembler.read(text, true));
+        }catch(Throwable ignored){
+        }
     }
 
     /** 下一条非空行是否已经是表达式卡标记行。 */
