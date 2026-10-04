@@ -138,7 +138,8 @@ public class ExprTextImportSelfTest{
             "card fields drifted: " + card.dest + " / " + card.expr);
 
         String lowered = unfold(statements);
-        check(lowered.equals("array buf cell1 0 8\nread x cell1 3"),
+        check(lowered.equals("array buf cell1 0 8\nread x cell1 3\n"
+                + ExprStatement.cardMarkerPrefix + "x \"buf[3]\""),
             "text import did not lower to the documented mlog:\n" + lowered);
 
         String compiled = compile(lowered);
@@ -153,10 +154,14 @@ public class ExprTextImportSelfTest{
         check(SugarCompiler.matchesStoredStream(compile(restored), compiled),
             "recompiled import did not match the stored stream");
 
-        // 重开时 read x cell1 3 要能被 foldAll 折回 buf[3]：目标内存必须命中数组注册表。
-        ArrayRegistry registry = ArrayRegistry.compileRegistry(LAssembler.read(restored, true), null);
-        check(!registry.isEmpty() && !registry.byMemory("cell1").isEmpty(),
-            "reopened read cannot fold back to x = buf[3]");
+        // 重开：单行卡靠自描述标记还原（数组声明只说明 cell 归属，孤立的 read 行不再被猜成下标卡）
+        ExprTextImport.Plan reopen = ExprTextImport.plan(restored);
+        check(!reopen.isEmpty(), "the restored marker was not recognised:\n" + restored);
+        Seq<LStatement> reopened = LAssembler.read(reopen.text(), true);
+        ExprTextImport.applyToStatements(reopened, reopen);
+        check(reopened.get(1) instanceof ExprStatement reopenedCard
+                && reopenedCard.dest.equals("x") && reopenedCard.expr.equals("buf[3]"),
+            "reopening did not restore the subscript card:\n" + restored);
     }
 
     /** 下标写：`buf[i] = 5` 落成 op add + write，与手写等价表达式一致。 */

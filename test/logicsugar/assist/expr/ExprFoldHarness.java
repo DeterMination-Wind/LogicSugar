@@ -59,10 +59,9 @@ public final class ExprFoldHarness{
                 i = chain.end;
                 continue;
             }
-            // 链首是注册表命中的 read/write 时单行也折叠（与 foldAllInContext 同一门槛）
-            boolean arrayEdge = chain.ops.get(0) instanceof ExprCompiler.ReadLine
-                || chain.ops.get(0) instanceof ExprCompiler.WriteLine;
-            if(chain.length() < 2 && !arrayEdge){
+            // 单行链永不折叠（阵列声明不是证据）：与画布版共用 ExprHook.foldableChain，
+            // 不再各自维护一份会漂的门槛。
+            if(!ExprHook.foldableChain(chain)){
                 i++;
                 continue;
             }

@@ -23,6 +23,8 @@ Example: `matrix m cell1 0 2 3` is 2 rows by 3 columns and occupies addresses [0
 
 Address formula: physical address = base + i * cols + j (row-major).
 
+> **Identity and reopen**: a constant subscript such as `x = m[1][2]` is a single `read`, byte-identical to a vanilla read block on the same cell — only the card's own `# @ls-expr-card x "m[1][2]"` marker tells them apart, and a declaration card never claims a row for a line. Single-line subscript cards saved by ≤5.7.1 carry no marker and reopen as vanilla read/write blocks (the product is byte-identical); drag a fresh Expr card to get the card back.
+
 ## Lowered examples
 
 ```text

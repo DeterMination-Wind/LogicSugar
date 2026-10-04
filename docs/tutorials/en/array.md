@@ -37,6 +37,8 @@ The index can be any expression. Literal indices are folded at compile time; var
 
 Every example below is written in the Sugar source form (what the declaration card and the Expr card contain). That same text can be pasted straight into the processor's code field: the declaration line imports as a card, and a line such as `x = buf[3]` imports as an Expr card instead of becoming an empty `noop` card.
 
+> **Identity and reopen**: a declaration card never changes the identity of vanilla read/write blocks on the same cell — `read x cell1 3` only comes back as an `x = buf[3]` Expr card when the `# @ls-expr-card x "buf[3]"` comment marker sits below it. Single-line subscript cards saved by ≤5.7.1 carry no marker and reopen as vanilla read/write blocks: the saved product is byte-identical and the program keeps running; drag a fresh Expr card with `buf[3]` to get the card back.
+
 Literal index:
 
 ```text

@@ -105,12 +105,9 @@ public class ExprHook{
                 i = j;
                 continue;
             }
-            // 链首是注册表命中的 read/write 时单行也尝试折叠（unfold 后 x = buf[3]、
-            // buf[2] = 5 各只有一行，fold 必须能还原，否则表达式卡保存一次就永久丢失）；
-            // 普通 op 链保持 >= 2 的既有门槛。
-            boolean arrayEdge = ops.get(0) instanceof ExprCompiler.ReadLine
-                || ops.get(0) instanceof ExprCompiler.WriteLine;
-            if(chainLen >= 2 || (chainLen == 1 && arrayEdge)){
+            // 只有 >= 2 行的链才携带数组下标语法的证据（见 foldableChain）：一条孤立的
+            // read/write 行永远不折——声明卡旁边的原版读写积木必须保持原版。
+            if(foldableChain(chain)){
                 // jump 安全检查（画布专有）：若有 jump 指向链中间 [i+1, i+chainLen-1]，放弃折叠。
                 // 场景：别人没装插件时写的 jump 指向 op 链中间，折叠会改变语义。
                 // 指向链首 i 是允许的，折叠后仍指向 expr 积木。
@@ -335,6 +332,10 @@ public class ExprHook{
      * 或落在某个数据结构声明的内存块上（{@link ExprIntrinsics#declaresMemory}）。
      * 链收集（{@link #isChainLine}）与自测共用这一处判定。
      *
+     * <p>它只决定「能不能入链」，<b>不</b>决定「是不是数组访问」：单行链的折叠由
+     * {@link #foldableChain} 拦下，因此命中内存块的原版读写积木不会被猜成下标卡；多行链本身就是
+     * 编译器展开的地址链形状，由 {@link #foldPlan} 的重编译比对门决定。
+     *
      * <p>为什么要管结构内存块：容器 getter（{@code s.top()} / {@code q.front()} / {@code d.back()}）
      * 的多行展开以一条落在容器内存块上的 {@code read} 结尾。read 不入链时链在它前面断掉，
      * 而链外读取判定又把地址临时变量当成外部读取，整条链永远折不回来；多行卡片在保存文本里
@@ -379,7 +380,8 @@ public class ExprHook{
         return st instanceof SelectStatement sel && SpanAccess.BUILDING.equals(sel.result);
     }
 
-    /** memory 变量名是否承载了当前注册表中的数组（宽松口径画布注册表）。 */
+    /** memory 变量名是否承载了当前注册表中的数组（宽松口径画布注册表）。入链判定用，
+     *  不代表这条 read 就是数组下标访问——数组是「可以折」的必要条件，不是「是」的充分条件。 */
     private static boolean isArrayMemory(String memory){
         if(memory == null || memory.isEmpty()) return false;
         ArrayRegistry registry = ArrayRegistry.active();
@@ -682,12 +684,20 @@ public class ExprHook{
     }
 
     /**
-     * 单行 read/write 链：{@code foldAll} 的数组门槛（memory 命中数组注册表）本来就能把它折回
-     * 卡片，不需要 {@link ExprStatement#cardMarkerPrefix} 自描述标记。
+     * 这条链能不能折回卡片：只有 {@code >= 2} 行的链才携带数组下标语法的证据。
+     *
+     * <p>一条孤立的 {@code read}/{@code write} 行永远不折——数组/矩阵/span 声明只说明这些
+     * cell 归它所有，不能说明这一行是下标访问：声明卡的默认区间（{@code cell1 0 8}）与原版
+     * Read/Write 积木的默认目标（{@code cell1} / 地址 {@code 0}）本来就重合，照着声明表猜会把
+     * 用户手拖的原版积木永久改写成 {@code x = buf[3]} / {@code buf[i] = 5} 卡片（2026-10 报告）。
+     * 下标访问在保存文本里是多行地址链（{@code op add}/{@code op mul} + {@code read}/{@code write}），
+     * 单行的常量下标访问则靠卡片自己写的 {@link ExprStatement#cardMarkerPrefix} 标记还原。</p>
+     *
+     * <p>画布折叠（{@code foldAllInContext}）与无头自测（{@code ExprFoldHarness}）共用这一处，
+     * 「一条链折不折」不会再有两份会漂的门槛。</p>
      */
-    public static boolean foldsBackAlone(List<ExprCompiler.Line> ops){
-        return ops.size() == 1
-            && (ops.get(0) instanceof ExprCompiler.ReadLine || ops.get(0) instanceof ExprCompiler.WriteLine);
+    public static boolean foldableChain(Chain chain){
+        return chain.length() >= 2;
     }
 
     /**

@@ -235,6 +235,15 @@ public final class ReconstructionMatrixTest{
             "stack s cell1 0 4\nifbegin x greaterThan 0 999\nset result 0\n"
                 + ExprStatement.cardMarkerPrefix + "result \"0\"\nblockend\n",
             ExprStatement.cardMarkerPrefix + "result \"0\"");
+        // 数组卡与同一 cell 上的原版读写（2026-10 报告）：声明只说明这些 cell 归数组所有，
+        // 不能说明哪一行是下标访问——身份证据是卡片自己写的标记。
+        //   - 带标记：`read x cell1 3` 是 x = buf[3] 卡的展开，重开后必须仍是那张卡；
+        //   - 无标记：同一行是用户手拖的原版读积木，恢复出的视图必须保持原版 read，
+        //     不得被猜成 buf[3]（折叠层由 arrayTest 的 vanillaReadDoesNotBecomeAnArrayCard 钉住）。
+        addCarrier("decl.array.exprcard", "array buf cell1 0 8\nread x cell1 3\n"
+            + ExprStatement.cardMarkerPrefix + "x \"buf[3]\"\n",
+            ExprStatement.cardMarkerPrefix + "x \"buf[3]\"");
+        addCarrier("decl.array.vanillaRead", "array buf cell1 0 8\nread x cell1 3\n", "read x cell1 3");
     }
 
     private static void addOperationFixtures(){

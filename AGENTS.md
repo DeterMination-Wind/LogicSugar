@@ -115,7 +115,11 @@ stripping carriers/markers, not the Base64 metadata):
    `restore` + `verifyRestore` + `SugarDecompiler.decompile` (carrier path) and still
    shows the cards. `reconstructionTest` pins the gate; `reconstructionMatrixTest` pins a
    100+ fixture matrix covering every current block/card, every `datacall` operation and
-   the assertion/debug cards.
+   the assertion/debug cards. Declaration cards are also **identity metadata, not a claim on
+   vanilla code**: `decl.array.exprcard` pins the marked case (the carrier view keeps the
+   `# @ls-expr-card` marker that makes `read x cell1 3` a `x = buf[3]` card), and
+   `decl.array.vanillaRead` pins the unmarked one (the same declaration + `read x cell1 3`
+   must keep opening as a vanilla read, never as `buf[3]`).
 2. **Decompiler inference**: pattern-match vanilla jumps back into `if`/`for`/`while`/
    `switch`/functions. Do **not** invent declaration cards or recover `__ls_builtin_*`
    trampolines as user `funcdef`s. Failure direction remains "more vanilla". A new
@@ -312,10 +316,15 @@ All three parts are load-bearing and pinned by `spanTest`:
   index form ever folded — a text-level fold test cannot see it, because it never runs the chain
   collection (`spanTest`'s `variableReadFoldsOnReopen` now does).
 
-The constant form is a trap of its own: `ExprStatement.write()` skips the `# @ls-expr-card`
-marker whenever `foldsBackAlone` is true, i.e. it trusts "foldAll's array gate can fold this
-alone". For a span read that is only true because the span view exists, so `spanTest` pins
-`foldsBackAlone` and `rebuild` together. Runtime coverage is `dataRuntimeTest.spanRuntime`: the
+The constant form is a single line, and a lone `read`/`write` line is **never** folded
+(`ExprHook.foldableChain` requires `chain.length() >= 2`). A declaration says which cells belong
+to the array, not that a line is a subscript access — the array card's default range
+(`cell1 0 8`) and the vanilla Read/Write block's default target (`cell1` / address `0`) coincide,
+so folding on the declaration table alone rewrote the user's hand-dragged vanilla blocks into
+`x = buf[3]` / `buf[i] = 5` cards (reported 2026-10). The single-line card carries its own
+`# @ls-expr-card` marker, and that marker is what restores it: `spanTest` pins the card's marker
+plus the `ExprTextImport.plan` round trip, and (separately) that the rebuilt-but-lone `read x
+cell2 0` stays a vanilla line on reopen. Runtime coverage is `dataRuntimeTest.spanRuntime`: the
 expansion must select a **building object** (a numeric-only `select` would break every span
 access in game while every shape-only test still passed).
 
@@ -424,18 +433,24 @@ by the card itself, and it has to keep the canvas/statement index parity:
   the card had already been removed: the block vanished instead of being added. Any new
   `ExprCompiler.Line` subclass needs a `statementFor` branch.
 - Single-line cards are never unfolded (`keepsCard`): in the saved text they already occupy
-  exactly one statement, and `foldAll` cannot fold a lone `op`/`set` line back (its single-line
-  rule covers array `read`/`write` only), so unfolding would downgrade the card to a plain block.
-  `ExprStatement.write()` writes the same text either way — `exprCardTest` pins that equality.
-  Persistence instead uses the self-describing marker `# @ls-expr-card <dest> "<expr>"`
-  (`ExprStatement.cardMarkerPrefix`, a comment: executable stream, statement count and every
-  `destIndex` stay untouched), which `ExprTextImport` turns back into the card on load. Multi-line
-  cards keep relying on the `>= 2` fold threshold and deliberately carry no marker in save text
-  (collapsing N lines there would shift indices); a **clipboard payload** is the one place where
-  they are written inline (`dest = expr` via `ExprTextImport.canWriteInline`) because a fragment is
-  re-parsed by our own paste path — one line per card keeps the fragment's jump offsets valid and
-  restores the card verbatim (`statementClipboardTest`). Add a fixture to `reconstructionMatrixTest`
-  when the save format changes.
+  exactly one statement, and no fold gate can bring a lone line back (`ExprHook.foldableChain`
+  needs `>= 2` lines for every chain, `read`/`write` included), so unfolding would downgrade the
+  card to a plain block. `ExprStatement.write()` writes the same text either way — `exprCardTest`
+  pins that equality. Persistence instead uses the self-describing marker
+  `# @ls-expr-card <dest> "<expr>"` (`ExprStatement.cardMarkerPrefix`, a comment: executable
+  stream, statement count and every `destIndex` stay untouched), which `ExprTextImport` turns back
+  into the card on load. **Every kept card writes it, single-line array `read`/`write` cards
+  included** (`x = buf[3]`, `buf[i] = 5`): the declaration table only says which cells belong to
+  the array, never that a line is a subscript access, so the marker is the only identity evidence
+  — without it the card silently reopens as a vanilla read/write block (accepted degradation for
+  saves written by ≤5.7.1: the product is byte-identical, and a fresh Expr card brings the
+  subscript back). Multi-line cards keep relying on the `>= 2` fold threshold and deliberately
+  carry no marker in save text (collapsing N lines there would shift indices); a **clipboard
+  payload** is the one place where they are written inline (`dest = expr` via
+  `ExprTextImport.canWriteInline`) because a fragment is re-parsed by our own paste path — one
+  line per card keeps the fragment's jump offsets valid and restores the card verbatim
+  (`statementClipboardTest`). Add a fixture to `reconstructionMatrixTest` when the save format
+  changes.
 - **The marker is evidence, and it has to survive every text rewrite.** A single-line card's
   unfolded line is byte-identical to a plain `set`/`op` block, so the marker is the *only* thing
   that tells the two apart; two paths re-serialize statements and used to drop every comment with
@@ -460,7 +475,14 @@ by the card itself, and it has to keep the canvas/statement index parity:
     alone). `ExprTextImport.cardMarker` is the single serializer of the format: `ExprStatement.write`
     and the recovery both go through it. `exprCardTest`'s `markerSurvivesTextRewrites` pins the
     rewrite, the hoisting and the stale-marker refusal; `reconstructionMatrixTest`'s
-    `decl.exprcard.staleDest` fixture pins the carrier path.
+    `decl.exprcard.staleDest` fixture pins the carrier path. The registry context for the marker's
+    expression comes from the text itself (`ExprTextImport.textDeclarations` →
+    `ArrayRegistry.lenientRegistry`), not from the canvas: on reopen/inference the canvas still
+    holds the previous program (or nothing), and a declaration card in a product exists only as a
+    `# @logic-sugar-line array …` comment, so `x = buf[3]` would compile to `read x buf 3` and
+    match nothing. `exprTextImportTest`'s `markerAttachmentUsesTheTextsOwnDeclarations` pins both
+    directions (with the declaration the marker is attached; without it the vanilla read is left
+    alone).
 - **`foldAll` collapses a retry only when its temporaries are not *read* outside the chain — a
   definition is not a read.** `ExprHook.hasExternalReads` used to fail on any textual occurrence,
   so two identical chains (the second one produced by copying the card) redefined each other's

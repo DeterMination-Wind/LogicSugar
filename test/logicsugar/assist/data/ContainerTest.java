@@ -972,8 +972,6 @@ public class ContainerTest{
 
         // size 类单独一张卡：展开只有一行，走 ExprStatement 的自描述标记（重开时还原成卡片）
         withRegistry("stack s cell1 0 8", () -> {
-            check(!ExprHook.foldsBackAlone(ExprCompiler.compile("x", "ssize(s)")),
-                "a size getter must rely on the card marker, not on the single-line array gate");
             check(ExprHook.keepsCard(ExprCompiler.compile("x", "ssize(s)")),
                 "a one-line size getter must keep the Expr card");
             check(writeOf("x", "s.size()").contains(ExprStatement.cardMarkerPrefix + "x \"s.size()\""),

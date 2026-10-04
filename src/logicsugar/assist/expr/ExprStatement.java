@@ -46,15 +46,16 @@ public class ExprStatement extends LStatement{
     public transient String lastError = null;
 
     /**
-     * 单行表达式卡的自描述标记：{@code # @ls-expr-card <dest> "<expr>"}，写在卡片展开行的
+     * 表达式卡的自描述标记：{@code # @ls-expr-card <dest> "<expr>"}，写在卡片展开行的
      * <b>后一行</b>（标记认领紧邻它上面的那一行）。
      *
-     * <p>保存文本里的单行卡与普通 {@code set}/{@code op} 积木逐字相同，而
-     * {@code ExprHook.foldAll} 的单行门槛只对数组 read/write 放行——重开处理器、撤销重做都
-     * 只能靠猜测，单行表达式卡（{@code x = 0}、{@code x = a + b}、{@code x = cos(a)}）
-     * 会退化成普通积木。标记给了确定证据：它是注释（原版 LParser 直接忽略，可执行流、
-     * 语句条数与 jump 下标都不受影响），随载体一起保存，加载时由
-     * {@link ExprTextImport} 把上一行还原成卡片。</p>
+     * <p>保存文本里的单行卡与普通 {@code set}/{@code op}/{@code read}/{@code write}
+     * 积木逐字相同：单行表达式卡（{@code x = 0}、{@code x = a + b}、{@code x = cos(a)}、
+     * {@code x = buf[3]}）重开处理器、撤销重做都只能靠猜测。而数组声明本身不是证据——
+     * {@code array buf cell1 0 8} 只说明这些 cell 归数组所有，画布上的原版读写积木（默认目标
+     * 也正是 {@code cell1}）不能因此被猜成下标卡（2026-10 报告）。标记给了确定证据：它是注释
+     * （原版 LParser 直接忽略，可执行流、语句条数与 jump 下标都不受影响），随载体一起保存，
+     * 加载时由 {@link ExprTextImport} 把上一行还原成卡片。</p>
      */
     public static final String cardMarkerPrefix = "# @ls-expr-card ";
 
@@ -84,10 +85,11 @@ public class ExprStatement extends LStatement{
                 builder.append(line.toText());
             }
         }
-        // 单行卡片额外写一行自描述标记（注释）：让重开/撤销能把这一行还原成卡片而不是
-        // 普通积木。多行卡片由 foldAll 的 >= 2 门槛折回，不需要标记（那会改变语句条数）；
-        // 单行 read/write 由 foldAll 的数组门槛折回，也不加标记。
-        if(ExprHook.keepsCard(lines) && !ExprHook.foldsBackAlone(lines) && dest != null){
+        // 单行卡片额外写一行自描述标记（注释）：让重开/撤销能把这一行还原成卡片而不是普通
+        // 积木。多行卡片由 foldAll 的 >= 2 门槛折回，不需要标记（那会改变语句条数）；单行
+        // read/write 同样写标记——数组声明只说明这些 cell 归数组所有，不能说明这一行是下标
+        // 访问，声明卡旁边的原版读写积木必须保持原版（2026-10 报告）。
+        if(ExprHook.keepsCard(lines) && dest != null){
             builder.append('\n').append(ExprTextImport.cardMarker(dest, expr));
         }
     }

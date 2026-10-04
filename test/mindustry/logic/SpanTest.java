@@ -7,6 +7,7 @@ import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprFoldHarness;
 import logicsugar.assist.expr.ExprHook;
 import logicsugar.assist.expr.ExprStatement;
+import logicsugar.assist.expr.ExprTextImport;
 import logicsugar.assist.expr.SpanAccess;
 import mindustry.Vars;
 import mindustry.gen.Building;
@@ -179,20 +180,36 @@ public final class SpanTest{
             // 常量地址：编译器把下标折成指向选中成员的一条 read
             List<ExprCompiler.Line> constant = ExprCompiler.compile("x", "buf[64]", name -> false, false);
             check(textOf(constant).equals("read x cell2 0"), "constant span read shape: " + textOf(constant));
+            // 反解层仍能把这条 read 解释成 buf[64]（verifyArrayFold 通过），但折叠层不再让孤立的
+            // read 行折回——声明只说明 cell 归属，不能说明这一行是下标访问。卡片的身份由它自己
+            // 写下的标记给出，重开时由文本导入直接还原。
             check("x = buf[64]".equals(spanFoldBack(textOf(constant))),
-                "constant span read did not fold: " + spanFoldBack(textOf(constant)));
-            // 常量形态是单行，ExprStatement.write() 因此**不写**自描述标记；它必须真的能折回，
-            // 否则“没有标记”就是丢卡的第二种途径（复核报告的原始症状）。
-            check(ExprHook.foldsBackAlone(constant), "a single-line span read is expected to fold back alone");
+                "constant span read did not rebuild: " + spanFoldBack(textOf(constant)));
             check(ExprCompiler.verifyArrayFold(constant, "x", "buf[64]", name -> false),
                 "constant span fold must pass the recompile gate");
+            ExprStatement constantCard = new ExprStatement();
+            constantCard.dest = "x";
+            constantCard.expr = "buf[64]";
+            StringBuilder constantText = new StringBuilder();
+            constantCard.write(constantText);
+            check(constantText.toString().equals("read x cell2 0\n"
+                    + ExprStatement.cardMarkerPrefix + "x \"buf[64]\""),
+                "a single-line span read card must write its marker:\n" + constantText);
+            ExprTextImport.Plan constantPlan = ExprTextImport.plan(constantText.toString());
+            check(!constantPlan.isEmpty(), "the span card marker was not recognised");
+            Seq<LStatement> constantStatements = LAssembler.read(constantPlan.text(), true);
+            ExprTextImport.applyToStatements(constantStatements, constantPlan);
+            check(constantStatements.get(0) instanceof ExprStatement spanCard
+                    && spanCard.dest.equals("x") && spanCard.expr.equals("buf[64]"),
+                "the constant span read card did not round-trip through the marker");
 
             // 赋值链：前导段 + write 折回 buf[i] = 7
             List<ExprCompiler.Line> assignment = ExprCompiler.compile("buf[i]", "7", name -> false, false);
             check("buf[i] = 7".equals(spanFoldBack(textOf(assignment))), "span assignment did not fold");
             check(ExprCompiler.verifyArrayFold(assignment, "buf[i]", "7", name -> false),
                 "span assignment must pass the recompile gate");
-            // 常量赋值：单行 write 也要折回（foldsBackAlone 同样依赖 span 视角）
+            // 常量赋值：反解层同样能把这条单行 write 解释成 buf[64] = 7（折叠层不再让孤立的
+            // write 行折回，卡片靠自描述标记还原）
             check("buf[64] = 7".equals(spanFoldBack(textOf(ExprCompiler.compile("buf[64]", "7", name -> false, false)))),
                 "constant span assignment did not fold");
 
@@ -248,7 +265,10 @@ public final class SpanTest{
             check("x = buf[i]+1".equals(foldBody("x", "buf[i] + 1")),
                 "a span read inside a larger expression must fold on reopen");
             check("buf[i] = 7".equals(foldBody("buf[i]", "7")), "span assignment must fold on reopen");
-            check("x = buf[64]".equals(foldBody("x", "buf[64]")), "constant span read must fold on reopen");
+            // 常量下标是单行：折叠层不再让孤立的 read 行折回，卡片靠自描述标记还原；
+            // ≤5.7.1 存档没有标记，这一行会显示成原版 read 积木（产物不变）
+            check("read x cell2 0".equals(foldBody("x", "buf[64]")),
+                "a constant span read must stay a vanilla read line on reopen: " + foldBody("x", "buf[64]"));
             for(LStatement statement : LAssembler.read(textOf(ExprCompiler.compile("x", "buf[i]", name -> false, false)), true)){
                 if(statement instanceof LStatements.ReadStatement read){
                     check(ExprHook.foldsMemoryLine(read),
@@ -295,7 +315,6 @@ public final class SpanTest{
             () -> ExprCompiler.compile("x", "buf[i]", name -> false, false));
         check(ExprHook.hasUnmappableLine(ops), "span prologue lines must keep the Expr card on unfold");
         check(!ExprHook.keepsCard(ops), "a span chain is multi-line and must not be treated as a single-line card");
-        check(!ExprHook.foldsBackAlone(ops), "a prologue chain must not claim foldsBackAlone");
         check(SpanAccess.scratchNames().contains(SpanAccess.BUILDING), "scratch names must include the building slot");
 
         Seq<LStatement> prologue = LAssembler.read("select __ls_span_b equal __ls_span_q 0 cell1 0\n", true);

@@ -3,6 +3,7 @@ package mindustry.logic;
 import arc.struct.Seq;
 import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
+import logicsugar.assist.expr.ExprFoldHarness;
 import logicsugar.assist.expr.ExprHook;
 import logicsugar.assist.expr.ExprStatement;
 import mindustry.Vars;
@@ -57,6 +58,7 @@ public class ArraySugarTest{
         conditionExpressionLowersToReadAndJump();
         outputIsPureVanilla();
         unfoldFoldRoundTrip();
+        vanillaReadDoesNotBecomeAnArrayCard();
         // ===== F1 v2: len / matrix / arrayinit / bounds asserts / capacity =====
         lenConstantFolding();
         lenTwoArgUnchanged();
@@ -303,9 +305,10 @@ public class ArraySugarTest{
             checkLine(unfolded, textOf(ExprCompiler.compile("x", "buf[i]*2")));
         });
         withRegistry("array buf cell1 0 8", () -> {
-            // assignment fold, literal index shape (single write line)
+            // assignment fold, literal index shape (single write line + the card's own marker)
             String unfolded = writeOf("buf[2]", "5");
-            checkLine("write 5 cell1 2", unfolded);
+            check(unfolded.equals("write 5 cell1 2\n" + ExprStatement.cardMarkerPrefix + "buf[2] \"5\""),
+                "a literal-index assignment card must write its line plus a marker:\n" + unfolded);
             String[] pair = ExprCompiler.rebuildAssignment(compileLines("buf[2]", "5"));
             check(pair != null && "buf[2]".equals(pair[0]) && "5".equals(pair[1]),
                 "assignment fold failed on a literal-index write chain");
@@ -321,9 +324,39 @@ public class ArraySugarTest{
         });
         withRegistry("array buf cell1 0 8", () -> {
             // vanilla statements must not fold: a read whose address sits outside every
-            // declared range (or on an unregistered block) stays untouched
+            // declared range (or on an unregistered block) stays untouched. foldBack 直接走
+            // rebuild，不包含链层门槛；区间内的原版 read/write 行永远不折这一条由
+            // vanillaReadDoesNotBecomeAnArrayCard（ExprFoldHarness，真实链判定）钉住。
             check(foldBack("read x cell1 20") == null, "out-of-range read folded into an array");
             check(foldBack("read x vault1 3") == null, "unregistered memory folded into an array");
+        });
+    }
+
+    /**
+     * 数组声明不能改变同一 cell 上原版读写的身份（2026-10 报告）：{@code array buf cell1 0 8}
+     * 是数组卡的默认值，而原版 Read/Write 积木的默认目标也正是 {@code cell1} / 地址 {@code 0}
+     * ——「拖一张数组卡、再拖两块原版读写」必然撞上。声明只说明这些 cell 归数组所有，不能说明
+     * 「这一行是数组语法」；证据在卡片自己写下的 {@code # @ls-expr-card} 标记里，一条孤立的
+     * read/write 行因此永远不折。这里跑的是画布折叠实际调用的那一份判定链（{@code ExprFoldHarness}）。
+     */
+    private static void vanillaReadDoesNotBecomeAnArrayCard(){
+        withRegistry("array buf cell1 0 8", () -> {
+            // 字面量地址落在声明区间内：旧口径折成 x = buf[3]
+            check(ExprFoldHarness.bodyOf("array buf cell1 0 8\nread x cell1 3\n").equals("read x cell1 3"),
+                "a hand-written vanilla read inside the declared range became an array card:\n"
+                    + ExprFoldHarness.bodyOf("array buf cell1 0 8\nread x cell1 3\n"));
+            // 变量地址 = 下标：旧口径折成 x = buf[i]
+            check(ExprFoldHarness.bodyOf("array buf cell1 0 8\nread x cell1 i\n").equals("read x cell1 i"),
+                "a hand-written vanilla read with a variable address became an array card:\n"
+                    + ExprFoldHarness.bodyOf("array buf cell1 0 8\nread x cell1 i\n"));
+            // 写积木同理：旧口径折成 buf[2] = 5
+            check(ExprFoldHarness.bodyOf("array buf cell1 0 8\nwrite 5 cell1 2\n").equals("write 5 cell1 2"),
+                "a hand-written vanilla write inside the declared range became an array card:\n"
+                    + ExprFoldHarness.bodyOf("array buf cell1 0 8\nwrite 5 cell1 2\n"));
+            // 区间外的地址本来就折不了：保持既有期望
+            check(ExprFoldHarness.bodyOf("array buf cell1 0 8\nread x cell1 20\n").equals("read x cell1 20"),
+                "an out-of-range read must stay vanilla:\n"
+                    + ExprFoldHarness.bodyOf("array buf cell1 0 8\nread x cell1 20\n"));
         });
     }
 

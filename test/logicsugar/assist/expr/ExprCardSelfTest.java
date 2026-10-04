@@ -177,9 +177,10 @@ public class ExprCardSelfTest{
     }
 
     /**
-     * 单行卡在保存文本里与普通 op/set 积木逐字相同，foldAll 的单行门槛只对数组 read/write
-     * 放行，因此单行卡必须自带 {@link ExprStatement#cardMarkerPrefix} 标记（注释行），重开与
-     * 撤销才能把它还原成卡片。多行卡与数组 read/write 卡不加标记。
+     * 单行卡在保存文本里与普通 {@code set}/{@code op}/{@code read}/{@code write} 积木逐字相同，
+     * 唯一证据是卡片自己写下的一行 {@link ExprStatement#cardMarkerPrefix} 标记（注释行）：
+     * 数组声明不是证据（单行 read/write 行不再折叠），重开与撤销还原全靠它。
+     * 多行卡由 foldAll 的 >= 2 门槛折回，不需要（也不能）加标记。
      */
     private static void singleLineCardsCarryTheMarker(){
         String marked = writeOf("result", "0");
@@ -194,9 +195,31 @@ public class ExprCardSelfTest{
         // 多行卡由 foldAll 的 >= 2 门槛折回，不需要（也不能）加标记：那会改变语句条数
         check(!writeOf("x", "(a + b) * 2").contains(ExprStatement.cardMarkerPrefix),
             "a multi-line card must not carry a marker:\n" + writeOf("x", "(a + b) * 2"));
-        // 单行 read/write 由 foldAll 的数组门槛折回，同样不加标记
-        check(!writeOf("x", "buf[3]").contains(ExprStatement.cardMarkerPrefix),
-            "a single-line array read must not carry a marker (foldAll recovers it):\n" + writeOf("x", "buf[3]"));
+        // 单行 read/write 卡同样写标记：数组声明只说明这些 cell 归数组所有，不能说明这一行是
+        // 下标访问，孤立的 read/write 行永远不折（2026-10 报告），还原只能靠标记
+        String arrayRead = writeOf("x", "buf[3]");
+        check(arrayRead.equals("read x buf 3\n" + ExprStatement.cardMarkerPrefix + "x \"buf[3]\""),
+            "a single-line array read must carry its marker:\n" + arrayRead);
+        ExprTextImport.Plan arrayPlan = ExprTextImport.plan(arrayRead);
+        check(!arrayPlan.isEmpty(), "the array read marker was not recognised:\n" + arrayRead);
+        Seq<LStatement> arrayStatements = LAssembler.read(arrayPlan.text(), true);
+        ExprTextImport.applyToStatements(arrayStatements, arrayPlan);
+        check(arrayStatements.get(0) instanceof ExprStatement arrayCard
+                && arrayCard.dest.equals("x") && arrayCard.expr.equals("buf[3]"),
+            "the array read card did not round-trip through the marker");
+        // 标记是注释：同一张卡的产物不受它影响（注释不产指令，可执行流逐行相等）
+        String markedProgram = "array buf cell1 0 8\n" + writeOf("x", "buf[3]") + "\n";
+        String bareProgram = markedProgram.replace("\n" + ExprStatement.cardMarkerPrefix + "x \"buf[3]\"", "");
+        check(!bareProgram.equals(markedProgram), "the invariance fixture no longer contains the marker");
+        String markedProduct = SugarCompiler.compile(markedProgram, SugarCompiler.FuncMode.normal, null, null);
+        String bareProduct = SugarCompiler.compile(bareProgram, SugarCompiler.FuncMode.normal, null, null);
+        check(SugarCompiler.emittedInstructionCount(markedProduct) == SugarCompiler.emittedInstructionCount(bareProduct),
+            "the marker must not change the instruction count: "
+                + SugarCompiler.emittedInstructionCount(markedProduct) + " vs "
+                + SugarCompiler.emittedInstructionCount(bareProduct));
+        check(SugarCompiler.matchesStoredStream(markedProduct, bareProduct),
+            "the marker must not change the executable product:\n" + markedProduct.replace("\n", " | "));
+
         // 表达式含引号/空格也必须无损转义：先成功编译一次（建立 lastOps 回退），再改成
         // 无法编译的中间态文本——标记必须原样保住用户输入，重开时卡片照旧标红
         ExprStatement broken = new ExprStatement();
