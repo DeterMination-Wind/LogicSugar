@@ -42,6 +42,8 @@ Write common control flow as blocks; on save, everything compiles to plain vanil
 | **Functions** | Define functions with parameters, call them, and return values; normal (subroutine) and inline modes can be switched in settings. |
 | **Function library** | Global functions shared by all processors, reducing repeated typing. Edit directly in settings; up to 10,000 statements. |
 
+![Defining a function and writing expressions directly in the call arguments](Readme_Image/en/image_194.png)
+
 ### Data Structures
 
 > [!note]
@@ -67,7 +69,19 @@ Write common control flow as blocks; on save, everything compiles to plain vanil
 
 Subscript reads and writes such as `buf[i]` and `buf[i] = 5` are supported in Expr.
 
+Records can be read and written field-by-field from Expr:
+
+![Record declaration with p.hp and p.team field access](Readme_Image/en/image_192.png)
+
+Several memory blocks can be merged into one logical address space (`span`):
+
+![span: merging cell1 + cell2 into one 16-slot address space](Readme_Image/en/image_191.png)
+
 Each structure corresponds to **one operation card** in the *Add Block* interface, whose in-card button switches between all of that structure's operations — the stack card, for instance, offers Push, Pop, Peek, Size and Clear. Arguments get **one input box per parameter**, with the parameter name shown on hover, and a card whose arguments cannot compile turns red on the spot. Operation cards live in the same palette column as that structure's declaration card (the array/matrix operation card sits under "Array Operations").
+
+![Array declaration, Expr subscript writes, and the array operation cards (sort ascending, sum, minimum, find index)](Readme_Image/en/image_195.png)
+
+![Stack, queue and deque declarations with their operation cards](Readme_Image/en/image_196.png)
 
 Each data structure has an advanced tutorial chapter: declaration card, function quick-reference table, line-by-line explanation of the lowered mlog, complexity, and usage notes. Start from the [tutorial index](docs/tutorials/en/README.md).
 
@@ -98,6 +112,17 @@ They are fully equivalent to the corresponding individual operation blocks (such
 | **Unit flag display** | Optional in settings: show each unit's logic flag above it, with different vivid colors for different flags; flag value 0 is hidden by default. |
 | **Copy variables and print buffer** | In the **edit menu**: copy all variables of the current processor to the clipboard as a table organized by name and preserving full precision (ready to paste into a spreadsheet), or copy the mlog output buffer. These two buttons used to occupy fixed-width slots in the bottom bar and have moved to the edit menu, so the bar no longer overflows a narrow window. |
 | **Logic editor conflict** | A setting. Other mods (for example 逻辑工具) also replace `Vars.ui.logic` to take the logic editor over, and only one mod can own it. Choose between **ask each launch** (the default: one prompt at startup; answering applies that choice for the session, and the setting stays on ask so the next launch asks again), **take over** (keep LogicSugar's editor and replace the other mod's UI), **step aside** (keep the other mod's editor, which also disables LogicSugar's editor and sugar language) and **coexist** (keep the other mod's whole editor UI and run LogicSugar's canvas inside it, so both work at once). Dismissing the prompt without answering steps aside - it never takes over by accident. Switching takes effect immediately. |
+
+The processor status indicator writes the stop position above a stopped processor and draws a progress ring above a long-waiting one:
+
+<p align="center">
+  <img src="Readme_Image/en/image_189.png" height="120" alt="A stopped processor shows Stopped at #2">
+  <img src="Readme_Image/en/image_190.png" height="120" alt="A long-waiting processor draws a progress ring">
+</p>
+
+Unit-control blocks and the unit flag display:
+
+![Control Units, Control One Unit, Unit Control, and unit.@health member access](Readme_Image/en/image_193.png)
 
 > [!note]
 > So that the multi-KB sugar carrier never executes, compiled output appends one `set @counter 0` at the end of main. It is a real instruction counted alongside the carrier, so a processor's **effective instruction limit is one below the limit (999)**; an existing program already at the limit reports the overflow when it is saved again.
