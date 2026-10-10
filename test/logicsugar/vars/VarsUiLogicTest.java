@@ -45,6 +45,7 @@ public final class VarsUiLogicTest{
         integrationApiShape();
         recordingListPositionText();
         restoreAndDeleteReachableWithoutCompact();
+        tripleTapRefusesUnreachableBlocks();
         uiCodeAvoidsOldArcIncompatibilities();
         escapeOnlyDoublesOpeningBrackets();
         ellipsisLabelBoundsHugeStrings();
@@ -119,6 +120,26 @@ public final class VarsUiLogicTest{
         }catch(java.io.IOException e){
             throw new AssertionError("cannot read " + file + ": " + e, e);
         }
+    }
+
+    /**
+     * 三击入口必须跳过「本客户端不可访问的方块」（世界处理器 / 禁止编辑的方块，上游 v0.11.6）。
+     *
+     * <p>{@code LogicBuild.displayable()} 就是 {@code accessible()}（{@code !privileged ||
+     * destructible}），也就是「世界处理器」那一档；这类方块点进去既不该攒计数也不该开对话框：
+     * {@code VarsDialog} 会去读客户端拿不到的实体。守卫是原版 public API，跨类加载器安全，
+     * 但守卫在 {@code TapEvent} 的 lambda 里，无头环境无法触发事件，所以扫源码钉住。</p>
+     */
+    private static void tripleTapRefusesUnreachableBlocks(){
+        String source = readSource("src/logicsugar/vars/ui/VarsAccess.java");
+        String handler = logicsugar.SourceNails.blockFrom(source, "Events.on(EventType.TapEvent.class, e -> {");
+
+        int guard = handler.indexOf("displayable()");
+        int count = handler.indexOf("taps.tap(");
+
+        check(guard >= 0, "三击处理器必须跳过不可访问的方块（Building.displayable()）");
+        check(handler.contains("build != null"), "守卫必须容忍空方块（点头顶空地时 build 为 null）");
+        check(count > 0 && guard < count, "守卫必须在三击计数之前（不可访问的方块不该攒计数）");
     }
 
     /**

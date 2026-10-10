@@ -26,10 +26,18 @@ this file only adds what is specific to this project.
 - 新功能提案先按此底线分类：不碰保存产物 → 正常实现；碰保存产物 → 必须加联机门禁，
   并在 bundle 与 `docs/architecture.md` 说明单机限定。
 - **上游同步基线**：断言/断点子系统与调试工具（Vars / Memory / Properties 界面、快照、Profiler）对齐
-  cardillan/MlogAssertions **v0.11.3**（参考源码 `../_upstream/MlogAssertions-0.11.3`，由
-  `gh api repos/cardillan/MlogAssertions/tarball/refs/tags/v0.11.3` 取得；本地那份
-  `../_upstream/MlogAssertions-pr` 停在 v0.8.2，只当历史参考，不要 `git fetch upstream`）。
-  上游的指令上限覆盖（`max-instructions`）**不得**移植。UI/快照部分落在 `logicsugar.vars`
+  cardillan/MlogAssertions **v0.11.6**（参考源码 `../_upstream/MlogAssertions-0.11.6`，由
+  `gh api repos/cardillan/MlogAssertions/tarball/refs/tags/v0.11.6` 取得；旧快照
+  `../_upstream/MlogAssertions-0.11.3` 与 `../_upstream/MlogAssertions-pr`（v0.8.2）只当历史参考，
+  不要 `git fetch upstream`）。v0.11.3 → v0.11.6 跟了这些：内存表导入的 65535 字节上限、
+  三击不打开本客户端不可访问的方块、失败断言/`error` 的 `exec.stop` 停机语义（详见
+  `docs/architecture.md`）、profiler 界面重做与 `noYielding`/`yields()` 快路径、五个视图开关的持久化。
+  **明确不移植**：上游的指令上限覆盖（`max-instructions`，处理器保存产物 ≤1000 条是硬不变式）、
+  v0.11.5 的「自动 profile 全部处理器」游戏规则（`data/CustomGameRules` + `Accessor` + `MapIndex`，
+  需要反射挂 `CustomRulesDialog` 并把 `rules.tags` 写进地图状态）、上游 `ConfigEvent` 的
+  `instructions != instrumentation.instructions` 精细判断（为自动 profile 服务的微优化）。
+  身份类改动（设置键前缀 `mlogdevtools-*`、mod 改名、Groovy→KTS、`README_zh`）同样不跟：
+  持久化键用本 mod 自己的 `logicsugar.vars*`。UI/快照部分落在 `logicsugar.vars`
   （数据）与 `logicsugar.vars.ui`（对话框/入口）、Profiler 落在 `logicsugar.profile`，
   不改变保存产物，因此不受联机底线约束；
   但**方块配置面板必须与 MindustryX 共存**：探测到 fork 自带 `LogicSupport` 时先调用方块自己的

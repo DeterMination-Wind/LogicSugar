@@ -188,6 +188,10 @@ public final class MemoryText{
 
     /** Restores the values of a variable source from the table. Values which cannot be
      * restored (references to units, buildings and contents) are skipped.
+     *
+     * <p>上游 v0.11.6：字符串值超过 65535 UTF-8 字节（{@code writeUTF} 的上限）时按坏行拒绝，
+     * 不再写进内存块——否则内存块序列化时会抛异常，整块内存都留不下来。</p>
+     *
      * @param data the variable source to be filled, or null to only check the table.
      * @return an error message listing the lines which could not be parsed, or null. */
     public static String read(String text, int capacity, VariableValues data){
@@ -223,12 +227,23 @@ public final class MemoryText{
 
             if(type == ValueType.string){
                 //when the literal isn't quoted, take the text as it is
+                String value;
                 if(isStringLiteral(literal)){
-                    set(data, address, unescape(literal.substring(1, literal.length() - 1)));
+                    value = unescape(literal.substring(1, literal.length() - 1));
                 }else if(literal.startsWith("\"")){
                     error(errors, i);
+                    value = null;
                 }else{
-                    set(data, address, literal);
+                    value = literal;
+                }
+                if(value != null){
+                    //上游 v0.11.6：内存块用 writeUTF 写字符串，超过 65535 字节的文本会让它抛
+                    //异常（导入整块内存因此失败）。按上游口径在这里拒绝，并给出坏行行号。
+                    if(utf8size(value) > 65535){
+                        error(errors, i);
+                    }else{
+                        set(data, address, value);
+                    }
                 }
             }else if(literal.equals("null")){
                 //the values which are not representable in memory blocks are written as null
@@ -244,6 +259,17 @@ public final class MemoryText{
         }
 
         return errors.isEmpty() ? null : errors.toString();
+    }
+
+    /** 字符串写进内存块时的 UTF-8 字节数（{@code writeUTF} 口径）：NUL 记 2、{@code <0x800} 记 2、
+     *  其余记 3，代理对自然记 6。上游 v0.11.6 用它对导入字符串施加 65535 字节的上限。 */
+    private static int utf8size(String str){
+        int size = 0;
+        for(int i = 0; i < str.length(); i++){
+            char c = str.charAt(i);
+            size += c != 0 && c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
+        }
+        return size;
     }
 
     private static void set(VariableValues data, int address, Object value){

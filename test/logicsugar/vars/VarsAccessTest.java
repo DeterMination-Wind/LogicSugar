@@ -21,6 +21,7 @@ public class VarsAccessTest{
         disabledOrEmptyTapsNeverTrigger();
         snapshotTypeTokensStayWireStable();
         processorRowOrderStaysWireAligned();
+        viewPreferencesPersist();
         defaultsAreSane();
         bundleCoversEveryKey();
         System.out.println("LogicSugar vars access self-test passed.");
@@ -120,6 +121,58 @@ public class VarsAccessTest{
         // 合成行多了一行，数组容量必须同步 +5（textbuffer/timewaited/accumulator + counter/unit/ipt）
         check(source.contains("new LVar[executor.vars.length + 5"),
             "ProcessorVars 的行数组容量没给 Accumulator 留位置");
+    }
+
+    /**
+     * P6：五个视图开关（hex / sorted / hide-temps / hide-links / full-precision）是持久化偏好。
+     * 键名写错不会报错——读回默认值，表现为「重启后又变回默认」；所以三处必须对得上：
+     * {@code VarsOptions} 定义并读写、{@code VarsDialog} 的每个显示开关经
+     * {@code refreshView}/{@code updateView} 写盘、{@code VarsAccess.applySettings} 启动时读回。
+     * 键前缀必须是本 mod 的（不跟上游 {@code mlogdevtools-*} 身份前缀）。
+     */
+    private static void viewPreferencesPersist(){
+        String options = readSource("src/logicsugar/vars/VarsOptions.java");
+        String dialog = readSource("src/logicsugar/vars/ui/VarsDialog.java");
+        String access = readSource("src/logicsugar/vars/ui/VarsAccess.java");
+
+        String[][] keys = {
+            {"keyHex", "logicsugar.varsHex"},
+            {"keySorted", "logicsugar.varsSorted"},
+            {"keyHideTemps", "logicsugar.varsHideTemps"},
+            {"keyHideLinks", "logicsugar.varsHideLinks"},
+            {"keyFullPrecision", "logicsugar.varsFullPrecision"}
+        };
+
+        String load = logicsugar.SourceNails.methodBody(options, "public static void load(){");
+        String save = logicsugar.SourceNails.methodBody(options, "public static void save(){");
+
+        for(String[] key : keys){
+            check(options.contains("public static final String " + key[0] + " = \"" + key[1] + "\";"),
+                "VarsOptions 缺少键常量 " + key[0] + " = " + key[1]);
+            check(load.contains(key[0]), "VarsOptions.load() 必须读回 " + key[1]);
+            check(save.contains(key[0]), "VarsOptions.save() 必须写入 " + key[1]);
+        }
+        // 键前缀必须是本 mod 的：扫常量声明本身（不扫注释，注释里会提到上游的 mlogdevtools-*）
+        java.util.regex.Matcher declared = java.util.regex.Pattern.compile(
+            "public static final String (\\w+) = \"([^\"]+)\";").matcher(options);
+        int count = 0;
+        while(declared.find()){
+            count++;
+            check(declared.group(2).startsWith("logicsugar."),
+                "视图偏好的键必须用本 mod 的键前缀，不能跟上游身份键: " + declared.group(2));
+        }
+        check(count == 5, "VarsOptions 的持久化键常量应为 5 个，实际 " + count);
+        check(load.contains("Core.settings == null") && save.contains("Core.settings == null"),
+            "Core.settings 为空（无头自检）时 load/save 必须静默跳过");
+
+        // 标题栏的 hex/全位数与 Options 面板的所有开关都经由这两个入口
+        for(String signature : new String[]{"private void refreshView(boolean update){", "private void updateView(boolean update){"}){
+            String body = logicsugar.SourceNails.methodBody(dialog, signature);
+            check(body.contains("VarsOptions.save()"), signature + " 必须写回视图偏好");
+        }
+
+        check(logicsugar.SourceNails.methodBody(access, "public static void applySettings(){").contains("VarsOptions.load()"),
+            "VarsAccess.applySettings 必须读回视图偏好（启动时）");
     }
 
     private static Building block(){

@@ -27,6 +27,7 @@ public class SugarAssertsTest{
         assertConditionCardRoundTrip();
         snapshotCardRoundTrip();
         profileAndRestartCards();
+        failuresSetTheStopFlag();
         System.out.println("LogicSugar SugarAsserts self-test passed.");
     }
 
@@ -419,6 +420,48 @@ public class SugarAssertsTest{
         StringBuilder out = new StringBuilder();
         statement.write(out);
         return out.toString();
+    }
+
+    /**
+     * 上游 v0.11.4：失败断言与 {@code error} 指令把处理器真正置为停机（{@code exec.stop}），
+     * 不再是纯自旋——profiler 因此停下统计（{@code Instrumentation} 的包装器读到 stop 就停），
+     * 世界处理器的 {@code LogicScript} 也因此收工。计数器仍然回退，所以普通处理器每帧重跑失败
+     * 指令、消息持续刷新。
+     *
+     * <p>为什么是源码钉子而不是真跑：两个位置都先调 {@code ProcessorStatus.setMessage(exec.build, …)}，
+     * 而 {@code LExecutor.build} 在无头环境里只能是 null——arc 的 {@code ObjectMap.get(null)}
+     * 直接抛 {@code IllegalArgumentException}("key cannot be null.")（已实测），而造一块真的
+     * {@code LogicBuild} 需要活的
+     * Tile/World。因此这里只钉住代码形状：两个位置都有停机标志，且断言路径把它写在非断点分支里。
+     * 运行时一致性由 {@code profilerTest} 的包装器用例与手测清单覆盖。</p>
+     */
+    private static void failuresSetTheStopFlag(){
+        String source = readSource("src/logicsugar/assist/AssertInstructions.java");
+        String errorRun = logicsugar.SourceNails.blockFrom(source,
+            "public final void run(LExecutor exec){\n            ProcessorStatus.setMessage(");
+        String assertion = logicsugar.SourceNails.methodBody(source,
+            "private static void assertion(LExecutor exec, String defaultKey, Object message, Object... values){");
+
+        check(errorRun.contains("exec.yield = true;") && errorRun.contains("exec.stop = true;"),
+            "error 指令必须同时让出并置停机标志（上游 v0.11.4）");
+        check(errorRun.indexOf("exec.counter.numval--") < errorRun.indexOf("exec.stop = true;"),
+            "error 指令先回退计数器再停机（消息要能随每帧重跑刷新）");
+
+        int stopAt = assertion.indexOf("exec.stop = true;");
+        check(stopAt >= 0, "断言失败路径必须置 exec.stop");
+        check(stopAt == assertion.lastIndexOf("exec.stop = true;"), "断言失败路径只能置一次停机标志");
+        int elseAt = assertion.indexOf("}else{");
+        check(elseAt >= 0 && elseAt < stopAt, "停机标志必须写在非断点分支里");
+        check(!assertion.substring(0, elseAt).contains("exec.stop"), "断点路径不能置停机标志（那是暂停，不是停机）");
+    }
+
+    /** 读仓库源文件（SourceNails 的容错包装：读不到直接断言失败，不吞异常）。 */
+    private static String readSource(String file){
+        try{
+            return logicsugar.SourceNails.readSource(file);
+        }catch(java.io.IOException e){
+            throw new AssertionError("cannot read " + file + ": " + e, e);
+        }
     }
 
     private static void checkLine(String expected, String actual){

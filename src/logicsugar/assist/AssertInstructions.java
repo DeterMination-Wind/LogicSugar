@@ -20,12 +20,13 @@ import mindustry.world.blocks.logic.LogicBlock.LogicBuild;
 
 /**
  * Runtime instruction classes for LogicSugar's assertion statement set, ported from the
- * upstream MlogAssertions mod (cardillan/mlogassertions, currently v0.11.3, wire-format
+ * upstream MlogAssertions mod (cardillan/mlogassertions, currently v0.11.6, wire-format
  * compatible). Failure reporting goes through {@link ProcessorStatus}, which draws the
- * message above the processor and keeps the program looping on the failing instruction
- * (counter rewind + yield) until the condition passes or the processor is reconfigured. With
- * the {@code assertsAreBreakpoints} setting, a failed assertion pauses the game at the
- * instruction instead (upstream behavior).
+ * message above the processor; since upstream v0.11.4 a failure also sets {@code exec.stop}
+ * (a real stop instead of a pure spin: the profiler stops counting, and a world processor's
+ * {@code LogicScript} finishes). The counter is still rewound, so a regular processor keeps
+ * re-running the failing instruction once per frame. With the {@code assertsAreBreakpoints}
+ * setting, a failed assertion pauses the game at the instruction instead (upstream behavior).
  *
  * <p>Synced from v0.8.2 to v0.11.3: the generic {@code assert} instruction, failure texts
  * that name the compared values, {@code asserttype}'s expanded taxonomy, {@code assertprints}'
@@ -38,7 +39,9 @@ import mindustry.world.blocks.logic.LogicBlock.LogicBuild;
  * these blocks during its scan: the instruction owns its message lifecycle, and a scan
  * that saw "not a stop/wait" would wipe the failure message every frame. Upstream v0.11.3
  * extends the same marker with {@code vars()} — the variable slots an instruction touches,
- * which the profiler's recording snapshots collect ({@code profile.InstrumentationEngine}).
+ * which the profiler's recording snapshots collect ({@code profile.InstrumentationEngine});
+ * upstream v0.11.6 adds {@code yields()} on the same marker, read by the profiler to pick the
+ * cheap accounting path for instructions that can never hand the frame's budget back.
  * The name follows upstream; pre-5.8.0 builds called it {@code AssertInstruction}.</p>
  */
 public final class AssertInstructions{
@@ -46,9 +49,18 @@ public final class AssertInstructions{
 
     /** Marker interface for assertion/debug instructions: the overlay scan skips them, and
      *  {@code vars()} lists the variable slots the instruction reads or writes (in the
-     *  instruction's own field order, {@code null} slots included) for snapshot recording. */
+     *  instruction's own field order, {@code null} slots included) for snapshot recording.
+     *
+     *  <p>Upstream v0.11.6 adds {@code yields()}: whether {@code run()} can hand the rest of the
+     *  frame's instruction budget back ({@code exec.yield}). The profiler reads it to pick the
+     *  cheap accounting path, so it must describe the instruction's failure path — the value
+     *  table matches upstream's, {@code RestartI} included (see its override).</p> */
     public interface DevToolsInstruction extends LExecutor.LInstruction{
         LVar[] vars();
+
+        /** Whether {@code run()} may set {@code exec.yield} (the profiler then has to account for
+         *  the execution quota the yield can discard). */
+        boolean yields();
     }
 
     /** The generic {@code assert} instruction: the condition must hold, otherwise the
@@ -73,6 +85,12 @@ public final class AssertInstructions{
         @Override
         public LVar[] vars(){
             return new LVar[]{value, compare, message};
+        }
+
+        /** 失败路径走 {@link #assertion}，那里会 {@code exec.yield = true}（非断点模式）。 */
+        @Override
+        public boolean yields(){
+            return true;
         }
 
         @Override
@@ -113,6 +131,12 @@ public final class AssertInstructions{
         @Override
         public LVar[] vars(){
             return new LVar[]{multiple, min, value, max, message};
+        }
+
+        /** 失败路径走 {@link #assertion}，那里会 {@code exec.yield = true}（非断点模式）。 */
+        @Override
+        public boolean yields(){
+            return true;
         }
 
         @Override
@@ -158,6 +182,12 @@ public final class AssertInstructions{
             return new LVar[]{expected, actual, message};
         }
 
+        /** 失败路径走 {@link #assertion}，那里会 {@code exec.yield = true}（非断点模式）。 */
+        @Override
+        public boolean yields(){
+            return true;
+        }
+
         @Override
         public final void run(LExecutor exec){
             if(ConditionOp.strictEqual.test(expected, actual)){
@@ -183,6 +213,12 @@ public final class AssertInstructions{
             return new LVar[]{flushIndex};
         }
 
+        /** 纯粹写回文本缓冲区长度，不让出执行权。 */
+        @Override
+        public boolean yields(){
+            return false;
+        }
+
         @Override
         public final void run(LExecutor exec){
             flushIndex.setnum(exec.textBuffer.length());
@@ -206,6 +242,12 @@ public final class AssertInstructions{
         @Override
         public LVar[] vars(){
             return new LVar[]{flushIndex, expected, message};
+        }
+
+        /** 失败路径走 {@link #assertion}，那里会 {@code exec.yield = true}（非断点模式）。 */
+        @Override
+        public boolean yields(){
+            return true;
         }
 
         @Override
@@ -251,6 +293,12 @@ public final class AssertInstructions{
             return new LVar[]{actualValue, message};
         }
 
+        /** 失败路径走 {@link #assertion}，那里会 {@code exec.yield = true}（非断点模式）。 */
+        @Override
+        public boolean yields(){
+            return true;
+        }
+
         @Override
         public final void run(LExecutor exec){
             if(expectedType.matches(actualValue)){
@@ -280,6 +328,12 @@ public final class AssertInstructions{
             return new LVar[]{value, compare};
         }
 
+        /** 命中时只是暂停游戏（{@code ProcessorStatus.breakpoint}），不碰 {@code exec.yield}。 */
+        @Override
+        public boolean yields(){
+            return false;
+        }
+
         @Override
         public void run(LExecutor exec){
             if(op.test(value, compare)){
@@ -303,11 +357,20 @@ public final class AssertInstructions{
             return vars;
         }
 
+        /** 总是回退计数器并让出（失败即停机，见 {@link #run}）。 */
+        @Override
+        public boolean yields(){
+            return true;
+        }
+
         @Override
         public final void run(LExecutor exec){
             ProcessorStatus.setMessage(exec.build, () -> buildMessage(exec, "", true, vars[0], vars));
             exec.counter.numval--;
             exec.yield = true;
+            // 上游 v0.11.4：不只是重跑这条指令，而是真的置停机标志（世界处理器的 LogicScript
+            // 因此收工；普通处理器仍然每帧重跑本指令，因为原版的 runOnce 不看 stop）。
+            exec.stop = true;
         }
     }
 
@@ -326,6 +389,12 @@ public final class AssertInstructions{
         @Override
         public LVar[] vars(){
             return vars;
+        }
+
+        /** 只打日志，不让出。 */
+        @Override
+        public boolean yields(){
+            return false;
         }
 
         @Override
@@ -361,6 +430,12 @@ public final class AssertInstructions{
         @Override
         public LVar[] vars(){
             return new LVar[]{block, steps, message};
+        }
+
+        /** 只创建快照，不让出。 */
+        @Override
+        public boolean yields(){
+            return false;
         }
 
         @Override
@@ -399,6 +474,12 @@ public final class AssertInstructions{
             return new LVar[]{target};
         }
 
+        /** 只是转发 start/stop/clear，不让出。 */
+        @Override
+        public boolean yields(){
+            return false;
+        }
+
         @Override
         public void run(LExecutor exec){
             if(target.obj() instanceof LogicBuild build){
@@ -435,6 +516,14 @@ public final class AssertInstructions{
             return new LVar[]{target};
         }
 
+        /** 与上游一致的有意近似：返回值是 {@code false}，但 {@code accumulator < 2} 的等待分支
+         *  确实会让出一次（上游也是这么写的）。profiler 因此按快路径统计这个指令——它只会
+         *  出现在调试构建里，优先保持与上游的取值表一致。 */
+        @Override
+        public boolean yields(){
+            return false;
+        }
+
         @Override
         public void run(LExecutor exec){
             if(target.obj() instanceof LogicBuild build){
@@ -462,9 +551,15 @@ public final class AssertInstructions{
         return Vars.net != null && Vars.net.active();
     }
 
-    /** Reports a failed assertion. By default the program loops on the failing instruction
-     *  and the message is drawn above the processor; with {@code assertsAreBreakpoints} the
-     *  game pauses at the instruction instead.
+    /** Reports a failed assertion. By default the program stops on the failing instruction
+     *  ({@code exec.stop}, upstream v0.11.4) and the message is drawn above the processor; with
+     *  {@code assertsAreBreakpoints} the game pauses at the instruction instead.
+     *
+     *  <p>Stop semantics: the vanilla executor only honours {@code stop} in a world processor's
+     *  {@code LogicScript} loop (which therefore now really finishes), while a regular processor
+     *  keeps re-running the rewound instruction once per frame — the difference from the old
+     *  "spin only" behaviour is the flag itself, which the profiler reads to stop counting.
+     *  Failed assertions and {@code error} set the flag together with the counter rewind.</p>
      *
      *  <p>Upstream v0.10 refuses to pause in multiplayer, and LogicSugar's multiplayer floor
      *  requires the same refusal. Divergence from upstream: the failure is still reported and
@@ -482,6 +577,9 @@ public final class AssertInstructions{
             String text = assertionText(exec::optionalVar, defaultKey, message, values);
             exec.counter.numval--;
             exec.yield = true;
+            // 停机标志（上游 v0.11.4）：失败就是停机，不是单纯的自旋——profiler 因此停下统计，
+            // 世界处理器的 LogicScript 也真正收工。断点路径不设（那是暂停，不是停机）。
+            exec.stop = true;
             ProcessorStatus.setMessage(exec.build, () -> text);
             // Upstream v0.11: an isolated snapshot of the failing processor, named after the
             // failure message. Client-side, so it is not gated on multiplayer.

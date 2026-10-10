@@ -40,6 +40,7 @@ public final class VarsDataTest{
         recordingSelectionFilter();
         memoryTextRoundTrip();
         memoryTextRejectsBadLines();
+        memoryTextRejectsOversizedStrings();
         memoryTextSkipsUnimportable();
         memoryTextAcceptsNumericLiterals();
         blockDataTypeNames();
@@ -340,6 +341,61 @@ public final class VarsDataTest{
         checkEquals(null, MemoryText.read(null, 4, target), "null 文本不报错");
         checkEquals(null, MemoryText.read("  \n\n", 4, target), "空白文本不报错");
         check(target.num(0) == 111, "空文本不修改目标");
+    }
+
+    // ===== 导入长度上限（上游 v0.11.6） =====
+
+    /**
+     * 内存块的字符串用 {@code writeUTF} 写盘，上限 65535 字节；超长的导入字符串必须按坏行拒绝，
+     * 否则内存块序列化时抛异常、整块内存都存不下来。计数口径是修改版 UTF-8（NUL 记 2、
+     * {@code <0x800} 记 2、其余记 3，代理对记 6），不是 Java 的 {@code char} 数。
+     */
+    private static void memoryTextRejectsOversizedStrings(){
+        // ASCII：65535 字节刚好通过，65536 拒绝
+        MemoryView ok = new MemoryView(1);
+        checkEquals(null, MemoryText.read("0\tstring\t\"" + "a".repeat(65535) + "\"", 1, ok),
+            "65535 字节的字符串必须能导入");
+        checkEquals("a".repeat(65535), ok.obj(0), "通过上限的字符串按原文写入");
+
+        MemoryView tooLong = new MemoryView(1);
+        checkEquals("1", MemoryText.read("0\tstring\t\"" + "a".repeat(65536) + "\"", 1, tooLong),
+            "65536 字节的字符串按坏行拒绝（行号 1 起算）");
+        check(!tooLong.isObj(0) && tooLong.num(0) == 0, "超长行不写入目标槽");
+
+        // 多字节：按字节而不是字符计数（21845 * 3 = 65535 通过；21846 * 3 拒绝）
+        MemoryView cjkOk = new MemoryView(1);
+        checkEquals(null, MemoryText.read("0\tstring\t\"" + "中".repeat(21845) + "\"", 1, cjkOk),
+            "CJK 按 UTF-8 字节计数：65535 字节通过");
+        checkEquals("中".repeat(21845), cjkOk.obj(0), "CJK 原文写入");
+
+        MemoryView cjkTooLong = new MemoryView(1);
+        checkEquals("1", MemoryText.read("0\tstring\t\"" + "中".repeat(21846) + "\"", 1, cjkTooLong),
+            "CJK 三个字节一个字符：65536 字节拒绝");
+        check(!cjkTooLong.isObj(0) && cjkTooLong.num(0) == 0, "超长 CJK 行不写入目标槽");
+
+        // 未加引号的裸文本走同一条检查（上游对两个分支用同一个 value）
+        MemoryView bare = new MemoryView(1);
+        checkEquals("1", MemoryText.read("0\tstring\t" + "a".repeat(65536), 1, bare),
+            "裸文本同样受 65535 字节限制");
+        check(!bare.isObj(0) && bare.num(0) == 0, "超长裸文本不写入目标槽");
+
+        // 代理对（emoji）= 2 个 char 但 6 个字节：10923 对 = 65538 字节，必须拒绝
+        MemoryView surrogate = new MemoryView(1);
+        checkEquals("1", MemoryText.read("0\tstring\t\"" + "\uD83D\uDE00".repeat(10923) + "\"", 1, surrogate),
+            "代理对按两个 3 字节序列计数（65538 字节拒绝）");
+
+        // 引号残缺的字符串仍然按坏行处理（长度检查不改变这条既有语义）
+        MemoryView unclosed = new MemoryView(1);
+        checkEquals("1", MemoryText.read("0\tstring\t\"unterminated", 1, unclosed), "引号残缺仍然按坏行拒绝");
+
+        // 非字符串类型的 null 分支不受影响（cap 1、地址 0）
+        MemoryView nullValue = new MemoryView(1);
+        checkEquals(null, MemoryText.read("0\tnumber\tnull", 1, nullValue), "非有限数写成的 null 仍可导入");
+        check(nullValue.type(0) == ValueType.nothing, "null 还原成空对象槽");
+
+        // 校验与导入是同一份判定（两段式协议：validate 报错时调用方不会调用 read）
+        checkEquals("1", MemoryText.validate("0\tstring\t\"" + "a".repeat(65536) + "\"", 1),
+            "validate 与 read 对超长行给同一份行号");
     }
 
     // ===== 不可还原的类型 =====

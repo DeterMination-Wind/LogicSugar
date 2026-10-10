@@ -37,7 +37,11 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 项目硬底线的执行机制：**多人联机环境必须兼容原版客户端**，因此会改变保存产物语义的调试类功能（目前是 AssertEmit=emit）只在 `!Vars.net.active()`（单机/地图编辑器）时生效，联机（已连接或自建）一律回落原版行为。门禁在代码层强制（`SugarCompiler.currentAssertEmit`）；不提供改变处理器指令预算的能力（指令上限覆盖曾试做后移除，处理器产物恒 ≤1000 条），不依赖用户自觉；纯展示类功能不受此限。全局函数库文件不是处理器产物，另有 `SugarFunctions.libraryInstructionLimit`（当前 10000 条语句）上限，见"函数库"。残余风险：单机创建的越界内容被分享到多人环境时原版客户端仍会截断/清空/静默降级，只能靠文档与设置描述讲清。
 
 ### 断言语句集（assertions）
-移植自 cardillan/MlogAssertions v0.8.2 的八条运行时检查指令（`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`asserttype`/`error`/`log`/`breakpoint`），线格式逐字节兼容：断言失败程序在失败行自旋并由 `ProcessorStatus` 显示消息（可经「断言失败即断点」改为在失败指令处暂停），`breakpoint` 暂停游戏、居中视角并按设置临时分离视角，全部 accumulator 在本帧结束后归还。与 MlogAssertions 并存时按"先到先得"跳过重复 opcode 注册。
+移植自 cardillan/MlogAssertions（本仓库基线 v0.11.6，最早的八条来自 v0.8.2、后续依次跟进）的运行时检查指令
+（`assert`/`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`asserttype`/`error`/`log`/`breakpoint`），
+线格式逐字节兼容：断言失败置**停机标志**（`exec.stop`，上游 v0.11.4 起）并由 `ProcessorStatus` 显示消息
+（可经「断言失败即断点」改为在失败指令处暂停），`breakpoint` 暂停游戏、居中视角并按设置临时分离视角，
+全部 accumulator 在本帧结束后归还。与 MlogAssertions 并存时按"先到先得"跳过重复 opcode 注册。
 
 ### 断点（breakpoint）
 暂停整个游戏并把视角定位到命中的处理器，用于在不改变处理器状态的前提下检查变量与内存。`ProcessorStatus.breakpoint` 负责暂停、视角、accumulator 冻结/归还与暂停期间的消息绘制；「禁用断点」让 breakpoint 与断点化断言变成空操作，「断点分离视角」决定是否临时改写原版 `detach-camera` 设置（取消暂停时恢复原值）。
@@ -208,6 +212,19 @@ profiler 把处理器的运行期指令数组换成转发包装器的那个对�
 每条指令的执行次数/指令预算/分支次数、覆盖率与丢配额，以及 recording 子快照的抓取。它**只存在于本地进程**，
 不进入保存产物；读 `executor.instructions` 的代码必须先 `InstrumentationEngine.unwrap(...)` 才能做
 `instanceof`（包装器是另一个类）。
+
+### 快路径 / 让出路径（profiler fast / yielding path）
+包装器的两种形态（上游 v0.11.6）。**快路径**用于永远不会 `exec.yield = true` 的指令
+（`InstrumentationEngine.noYielding` 里的原版指令 + `DevToolsInstruction.yields() == false` 的调试指令）：
+不读 `exec.yield`，恒 +1 步/+1 配额，覆盖率看 `steps[index] == 0`。**让出路径**用于可能让出的指令
+（`wait`/`stop`/`flushmsg` 与会失败的断言）：只有计数器真的前进了才算一步，配额按估算值累计，
+覆盖率看 `covered` 位图。两条路径的覆盖率来源不同，读方必须用 `Instrumentation.isCovered(index)`
+（`steps > 0 || covered.get(index)`）合并。
+
+### 停机标志（exec.stop）
+原版执行器的停机开关。上游 v0.11.4 起失败断言与 `error` 指令在回退计数器的同时置它（语义从「自旋」
+变成「停机」：世界处理器的 `LogicScript` 收工，profiler 的包装器读到它就 `stopAll()` 停下统计与录制；
+普通处理器因为原版 `runOnce` 不看 `stop`，仍然每帧重跑失败指令，消息因此持续刷新）。
 
 ### 执行配额（instruction quota）与丢配额（lost quota）
 处理器每帧的执行预算由 `maxInstructionScale * ipt` 封顶，`accumulator` 是剩余额度。profiler 的「时间」列

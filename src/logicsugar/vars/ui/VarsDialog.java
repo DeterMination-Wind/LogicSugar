@@ -53,7 +53,8 @@ import java.util.Arrays;
  * <li>会话级显示偏好（{@code hex}/{@code sorted}/{@code filtered}/{@code hideLinks}/
  * {@code fullPrecision}/{@code significantDigits}/{@code alignment}/{@code updateFrequency}）
  * 改读写 {@link VarsOptions}。上游把它们放在本类的静态字段里，现在由 LogicSugar 的设置项
- * 写入（本类不再声明同名副本）。</li>
+ * 写入（本类不再声明同名副本）；其中五个开关还会经 {@link VarsOptions#save()} 写进
+ * {@code Core.settings}，启动时由 {@link VarsAccess#applySettings()} 读回。</li>
  * <li>编辑器里的「内置变量」按钮改为调用集成阶段注入的 {@link #globalsOpener}：上游直接调用
  * 未移植的 {@code LogicDialogAddon.globalsDialog.show()}，LogicSugar 的全局变量对话框由
  * 集成代码自己接线，本包不引用 {@code mindustry.logic.LogicDialog}。opener 未注入时不显示
@@ -734,6 +735,8 @@ public class VarsDialog extends BaseDialog{
     }
 
     private void refreshView(boolean update){
+        // 显示开关是持久化偏好（P6）：标题栏的 hex/全位数与 Options 面板的所有开关都经由这里
+        VarsOptions.save();
         Arrays.fill(counter, reset);
     }
 
@@ -742,6 +745,8 @@ public class VarsDialog extends BaseDialog{
     }
 
     private void updateView(boolean update){
+        // 同上：排序/临时变量/链接/精度/对齐都由这个入口写盘
+        VarsOptions.save();
         snapshots.view().setView(VarsOptions.sorted, VarsOptions.filtered, VarsOptions.hideLinks);
         if(snapshots.view().size() != length){
             setup();
