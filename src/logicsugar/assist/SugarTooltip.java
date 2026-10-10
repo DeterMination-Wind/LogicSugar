@@ -51,13 +51,27 @@ public final class SugarTooltip{
      * nothing, so call sites that pass a vanilla key keep working unchanged.
      */
     public static void hint(Cell<?> cell, String key){
-        if(key == null) return;
+        String resolved = resolveHint(key);
+        if(resolved != null) attach(cell, Core.bundle.get(resolved));
+    }
+
+    /**
+     * The bundle key a hint shows for {@code key}, or null when the running bundle has no entry:
+     * lower-cased with spaces removed, exactly the lookup {@code LCanvas.tooltip} performs.
+     *
+     * <p>Public because the palette's key rule has to choose between two namespaces before it can
+     * show anything — LogicSugar's {@code logicsugar.lst.*} for its own cards and the game's
+     * {@code lst.*} for vanilla statements — and resolving every candidate through this one method
+     * keeps "does an entry exist?" answered in a single place. The rule used to answer it itself
+     * and silently dropped the game's prefix while doing so (issue #24).</p>
+     */
+    public static String resolveHint(String key){
+        if(key == null || Core.bundle == null) return null;
         // Locale.ROOT rather than the default locale: under a Turkish locale "I".toLowerCase()
         // yields a dotless ı and the key stops resolving (SpotBugs DM_CONVERT_CASE). This mod has
         // already been bitten once by a locale assumption -- see Mods.buildFiles() on Android.
-        String lkey = key.toLowerCase(Locale.ROOT).replace(" ", "");
-        if(!Core.bundle.has(lkey)) return;
-        attach(cell, Core.bundle.get(lkey));
+        String normalized = key.toLowerCase(Locale.ROOT).replace(" ", "");
+        return Core.bundle.has(normalized) ? normalized : null;
     }
 
     /**

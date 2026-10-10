@@ -944,10 +944,8 @@ public class SugarLogicDialog extends LogicDialog{
                             dialog.hide();
                         }).size(130f, 50f).self(c -> {
                             configurePaletteButton(c.get());
-                            // LogicSugar statements use dedicated hint keys; vanilla ones keep the original lookup
-                            String sugarKey = "logicsugar.lst." + example.typeName().toLowerCase(Locale.ROOT);
-                            String bundleKey = Core.bundle.has(sugarKey) ? sugarKey : statementBundleKey(example);
-                            SugarTooltip.hint(c, bundleKey != null ? bundleKey : sugarKey);
+                            // LogicSugar statements use dedicated hint keys; vanilla ones keep the game's own lookup
+                            SugarTooltip.hint(c, paletteHintKey(example));
                         }).top().left();
 
                         if(cat.getChildren().size % 3 == 0) cat.row();
@@ -988,10 +986,44 @@ public class SugarLogicDialog extends LogicDialog{
         return localized instanceof String ? (String)localized : statement.name();
     }
 
-    /** Bundle key for a statement when the running core exposes it; {@code null} on vanilla. */
-    private static String statementBundleKey(LStatement statement){
-        Object key = optionalStatementString(statement, "statementKey");
-        return key instanceof String ? (String)key : null;
+    /**
+     * Palette button hint key for {@code example}, or null when it has no description entry.
+     *
+     * <p>Two namespaces meet in the plus menu, and mis-resolving either one is silent: the button
+     * simply shows no hint. LogicSugar's cards describe themselves under
+     * {@code logicsugar.lst.<typeName>}; a vanilla statement's description is the game's
+     * {@code lst.*} entry, which vanilla builds as {@code "lst." + statementKey()} on cores that
+     * expose v160's accessor and as {@code "lst." + name()} on older ones.</p>
+     *
+     * <p>The reflective fallback used to return the bare {@code statementKey()} — without the
+     * {@code "lst."} prefix — so every vanilla statement asked the bundle for {@code sensor}
+     * instead of {@code lst.sensor} and the palette showed no hint at all (issue #24, 2026-10).
+     * Falling back to {@code name()} when the accessor is absent is what keeps pre-v160 cores,
+     * where the palette used to throw {@code NoSuchMethodError}, working instead.</p>
+     *
+     * <p>A LogicSugar card never falls back into the game's namespace: a card without its own
+     * translation must show no hint rather than the description of an unrelated vanilla statement
+     * that happens to share its name — the {@code Set} declaration card is vanilla's
+     * {@code lst.set}.</p>
+     */
+    static String paletteHintKey(LStatement example){
+        boolean modOwned = example instanceof SugarStatements.SugarStatement;
+        Object statementKey = modOwned ? null : optionalStatementString(example, "statementKey");
+        return paletteHintKey(example.typeName(),
+            statementKey instanceof String ? (String)statementKey : null, example.name(), modOwned);
+    }
+
+    /**
+     * The rule behind {@link #paletteHintKey(LStatement)}, split out so the version matrix is
+     * testable on a core that always exposes {@code statementKey()}: {@code sugarKey} comes from
+     * {@code typeName()}, {@code statementKey} is the v160 accessor's value (null on older cores)
+     * and {@code name} is {@link LStatement#name()} — what vanilla used before that accessor
+     * existed. Returns the key the bundle really has ({@link SugarTooltip#resolveHint} normalizes
+     * it), or null when nothing matches.
+     */
+    static String paletteHintKey(String typeName, String statementKey, String name, boolean modOwned){
+        if(modOwned) return SugarTooltip.resolveHint("logicsugar.lst." + typeName.toLowerCase(Locale.ROOT));
+        return SugarTooltip.resolveHint("lst." + (statementKey != null ? statementKey : name));
     }
 
     private static Object optionalStatementString(LStatement statement, String method){

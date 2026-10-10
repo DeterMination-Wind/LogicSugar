@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十八个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十九个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了四十八个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册了四十九个自测任务，均 `dependsOn testClasses`：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -52,6 +52,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `conditionLabelTest` | `logicsugar.ConditionLabelTest` | 循环条件字段的本地化标签：三份 bundle 键集一致、`while.condition`/`for.condition` 不得写成「结束条件 / 终止条件 / until」、提示语保持「为真时重复」，并断言 `WhileBeginStatement` 使用专用键而非通用 `condition`；另钉住数据操作提示的失败值措辞（13 个可失败操作的 `hint`/`lst` 提示在三份 bundle 里都必须写明 v5 的 `-1`，`map_contains`/`set_contains`/`bitset_test` 等查询类必须保持 0/1 而不出现 `-1`） |
 | `editorConflictTest` | `logicsugar.EditorConflictTest` | 编辑器所有权与四档冲突策略：`classify` 把「尚未安装 / 游戏自带 `LogicDialog`」判为 native、自家对话框及其子类判为 sugar、别的模组的 `LogicDialog` 子类判为 foreign（不得误判成 sugar）、`EditorConflict.parse` 四档映射与大小写不敏感、缺失/空/垃圾值一律回落 `ask` 而绝不落到「编辑器被停用」、设置按钮 `next()` 一圈必须恰好访问全部状态并回到默认档（漏一个状态就是用户够不到的档）、设置键与四档标签在三份 bundle 里都存在、安装守卫无不对称、选板隐藏可逆、四档切换有接线、共存编译挂在对方关闭路径上且捕异常、退出共存还原对方画布、ask 弹窗三种答案齐全且不含接管分支的私有副本、聚合设置表单与独立设置项默认档一致、共存时重新绑定对方面板且对方面板仍可点击、共存档挂上跨逻辑复制且画布停用后不再装按钮；源码钉子统一走共享的 `SourceNails.readSource()`（归一 CRLF） |
 | `textWrapTest` | `logicsugar.assist.TextWrapTest` | `SugarTooltip` 的折行规则（测量函数换成字符数，因此无需图形上下文即可精确断言）：放得下原样返回、空串与 null 安全、只在空格处断且每行不超限、超长单词硬断不丢字符、markup 标签绝不被拆开、已有换行保留、折行幂等 |
+| `paletteHintTest` | `mindustry.logic.PaletteHintTest` | 加号菜单（「添加积木」）悬浮提示的 bundle 键规则（issue #24：装模组后原版积木集体不再显示提示，糖积木却正常）。键规则：v160 系原版拼 `"lst." + statementKey()`、无该访问器的老客户端拼 `"lst." + name()`（空格/大小写由查表归一；受控 bundle 里刻意放进裸 `statementKey()` 与 `lst.set`，错取即红）；糖积木只取自己的 `logicsugar.lst.<typeName>` 命名空间 —— 自己没译文时宁可没提示，也绝不借用同名原版语句（Set 声明卡 vs 原版 `lst.set`）；真实游戏 bundle（测试 classpath 上游戏 jar 根下的 `bundles/bundle.properties`，缺失直接报错）+ 三份模组 bundle + 真实 `LogicIO.allStatements` 注册表下，每条可见原版积木（51 条）都必须解析出游戏自己的 `lst.*` 条目，糖积木必须落在自己命名空间；另含源码钉子：调色板必须走 `paletteHintKey(example)`，不得自己拼键（丢掉 `"lst."` 前缀的 `statementBundleKey()` 保持删除） |
 | `statementClipboardTest` | `logicsugar.assist.StatementClipboardSelfTest` | 跨处理器剪贴板的片段格式（全程只有语句与字符串，无画布）：`write`/`parse` 对全部语句类型 round-trip、头部标记识别（无正文不算 payload）、接受 CRLF 文本与纯原版 mlog、拒绝不可读文本、`acceptable` 双向判定、`rebase` 把 jump 映射进片段局部下标、选区外跳转被识别为 escaping、无链接的 jump 既不映射也不报 escaping、`pairBlockEnds` 修复片段内 begin/end 配对并拒绝不成对的片段、越界目标计数；**表达式卡在载荷里只占一条语句**（`dest = expr`，粘贴侧经 `ExprTextImport` 哨兵换回同一张卡、片段内 jump 相对下标不变），旧载荷的 `set` + 自描述标记仍旧能还原成卡片，含 `#`/`;`/`@counter` 目标等不适合单行形态的一律退回 op 形态 |
 | `canvasSourceTest` | `logicsugar.CanvasSourceTest` | `SugarCanvas` 渲染路径的源码钉子（无头测试看不见画布）：`save()` 是纯文本读取（`ExprHook.unfoldedText`，不 unfold/fold、不落 `super.save()`；卡片的“保不保留”判定与 `unfoldAll` 共用同一个 `cardLines()`）、行号标签的顺序为「原版 layout → 写 mlog 文本 → 清 `needsLayout`」且空闲路径不强制重排（顺序颠倒会让标签每帧在语句下标与 mlog 下标之间来回跳、卡片头部抖动） |
 | `spanTest` | `mindustry.logic.SpanTest` | 多格 span：声明写成 `mem = cell1 + cell2`；无链接上下文按名字启发式算每格容量（`cellN`=64、`bankN`/`worldN`=512，混合推断值报错，猜不出的名字报错）；常量下标 0/64 各折叠成一条 `read`；`cell1 + cell3 + cell2` 的地址 64 是 `cell3`；N=2 的变量地址是 5 条（`N+3`；负商和 `q >= N` 都落在数字 `0` 上）；数组声明在 span 名上的容量是 `N*C`；普通 read/write 同样展开；单格、空项和非名字是编译错误；`idiv`/`select` 不会被推断回 span 卡。**重建折层**：`x = buf[i]` / `buf[i] = 7` / `m[i][j]` 的展开文本必须被 `ExprCompiler` 的 span 视角（成员 + 格内地址 / 前导段形状反查）折回原表达式，**常量形态是单行、不参与折叠**（折叠层永不折孤立 read/write 行，卡片靠 `# @ls-expr-card` 标记还原，`spanTest` 钉住标记写入 + 文本导入还原 + 重开后仍是原版行）；**变量下标走真实链收集**（`variableReadFoldsOnReopen`：前导段 scratch 不能结束链、building scratch 上的 read 要入链，键收集跑 `ExprFoldHarness` 的同一份判定）；越界/变量格内地址/行数对不上的假前导段不折；无 span 声明时 scratch 不入链；前导段 select 参与折叠链但不映射成积木（`unfoldAll` 必须保留卡片）；两张相邻 span 表达式卡的 scratch 不算链外读取；两个注入函数名与编辑器函数名校集同口径 |
@@ -62,7 +63,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前四十八个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前四十九个全绿（见 [release.md](release.md)）。
 
 ## 新增测试的约定
 
@@ -85,7 +86,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 6. **嵌套布局**：横屏/竖屏及 UI scale 100%/150%/200% 下，展开 1/2/3/4/6 层嵌套 `For`；确认 `variable`、`initial`、`step`、`until`、条件控件、`OP/Expr` 和折叠按钮均在卡片内可见且可点击。切换 MindustryX LogicSupport 侧栏显示/隐藏并重复检查；同时覆盖简体中文、繁体中文和 English。
 7. **双形态设置**：独立安装时出现 `Logic Sugar` 设置分类；并入 Neon 后设置项只出现在 Neon 总设置页，无重复分类。
 8. **安卓包**：安装 `build/libs/LogicSugar-v<version>.jar`（含 `classes.dex`）于安卓设备，确认能加载并打开逻辑编辑器。
-9. **对话框按钮**：打开处理器编辑器两次以上——返回 / 编辑 / 变量 / **添加积木** / 打开函数库（移动端另有撤销/重做）每次都在（vanilla `setup()` 每次 show 重建按钮行，Sugar 侧的按钮与「添加积木」都必须在重建后回来），其中「添加积木」必须可见可点并打开糖积木面板（2026-10 报告：它被整行重建时的位置猜测弄丢过）；点复制变量得到按名排序的 TSV；函数库会话中两个复制按钮不出现。移动端每次打开都能看到撤销/重做按钮。窗口宽度不足时（例如 800×600 或更窄）按钮换到多行、彼此不重叠；把窗口拉宽后回到「操作居中 / 检查控件贴右」的单行形态。**手机/竖屏同一条宽度路径**：横屏与竖屏各打开一次，返回键与打开函数库按钮都必须完整可见可点（早期版本在这两种形态下退回固定宽度行，首尾按钮被推出屏幕）；竖屏窄于 212px 时指令预算标签不出现属预期，此时超限提示由 toast 承担。
+9. **对话框按钮**：打开处理器编辑器两次以上——返回 / 编辑 / 变量 / **添加积木** / 打开函数库（移动端另有撤销/重做）每次都在（vanilla `setup()` 每次 show 重建按钮行，Sugar 侧的按钮与「添加积木」都必须在重建后回来），其中「添加积木」必须可见可点并打开糖积木面板（2026-10 报告：它被整行重建时的位置猜测弄丢过），且面板里悬停原版积木必须给出游戏自己的说明（输入&输出 / 控制方块 / 操作 / 控制顺序 / 控制单位 一个都不能少，issue #24 就是这条全部失声）；点复制变量得到按名排序的 TSV；函数库会话中两个复制按钮不出现。移动端每次打开都能看到撤销/重做按钮。窗口宽度不足时（例如 800×600 或更窄）按钮换到多行、彼此不重叠；把窗口拉宽后回到「操作居中 / 检查控件贴右」的单行形态。**手机/竖屏同一条宽度路径**：横屏与竖屏各打开一次，返回键与打开函数库按钮都必须完整可见可点（早期版本在这两种形态下退回固定宽度行，首尾按钮被推出屏幕）；竖屏窄于 212px 时指令预算标签不出现属预期，此时超限提示由 toast 承担。
 10. **处理器状态指示**：造一个 `stop` 结尾的程序和一个长 `wait` 程序，确认停止处理器上方显示「已停在第 N 条」、长 wait 画进度圆环；把等待阈值滑到 0 后圆环消失；处理器极多的地图无可见卡顿。
 11. **断言（调试构建）**：关闭「调试断言构建」时保存含断言的程序，产物 mlog 无 `assert*` 行且无模组客户端可正常打开；开启后保存，断言失败在地图上显示消息（含「(expected X, got Y)」）且程序原地自旋，`breakpoint` 命中时游戏暂停、视角居中到该处理器；开启「断言失败即断点」后失败改为在失败指令处暂停，开启「禁用断点」后 breakpoint 直接跳过；重开编辑器断言卡片完整。与 MlogAssertions 并存装时无重复注册报错。
 12. **联机门禁（兼容底线）**：把断言构建设为 emit，然后加入或自建一个多人游戏——此时保存任何程序，产物必须 ≤1000 条且不含 `assert*` 行（与原版客户端互开无异常）；回到单机重新载入地图后，emit 设置恢复生效。指令上限覆盖功能已移除，保存产物恒 ≤1000 条。同一会话里打开 profiler：统计照常（每个客户端各算各的），但处理器状态消息/等待时间不能因为 profiler 开着而消失或显示 0；`profile`/`restart`/`snapshot recording` 行在联机保存时必须不落进产物。
