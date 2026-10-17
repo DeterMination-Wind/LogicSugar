@@ -22,6 +22,8 @@ docs/
 |-- README.md            本页：文档导航
 |-- tutorials/           高级数据类型教程：中文在根目录, English 在 en/（每结构一章）
 |-- architecture.md      架构总览：双形态、编译器、重建（载体/反编译）、表达式子系统、数据子系统、跨类加载器约束、上游版本适配笔记
+|-- reconstruction.md    重建规则：载体还原、反编译推断、raw/stride、unit-control、span/getter 折叠、Expr 卡持久化
+|-- upstream.md          上游基线：MlogAssertions v0.11.7、跟进历史、不移植项、线格式例外
 |-- development.md       开发指南：环境、构建命令、代码风格、调试建议
 |-- release.md           版本与发布：版本号体系、构建产物链、Release 资产安全
 |-- testing.md           测试指南：JavaExec 自测任务、新增测试约定、手测清单
@@ -32,14 +34,17 @@ docs/
 ## 相关文件
 
 - [README.md](../README.md) / [README_zh.md](../README_zh.md)：面向玩家的功能与安装说明（英文 / 中文）。
-- [AGENTS.md](../AGENTS.md)：仓库维护约束，重点是**跨类加载器访问陷阱**、**反编译恢复安全门**与**重建（每加功能都要考虑）**。
+- [AGENTS.md](../AGENTS.md)：根路由与硬约束（重建完成定义、多人兼容底线、构建入口）。
+- 模块 AGENTS：[mindustry/logic](../src/mindustry/logic/AGENTS.md)、[assist/expr](../src/logicsugar/assist/expr/AGENTS.md)、[assist/data](../src/logicsugar/assist/data/AGENTS.md)、[vars/profile](../src/logicsugar/vars/AGENTS.md)。
+- [重建规则](reconstruction.md) / [上游基线](upstream.md)：从原版 mlog 恢复的完整约束 / MlogAssertions 同步历史与线格式例外。
 - [mod.json](../mod.json)：模组描述符（入口 `logicsugar.LogicSugarMod`、最低 Mindustry `v160.1`）。
-- [build.gradle](../build.gradle)：编译依赖、四十四个自测任务与 Android 打包管线的唯一事实来源。
+- [build.gradle](../build.gradle)：编译依赖、自测任务（清单以 `check.dependsOn` 为准）与 Android 打包管线的唯一事实来源。
 - 发布说明：每个版本的双语（中文/English）正文随 GitHub Release 发布，仓库不再保留副本；写作范式见 [版本与发布](release.md)。
 
 ## 维护约定
 
 - 架构文档描述"怎么实现"，README 描述"用"。同一主题两边都出现时，README 从玩家操作视角写，架构文档从代码结构写。
-- 涉及 `mindustry.logic.*` 游戏类成员访问的结论必须与 `AGENTS.md` 保持一致；两处冲突时以 `AGENTS.md` 为准并同步修订。
+- 实现与命令事实以代码、`build.gradle`、docs 为准；AGENTS 只约束代理行为与流程，发现文档过时同步修正。
+- AGENTS 写路由、硬约束与本作用域操作规则，不复制 docs 长文；根 ≤100 行、模块 ≤100 行。实现叙述以 docs/代码为准。
 - 自测任务名以 `build.gradle` 为准；新增或删除任务后必须更新 [测试指南](testing.md) 的任务表。
 - 版本相关数字（当前版本号、产物文件名）以 `build.gradle` 与 `mod.json` 为准，文档只写规则不写快照，避免过期。

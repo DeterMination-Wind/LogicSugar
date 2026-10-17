@@ -167,7 +167,7 @@ Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[
 逻辑编辑器的语句卡片区域。原版是 `LCanvas`；本模组用 `SugarCanvas` 子类接管，叠加结构引导线、框选、表达式折叠等能力。
 
 ### 跨类加载器访问（cross-loader access）
-运行时模组类与 `mindustry.logic.*` 游戏类分属不同类加载器——同包名、不同运行时包。受保护/包私有成员只能在本模组子类实例方法内或经反射访问，否则运行时抛 `IllegalAccessError`（源码级能编译通过）。详见 AGENTS.md。
+运行时模组类与 `mindustry.logic.*` 游戏类分属不同类加载器——同包名、不同运行时包。受保护/包私有成员只能在本模组子类实例方法内或经反射访问，否则运行时抛 `IllegalAccessError`（源码级能编译通过）。详见 [src/mindustry/logic/AGENTS.md](../src/mindustry/logic/AGENTS.md)。
 
 ### 双视图（original / Sugar）
 `SugarLogicDialog` 提供的切换：查看生成的原版 mlog 或返回 Sugar 编辑，切换前保护未保存修改。
@@ -176,7 +176,7 @@ Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[
 `SugarCanvas` 对外围功能字段的策略：`optionalField`/`optionalMethod` 找不到上游成员时该功能静默退化，而不是整个编辑器崩溃；核心字段（如 `LogicDialog.privileged`）则用无降级余地的硬反射。
 
 ### 单位控制卡（unitbind / unitnext / unitfor / unitfree）
-编辑器积木，lowering 成原版 `ubind` / `sensor` / `ucontrol flag` / `end`。同一处理器的 flag 是 `@thisx * 100000 + @thisy + 1`。认领空闲单位（flag 0 且 `@controlled` 为 0）后连续 `end` 四拍再读回 flag，对不上就放弃，避免同帧复制多份逻辑时抢到同一单位。`unitfor` 是带 `break`/`continue` 的循环。载体缺失时按编译器私有的 `__ls_ub_*` 名字逐条比对这段 lowering 恢复成卡（见[架构总览](architecture.md)「路径 2」），对不上就保持原版指令。
+编辑器积木，lowering 成原版 `ubind` / `sensor` / `ucontrol flag` / `end`。同一处理器的 flag 是 `@thisx * 100000 + @thisy + 1`。认领空闲单位（flag 0 且 `@controlled` 为 0）后连续 `end` 四拍再读回 flag，对不上就放弃，避免同帧复制多份逻辑时抢到同一单位。`unitfor` 是带 `break`/`continue` 的循环。载体缺失时按编译器私有的 `__ls_ub_*` 名字逐条比对这段 lowering 恢复成卡（见[重建规则](reconstruction.md)「unit-control」），对不上就保持原版指令。
 
 ### 单位 flag 显示与着色
 可选地图叠加：设置 `logicsugar.showUnitFlags` 打开后，在每个单位正上方绘制其逻辑 `flag`（`ucontrol flag` / `@unit.@flag`）。默认使用红色；再打开 `logicsugar.colorizeUnitFlags` 后，不同 flag 按首次遇到顺序优先使用 10 种高对比度颜色，更多 flag 使用高饱和度随机色，并在当前世界内保持映射稳定。默认 0 与非有限值不显示；视野外与迷雾中的单位跳过。纯展示，不改保存产物，不受单机门禁限制。由 `unitFlagsTest` 钉住判定、格式与配色分配。

@@ -1,10 +1,10 @@
 # 测试指南
 
-LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。当前共有四十九个 JavaExec 自测任务。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
+LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（无 JUnit runner），全部挂接在 `check` 上。自测任务清单以 `build.gradle` 的 `check.dependsOn` 与本文任务表为准。任何接线改动都不允许把自测任务从 `check.dependsOn` 摘掉；`test` 任务被显式禁用，属正常现象。
 
 ## 自动化任务
 
-`build.gradle` 注册了四十九个自测任务，均 `dependsOn testClasses`：
+`build.gradle` 注册的自测任务均 `dependsOn testClasses`，完整清单以 `check.dependsOn` 为准：
 
 | 任务 | 主类 | 覆盖内容 |
 | --- | --- | --- |
@@ -12,7 +12,7 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 | `ifElseTest` | `mindustry.logic.IfElseCompileTest` | `if` / `elif` / `else` / `while` 三段式条件的 lowering 冒烟（负分支取反、标签、出口跳转） |
 | `decompileTest` | `mindustry.logic.SugarDecompilerTest` | 反编译恢复：vanilla 程序保持原样、各结构恢复 round-trip、跳转表识别（含手写无守卫裸表 → `switchbegin … raw` + `default`，以及步长表 `switchbegin … stride`：`test/fixtures/counter-stride-switch.mlog`）、手写程序无入口 skip 也能恢复、数字跳转链穿线归一化、真实 655 条跳转表程序夹具（`test/fixtures/realworld-jump-table.mlog`）、**编辑器开屏决策**（`openingSource`：无载体的处理器程序必须走推断、两种编辑器权限都要验证、载体程序与函数库文本保持原样；`openableSource`：首选源码读不出来时改为载入存储产物、丢弃读不出来的草稿，产物也读不出来才拒绝）、陈旧载体回退推断、单位控制卡按编译器自己的 lowering 恢复且改过的 lowering 不得被改写成卡、表达式卡自描述标记在推断路径上按「展开后逐字存在」恢复（过期标记不得改写语句）、短路守卫重建布尔树（单原子 / 顶层 `!` / 嵌套 `&&`\|\|` / 左深链 / `whilebegin`/`forbegin` 的 `exprsc` / `continue` 内部回边）、贪心候选失败后的回溯提升、验证矩阵（chainOnly 保存的程序在 auto 默认设置下仍验证）、动态 `@counter` 分诊保持 flat、函数区杂散跳转验证、不支持的模式保持 flat、引号/转义、坏输入不崩 |
 | `reconstructionTest` | `mindustry.logic.ReconstructionFixtureTest` | 重建：过期 `destIndex` 按嵌套重配对后载体仍验证；两份世界处理器样例走载体还原出 `ifbegin`/`forbegin`；`array`/`stack`/`record` 声明卡随载体回来；剥掉载体后不发明声明卡、不把 `__ls_builtin_*` 恢复成用户函数 |
-| `reconstructionMatrixTest` | `mindustry.logic.ReconstructionMatrixTest` | 重建矩阵：203 个 fixture / 1276 个 gate 断言，覆盖当前全部控制积木（if/elif/else/for/while/switch/break/continue/函数/折叠变体，含步长表与单位控制卡 `unitbind`/`unitnext`/`unitfor`/`unitfree`）、全部数据积木（array/matrix/arrayinit/span/record/stack/queue/deque/bitset/map/uset/list/heap/chain）、68 个 `datacall` 操作卡与 8 张断言/调试卡；每个 fixture 都断言 compile → carrier restore → `verifyRestore` → 载体反编译链路，并自动检查每个已注册 `datacall` 操作都有 fixture；对 decompiler 可证明的控制流形状额外断言无载体推断路径。单位控制卡按编译器自己的 lowering（`__ls_ub_*`）推断恢复，含体内 `break`/`continue`、嵌套、循环体内、函数体内与四卡混排的 inference fixture。span 只有载体 fixture（声明、span 上的 array、以及表达式卡保存文本的原样往返），不从 `idiv`/`select` 推断；表达式卡另有 `decl.exprcard.staleDest`（过期 destIndex 触发语句重写时自描述标记必须活下来）与 `decl.exprcard.getter` / `decl.exprcard.getter.size`（容器 getter 的展开文本与 size 类单行卡标记的载体往返）；`decl.array.exprcard` 与 `decl.array.vanillaRead` 是同一行 `read x cell1 3` 的两面（有标记 = `x = buf[3]` 卡，无标记 = 原版读积木，声明不能替它做主）|
+| `reconstructionMatrixTest` | `mindustry.logic.ReconstructionMatrixTest` | 重建矩阵：100+ fixture（测试运行时打印实际数量；测试强制 ≥100），覆盖当前全部控制积木（if/elif/else/for/while/switch/break/continue/函数/折叠变体，含步长表与单位控制卡 `unitbind`/`unitnext`/`unitfor`/`unitfree`）、全部数据积木（array/matrix/arrayinit/span/record/stack/queue/deque/bitset/map/uset/list/heap/chain）、68 个 `datacall` 操作卡与 8 张断言/调试卡；每个 fixture 都断言 compile → carrier restore → `verifyRestore` → 载体反编译链路，并自动检查每个已注册 `datacall` 操作都有 fixture；对 decompiler 可证明的控制流形状额外断言无载体推断路径。单位控制卡按编译器自己的 lowering（`__ls_ub_*`）推断恢复，含体内 `break`/`continue`、嵌套、循环体内、函数体内与四卡混排的 inference fixture。span 只有载体 fixture（声明、span 上的 array、以及表达式卡保存文本的原样往返），不从 `idiv`/`select` 推断；表达式卡另有 `decl.exprcard.staleDest`（过期 destIndex 触发语句重写时自描述标记必须活下来）与 `decl.exprcard.getter` / `decl.exprcard.getter.size`（容器 getter 的展开文本与 size 类单行卡标记的载体往返）；`decl.array.exprcard` 与 `decl.array.vanillaRead` 是同一行 `read x cell1 3` 的两面（有标记 = `x = buf[3]` 卡，无标记 = 原版读积木，声明不能替它做主）|
 | `unitControlTest` | `logicsugar.UnitControlTest` | 单位控制卡：flag 由 `@thisx/@thisy` 拼出且不为 0；认领写入 flag 后连续 `end` 四拍再复核；`unitnext` 不把已有 flag 当成空闲单位；`unitfree` 只清自己的 flag 并 `unbind`；`unitfor` 的循环体、`break`/`continue` 与名额上限；产物可被原版 assembler 解析；载体往返 |
 | `recoveryPredicateTest` | `mindustry.logic.RecoveryPredicateTest` | 谓词树模型：比较运算精确取反、`strictEqual` 不做有损取反、德摩根、优先级打印、求值方式影响代价 |
 | `shortCircuitTest` | `logicsugar.ShortCircuitCompilerTest` | `&&` / `||` 下降为条件 `jump`：操作数顺序、OR 续接标签、嵌套括号、`===` 取反不丢精度、坏谓词拒绝 |
@@ -63,11 +63,11 @@ LogicSugar 的自动化测试是 `main()` 断言式的 JavaExec 回归任务（�
 .\gradlew.bat decompileTest   # 单跑一个
 ```
 
-改动对应子系统时必须先跑相关任务；发版前四十九个全绿（见 [release.md](release.md)）。
+改动对应子系统时必须先跑相关任务；发版前全部自测任务全绿（清单见 `build.gradle` 的 `check.dependsOn`，见 [release.md](release.md)）。
 
 ## 新增测试的约定
 
-- 保持 `main()` + 断言（失败抛 `AssertionError`）风格，新建 `test/` 下与被测类同包的类，并在 `build.gradle` 注册 JavaExec 任务、加进 `check.dependsOn`——这是 AGENTS.md 明文要求。
+- 保持 `main()` + 断言（失败抛 `AssertionError`）风格，新建 `test/` 下与被测类同包的类，并在 `build.gradle` 注册 JavaExec 任务、加进 `check.dependsOn`——这是本文与根 AGENTS.md 构建/验证入口的约定。
 - 纯逻辑（编译、恢复、谓词、阈值策略）优先做成无头可跑的任务；需要游戏状态的部分模拟到能离线断言的程度（如 `crossLoaderTest` 手工构造加载器拓扑）。
 - 触碰 `LAssembler` / 语句解析的测试开头先调 `SugarStatements.installParsers()`（与模组 init 共享的注册点）。
 - **新增/修改积木导致编译出的原版代码变化时，必须同步补 `ReconstructionMatrixTest` fixture**：新卡片走 carrier 路径；控制流新形状同时补可证明的 inference fixture。fixture 数必须保持 100+；只改测试数字不算覆盖，必须有 carrier restore + `verifyRestore` + 载体反编译断言。

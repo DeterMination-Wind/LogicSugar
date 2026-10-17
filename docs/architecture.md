@@ -1,6 +1,6 @@
 # 架构总览
 
-改 `src/` 下的任何代码前先读本文。它解释 LogicSugar 的组织方式：Sugar 结构如何编译成 mlog、程序如何在保存后还原、以及为什么跨类加载器访问与反编译安全门是两条硬约束。
+改 `src/` 下的任何代码前先读本文。它解释 LogicSugar 的组织方式：Sugar 结构如何编译成 mlog、程序如何在保存后还原、以及为什么跨类加载器访问与反编译安全门是两条硬约束。模块级“改这里要注意什么”见 [mindustry/logic AGENTS](../src/mindustry/logic/AGENTS.md)、[assist/expr AGENTS](../src/logicsugar/assist/expr/AGENTS.md)、[assist/data AGENTS](../src/logicsugar/assist/data/AGENTS.md)、[vars/profile AGENTS](../src/logicsugar/vars/AGENTS.md)；重建细节见[重建规则](reconstruction.md)。
 
 ## 双形态：独立运行 / 并入 Neon 聚合
 
@@ -93,7 +93,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - **getter 语法糖（只读）**：已声明结构在 Expr 模式下可用下标/方法写法替代 getter intrinsic——`list` 的 `l[i]` / `l.get(i)`，`list`/`heap` 的 `.size()`/`.length()`/`.count()`，`stack` 的 `.top()`/`.peek()`，`queue` 的 `.front()`/`.peek()`，`deque` 的 `.front()`/`.back()`，`bitset` 的 `b[i]`/`.test(i)`/`.get(i)`，`chain` 的 `c[i]`/`.get(i)`/`.head()`。实现走 `ExprIntrinsics.Provider` 的 `kindOf` / `methodIntrinsic` / `indexIntrinsic` 扩展点，由 `compileNode(Method)` / `compileNode(Index)` 分派；语义与对应 intrinsic 完全一致，已声明数组优先于同名结构的 `[i]`。映射覆盖只读 getter，既包括无注入函数的 `vector_at` / `stack_top` / `bitset_test` / `chain_get` / `chain_head` / `*size`，也包括走注入函数的 `map_get` / `set_contains` / `vector_find` / `bitset_count` / `chain_next` / `chain_len`。`SugarCompiler.compile` 在 `analyze` 之前用 `DataModules.declaredKinds(statements)` 安装轻量声明表；`collectCallNodes` 据此把方法/下标解析成 intrinsic 并发出 root-intrinsic `CallSite`，`registerExprCalls` 再用 `calleesOfRoot` 登记 `__ls_builtin_*` 可达性（否则 normal 模式会漏 hoist）。下标糖只读：`l[i] = v` 显式报编译错误并提示使用 `vector_set` / `bitset_set` / `chain_set`，避免静默降级为 `write <v> l <i>`。
 
-  **重建**：多行 getter（`stack.top()` / `queue.front()` / `deque.back()`）的展开以一条落在容器声明内存块上的 `read` 结尾，折叠链必须把它算作链元素（`ExprIntrinsics.Provider.declaresMemory`），再由 `ContainerIntrinsics.foldAt` 把整段折回——形状表不手写：用正向展开重新编译候选 getter（`s.top()` / `s.size()` / `q.front()` / `d.front()` / `d.back()`）再逐行比对，正向 lowering 改了反向层立刻失配而不是静默失效。别名（`peek` / `peekfront` / …）与函数形式（`speek(s)` / `qpeek(q)`）的展开逐字相同，折回统一收敛到规范写法（表达式文本按重建器的规范空白输出，不留用户原样的空格）；单行的 `size` 类展开单独一张卡走 `ExprStatement.cardMarkerPrefix` 自描述标记，混在别的 getter 链里（`x = q.front() + q.size()`）时由同一条反向层折回。会写隐藏状态的变更类操作（`spop`/`qpop`/`dpopf`/`dpopb` 与各 push）**故意不在反向表里**：它们的链会写隐藏状态变量，容器在别处再被用到时链外读取判定就会拦下，重开仍是裸指令（这是显式接受的“显示原版”口径，见 `AGENTS.md`）。回归见 `containerTest` 的 `getterFold`（全表 + getter 当数组下标 + 两张卡 + 载体 restore 端到端 + 反例）。
+  **重建**：多行 getter（`stack.top()` / `queue.front()` / `deque.back()`）的展开以一条落在容器声明内存块上的 `read` 结尾，折叠链必须把它算作链元素（`ExprIntrinsics.Provider.declaresMemory`），再由 `ContainerIntrinsics.foldAt` 把整段折回——形状表不手写：用正向展开重新编译候选 getter（`s.top()` / `s.size()` / `q.front()` / `d.front()` / `d.back()`）再逐行比对，正向 lowering 改了反向层立刻失配而不是静默失效。别名（`peek` / `peekfront` / …）与函数形式（`speek(s)` / `qpeek(q)`）的展开逐字相同，折回统一收敛到规范写法（表达式文本按重建器的规范空白输出，不留用户原样的空格）；单行的 `size` 类展开单独一张卡走 `ExprStatement.cardMarkerPrefix` 自描述标记，混在别的 getter 链里（`x = q.front() + q.size()`）时由同一条反向层折回。会写隐藏状态的变更类操作（`spop`/`qpop`/`dpopf`/`dpopb` 与各 push）**故意不在反向表里**：它们的链会写隐藏状态变量，容器在别处再被用到时链外读取判定就会拦下，重开仍是裸指令（这是显式接受的“显示原版”口径，见[重建规则](reconstruction.md)「container getter」）。回归见 `containerTest` 的 `getterFold`（全表 + getter 当数组下标 + 两张卡 + 载体 restore 端到端 + 反例）。
 - **容量检查**：容量优先取**处理器当前链接的方块**——解析 `memory` 变量到 `LogicBuild.optionalLink`，命中原版 `MemoryBlock` 就用它的真实 `memoryCapacity`（模组内存块、world-cell 都由此得到正确值）。解析不到时才回落按名字猜的 `<cellN>` = 64、`<bankN>` / `<worldN>` = 512（大小写不敏感）；解析到方块但不是内存块则确定不限制、跳过检查。`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`，集合为 `base+capacity`）超容量编译期报错；猜出来的容量在错误信息里明确标注 `inferred from the variable name`。名字不是证据：原版 `LogicBlock.getLinkName` 取方块名最后一个 `-` 之后的部分，所以 **world-cell（512 格）的变量名同样是 `cellN`**，纯按名字判断会把它错限成 64。`ArrayRegistry.capacityOf` / `capacitySource` 是唯一口径，各模块不得自己读 `memoryCapacity`。
 - **多格 span**：声明卡在编辑器里是一行表达式 `mem = cell1 + cell3 + cell2`。`+` 只表示按书写顺序拼接，第一项是地址 0，个数不限（没有 `op rand`）。存档收成定长 3 token `span <name> "<expr>"`，因为 LParser 复用静态 token 数组，可变个数的 cell 名不能各占一个 token。卡片不产指令。成员必须至少两块、容量相同；每格容量优先取链接上的 `memoryCapacity`，解析不到的成员与数组侧同一口径回落名字启发式（`cellN`=64、`bankN`/`worldN`=512，见「容量检查」），猜不出来（既无链接、名字也不像链接名）才是编译错误——span 的 `idiv`/`mod` 需要一个确定的除数，不能像数组容量那样「不限制」；混合容量、特权内存块挂在非特权处理器上、以及不足两格也是编译错误。猜测口径对齐数组侧是 2026-09 复核的修正：在此之前只接受全 `cellN`，共享/换图后未链接的 `bank1 + bank2` 直接编译失败，而编译失败会让编辑器回落 vanilla 视图，用户下次保存就丢掉只存在于载体里的 span/array 卡。逻辑容量是 `N * C`，`capacityOf(span 名)` 把这个和交给数组、矩阵、容器、位集、哈希表、集合、列表、堆和链表的区间检查。`record` 仍是处理器变量，不走 span。变量逻辑地址在 `SpanAccess` 一处展开：`idiv` / `mod`、`N` 条 `select equal q k`（第一条失败分支是数字 `0`），最后一条 `read` 或 `write`，共 `N+3` 条（N=2 时 5 条）。`idiv` 是 `Math.floor`，负数的商 `<= -1`，和 `q >= N` 一样对不上 `0..N-1`，留在数字 `0` 上；常量地址折叠成指向选中成员的一条 `read`/`write`。前导段的三个临时量（`__ls_span_q/r/b`）是程序级固定 scratch：它们不像表达式临时变量那样会进条件/函数/数据内联的命名空间，所以**前导段必须与它自己的 read/write 紧邻发射**，任何把 `relocate()`/`appendRead()` 结果延后使用的改法都会让两次展开互相覆盖（`spanTest` 把产物形状钉在固定名上，改名字是显式决定）；折叠链的「链外读取」检查必须忽略这三个 scratch，否则画布上两张 span 表达式卡会互相判成外部读取、谁都折不回来。**重建分两半**：反编译器不把 `idiv`/`select` 这个形状推断回 span 卡；而编辑器侧 `ExprHook.foldAll` 必须把展开文本折回 `buf[i]`——`ExprCompiler` 的 span 视角把「成员 + 格内地址」还原成 `k*C + local`，把前导段按「成员序列 + 每格容量」反查 span 别名并以 idiv 的被除数当逻辑地址，前导段行随折叠一起消费，安全门仍是 `verifyArrayFold` 重编译比对；前导段 select 参与折叠链（`ExprHook.foldsSpanPrologue`）但没有对应的原版积木，因此 `statementFor` 不映射它、`unfoldAll` 遇到它就保留表达式卡。变量逻辑地址的两端也都要能进折叠链（2026-10 复核修正）：前导段的 `idiv`/`mod` 写的是固定 scratch 名（不是临时变量形态），不能让它结束链；`read`/`write` 的内存名是 building scratch 而不是 span 成员块，`isArrayMemory` 认不出来，要由 `ExprHook.foldsMemoryLine` 的 scratch 分支放行——两者缺一，载体里的展开文本重开时都折不回 `buf[i]`（常量下标那种单行 `read` 不受影响，因此这个缺口在文本层的折叠测试里看不出来）。回归见 `spanTest` 的 `variableReadFoldsOnReopen`。旧的 `__ls_builtin_*` 函数体不改；内存名是 span 时，批量运算若仍会只读第一格，编译直接报错。新的 `__ls_builtin_spanread` / `__ls_builtin_spanwrite` 是另加的函数，目前没有发射点（给以后的批量算法），但和 data 模块内置函数一样并进编辑器可识别的函数名集合，避免「编辑器标红、编译器却接受」。内置函数只并进本次编译的 `LibraryIndex`，不写进载体；`withBuiltins(null, …)` 仍标 `userMissing`，所以缺库时的调用错误照旧指向设置里的函数库，不会被内置函数顶成「函数不存在」。
 - **越界断言**：仅 `AssertEmit=emit` 的调试构建下、下标为非常量时，在 `read` / `write` 前发射 `assertBounds`（复用 `SugarAsserts` 线格式）；`strip` 模式不发射。数组/矩阵字面量越界始终是编译错误。
@@ -121,15 +121,14 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - **asserttype 线格式**：上游 v0.10 起顺序为 `<type> <value> <message>`（本 mod 同）；类型表与上游对齐（24 种，v0.11.3 起未变：基础类型 + 内容物细分 item / block / bulletType / liquid / statusEffect / unitType / weather / team / unitCommand / unitStance + building 细分 processor / memory / message / display / canvas + property / readable / writable / senseable），LogicSugar 额外支持 `none`（线上写 `null`）——上游 `AssertionDataType` 无法断言空值。旧的 `<value> <type>` 顺序仍可读取（`parseAssertType` 以「哪个 token 是类型名」判定；两个都是类型名时按新序），保存时统一写新序。类型分类是层级而非互斥：`senseable` 同时匹配单位/建筑/队伍，失败消息用 `AssertionDataType.actualType` 取最窄匹配（如 building 而不是 senseable）。
 - **assertprints 缓冲语义**：按上游 v0.11，在比较前就把缓冲区截断到记录位置——失败重试不再累积输出，也不把被检查区域的文本留给下一条 `assertprints`。
 - **失败消息的默认文本不含消息槽**：上游把消息槽当作 `{0}` 传给默认文本，导致默认消息里印出 `null`；LogicSugar 只渲染比较值（`assertionText` 注释记录了这处有意偏离）。
-- **`snapshot` 指令**：与其它断言卡同一家族（`SugarAsserts.SnapshotCard` + `AssertInstructions.SnapshotI`）。线格式为 `snapshot <type> <block> <steps> <message>`（上游 v0.11.2 起；`isolated` / `connected` / `recording` / `global`），**旧的三载荷 token 文本仍可读取**（上游 ≤v0.11.1、LogicSugar ≤5.7.2 没有 `steps` 槽，第 4 槽就是消息）。因为原版 `LParser` 不告诉自定义解析器本行有多少个 token（复用的静态数组，见 AGENTS.md 的既有陷阱），`parseSnapshot` 不是按数量而是按**第 4 个 token 的写法**分流：`~` / 引号字符串 / `null` / 空 视为旧式消息（`steps` 取默认值），其余按 `steps` 槽读、消息取第 5 槽——所以「变量形式的 `steps`」优先于「旧式未加引号消息」这个真正二义的情形；清空的 `steps` 字段写盘时归一为默认 `20`，`steps` 槽永远不会写出空值。`recording`（记录目标处理器接下来 `steps` 条指令，每条一份子快照）的运行时语义见下面的 Profiler 一节。strip/emit 与载体覆盖同其它断言卡；它是纯客户端动作（不改保存产物），因此不受联机门禁限制。
+- **`snapshot` 指令**：与其它断言卡同一家族（`SugarAsserts.SnapshotCard` + `AssertInstructions.SnapshotI`）。线格式为 `snapshot <type> <block> <steps> <message>`（上游 v0.11.2 起；`isolated` / `connected` / `recording` / `global`），**旧的三载荷 token 文本仍可读取**（上游 ≤v0.11.1、LogicSugar ≤5.7.2 没有 `steps` 槽，第 4 槽就是消息）。因为原版 `LParser` 不告诉自定义解析器本行有多少个 token（复用的静态数组，见[重建规则](reconstruction.md)「卡片 write/parse 闭合」的既有陷阱），`parseSnapshot` 不是按数量而是按**第 4 个 token 的写法**分流：`~` / 引号字符串 / `null` / 空 视为旧式消息（`steps` 取默认值），其余按 `steps` 槽读、消息取第 5 槽——所以「变量形式的 `steps`」优先于「旧式未加引号消息」这个真正二义的情形；清空的 `steps` 字段写盘时归一为默认 `20`，`steps` 槽永远不会写出空值。`recording`（记录目标处理器接下来 `steps` 条指令，每条一份子快照）的运行时语义见下面的 Profiler 一节。strip/emit 与载体覆盖同其它断言卡；它是纯客户端动作（不改保存产物），因此不受联机门禁限制。
 
 ### 残余风险与不跟随的上游改动
 
+上游基线的完整记录（参考源码、跟进历史、明确不移植项、线格式例外）见[上游基线](upstream.md)；本节只保留与实现相关的残余风险。
+
 - **不认识的外来 token 仍会中止整段解析**。原版 `LParser` 只把 `LogicIO.read(tokens, tok)` 包在 try/catch 里，自定义解析器抛出的异常（未知类型名等 `IllegalArgumentException`）会中止整个程序的解析，编辑器因此拒绝打开（`snapshot recording` 在本次改动之前就是这种情形）。本次只消除了这一个具体缺口：新增 `recording` 类型与 `steps` 槽、并让旧文本继续可读；**不引入「把解析异常吞成 InvalidStatement」的兜底**，否则用户手打错 token 的定位报错会退化成静默的 noop 卡片（`SugarAssertsTest.parseFailureIsACleanError` 钉住这条）。上游以后新增的枚举 token 仍会以同样方式暴露，`SugarDecompiler.openableSource` 只会把载体文本换成存储的程序。
-- **不跟随上游 v0.11.2–v0.11.7 的身份类改动**：设置键前缀（上游改 `mlogdevtools-*`）、mod 改名（Mlog Dev Tools）、Gradle Groovy → KTS、`README_zh` 均不跟。这些是打包/更新身份，改了等于让既有用户的设置与更新检查失效；需要同步的是线格式与指令语义。例如上游 v0.11.6 的视图偏好持久化就跟了语义，但键名自己定（`logicsugar.vars*`）。三个明确不移植的项：
-  - 上游的 `max-instructions`（指令预算覆盖）：处理器保存产物 ≤1000 条是本项目的硬不变式。
-  - 上游 v0.11.5 的「自动 profile 全部处理器」游戏规则（`data/CustomGameRules` + `Accessor` + `MapIndex`）：需要反射挂 4 个 `CustomRulesDialog`（MindustryX 路径不同）并把 `rules.tags` 写进地图状态，收益小、兼容风险大；要就该单独立项。
-  - 上游 `ConfigEvent` 里「`instructions != instrumentation.instructions` 才重建」的精细判断：那是为自动 profile 服务的微优化，本 mod 保持「配置变更就丢弃重建」的简单口径。
+- **不跟随上游的身份类改动与三个明确不移植项**（`max-instructions`、自动 profile 全部处理器、`ConfigEvent` 精细判断）见[上游基线](upstream.md)「明确不移植」；本 mod 仍需同步线格式与指令语义，持久化键保持 `logicsugar.vars*`。
 
 - **双身份序列化**：卡片 `write()` 直接输出指令 token，既是编辑器卡片也是 mlog 指令行；空槽位按 LogicSugar 惯例写 `~` 保持定长 token（上游无此约定，仅空字段场景降级）。
 - **AssertEmit 开关**（设置项 `logicsugar.assertEmit`，默认 `strip`，**仅单机/编辑器生效**）：`strip` 把断言编译掉——sugar（含断言）随载体保存，mlog 保持原版可解析；`emit`（调试构建）把断言写回为真实指令，**原版客户端会将其降级为 InvalidStatement 占位**（程序能跑但断言静默失效）。联机会话（`Vars.net.active()`，已连接或自建）下 `currentAssertEmit()` 一律强制 `strip`——兼容底线在代码层强制，不依赖用户自觉；显式 `compile(..., AssertEmit)` 重载仅供验证矩阵与自测使用。
@@ -192,7 +191,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
   的字符串（NUL 记 2、`<0x800` 记 2、其余 3，代理对自然 6）。超长按坏行报行号且**不写入**（两段式仍是
   「先 validate 再 read」）；不这么做的话内存块序列化时会抛异常，整块内存都存不下来。
 - **不改变保存产物**：界面与快照都只存在于客户端内存；快照不随地图保存，关图即丢。失败自动快照、断点自动快照、
-  上限与三击窗口等设置在自有设置页与 Neon 聚合页（`bekBuildSettings`）**两处**注册（AGENTS.md 双形态要求），
+  上限与三击窗口等设置在自有设置页与 Neon 聚合页（`bekBuildSettings`）**两处**注册（双形态要求，见本文「双形态」），
   设置值由 `VarsAccess.applySettings` / `ProcessorStatus.applySettings` 读入运行期字段。
 - **字符串转义与大字符串**：变量表里只有 `ValueType.string` 的值会做 `[` → `[[` 转义
   （`VarsDialog.escape`，与 `ExprStatement.highlight` 同规则；`]` 是字面量，转义会多渲染一个括号）；
@@ -284,6 +283,8 @@ v0.11.4 的界面/停机、v0.11.6 的性能口径与 v0.11.7 的两个崩溃守
 
 玩家重开处理器时，编辑器要把已存的原版 mlog 尽量还原成当初的 Sugar 积木。这是功能是否「完成」的一部分：**只要新增积木/功能会改变编译出的原版 mlog，或修改现有 lowering 会改变产物，就必须在同一次改动里补齐对应的从原版代码重建逻辑；只改 lowering 不算完成。** 两条路径都要过安全门；失败方向永远是「多显示原版代码」。
 
+完整细节（安全门、两次归一化、开屏决策、raw/stride、unit-control、span、getter、Expr 卡持久化）见[重建规则](reconstruction.md)；本节保留流水线概览。
+
 ```text
 打开处理器
   │
@@ -307,7 +308,7 @@ v0.11.4 的界面/停机、v0.11.6 的性能口径与 v0.11.7 的两个崩溃守
 
 - 有载体且验证通过 → 声明卡和表达式一并回来（编辑器再 `foldAll` 折回 `buf[i]` / `stack_push` 等）。
 - 没有载体（别人用手写 mlog、或载体被删）→ **不猜测**声明卡，只显示 `read`/`write`/`op`/`jump`。注入函数 `__ls_builtin_*` 的蹦床也不得恢复成用户 `funcdef`。
-- 单位控制卡（`unitbind` / `unitnext` / `unitfor` / `unitfree`）同样只活在载体里，但它们的 lowering 不是「普通抢旗代码」：整段由编译器私有的 `__ls_ub_<字段>_<下标>` 临时变量与固定指令序列构成（见「路径 2」的单位控制卡一段），所以无载体时按名字逐条比对恢复；对不上一律保持 vanilla。
+- 单位控制卡（`unitbind` / `unitnext` / `unitfor` / `unitfree`）的卡片身份在载体里，但 lowering 由编译器私有的 `__ls_ub_*` 临时变量与固定指令序列构成，无载体时按名字逐条比对推断恢复；规则见[重建规则](reconstruction.md)「unit-control」，对不上一律保持 vanilla。
 
 反编译预检必须走 `LogicSugarMod.registerStatements()`（模块 + 解析器），否则载体里的声明卡会被当成未知行。
 
@@ -321,44 +322,19 @@ v0.11.4 的界面/停机、v0.11.6 的性能口径与 v0.11.7 的两个崩溃守
 4. 结构恢复：`recoverFunctions()` + `parseMain()` 生成候选 Sugar 源。函数区先过静态验证（区间外 jump 不得跳入、区间内 jump 不得跳出；嵌套调用前导跳向其他函数入口的 always 跳转豁免）。同一位置可能有多个候选帧（`tryFrames`），按 `RecoveryPredicate` 的 loss 排序取最优；贪心选择验证失败时，`backtrack()` 会在记录的决策点上逐个提升次优候选重试（有次数预算），每次仍走同一道门。
 5. **安全门（必须保留）**：候选先重新编译，再与输入的规范化指令流比对，比对通过才允许返回恢复结果。验证矩阵覆盖 FuncMode × SwitchStrategy 全部组合（`verify`）——程序可能在另一台机器、另一个 switch 策略设置下保存，不能因本机设置不同而误判。任何识别不了的内容回退为原样保留的 vanilla 语句（`matchedMode = "flat"`）。
 
-**门的两次归一化（手写/第三方程序能开成 Sugar 的前提）**：LogicSugar 从未保存过的程序既没有载体，也没有本编译器产物必然带的两样东西；两者原先都缺，导致这类程序无论识别得多好都只能回落 vanilla（2026-09-25 报的 655 条跳转表程序；夹具 `test/fixtures/realworld-jump-table.mlog`）：
+**门与开屏**：两次归一化（入口 skip 两个纪元、数字 + 标签跳转穿线）、`openingSource` 的 `stored`/`inferred`/`raw` 决策、`openableSource` 的草稿回退，以及卡片 write/parse 闭合（清空/乱填是卡片状态、LParser `~` 占位、`funcdef` 引号写回）是手写/第三方程序能开成 Sugar 的前提；完整规则、失败方向与测试见[重建规则](reconstruction.md)「门的两次归一化」「开屏决策」「卡片 write/parse 闭合」。
 
-- **入口 skip 的两个纪元**：`compile` 会在末尾补 `set @counter 0`，于是任何含糖的候选都比输入多一条指令。`verify` 现在对每个候选按"有无 skip"各编译一次，与 `SugarCompiler.verifyLowering` 对存量存档的做法完全一致（公开入口 `compileWithoutEntrySkip`，只有门用它）。恢复后的视图保存时仍会补上 skip —— 这是既定行为，且语义等价（跑出末尾本来就回到 0）。
-- **跳转穿线**：`compile` 会跑 `threadAlwaysJumpTargets`，把 `jump A always` 改写到 A 的链尾。那一趟是**按标签**读链的，而手写 mlog 用指令下标寻址、一个标签都没有，于是旧的比对目标 `threadAlwaysJumpTargets(original)` 恰恰在需要它的程序上是空操作。`SugarCompiler.threadNumericJumpTargets` 把同一套不动点搬到语句下标上（只认无条件跳转、成环保持原目标、行结构与指令数不变）；`verify` 对比较目标串联两趟归一化（先数字、后标签）：数字那趟覆盖手写/下标寻址程序，标签那趟覆盖存量产物（jump 目标还是 `__ls_*` 标签，数字那趟对它是空操作）。
+`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 100+ fixture（测试运行时打印实际数量；测试强制 ≥100）覆盖当前全部控制积木、全部声明卡、全部 `datacall` 操作和断言/调试卡：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且不得只改数字。
 
-两次归一化都不放松门：它们产出的指令流与输入行为完全一致，且都是编译器本来就会对自己产物做的变换。
-
-**但门修好不等于能被调用**：`verifyRestore` 开头就是 `if(!hasSugarCarrier(code)) return true;`——没有载体就没有"待验证的载体"，于是它对从未被 LogicSugar 保存过的程序**恒返回 true**；`SugarLogicDialog.show` 把这当成"载体可信"，直接载入原版本体，反编译器只在"有载体但验证失败"时才被叫到，也就是**对这类程序永远不会被叫到**。所以门修好后用户看到的仍是 251 张裸 jump 卡。
-
-因此开屏决策被抽成 `SugarDecompiler.openingSource(code, privileged, librarySession)`，返回要载入的源码与来源模式：`stored`（载体/旧标记块/函数库文本，原样载入）、`inferred`（验证过的推断：弹恢复提示并保留 Original 视图）、`raw`（原样载入代码）。没有可信载体时一律先跑推断，且只对处理器程序跑（函数库文本是糖源码，不是程序）。它是**纯粹静态方法**：这个 bug 就长在无头测试够不到的 UI 代码里，现在 `decompileTest` 的 `editorOpensHandWrittenProgramsAsSugar` 在两种编辑器权限下都钉住该决策（普通处理器编辑时 `privileged == false`，而恢复测试习惯传 `true`）。
-
-失败方向永远是"多显示原版代码"，绝不改写未知程序。新增恢复模式（跳转表、短路谓词、新数据结构）一律放在这道门之后；新功能若既不能进载体、也不能被推断，就要在文档写明「重开只显示原版」。
-
-**开屏永远能成功：`SugarDecompiler.openableSource(preferred, code, privileged, librarySession)`。** 开屏预检原先在源码解析失败时直接关掉编辑器并弹错——而草稿还在，于是**每次重开都撞同一面墙**，用户再也没有修程序的办法（2026-10 报：`funcdef` 返回声明填了 `c`，卡面接受、解析器拒绝，编辑器从此打不开）。现在决策分两步：首选源码（保留中的草稿，或 `openingSource` 的选择）能解析就照常载入；不能解析时改载**存储的编译产物**（编译器产出必然可解析），同时丢掉那份读不出来的草稿并弹提示。产物也解析不了（连处理器程序本身都坏了）时仍按原样拒绝，理由带在 `OpenDecision.failure` 里。与 `openingSource` 一样是纯静态方法，`decompileTest` 的 `unreadableSourceFallsBackToTheStoredProgram` 钉住三条分支——没有它，这段逻辑又只能靠肉眼。
-
-与之配套的是**卡片写入→解析必须闭合**：编辑器里任何字段值（包括清空、乱填）写出的行都必须能被自己的解析器读回来，否则草稿就是上面那种读不出来的文本。卡片解析器因此不再对「用户能编辑出来的字段值」抛错（`funcdef` 的返回声明/函数名、`span`/`array`/`matrix`/`arrayinit` 的名字与内存名）：它们把值原样留在卡上，由编译路径报带位置的具体错误（`funcdef` 走 `SugarFunctions.funcDefDeclarationProblem`），编辑器按同一条规则标红；`funcdef` 的非规范声明用引号写回，避免被当成旧形态的整数 `destIndex` 槽。
-
-`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 198 个 fixture / 1246 个 gate 断言覆盖当前全部控制积木、全部声明卡、全部 `datacall` 操作和断言/调试卡：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且必须保持 100+，不得只改数字。
-
-**无边界跳转表（`switchbegin … raw`）与 `default` 分支**：手写 `@counter` 跳转表没有边界守卫，就是 `op add @counter @counter <v>` 后跟每条槽位一条无条件跳转行。用编译器的*带守卫*跳转表去还原它会多出两条指令并夹紧越界值，等于偷偷改写程序，所以形态写进源码：
-
-- `switchbegin <切换值> <dest> raw`（可选第 4 个 token；缺省即带守卫）只发射派发 + `span` 条槽位行，且**忽略 `SwitchStrategy`**——形态是程序属性，这也正是门的策略矩阵能接受它的原因。非法裸表（非整数 case、跨度超 `MAX_TABLE_SPAN`）直接编译报错。
-- `default:` 是 switch 自己的"没有 case 命中"卡片：比较链里它是末尾跳转的目标；跳转表里它是所有空槽行的目标，带守卫形态下边界守卫也指向它（越界值落在这里）。每个 switch 至多一个、必须在 switch 内；`defaultViolations` 是编译器、编辑器标红与函数库构建共用的一条规则。
-- 裸表推断（`tryBareSwitchTable`）：槽位 *k* 直接寻址第 *k* 行，所以 case 值就是行号、跨度从 0 开始；行的目标按无条件跳转链（作者自己的穿线）读取。目标落在体区之外的行是空槽，它们必须同指一处，该处成为 `default`——并且必须落在**已存在**的指令上（其自身跳转链终于同一处），否则重编译出的空槽行会落到程序从未有过的跳转上。跨度两端若正好是空槽，就用一个 case 标签钉住（标签与 default 共位，编译出的行完全相同）。任何不吻合都返回 null，视图保持 vanilla。
-- **步长表**（`switchbegin … stride <n> <tmp> abs|rel`）：手写程序用 `op mul <tmp> <idx> <n>` 再写入 `@counter`，case 正文按固定长度紧挨着排，而不是每个槽一条跳转行。`abs` 的常数在编译时按第一条正文的指令下标重算；`rel` 的偏移是 `1 - firstCase * n`，使第一个 case 落在三条派发指令的下一行。推断要求至少两个完整槽，且槽尾同为 `end` 或同指一处的无条件跳转；对不上就保持 vanilla。动态 `@counter` 分诊只把 `recognizeStride` 接受的派发当成已知安全形状。
-- **步长表**（`switchbegin … stride <n> <tmp> abs|rel`）：手写程序用 `op mul` 再写入 `@counter`，case 正文按固定长度紧挨着排。`abs` 的常数在编译时按第一条正文的指令下标重算；`rel` 使第一个 case 落在三条派发指令的下一行。推断要求至少两个完整槽，槽尾同为 `end` 或同指一处的无条件跳转。动态 `@counter` 分诊只把 `recognizeStride` 接受的派发当成已知安全形状。
-- 带守卫跳转表的推断同样恢复 `default`：守卫与空槽行落在 switch *内部*的体上而不是出口，此时 switch 真正的结尾是各 case 体 break 跳转的目标（`switchEndBeyond`）。两种读法都作为候选给出——体里跳出 switch 的跳转在这一层与 default 无法区分——由门裁决，与其余恢复逻辑同一套做法。
-
-**单位控制卡（`unitbind` / `unitnext` / `unitfor` / `unitfree`）是另一类推断：不是从跳转形状猜，而是认编译器自己的 lowering**（`tryUnitCard` + `unitFreeFrame` / `unitBindFrame` / `unitNextFrame` / `unitForFrame`）。这一段与 `__ls_sw_*` 跳转表同一思路：整段由 `__ls_ub_uid`（`@thisx * 100000 + @thisy + 1`）、`__ls_ub_<字段>_<下标>` 临时变量与固定指令序列组成，因此逐条比对（每条 jump 的目标、四条 `end` 空等、claim 后的 flag 复核都要对上），随手写的 `ubind` / `sensor @flag` 不会命中；`unitfor` 的体区（卡自带的扫描前导与 step/回边之间）仍由常规 `parseRange` 恢复，`break` / `continue` 分别指向卡的出口与 step。
-
-- **下标条件**：lowering 把临时变量按「正在 lower 的那张语句表的序号」命名（`__ls_ub_n_3`），而编译器重编译恢复后的源码时是从卡片在源码里的位置重新生成这些名字。所以 `unitIndexMatches` 要求卡片落在同一序号（主程序用可见语句序号，函数体用体序号，`scopeBase` / `scopeFunction` 记录），否则**不认这张卡**——认了也过不了门，反而会连累整程序的其它恢复。声明卡、表达式卡等零指令语句改变序号时同样拒绝。
-- **一层可关的恢复层**：`Candidate.unitCards`。万一认了却过不了门（例如上面的序号推算之外还有别的差异），`infer` 会**关掉这层再跑一遍**，验证通过就用旧读法（正是本层存在前的结果），并加一条 note；旧读法也失败时才继续 `backtrack`。所以新层只能把视图变好，不会把已有的恢复弄没。
+**裸表 / 步长表 / 单位控制卡的源码形态与推断规则**（`switchbegin … raw`、`switchbegin … stride`、`default`、`tryBareSwitchTable`、`unitIndexMatches`、`Candidate.unitCards`）集中在[重建规则](reconstruction.md)「raw leap table 与 default」「stride table」「unit-control」；本节不再重复。
 
 短路守卫恢复（`tryShortCircuitFrames`）是这套机制的核心用户：`ShortCircuitCompiler` 的 lowering 是若干 `[条件 jump, fallback jump]` 原子对的连续拼接（内部续接标签都落在原子对起点），守卫解析器从对的目标关系重建布尔树（`parseGuardTree`，带换目标环检测的备忘递归），为同一片守卫区域同时给出 `if` / `while` / `for` 候选。由此单原子守卫、顶层 `!`、任意嵌套 `&&`/`||` 树以及 `whilebegin`/`forbegin` 的 `exprsc` 条件都能恢复，不再限于固定四指令布局。体内跳回 while 守卫头的 always 跳转就是 `continue` 的 lowering 形状，由循环上下文恢复为 `continue` 语句。
 
 辅助组件：`MlogCFG`（`cfgTest`）是反编译器共享的 CFG/数据流只读视图；`MlogLint`（`lintTest`，Bang logic_lint 风格）是 advisory 的编译后 MLog 静态检查器（未知 op、参数个数、对字面量赋值、自/越界跳转等，规则事实全部转录自 Mindustry-master 源码），当前独立于编译管线，供工具与测试使用。
 
-## 跨类加载器访问约束（继承自 AGENTS.md）
+## 跨类加载器访问约束（实现规则见 [src/mindustry/logic/AGENTS.md](../src/mindustry/logic/AGENTS.md)）
+
+以下是运行时成因说明；落地规则（子类实例方法 / 反射 / 静态扫描）与检查入口以模块文件为准。
 
 运行时本模组类经 mod class loader 加载，`mindustry.logic.*` 游戏类在 app loader——同包名、**不同运行时包**：
 
@@ -438,7 +414,7 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 
 ## 上游版本适配笔记（v160）
 
-本分支运行口径是 Mindustry v160.1（`mod.json` 的 `minGameVersion`）；本节记录上游 v160 的 Logic 相关改动及本分支的兼容策略。默认 Gradle 依赖仍是工作区 `../Mindustry-master/desktop/build/libs/Mindustry.jar`，也可用 `-PmindustryJar=<path>` 指定另一份 API 包。每条给出上游变化、对 LogicSugar 的影响与适配动作；涉及 `mindustry.logic.*` 的成员访问必须与 `AGENTS.md` 保持一致，冲突时以 `AGENTS.md` 为准。
+本分支运行口径是 Mindustry v160.1（`mod.json` 的 `minGameVersion`）；本节记录上游 v160 的 Logic 相关改动及本分支的兼容策略。默认 Gradle 依赖仍是工作区 `../Mindustry-master/desktop/build/libs/Mindustry.jar`，也可用 `-PmindustryJar=<path>` 指定另一份 API 包。每条给出上游变化、对 LogicSugar 的影响与适配动作；涉及 `mindustry.logic.*` 的成员访问以代码与[模块 AGENTS](../src/mindustry/logic/AGENTS.md)为准；实现/命令事实以代码、`build.gradle`、docs 为准，AGENTS 只约束代理行为与流程，发现文档过时同步修正。
 
 ### 内存对象存储（上游 #12459，fac33d08d）
 

@@ -1,6 +1,6 @@
 # 开发指南
 
-环境、日常构建命令与代码风格要点。仓库级硬性约束（跨类加载器访问、反编译安全门、dev 身份）在根目录 [AGENTS.md](../AGENTS.md)，与本文冲突时以 AGENTS.md 为准；实现层面的解释见[架构总览](architecture.md)。
+环境、日常构建命令与代码风格要点。仓库级硬性约束（跨类加载器访问、反编译安全门、dev 身份）的路由在根目录 [AGENTS.md](../AGENTS.md) 与模块 [src/mindustry/logic/AGENTS.md](../src/mindustry/logic/AGENTS.md)；实现与命令事实以代码、`build.gradle`、docs 为准，AGENTS 只约束代理行为与流程，发现文档过时同步修正；实现层面的解释见[架构总览](architecture.md)。
 
 ## 环境
 
@@ -13,7 +13,7 @@
 ## 常用命令
 
 ```powershell
-# 全部自测（四十四个 JavaExec 任务，接线见 testing.md）
+# 全部自测（JavaExec 任务清单以 check.dependsOn 为准，接线见 testing.md）
 .\gradlew.bat check
 
 # 单跑某个自测任务
@@ -34,7 +34,7 @@
 注意：
 
 - `test` 任务被显式 `enabled = false`（本项目不用 JUnit runner）；真正的回归全部是 `main()` 式 JavaExec 任务，挂接在 `check.dependsOn` 上。
-- `test/fixtures/` 存"真实程序"夹具（当前只有 `realworld-jump-table.mlog`：第三方工具产出的 655 条无载体程序），测试通过 `SourceNails.readSource(...)` 按仓库相对路径读取。**这些文件里语句下标是有意义的**（跳转按指令下标寻址），增删行会改变程序本身，只能改注释。
+- `test/fixtures/` 存"真实程序"夹具（如 `realworld-jump-table.mlog`：第三方工具产出的 655 条无载体程序；`counter-stride-switch.mlog`：步长表），测试通过 `SourceNails.readSource(...)` 按仓库相对路径读取。**这些文件里语句下标是有意义的**（跳转按指令下标寻址），增删行会改变程序本身，只能改注释。
 - `tools/maplab/` 是独立的小工具（不参与 `build`/`check`，也不需要 Gradle），用自己的 `build.ps1` 编译运行；它读取 `LogicSugar/build/classes/java/main` 里的编译器类。
 - `tools/mlog2sugar/` 同样独立于 `build`/`check`：`mlog2sugar.py` 是单文件入口（Java 内核内嵌其中，运行时编译到系统临时目录），不带参数运行即粘贴 mlog → 输出糖码文本，按编辑器打开/保存的同一条链路转换（与游戏内逐字节相同）；`--selftest` 对 `tools/maplab/demos` 跑保存周期不动点比对。
 - `jar` 任务产物 `LogicSugar-v<版本>-desktop.jar` 是**桌面中间产物**（纯 class 字节码，安卓无法加载），不要分发；可分发形态只有 `deploy` 的合并 jar。
@@ -95,7 +95,7 @@ python tools\mlog2sugar\mlog2sugar.py --selftest                    # 27 个演�
 ## 调试建议
 
 - 编译器/反编译器问题先跑对应自测任务再上游戏：`SugarCompilerSelfTest` / `SugarDecompilerTest` 覆盖大量 round-trip 场景，且不需要启动游戏。
-- 运行时抛 `IllegalAccessError` 且栈顶是本模组静态方法 → 九成是跨类加载器访问陷阱，按 AGENTS.md 规则改为子类实例方法或反射；修完跑 `crossLoaderTest`。
+- 运行时抛 `IllegalAccessError` 且栈顶是本模组静态方法 → 九成是跨类加载器访问陷阱，按 [src/mindustry/logic/AGENTS.md](../src/mindustry/logic/AGENTS.md) 规则改为子类实例方法或反射；修完跑 `crossLoaderTest`。
 - 反编译结果"少了结构"通常是安全门拒绝（`Result.notes` 会说明原因），这不是 bug：检查新模式是否绕过了 verify 或候选编译不等价。
 - 设置项不显示：确认是独立态还是聚合态——聚合态由宿主调 `bekBuildSettings`，模组自建分类被 `if(!bekBundled)` 跳过。
 - 变量过滤分两块：`allVars`（MindustryX 浮动逻辑辅助器，纯展示、随时安全）总能过滤；`vars`（原版 `@variables` 对话框、MindustryX 处理器配置面板）只在单机 `!Vars.net.active()` 时过滤，联机一律不动 `vars`（它是 `sync` 的索引空间）。过滤器在 `SaveWriteEvent` 时先还原完整 `vars`，所以单机存档仍会带上 `__ls_*` 隐藏状态。
