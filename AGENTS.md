@@ -69,6 +69,8 @@ cd LogicSugar; ./gradlew check        # runs selfTest, ifElseTest, decompileTest
 
 `tools/maplab/` 是**独立于 Gradle 的演示地图生成器**（自己的 `build.ps1` + `demos/*.ls`，见 `tools/maplab/README.md`）：生成 100x100 的功能展厅地图（25 个处理器展台）。它不参与 `build` / `check`，改它不需要跑 Gradle；但它依赖 `build/classes/java/main` 里的编译器类，并且**目标游戏 jar 决定写出的存档格式**（新 reader 认老格式、老 reader 不认新格式），换 jar 后要重新生成。
 
+`tools/mlog2sugar/` 是另一个独立小工具（单文件入口 `mlog2sugar.py`，Java 内核内嵌其中，见 `tools/mlog2sugar/README.md`）：不带参数运行即粘贴 mlog → 输出糖码文本，按游戏编辑器打开/保存的同一条链路转换，输出必须与游戏内结果逐字节相同（转换逻辑一律调用 mod 现有入口，不得重写）。它同样不参与 `build` / `check`，`--selftest` 用 `tools/maplab/demos` 的全部演示做「打开+保存 == 重开+保存」逐字节自检。
+
 The self-tests are `main()`-based JavaExec tasks (no JUnit runner). New regression coverage
 should follow that convention and be added to `check.dependsOn`.
 

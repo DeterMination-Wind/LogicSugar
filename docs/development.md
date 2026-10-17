@@ -36,6 +36,7 @@
 - `test` 任务被显式 `enabled = false`（本项目不用 JUnit runner）；真正的回归全部是 `main()` 式 JavaExec 任务，挂接在 `check.dependsOn` 上。
 - `test/fixtures/` 存"真实程序"夹具（当前只有 `realworld-jump-table.mlog`：第三方工具产出的 655 条无载体程序），测试通过 `SourceNails.readSource(...)` 按仓库相对路径读取。**这些文件里语句下标是有意义的**（跳转按指令下标寻址），增删行会改变程序本身，只能改注释。
 - `tools/maplab/` 是独立的小工具（不参与 `build`/`check`，也不需要 Gradle），用自己的 `build.ps1` 编译运行；它读取 `LogicSugar/build/classes/java/main` 里的编译器类。
+- `tools/mlog2sugar/` 同样独立于 `build`/`check`：`mlog2sugar.py` 是单文件入口（Java 内核内嵌其中，运行时编译到系统临时目录），不带参数运行即粘贴 mlog → 输出糖码文本，按编辑器打开/保存的同一条链路转换（与游戏内逐字节相同）；`--selftest` 对 `tools/maplab/demos` 跑保存周期不动点比对。
 - `jar` 任务产物 `LogicSugar-v<版本>-desktop.jar` 是**桌面中间产物**（纯 class 字节码，安卓无法加载），不要分发；可分发形态只有 `deploy` 的合并 jar。
 - `releaseZip` 产出附 README/LICENSE/sample 的 zip，是可选的发布外包装。
 
@@ -73,6 +74,23 @@ powershell -ExecutionPolicy Bypass -File build.ps1          # 生成 out\LogicSu
 - 展台源码写在 `demos/*.ls`，是**能直接粘进处理器的那份糖码**；工具复刻编辑器的三层管线（哨兵文本 → 语句表 → 画布文本 → `SugarCompiler.compile` 产物），因此地图里只有原版 mlog + 载体。
 - `-MindustryJar` 决定写出的存档格式，默认指向本机安装的客户端。处理器实体的修订号**新 reader 认老格式、老 reader 不认新格式**，用更新 master 的 jar 写出的地图会在较老客户端上读失败，换 jar 后重新生成即可。
 - 生成末尾会自己读回校验（`SaveIO` 重新加载 + 每块处理器的代码逐字节比对 + 链接/信息板/载体检查），自检也会检查每个展台的 `verifyRestore` 与 `SwitchStrategy` 稳定性。
+
+## Mlog → 糖码（`tools/mlog2sugar`）
+
+把处理器里的 Mlog 转成 LogicSugar 糖码文本，供移植/审查/离线查看使用：直接运行 `mlog2sugar.py`
+粘贴 mlog 即可（单文件入口，内嵌 Java 内核），转换本身全部走 mod 现有入口（`SugarDecompiler.openingSource` / `openableSource` /
+`ExprTextImport` / `ExprHook.foldAll` / `ExprHook.unfoldedText`），即游戏编辑器打开与保存的同一条
+链路，所以输出与游戏内结果逐字节相同。
+
+```powershell
+python tools\mlog2sugar\mlog2sugar.py program.mlog -o program.ls   # 默认输出画布 save() 文本
+python tools\mlog2sugar\mlog2sugar.py --stage source program.mlog  # 打开时的糖码原文
+python tools\mlog2sugar\mlog2sugar.py --selftest                    # 27 个演示的逐字节不动点自检
+```
+
+要点（细节与验证口径见 `tools/mlog2sugar/README.md`）：需要 JDK 17+、一个 v160.1 桌面 jar 与
+编译好的 mod 类（缺失/过期时脚本自动 `gradlew classes`）；`--privileged` 对应世界处理器特权，
+`--assert-emit` 只在单机调试构建下有意义；工具只输出文本，不写产物、不碰 1000 条指令底线。
 
 ## 调试建议
 
