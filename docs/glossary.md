@@ -37,7 +37,7 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 项目硬底线的执行机制：**多人联机环境必须兼容原版客户端**，因此会改变保存产物语义的调试类功能（目前是 AssertEmit=emit）只在 `!Vars.net.active()`（单机/地图编辑器）时生效，联机（已连接或自建）一律回落原版行为。门禁在代码层强制（`SugarCompiler.currentAssertEmit`）；不提供改变处理器指令预算的能力（指令上限覆盖曾试做后移除，处理器产物恒 ≤1000 条），不依赖用户自觉；纯展示类功能不受此限。全局函数库文件不是处理器产物，另有 `SugarFunctions.libraryInstructionLimit`（当前 10000 条语句）上限，见"函数库"。残余风险：单机创建的越界内容被分享到多人环境时原版客户端仍会截断/清空/静默降级，只能靠文档与设置描述讲清。
 
 ### 断言语句集（assertions）
-移植自 cardillan/MlogAssertions（本仓库基线 v0.11.7，最早的八条来自 v0.8.2、后续依次跟进）的运行时检查指令
+移植自 cardillan/MlogAssertions（本仓库基线 v0.11.8，最早的八条来自 v0.8.2、后续依次跟进）的运行时检查指令
 （`assert`/`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`asserttype`/`error`/`log`/`breakpoint`），
 线格式逐字节兼容：断言失败置**停机标志**（`exec.stop`，上游 v0.11.4 起）并由 `ProcessorStatus` 显示消息
 （可经「断言失败即断点」改为在失败指令处暂停），`breakpoint` 暂停游戏、居中视角并按设置临时分离视角，

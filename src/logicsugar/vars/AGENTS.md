@@ -28,6 +28,11 @@
 
 - 三击入口与 `InstrumentationEngine.getInstrumentation` 都必须先判 `Building.displayable()`
   （= `LogicBuild.accessible()`）：世界处理器、禁止编辑地图上的处理器不弹窗、不统计。
+- `Snapshots.liveView` 必须先判 `executor.counter != null` 才能构造 `ProcessorVars`（上游 v0.11.8）：
+  没载入过代码的处理器没有 `@counter`，而 `ProcessorVars` 构造期 `numvar(...)` 会立刻读
+  `executor.counter.numval`，旧写法必 NPE（三击刚放下的空处理器、配置面板快照按钮都会崩）。
+  这类方块退化为 `SensorVars`（属性视图）；分派顺序 `MemoryVars → ProcessorVars → SensorVars`
+  不能动（顺序变了视图类型就变），`varsTest` 同时钉住守卫与顺序。
 - `Snapshots.create` 在额度为 0 时返回 `null`；`Instrumentation.createSnapshot` 必须先判空，再
   `recording().add` / `Snapshots.register`，否则录制中把上限改成 0 会 NPE。`SnapshotI` 在 `master == null`
   时不写 recording。
@@ -46,5 +51,6 @@
   （`varsUiTest` 源码钉子）。
 - 主要回归：`varsTest`、`varsUiTest`、`varsAccessTest`、`profilerTest`；需要活场景的对话框行为走
   [测试指南](../../../docs/testing.md) 的手测清单。
-- 上游版本相关的判空/停机语义（v0.11.6 的 65535 字节上限与 `displayable()`、v0.11.7 的三处守卫）见
+- 上游版本相关的判空/停机语义（v0.11.6 的 65535 字节上限与 `displayable()`、v0.11.7 的三处守卫、
+  v0.11.8 的 `liveView` 空处理器守卫）见
   [上游基线](../../../docs/upstream.md)。

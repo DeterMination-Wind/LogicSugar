@@ -20,7 +20,7 @@ import mindustry.world.blocks.logic.LogicBlock.LogicBuild;
 
 /**
  * Runtime instruction classes for LogicSugar's assertion statement set, ported from the
- * upstream MlogAssertions mod (cardillan/mlogassertions, currently v0.11.7, wire-format
+ * upstream MlogAssertions mod (cardillan/mlogassertions, currently v0.11.8, wire-format
  * compatible). Failure reporting goes through {@link ProcessorStatus}, which draws the
  * message above the processor; since upstream v0.11.4 a failure also sets {@code exec.stop}
  * (a real stop instead of a pure spin: the profiler stops counting, and a world processor's

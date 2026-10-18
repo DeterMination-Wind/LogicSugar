@@ -116,7 +116,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ## 断言子系统（调试构建）
 
-`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions（当前基线 **v0.11.7**，线格式兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：九条自定义指令 `assert` / `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `asserttype` / `error` / `log` / `breakpoint`。**断言失败是停机不是自旋**（上游 v0.11.4）：回退 `counter` + `yield` 之外还置 `exec.stop`，消息仍由 `ProcessorStatus` 绘制在处理器上方；只能说「停机状态 + 停在失败行上重跑」——原版 `LExecutor.runOnce` 不看 `stop`，所以普通处理器每帧仍重跑失败指令（消息因此持续刷新），而世界处理器的 `LogicScript` 循环真的收工。profiler 的包装器读 `exec.stop` 后停止统计与录制（见下面的 Profiler 一节），这对单机/联机行为一致，也不影响保存产物。失败文本按上游 v0.11 语义生成：消息留空（线上写 `~`）时用带比较值的本地化默认文本（`logicsugar.asserts.assertFailedWithValues` / `equalFailedWithValues` / `boundsFailedWithValues`），写了消息则原样显示；消息内 `{1}`… 引用比较值，`{变量名}` 取该变量当前值（`{@counter}` 渲染为失败行号），LogicSugar ≤5.5 的 `[[1]` 旧写法仍被识别（`AssertInstructions.formatMessage`）。`assert` 是通用的条件断言（`ConditionOp` + 值 + 比较值 + 可选消息），上游 v0.11.0 新增。`breakpoint` 语义与上游一致（视角居中到处理器、按设置临时分离视角、冻结全部 accumulator 并在本帧更新结束后归还，暂停期间消息持续绘制），但**联机（`Vars.net.active()`）下拒绝暂停**（上游 v0.10 起的门禁）：显式 `breakpoint` 直接跳过，断言失败退回「停机 + 处理器上方消息」的非断点路径（与上游「静默丢弃断言」不同，见 `AssertInstructions.assertion` 注释）。设置「断言失败即断点」（`logicsugar.assertsAreBreakpoints`）可让断言失败改为在失败指令处暂停；「禁用断点」（`logicsugar.disableBreakpoints`）让 breakpoint 与断点化断言直接跳过。
+`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogAssertions（当前基线 **v0.11.8**，线格式兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：九条自定义指令 `assert` / `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `asserttype` / `error` / `log` / `breakpoint`。**断言失败是停机不是自旋**（上游 v0.11.4）：回退 `counter` + `yield` 之外还置 `exec.stop`，消息仍由 `ProcessorStatus` 绘制在处理器上方；只能说「停机状态 + 停在失败行上重跑」——原版 `LExecutor.runOnce` 不看 `stop`，所以普通处理器每帧仍重跑失败指令（消息因此持续刷新），而世界处理器的 `LogicScript` 循环真的收工。profiler 的包装器读 `exec.stop` 后停止统计与录制（见下面的 Profiler 一节），这对单机/联机行为一致，也不影响保存产物。失败文本按上游 v0.11 语义生成：消息留空（线上写 `~`）时用带比较值的本地化默认文本（`logicsugar.asserts.assertFailedWithValues` / `equalFailedWithValues` / `boundsFailedWithValues`），写了消息则原样显示；消息内 `{1}`… 引用比较值，`{变量名}` 取该变量当前值（`{@counter}` 渲染为失败行号），LogicSugar ≤5.5 的 `[[1]` 旧写法仍被识别（`AssertInstructions.formatMessage`）。`assert` 是通用的条件断言（`ConditionOp` + 值 + 比较值 + 可选消息），上游 v0.11.0 新增。`breakpoint` 语义与上游一致（视角居中到处理器、按设置临时分离视角、冻结全部 accumulator 并在本帧更新结束后归还，暂停期间消息持续绘制），但**联机（`Vars.net.active()`）下拒绝暂停**（上游 v0.10 起的门禁）：显式 `breakpoint` 直接跳过，断言失败退回「停机 + 处理器上方消息」的非断点路径（与上游「静默丢弃断言」不同，见 `AssertInstructions.assertion` 注释）。设置「断言失败即断点」（`logicsugar.assertsAreBreakpoints`）可让断言失败改为在失败指令处暂停；「禁用断点」（`logicsugar.disableBreakpoints`）让 breakpoint 与断点化断言直接跳过。
 
 - **asserttype 线格式**：上游 v0.10 起顺序为 `<type> <value> <message>`（本 mod 同）；类型表与上游对齐（24 种，v0.11.3 起未变：基础类型 + 内容物细分 item / block / bulletType / liquid / statusEffect / unitType / weather / team / unitCommand / unitStance + building 细分 processor / memory / message / display / canvas + property / readable / writable / senseable），LogicSugar 额外支持 `none`（线上写 `null`）——上游 `AssertionDataType` 无法断言空值。旧的 `<value> <type>` 顺序仍可读取（`parseAssertType` 以「哪个 token 是类型名」判定；两个都是类型名时按新序），保存时统一写新序。类型分类是层级而非互斥：`senseable` 同时匹配单位/建筑/队伍，失败消息用 `AssertionDataType.actualType` 取最窄匹配（如 building 而不是 senseable）。
 - **assertprints 缓冲语义**：按上游 v0.11，在比较前就把缓冲区截断到记录位置——失败重试不再累积输出，也不把被检查区域的文本留给下一条 `assertprints`。
@@ -137,7 +137,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ## 变量/内存/属性界面与快照（调试工具）
 
-移植自上游 MlogAssertions v0.11.7（v0.11.3 的子系统，后续跟进到 v0.11.7）的
+移植自上游 MlogAssertions v0.11.8（v0.11.3 的子系统，后续跟进到 v0.11.8）的
 「Vars / Memory / Properties」三合一对话框与快照子系统。三者共用
 同一个 `VarsDialog`，标题由数据源决定（`BlockDataType`：`变量`/`内存`/`属性`）；快照也是同一种数据源，
 因此浏览快照与浏览活数据用的是同一套渲染。
@@ -173,6 +173,12 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
      （上游 v0.11.6；这类方块读不到实体，弹窗会崩）。`displayable()` 是原版 public API，跨类加载器安全。
      同一把钥匙在 v0.11.7 也补到了 profiler 的收口点（`InstrumentationEngine.getInstrumentation`），
      所以「不可访问」的范围与判定在两处一致。
+     刚放下、尚未载入任何代码的处理器曾另有一个崩溃口：`Snapshots.liveView` 给这类方块构造
+     `ProcessorVars`，而它的构造期 `numvar(...)` 会立刻求值 `timeWaited()` → `executor.counter.numval`，
+     空处理器的 `@counter` 根本不存在（只有 `LExecutor.load` 才会创建）。上游 v0.11.8 加
+     `executor.counter != null` 守卫，这类方块退化成属性视图（`SensorVars`）；配置面板的「快照」按钮
+     走同一份 `liveView`，同一守卫一起挡住（对空处理器建快照是静默不产，`ProcessorSnapshot.create`
+     的 `vars.length == 0` 守卫返回 `null`；`varsTest` 钉住守卫与分派顺序）。
   3. 内存块/处理器的配置面板（`BlockConfigAccess`，反射替换 `InputHandler.config`）。
 - **MindustryX 共存（原则要求）**：探测到 fork 自带 `mindustryX.features.ui.LogicSupport` 时，内存块/处理器的
   配置面板**先调用方块自己的 `buildConfiguration` 再追加**本 mod 的按钮（否则会把 MindustryX 的内存网格/
@@ -203,8 +209,8 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 ## Profiler（性能分析器）
 
-`logicsugar.profile` + `logicsugar.profile.ui`，移植自上游 MlogAssertions v0.11.7（v0.11.3 基线，之后跟进
-v0.11.4 的界面/停机、v0.11.6 的性能口径与 v0.11.7 的两个崩溃守卫）——统计每条指令的执行次数/消耗的指令预算、分支比例与覆盖率，
+`logicsugar.profile` + `logicsugar.profile.ui`，移植自上游 MlogAssertions v0.11.8（v0.11.3 基线，之后跟进
+v0.11.4 的界面/停机、v0.11.6 的性能口径、v0.11.7 的两个崩溃守卫与 v0.11.8 的 liveView 空处理器守卫）——统计每条指令的执行次数/消耗的指令预算、分支比例与覆盖率，
 界面入口在变量界面的 📊 按钮与 `Edit` 菜单（快照关闭时标题栏不存在，两处都要留），设置项
 `logicsugar.startProfilerImmediately` 控制空数据页是否直接开始统计。
 

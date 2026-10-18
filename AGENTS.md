@@ -25,7 +25,7 @@ Mindustry Java mod：在逻辑编辑器里提供 `for` / `while` / `switch` / �
 - **反编译 verify 门**：`SugarDecompiler` 只有把恢复源码重新编译、与输入归一化可执行指令流比对通过后
   才能返回；未识别的保持原版。新恢复模式一律放在门后；`backtrack` 只在贪心候选失败后运行且同样过门。
   细节见 [重建规则](docs/reconstruction.md)「安全门」。
-- **上游基线**：断言/断点子系统与调试工具对齐 cardillan/MlogAssertions `v0.11.7`；跟进历史、明确不移植项
+- **上游基线**：断言/断点子系统与调试工具对齐 cardillan/MlogAssertions `v0.11.8`；跟进历史、明确不移植项
   与线格式例外见 [上游基线](docs/upstream.md)。
 
 ## 构建与验证

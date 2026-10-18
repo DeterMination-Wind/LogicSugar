@@ -38,6 +38,7 @@ public final class VarsDataTest{
         deadEntityClassification();
         snapshotRecordAccounting();
         recordingSelectionFilter();
+        liveViewGuardsUnloadedProcessors();
         memoryTextRoundTrip();
         memoryTextRejectsBadLines();
         memoryTextRejectsOversizedStrings();
@@ -201,6 +202,39 @@ public final class VarsDataTest{
 
     private static LVar var(String name){
         return new LVar(name);
+    }
+
+    /**
+     * {@code liveView} 对「从未载入过代码的处理器」的守卫（上游 v0.11.8）。
+     *
+     * <p>崩溃路径需要一块活的 {@code LogicBuild}（{@code LogicBlock} 构造会读 {@code Vars.content}），
+     * 无头环境里构造不出来，所以与 v0.11.7 的三击守卫同款处理：扫源码钉住。守卫缺了就退回去读
+     * {@code ProcessorVars} 构造里立刻求值的 {@code timeWaited()} → {@code executor.counter.numval}，
+     * 对空处理器必 NPE。分派顺序（MemoryVars → ProcessorVars → SensorVars）同样要钉：顺序漂移
+     * 会让同一个方块落到别的视图类型上，行为一样变。</p>
+     */
+    private static void liveViewGuardsUnloadedProcessors(){
+        String source = readSource("src/logicsugar/vars/Snapshots.java");
+        String body = logicsugar.SourceNails.methodBody(source, "public static VariableValues liveView(Senseable entity)");
+
+        check(body.contains("build.executor.counter != null"),
+            "liveView 必须跳过 executor.counter == null 的处理器（未载入代码时构造 ProcessorVars 会读 counter.numval 而 NPE，上游 v0.11.8）");
+
+        int memory = body.indexOf("new MemoryVars(");
+        int processor = body.indexOf("new ProcessorVars(");
+        int sensor = body.indexOf("new SensorVars(");
+        check(memory >= 0 && processor >= 0 && sensor >= 0, "liveView 必须保留三种视图的分派");
+        check(memory < processor && processor < sensor,
+            "分派顺序必须保持 MemoryVars → ProcessorVars → SensorVars（顺序变了视图类型就变）");
+    }
+
+    /** 读仓库源文件（与 VarsUiLogicTest 相同的容错包装：读不到直接断言失败）。 */
+    private static String readSource(String file){
+        try{
+            return logicsugar.SourceNails.readSource(file);
+        }catch(java.io.IOException e){
+            throw new AssertionError("cannot read " + file + ": " + e, e);
+        }
     }
 
     /** 只实现 Senseable 的实体替身（既不是建筑/单位，也不是 Posc）。 */

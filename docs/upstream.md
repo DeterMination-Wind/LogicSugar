@@ -1,15 +1,16 @@
 # 上游基线（MlogAssertions）
 
 LogicSugar 的断言/断点子系统与调试工具（Vars / Memory / Properties 界面、快照、Profiler）对齐
-cardillan/MlogAssertions 的 **v0.11.7**。本文记录基线怎么取得、跟了哪些行为、明确不移植什么，以及三处
+cardillan/MlogAssertions 的 **v0.11.8**。本文记录基线怎么取得、跟了哪些行为、明确不移植什么，以及三处
 线格式例外；实现叙述见[架构总览](architecture.md)的「断言子系统」「变量/内存/属性界面与快照」「Profiler」，
 测试入口见[测试指南](testing.md)。
 
 ## 参考源码与同步方式
 
-- 基线 v0.11.7：参考源码在工作区 `../_upstream/MlogAssertions-0.11.7`，由
-  `gh api repos/cardillan/MlogAssertions/tarball/refs/tags/v0.11.7` 取得。
-- 旧快照 `../_upstream/MlogAssertions-0.11.6`、`../_upstream/MlogAssertions-0.11.3` 与
+- 基线 v0.11.8：参考源码在工作区 `../_upstream/MlogAssertions-0.11.8`，由
+  `gh api repos/cardillan/MlogAssertions/tarball/refs/tags/v0.11.8` 取得。
+- 旧快照 `../_upstream/MlogAssertions-0.11.7`、`../_upstream/MlogAssertions-0.11.6`、
+  `../_upstream/MlogAssertions-0.11.3` 与
   `../_upstream/MlogAssertions-pr`（v0.8.2）只当历史参考，不作为当前行为依据。
 - 不要 `git fetch upstream`：本仓库不保留上游 remote；同步以上述快照 + GitHub tag/tarball 为准。
 - UI 落点：数据层 `logicsugar.vars`、对话框/入口 `logicsugar.vars.ui`、Profiler `logicsugar.profile`
@@ -40,6 +41,20 @@ cardillan/MlogAssertions 的 **v0.11.7**。本文记录基线怎么取得、跟�
    返回 `null`。
 3. `SnapshotI`：`master == null` 时不写 recording（本仓库从 v0.11.3 移植起已带着，`assertTest` 钉住）。
 
+### v0.11.7 → v0.11.8
+
+上游只有一个修复提交：`SnapshotManager.liveView` 对「从未载入过代码的处理器」加
+`executor.counter != null` 守卫（三击刚创建的空处理器不再崩溃）。
+
+- 没载入过代码的处理器 `executor.counter` 是 `null`——只有 `LExecutor.load` 才会创建它并赋 `@counter`——
+  而 `ProcessorVars` 的构造期 `numvar(...)` 会立刻求值 `timeWaited()` → `executor.counter.numval`，
+  所以旧写法对这类方块必 NPE。加守卫后这类方块在 `liveView` 里退化为 `SensorVars`（属性视图）。
+- 本仓库同根的第二条可达路径是处理器配置面板的「快照」按钮（`BlockConfigAccess` 通往同一套快照
+  创建代码），同一守卫一起挡住。修完后对空处理器建快照是**静默不产**而不是崩溃：
+  `ProcessorSnapshot.create` 的 `executor.vars.length == 0` 守卫让创建返回 `null`。
+- 真实崩溃路径需要一块活的 `LogicBuild`（`LogicBlock` 构造会读 `Vars.content`），无头环境构造不出来，
+  因此自动化侧是 `VarsDataTest` 的源码钉子 + 变异验证（与 v0.11.7 那次的约定相同）。
+
 ## 明确不移植
 
 - **`max-instructions`（指令预算覆盖）**：处理器保存产物恒 ≤1000 条是硬不变式，见根 `AGENTS.md`。
@@ -64,4 +79,4 @@ cardillan/MlogAssertions 的 **v0.11.7**。本文记录基线怎么取得、跟�
 3. **`snapshot` 5 槽文本**：上游 v0.11.2 起为 `type block steps message`；旧 3 载荷 token 文本按第 4 槽写法
    分流仍可读，清空的 `steps` 保存时归一为默认 `20`。
 
-除此之外，断言指令族、`profile` / `restart` 卡、`recording` 快照类型以及停机/断点语义均按 v0.11.7 对齐。
+除此之外，断言指令族、`profile` / `restart` 卡、`recording` 快照类型以及停机/断点语义均按 v0.11.8 对齐。

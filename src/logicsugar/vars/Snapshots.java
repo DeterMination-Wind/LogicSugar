@@ -70,8 +70,12 @@ public class Snapshots{
     }
 
     public static VariableValues liveView(Senseable entity){
+        // 上游 v0.11.8：还没载入过代码的处理器（刚放下、从未运行）executor.counter == null——
+        // 只有 LExecutor.load 会创建并赋 @counter；而 ProcessorVars 的构造会立刻求值
+        // timeWaited() → executor.counter.numval，旧写法对这类方块必 NPE（三击刚放下的空
+        // 处理器、或配置面板里点「快照」都会崩）。这里让它退化成 SensorVars（属性视图）。
         return entity instanceof MemoryBlock.MemoryBuild build ? new MemoryVars(build) :
-                entity instanceof LogicBlock.LogicBuild build ? new ProcessorVars(build) :
+                entity instanceof LogicBlock.LogicBuild build && build.executor.counter != null ? new ProcessorVars(build) :
                 new SensorVars(entity);
     }
 
