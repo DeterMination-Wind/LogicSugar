@@ -4,6 +4,8 @@ import arc.Core;
 import mindustry.logic.LAccess;
 import mindustry.logic.SugarCompiler;
 
+import logicsugar.assist.LiteralParse;
+
 import java.lang.reflect.Field;
 import java.util.*;
 
@@ -1542,7 +1544,7 @@ public class ExprCompiler{
      */
     private static List<SpanFoldView> spanFoldViews(List<Line> ops, int p, String memory, String address){
         List<SpanFoldView> views = new ArrayList<>();
-        Long local = ArrayRegistry.parseIntLiteral(address);
+        Long local = LiteralParse.parseIntLiteral(address);
         if(local != null){
             if(local < 0) return views;
             for(ArrayRegistry.SpanInfo span : ArrayRegistry.findSpansByMember(memory)){
@@ -1601,7 +1603,7 @@ public class ExprCompiler{
         if(!(ops.get(k - 1) instanceof OpLine div) || !div.op.equals("idiv")
             || !SpanAccess.QUOTIENT.equals(div.dest)) return null;
         if(!div.a.equals(mod.a) || !div.b.equals(mod.b)) return null;
-        Long capacity = ArrayRegistry.parseIntLiteral(div.b);
+        Long capacity = LiteralParse.parseIntLiteral(div.b);
         if(capacity == null || capacity <= 0 || capacity > Integer.MAX_VALUE) return null;
         ArrayRegistry.SpanInfo span = ArrayRegistry.findSpanByShape(members, capacity.intValue());
         if(span == null) return null;
@@ -1612,7 +1614,7 @@ public class ExprCompiler{
 
     /** 一维数组归属解析（规则见 {@link #resolveArrayFolds}），未命中返回 null。 */
     private static ArrayFold resolveArrayFold(ArrayRegistry registry, String memory, String address, List<Line> ops, int p){
-        Long literal = ArrayRegistry.parseIntLiteral(address);
+        Long literal = LiteralParse.parseIntLiteral(address);
         if(literal != null){
             for(ArrayRegistry.ArrayInfo candidate : registry.byMemory(memory)){
                 if(candidate.base <= literal && literal < candidate.base + candidate.size){
@@ -1626,8 +1628,8 @@ public class ExprCompiler{
         for(int j = p - 1; j >= 0; j--){
             Line def = ops.get(j);
             if(!(def instanceof OpLine opdef) || !opdef.op.equals("add") || !opdef.dest.equals(address)) continue;
-            Long baseA = ArrayRegistry.parseIntLiteral(opdef.a);
-            Long baseB = baseA == null ? ArrayRegistry.parseIntLiteral(opdef.b) : null;
+            Long baseA = LiteralParse.parseIntLiteral(opdef.a);
+            Long baseB = baseA == null ? LiteralParse.parseIntLiteral(opdef.b) : null;
             ArrayRegistry.ArrayInfo byA = baseA == null ? null : findByBase(registry, memory, baseA);
             ArrayRegistry.ArrayInfo byB = byA == null && baseB != null ? findByBase(registry, memory, baseB) : null;
             if(byA != null) return new ArrayFold(byA, opdef.b, def);
@@ -1650,7 +1652,7 @@ public class ExprCompiler{
         List<ArrayRegistry.MatrixInfo> candidates = registry.matricesByMemory(memory);
         if(candidates.isEmpty()) return null;
 
-        Long literal = ArrayRegistry.parseIntLiteral(address);
+        Long literal = LiteralParse.parseIntLiteral(address);
         if(literal != null){
             ArrayFold found = null;
             for(ArrayRegistry.MatrixInfo matrix : candidates){
@@ -1702,7 +1704,7 @@ public class ExprCompiler{
 
     /** 沿链内 op add/mul 定义展开地址操作数（{@code before} 之前），展开过的定义行记入 used。 */
     private static AddrNode buildAddrNode(List<Line> ops, int before, String operand, Set<Line> used){
-        Long literal = ArrayRegistry.parseIntLiteral(operand);
+        Long literal = LiteralParse.parseIntLiteral(operand);
         if(literal != null) return new AddrLit(operand, literal);
         for(int j = before - 1; j >= 0; j--){
             Line line = ops.get(j);

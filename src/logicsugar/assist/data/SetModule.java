@@ -1,5 +1,7 @@
 package logicsugar.assist.data;
 
+import logicsugar.assist.LiteralParse;
+
 import arc.Core;
 import arc.scene.Element;
 import arc.scene.ui.layout.Table;
@@ -257,15 +259,15 @@ public class SetModule extends DataModule{
     private static String fieldError(USetStatement card){
         String name = trim(card.uset);
         if(name.isEmpty()) return "name must not be empty";
-        if(!isIdentifier(name)) return "name '" + name + "' must match [A-Za-z_][A-Za-z0-9_]*";
+        if(!LiteralParse.isIdentifier(name)) return "name '" + name + "' must match [A-Za-z_][A-Za-z0-9_]*";
         if(name.startsWith("__ls_")) return "name '" + name + "' uses the reserved '__ls_' prefix";
         String memory = trim(card.memory);
         if(memory.isEmpty()) return "needs a memory cell variable";
-        Long base = parseIntLiteral(card.base);
+        Long base = LiteralParse.parseIntLiteral(card.base);
         if(base == null || base < 0 || base > Integer.MAX_VALUE){
             return "base must be a non-negative integer literal (variables are not supported yet), got '" + card.base + "'";
         }
-        Long capacity = parseIntLiteral(card.capacity);
+        Long capacity = LiteralParse.parseIntLiteral(card.capacity);
         if(capacity == null || capacity < 1 || capacity > Integer.MAX_VALUE){
             return "capacity must be an integer literal of at least 1 (variables are not supported yet), got '" + card.capacity + "'";
         }
@@ -281,9 +283,9 @@ public class SetModule extends DataModule{
     private static SetInfo infoOf(USetStatement card){
         String name = trim(card.uset);
         String memory = trim(card.memory);
-        Long base = parseIntLiteral(card.base);
-        Long capacity = parseIntLiteral(card.capacity);
-        if(name.isEmpty() || !isIdentifier(name) || name.startsWith("__ls_")) return null;
+        Long base = LiteralParse.parseIntLiteral(card.base);
+        Long capacity = LiteralParse.parseIntLiteral(card.capacity);
+        if(name.isEmpty() || !LiteralParse.isIdentifier(name) || name.startsWith("__ls_")) return null;
         if(memory.isEmpty() || base == null || capacity == null) return null;
         if(base < 0 || base > Integer.MAX_VALUE || capacity < 1 || capacity > Integer.MAX_VALUE) return null;
         long end = base + capacity;
@@ -355,31 +357,4 @@ public class SetModule extends DataModule{
         return value == null ? "" : value.trim();
     }
 
-    private static boolean isIdentifier(String name){
-        if(name.isEmpty()) return false;
-        char first = name.charAt(0);
-        if(!(Character.isLetter(first) || first == '_')) return false;
-        for(int i = 1; i < name.length(); i++){
-            char c = name.charAt(i);
-            if(!(Character.isLetterOrDigit(c) || c == '_')) return false;
-        }
-        return true;
-    }
-
-    private static Long parseIntLiteral(String token){
-        if(token == null) return null;
-        String t = token.trim();
-        if(t.isEmpty()) return null;
-        String digits = t.startsWith("-") ? t.substring(1) : t;
-        if(digits.isEmpty()) return null;
-        for(int i = 0; i < digits.length(); i++){
-            char c = digits.charAt(i);
-            if(c < '0' || c > '9') return null;
-        }
-        try{
-            return Long.parseLong(t);
-        }catch(NumberFormatException e){
-            return null;
-        }
-    }
 }

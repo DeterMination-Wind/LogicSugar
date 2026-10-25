@@ -1,5 +1,7 @@
 package logicsugar.assist.data;
 
+import logicsugar.assist.LiteralParse;
+
 import arc.Core;
 import arc.scene.Element;
 import arc.scene.ui.layout.Table;
@@ -179,9 +181,9 @@ public class BitsetModule extends DataModule{
                 if(!(elem.st instanceof BitsetStatement card)) continue;
                 String name = card.name == null ? "" : card.name.trim();
                 String memory = card.memory == null ? "" : card.memory.trim();
-                Long base = parseIntLiteral(card.base);
-                Long words = parseIntLiteral(card.words);
-                if(!isIdentifier(name) || name.startsWith("__ls_")) continue;
+                Long base = LiteralParse.parseIntLiteral(card.base);
+                Long words = LiteralParse.parseIntLiteral(card.words);
+                if(!LiteralParse.isIdentifier(name) || name.startsWith("__ls_")) continue;
                 if(memory.isEmpty() || result.containsKey(name)) continue;
                 if(base == null || words == null || base < 0 || base > Integer.MAX_VALUE
                     || words < 1 || words > Integer.MAX_VALUE) continue;
@@ -200,7 +202,7 @@ public class BitsetModule extends DataModule{
                                    Set<String> functionNames, ArrayRegistry arrays){
         String name = card.name == null ? "" : card.name.trim();
         if(name.isEmpty()) return "name must not be empty";
-        if(!isIdentifier(name)) return "name '" + name + "' must match [A-Za-z_][A-Za-z0-9_]*";
+        if(!LiteralParse.isIdentifier(name)) return "name '" + name + "' must match [A-Za-z_][A-Za-z0-9_]*";
         if(name.startsWith("__ls_")) return "name '" + name + "' uses the reserved '__ls_' prefix";
         if(names.contains(name)) return "duplicate name '" + name + "'";
         if(functionNames != null && functionNames.contains(name)){
@@ -212,11 +214,11 @@ public class BitsetModule extends DataModule{
         }
         String memory = card.memory == null ? "" : card.memory.trim();
         if(memory.isEmpty()) return "bitset '" + name + "' needs a memory cell variable";
-        Long base = parseIntLiteral(card.base);
+        Long base = LiteralParse.parseIntLiteral(card.base);
         if(base == null || base < 0 || base > Integer.MAX_VALUE){
             return "bitset '" + name + "' base must be a non-negative integer literal, got '" + card.base + "'";
         }
-        Long words = parseIntLiteral(card.words);
+        Long words = LiteralParse.parseIntLiteral(card.words);
         if(words == null || words < 1 || words > Integer.MAX_VALUE){
             return "bitset '" + name + "' words must be an integer literal of at least 1, got '" + card.words + "'";
         }
@@ -236,35 +238,6 @@ public class BitsetModule extends DataModule{
             }
         }
         return null;
-    }
-
-    private static boolean isIdentifier(String name){
-        if(name.isEmpty()) return false;
-        char first = name.charAt(0);
-        if(!(Character.isLetter(first) || first == '_')) return false;
-        for(int i = 1; i < name.length(); i++){
-            char c = name.charAt(i);
-            if(!(Character.isLetterOrDigit(c) || c == '_')) return false;
-        }
-        return true;
-    }
-
-    /** 解析纯十进制整数字面量（允许前导 '-'），失败（含溢出）返回 null。 */
-    private static Long parseIntLiteral(String token){
-        if(token == null) return null;
-        String t = token.trim();
-        if(t.isEmpty()) return null;
-        String digits = t.startsWith("-") ? t.substring(1) : t;
-        if(digits.isEmpty()) return null;
-        for(int i = 0; i < digits.length(); i++){
-            char c = digits.charAt(i);
-            if(c < '0' || c > '9') return null;
-        }
-        try{
-            return Long.parseLong(t);
-        }catch(NumberFormatException e){
-            return null;
-        }
     }
 
     private static String optional(String value){

@@ -1,5 +1,7 @@
 package logicsugar.assist.data;
 
+import logicsugar.assist.LiteralParse;
+
 import arc.Core;
 import arc.scene.ui.layout.Table;
 import logicsugar.assist.expr.ArrayRegistry;
@@ -283,11 +285,11 @@ public class ContainerModule extends DataModule{
                 if(card == null) continue;
                 String name = card.name.trim();
                 String memory = card.memory.trim();
-                Long base = parseIntLiteral(card.base);
-                Long size = parseIntLiteral(card.size);
+                Long base = LiteralParse.parseIntLiteral(card.base);
+                Long size = LiteralParse.parseIntLiteral(card.size);
                 // 宽松口径：名字合法、未被占用、内存块非空、区间字面量合法才登记；
                 // 其余问题（重复、重叠、容量、与函数/数组重名）留给编译期严格校验与编辑期标红
-                if(!isIdentifier(name) || name.startsWith(RESERVED_PREFIX)) continue;
+                if(!LiteralParse.isIdentifier(name) || name.startsWith(RESERVED_PREFIX)) continue;
                 if(memory.isEmpty() || registry.get(name) != null) continue;
                 if(base == null || base < 0 || base > Integer.MAX_VALUE
                     || size == null || size < 1 || size > Integer.MAX_VALUE) continue;
@@ -445,9 +447,9 @@ public class ContainerModule extends DataModule{
             if(card == null) continue;
             String name = card.name.trim();
             String memory = card.memory.trim();
-            Long base = parseIntLiteral(card.base);
-            Long size = parseIntLiteral(card.size);
-            boolean bad = name.isEmpty() || !isIdentifier(name) || name.startsWith(RESERVED_PREFIX)
+            Long base = LiteralParse.parseIntLiteral(card.base);
+            Long size = LiteralParse.parseIntLiteral(card.size);
+            boolean bad = name.isEmpty() || !LiteralParse.isIdentifier(name) || name.startsWith(RESERVED_PREFIX)
                 || memory.isEmpty() || memory.startsWith(RESERVED_PREFIX)
                 || base == null || base < 0 || base > Integer.MAX_VALUE
                 || size == null || size < 1 || size > Integer.MAX_VALUE
@@ -478,7 +480,7 @@ public class ContainerModule extends DataModule{
     private static void validateName(String kind, int index, String name, Set<String> names,
                                      Set<String> functionNames, ArrayRegistry arrays){
         if(name.isEmpty()) throw error(kind, index, "name must not be empty");
-        if(!isIdentifier(name)) throw error(kind, index, "name '" + name + "' must match [A-Za-z_][A-Za-z0-9_]*");
+        if(!LiteralParse.isIdentifier(name)) throw error(kind, index, "name '" + name + "' must match [A-Za-z_][A-Za-z0-9_]*");
         if(name.startsWith(RESERVED_PREFIX)) throw error(kind, index, "name '" + name + "' uses the reserved '" + RESERVED_PREFIX + "' prefix");
         if(names.contains(name)) throw error(kind, index, "duplicate name '" + name + "'");
         if(functionNames != null && functionNames.contains(name)){
@@ -497,7 +499,7 @@ public class ContainerModule extends DataModule{
     }
 
     private static long literal(String kind, int index, String name, String field, String token, long minimum){
-        Long value = parseIntLiteral(token);
+        Long value = LiteralParse.parseIntLiteral(token);
         if(value == null || value < minimum || value > Integer.MAX_VALUE){
             throw error(kind, index, "container '" + name + "' " + field + " must be "
                 + (minimum == 0 ? "a non-negative" : "an") + " integer literal of at least " + minimum
@@ -557,35 +559,6 @@ public class ContainerModule extends DataModule{
     }
 
     // ===== 工具 =====
-
-    static boolean isIdentifier(String name){
-        if(name == null || name.isEmpty()) return false;
-        char first = name.charAt(0);
-        if(!(Character.isLetter(first) || first == '_')) return false;
-        for(int i = 1; i < name.length(); i++){
-            char c = name.charAt(i);
-            if(!(Character.isLetterOrDigit(c) || c == '_')) return false;
-        }
-        return true;
-    }
-
-    /** 解析纯十进制整数字面量（允许前导 '-'），失败（含溢出）返回 null。 */
-    static Long parseIntLiteral(String token){
-        if(token == null) return null;
-        String t = token.trim();
-        if(t.isEmpty()) return null;
-        String digits = t.startsWith("-") ? t.substring(1) : t;
-        if(digits.isEmpty()) return null;
-        for(int i = 0; i < digits.length(); i++){
-            char c = digits.charAt(i);
-            if(c < '0' || c > '9') return null;
-        }
-        try{
-            return Long.parseLong(t);
-        }catch(NumberFormatException e){
-            return null;
-        }
-    }
 
     private static String token(String[] tokens, int index){
         if(tokens == null || index >= tokens.length || tokens[index] == null) return "";

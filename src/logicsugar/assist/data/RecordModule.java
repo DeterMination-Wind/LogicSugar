@@ -1,5 +1,7 @@
 package logicsugar.assist.data;
 
+import logicsugar.assist.LiteralParse;
+
 import arc.scene.Element;
 import arc.scene.ui.layout.Table;
 import logicsugar.assist.expr.ArrayRegistry;
@@ -251,7 +253,7 @@ public class RecordModule extends DataModule{
                     throw error(index, ExprIntrinsics.text("la.err.record_name_empty",
                         "record name must not be empty"));
                 }
-                if(!isIdentifier(name)){
+                if(!LiteralParse.isIdentifier(name)){
                     throw error(index, ExprIntrinsics.text("la.err.record_name_invalid",
                         "record name {0} must match [A-Za-z_][A-Za-z0-9_]*", name));
                 }
@@ -281,7 +283,7 @@ public class RecordModule extends DataModule{
                 for(String raw : card.fields){
                     String field = raw == null ? "" : raw.trim();
                     if(field.isEmpty()) continue;
-                    if(!isIdentifier(field)){
+                    if(!LiteralParse.isIdentifier(field)){
                         throw error(index, ExprIntrinsics.text("la.err.record_field_invalid",
                             "field name {0} of record {1} must match [A-Za-z_][A-Za-z0-9_]*",
                             field, name));
@@ -349,7 +351,7 @@ public class RecordModule extends DataModule{
             if(statement instanceof RecordStatement card){
                 String name = card.name == null ? "" : card.name.trim();
                 List<String> fields = card.fieldList();
-                boolean bad = name.isEmpty() || !isIdentifier(name) || name.startsWith(RESERVED_PREFIX)
+                boolean bad = name.isEmpty() || !LiteralParse.isIdentifier(name) || name.startsWith(RESERVED_PREFIX)
                     || recordNames.contains(name) || storage.contains(name)
                     || (functionNames != null && functionNames.contains(name))
                     || (arrays != null && (arrays.get(name) != null || arrays.getMatrix(name) != null))
@@ -357,7 +359,7 @@ public class RecordModule extends DataModule{
                 if(!bad){
                     Set<String> seen = new HashSet<>();
                     for(String field : fields){
-                        if(!isIdentifier(field) || !seen.add(field)){
+                        if(!LiteralParse.isIdentifier(field) || !seen.add(field)){
                             bad = true;
                             break;
                         }
@@ -413,13 +415,13 @@ public class RecordModule extends DataModule{
                 if(!(child instanceof LCanvas.StatementElem elem)) continue;
                 if(!(elem.st instanceof RecordStatement card)) continue;
                 String name = card.name == null ? "" : card.name.trim();
-                if(!isIdentifier(name) || name.startsWith(RESERVED_PREFIX) || registry.get(name) != null) continue;
+                if(!LiteralParse.isIdentifier(name) || name.startsWith(RESERVED_PREFIX) || registry.get(name) != null) continue;
                 List<String> fields = card.fieldList();
                 if(fields.isEmpty() || fields.size() > MAX_FIELDS) continue;
                 Set<String> seen = new HashSet<>();
                 boolean bad = false;
                 for(String field : fields){
-                    if(!isIdentifier(field) || !seen.add(field)){
+                    if(!LiteralParse.isIdentifier(field) || !seen.add(field)){
                         bad = true;
                         break;
                     }
@@ -443,17 +445,6 @@ public class RecordModule extends DataModule{
 
     private static IllegalArgumentException error(int index, String detail){
         return new IllegalArgumentException("record at statement " + index + " " + detail + ".");
-    }
-
-    static boolean isIdentifier(String name){
-        if(name == null || name.isEmpty()) return false;
-        char first = name.charAt(0);
-        if(!(Character.isLetter(first) || first == '_')) return false;
-        for(int i = 1; i < name.length(); i++){
-            char c = name.charAt(i);
-            if(!(Character.isLetterOrDigit(c) || c == '_')) return false;
-        }
-        return true;
     }
 
     private static String optional(String value){

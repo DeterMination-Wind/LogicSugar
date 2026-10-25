@@ -823,34 +823,17 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     private Dialog parentDialog(Element element){
-        Element current = element;
-        while(current != null && !(current instanceof Dialog)) current = current.parent;
-        return (Dialog)current;
+        return SelectionClipboardUi.parentDialog(element);
     }
 
     /** True when the element is still attached under the scene root (a closed dialog's
      *  children are detached from the tree, so a cached button there is stale). */
     private static boolean inSceneTree(Element element){
-        Element current = element;
-        while(current != null){
-            if(current == Core.scene.root) return true;
-            current = current.parent;
-        }
-        return false;
+        return SelectionClipboardUi.inSceneTree(element);
     }
 
     private TextButton findCopyButton(Element element){
-        if(element instanceof TextButton button && button.getText().toString().equals(Core.bundle.get("copy.clipboard"))){
-            return button;
-        }
-        if(element instanceof Group group){
-            Seq<Element> children = group.getChildren();
-            for(Element child : children){
-                TextButton found = findCopyButton(child);
-                if(found != null) return found;
-            }
-        }
-        return null;
+        return SelectionClipboardUi.findCopyButton(element);
     }
 
     @Override

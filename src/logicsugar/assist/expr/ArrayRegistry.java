@@ -1,5 +1,7 @@
 package logicsugar.assist.expr;
 
+import logicsugar.assist.LiteralParse;
+
 import arc.scene.Element;
 import arc.struct.Seq;
 import mindustry.Vars;
@@ -285,11 +287,11 @@ public final class ArrayRegistry{
                 validateName(i, "array", name, names, functionNames);
                 String memory = card.memory == null ? "" : card.memory.trim();
                 if(memory.isEmpty()) throw error(i, "array '" + name + "' needs a memory cell variable");
-                Long base = parseIntLiteral(card.base);
+                Long base = LiteralParse.parseIntLiteral(card.base);
                 if(base == null || base < 0 || base > Integer.MAX_VALUE){
                     throw error(i, "array '" + name + "' base must be a non-negative integer literal (variables are not supported yet), got '" + card.base + "'");
                 }
-                Long size = parseIntLiteral(card.size);
+                Long size = LiteralParse.parseIntLiteral(card.size);
                 if(size == null || size < 1 || size > Integer.MAX_VALUE){
                     throw error(i, "array '" + name + "' size must be an integer literal of at least 1 (variables are not supported yet), got '" + card.size + "'");
                 }
@@ -302,15 +304,15 @@ public final class ArrayRegistry{
                 validateName(i, "matrix", name, names, functionNames);
                 String memory = card.memory == null ? "" : card.memory.trim();
                 if(memory.isEmpty()) throw error(i, "matrix '" + name + "' needs a memory cell variable");
-                Long base = parseIntLiteral(card.base);
+                Long base = LiteralParse.parseIntLiteral(card.base);
                 if(base == null || base < 0 || base > Integer.MAX_VALUE){
                     throw error(i, "matrix '" + name + "' base must be a non-negative integer literal (variables are not supported yet), got '" + card.base + "'");
                 }
-                Long rows = parseIntLiteral(card.rows);
+                Long rows = LiteralParse.parseIntLiteral(card.rows);
                 if(rows == null || rows < 1 || rows > Integer.MAX_VALUE){
                     throw error(i, "matrix '" + name + "' rows must be an integer literal of at least 1 (variables are not supported yet), got '" + card.rows + "'");
                 }
-                Long cols = parseIntLiteral(card.cols);
+                Long cols = LiteralParse.parseIntLiteral(card.cols);
                 if(cols == null || cols < 1 || cols > Integer.MAX_VALUE){
                     throw error(i, "matrix '" + name + "' cols must be an integer literal of at least 1 (variables are not supported yet), got '" + card.cols + "'");
                 }
@@ -469,7 +471,7 @@ public final class ArrayRegistry{
 
     private static void validateName(int index, String card, String name, Set<String> names, Set<String> functionNames){
         if(name.isEmpty()) throw error(card, index, "name must not be empty");
-        if(!isIdentifier(name)) throw error(card, index, "name '" + name + "' must match [A-Za-z_][A-Za-z0-9_]*");
+        if(!LiteralParse.isIdentifier(name)) throw error(card, index, "name '" + name + "' must match [A-Za-z_][A-Za-z0-9_]*");
         if(name.startsWith("__ls_")) throw error(card, index, "name '" + name + "' uses the reserved '__ls_' prefix");
         if(names.contains(name)) throw error(card, index, "duplicate name '" + name + "'");
         if(functionNames != null && functionNames.contains(name)){
@@ -814,11 +816,11 @@ public final class ArrayRegistry{
             if(st instanceof ArrayStatement card){
                 String name = card.array == null ? "" : card.array.trim();
                 String memory = card.memory == null ? "" : card.memory.trim();
-                Long base = parseIntLiteral(card.base);
-                Long size = parseIntLiteral(card.size);
+                Long base = LiteralParse.parseIntLiteral(card.base);
+                Long size = LiteralParse.parseIntLiteral(card.size);
                 // 宽松口径：名字合法、未被占用、内存块非空、区间字面量合法才登记；
                 // 其余问题（重叠、与函数重名等）留给编译期严格校验与编辑期标红
-                if(!isIdentifier(name) || name.startsWith("__ls_")) continue;
+                if(!LiteralParse.isIdentifier(name) || name.startsWith("__ls_")) continue;
                 if(memory.isEmpty() || registry.byName.containsKey(name) || registry.matrices.containsKey(name)
                     || registry.spans.containsKey(name)) continue;
                 if(base == null || size == null || base < 0 || base > Integer.MAX_VALUE
@@ -827,10 +829,10 @@ public final class ArrayRegistry{
             }else if(st instanceof MatrixStatement card){
                 String name = card.matrix == null ? "" : card.matrix.trim();
                 String memory = card.memory == null ? "" : card.memory.trim();
-                Long base = parseIntLiteral(card.base);
-                Long rows = parseIntLiteral(card.rows);
-                Long cols = parseIntLiteral(card.cols);
-                if(!isIdentifier(name) || name.startsWith("__ls_")) continue;
+                Long base = LiteralParse.parseIntLiteral(card.base);
+                Long rows = LiteralParse.parseIntLiteral(card.rows);
+                Long cols = LiteralParse.parseIntLiteral(card.cols);
+                if(!LiteralParse.isIdentifier(name) || name.startsWith("__ls_")) continue;
                 if(memory.isEmpty() || registry.byName.containsKey(name) || registry.matrices.containsKey(name)
                     || registry.spans.containsKey(name)) continue;
                 if(base == null || rows == null || cols == null || base < 0 || base > Integer.MAX_VALUE
@@ -875,9 +877,9 @@ public final class ArrayRegistry{
             if(statement instanceof ArrayStatement card){
                 String name = card.array == null ? "" : card.array.trim();
                 String memory = card.memory == null ? "" : card.memory.trim();
-                Long base = parseIntLiteral(card.base);
-                Long size = parseIntLiteral(card.size);
-                boolean bad = name.isEmpty() || !isIdentifier(name) || name.startsWith("__ls_")
+                Long base = LiteralParse.parseIntLiteral(card.base);
+                Long size = LiteralParse.parseIntLiteral(card.size);
+                boolean bad = name.isEmpty() || !LiteralParse.isIdentifier(name) || name.startsWith("__ls_")
                     || memory.isEmpty()
                     || base == null || base < 0 || base > Integer.MAX_VALUE
                     || size == null || size < 1 || size > Integer.MAX_VALUE
@@ -903,10 +905,10 @@ public final class ArrayRegistry{
             }else if(statement instanceof MatrixStatement card){
                 String name = card.matrix == null ? "" : card.matrix.trim();
                 String memory = card.memory == null ? "" : card.memory.trim();
-                Long base = parseIntLiteral(card.base);
-                Long rows = parseIntLiteral(card.rows);
-                Long cols = parseIntLiteral(card.cols);
-                boolean bad = name.isEmpty() || !isIdentifier(name) || name.startsWith("__ls_")
+                Long base = LiteralParse.parseIntLiteral(card.base);
+                Long rows = LiteralParse.parseIntLiteral(card.rows);
+                Long cols = LiteralParse.parseIntLiteral(card.cols);
+                boolean bad = name.isEmpty() || !LiteralParse.isIdentifier(name) || name.startsWith("__ls_")
                     || memory.isEmpty()
                     || base == null || base < 0 || base > Integer.MAX_VALUE
                     || rows == null || rows < 1 || rows > Integer.MAX_VALUE
@@ -979,35 +981,6 @@ public final class ArrayRegistry{
     }
 
     // ===== 工具 =====
-
-    static boolean isIdentifier(String name){
-        if(name.isEmpty()) return false;
-        char first = name.charAt(0);
-        if(!(Character.isLetter(first) || first == '_')) return false;
-        for(int i = 1; i < name.length(); i++){
-            char c = name.charAt(i);
-            if(!(Character.isLetterOrDigit(c) || c == '_')) return false;
-        }
-        return true;
-    }
-
-    /** 解析纯十进制整数字面量（允许前导 '-'），失败（含溢出）返回 null。 */
-    static Long parseIntLiteral(String token){
-        if(token == null) return null;
-        String t = token.trim();
-        if(t.isEmpty()) return null;
-        String digits = t.startsWith("-") ? t.substring(1) : t;
-        if(digits.isEmpty()) return null;
-        for(int i = 0; i < digits.length(); i++){
-            char c = digits.charAt(i);
-            if(c < '0' || c > '9') return null;
-        }
-        try{
-            return Long.parseLong(t);
-        }catch(NumberFormatException e){
-            return null;
-        }
-    }
 
     /** 解析十进制数字字面量（整数或小数，可带负号），失败返回 null。
      *  仅用于 {@code arrayinit} 槽位：变量/表达式/科学计数法都拒绝。 */

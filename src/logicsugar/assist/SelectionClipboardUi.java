@@ -151,13 +151,13 @@ public final class SelectionClipboardUi{
         return result;
     }
 
-    private static Dialog parentDialog(Element element){
+    public static Dialog parentDialog(Element element){
         Element current = element;
         while(current != null && !(current instanceof Dialog)) current = current.parent;
         return (Dialog)current;
     }
 
-    private static boolean inSceneTree(Element element){
+    public static boolean inSceneTree(Element element){
         Element current = element;
         while(current != null){
             if(Core.scene != null && current == Core.scene.root) return true;
@@ -166,7 +166,7 @@ public final class SelectionClipboardUi{
         return false;
     }
 
-    private static TextButton findCopyButton(Element element){
+    public static TextButton findCopyButton(Element element){
         if(element instanceof TextButton button
             && button.getText().toString().equals(Core.bundle.get("copy.clipboard"))){
             return button;
