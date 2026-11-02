@@ -1,6 +1,6 @@
 apply plugin: "java"
 
-version = "5.9.2"
+version = "5.10.0"
 sourceSets{
     main.java.srcDirs = ["src"]
     test.java.srcDirs = ["test"]
