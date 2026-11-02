@@ -8,7 +8,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - `logicsugar.LogicSugarMod#bekBundled`：宿主（Neon）注入时置 `true`。
 - **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试断言构建、函数库入口、处理器状态、单位 flag 显示/按 flag 着色、隐藏内部变量、框选、跳转线着色）。
-- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、处理器状态滑杆、单位 flag 显示/按 flag 着色、隐藏变量、框选与跳转线着色；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
+- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、处理器状态滑杆、单位 flag 显示/按 flag 着色、隐藏变量、框选、跳转线着色与底部的反馈入口；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
 
 除设置入口外，两种形态的行为完全一致；不存在单独的聚合分支代码。
 
@@ -28,6 +28,18 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 1. **注册语句**：`registerStatements()` 把 18 种 `SugarStatements` 卡片（`ForBegin` / `WhileBegin` / `SwitchBegin` / `IfBegin` / `Case` / `Default` / `ElseIf` / `Else` / `Break` / `Continue` / `BlockEnd` / `FuncDef` / `FuncCall` / `Return` / `Array` / `Matrix` / `ArrayInit` / `Span`）加入 `LogicIO.allStatements`；随后注册数据子系统模块（`DataModules.register(new ArrayBulkModule/RecordModule/ContainerModule/BitsetModule/MapModule/SetModule/ListHeapModule/ChainModule())`，同时注册表达式 intrinsic provider），再调用 `SugarStatements.installParsers()` 与 `DataModules.registerParsers()` 向 `LAssembler.customParsers` 注册全部 token 解析器（含 `forend` / `whileend` / `switchend` 三个旧开发版本标记的只读兼容，以及 `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 十张数据声明卡）。整个 `registerStatements()` 由静态 `registered` 守卫，重复 `init()` 不会重复添加卡片或解析器。这是与反编译器、自测共享的唯一注册点。
 2. **接管编辑器**：`ClientLoadEvent` 后把 `Vars.ui.logic` 换成 `SugarLogicDialog`（构造函数内使用 `SugarCanvas`）。替换前把旧对话框上除 canvas/buttons 外的子元素（如 MindustryX 的逻辑辅助浮层）按 z 顺序迁移到新对话框。
 3. **挂辅助功能**：`BoxSelect.init()`（框选）、`ExprHook.init()`（表达式语句）、`VarDisplayFilter.init()`（隐藏 `__ls_*` 内部变量）、`ProcessorStatus.init()`（处理器状态指示）、`UnitFlags.init()`（单位 flag 叠加），并注册关闭对话框时清空跳转线着色缓存。
+
+## 匿名使用统计与反馈（PostHog）
+
+`logicsugar.PostHogReporter` 只做客户端观测，不触碰处理器产物、编辑器状态或联机逻辑；初始化失败被 `LogicSugarMod.init()` 的 `ClientLoadEvent` 回调吞掉，不能影响编辑器与编译。
+
+- **会话事件**：`logicsugar_session_end`，属性 `usage_minutes`、`game_version`、`mod_version`、`player_id`、`player_name`、`bundled`、`locale`、`platform`。`usage_minutes` 是真实分钟数：`Time.delta` 本身是秒，`sessionMinutes()` 只除一次 60（Neon 当前的 `Time.delta / 60` 再 `/60` 是双重换算，不要照抄）。累计不足 `minFlushMinutes`（2 分钟）时不发请求，分钟数先持久化到 `logicsugar.posthog.pendingMinutes`，下次启动继续累计；上传成功才清零。
+- **触发点**：`EventType.Trigger.update` 里只在 `Vars.state.isGame()` 时累计；`DisposeEvent` 与 JVM shutdown hook 各尝试 flush 一次（`flushed` 守卫保证只发一次）。`Vars.headless` 直接跳过。
+- **distinct_id**：优先 `Vars.player.uuid()`，其次 `Vars.platform.getUUID()`，两者都不可用（单机 `[LOCAL]`）时生成并持久化一个 `ls-<UUID>`；结果缓存到 `logicsugar.posthog.playerId`。这样离线单机用户不会被合并成同一个 `unknown` 人。
+- **mod_version**：独立形态读 LogicSugar 自己的 `LoadedMod.meta.version`；聚合形态（`bekBundled`）读同一 class loader 下宿主 `LoadedMod.meta.version`，因此 Neon 发布号（如 `180003`）会作为宿主版本上报，现有仪表盘的 N/B 拆解规则正好处理它。
+- **国家**：模组不上报国家；PostHog 从请求 IP 自动补 `$geoip_country_name`（项目未开启 IP 匿名化）。
+- **反馈**：设置页最底部的 `FeedbackButtonSetting`（`LogicSugarSettings.build` 与 `LogicSugarMod.bekBuildSettings` 两处都注册）打开 `FeedbackDialog`，把自由文本作为特殊事件 `logicsugar_feedback` 的 `message` 属性发送；同时附带版本、玩家名、`bundled`、`locale`、`platform`。HTTP 在 daemon 线程执行，失败时保留对话框内容并提示重试。反馈与用量都不读取存档或处理器程序。
+- **实现位置**：事件 JSON 由 `sessionPayload` / `feedbackPayload` 纯函数拼装（自测 `postHogTest` 钉住事件名、属性名、JSON 转义与分钟换算），HTTP 使用与 Neon 相同的 `https://us.i.posthog.com/i/v0/e/` 和项目 token。
 
 ## 编译器：Sugar → mlog
 

@@ -75,6 +75,8 @@ public final class LogicSugarSettings{
         if(includeJumpLines){
             logicsugar.assist.JumpLineColor.buildSettings(table);
         }
+        // 反馈按钮固定在设置页最底部；Neon 聚合页在 bekBuildSettings 里同样追加这一行。
+        table.pref(new FeedbackButtonSetting());
         // Settings descriptions are prose and run to ~500 characters, while vanilla's tooltip has
         // no width limit at all, so they used to slide off both edges of the screen. Re-flow them
         // once the list is complete — addDesc() captured the raw text while each setting was being
@@ -430,6 +432,22 @@ public final class LogicSugarSettings{
                 box.add(title).padRight(12f).padLeft(4f);
                 box.button("@logicsugar.funclib.open", Icon.book, () -> new FunctionLibraryDialog().show()).size(220f, 46f);
             }).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().left().padTop(4f).get());
+            table.row();
+        }
+    }
+
+    /** 打开反馈对话框的按钮；放在设置页最底部，独立形态与 Neon 聚合形态共用。 */
+    public static class FeedbackButtonSetting extends SettingsMenuDialog.SettingsTable.Setting{
+        public FeedbackButtonSetting(){
+            super(null);
+        }
+
+        @Override
+        public void add(SettingsMenuDialog.SettingsTable table){
+            table.table(box -> {
+                box.left();
+                box.button("@logicsugar.feedback", Icon.chat, () -> new FeedbackDialog().show()).size(240f, 48f);
+            }).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().left().padTop(4f);
             table.row();
         }
     }

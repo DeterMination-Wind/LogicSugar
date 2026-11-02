@@ -160,6 +160,14 @@ public class LogicSugarMod extends Mod{
         on(ClientLoadEvent.class, event -> Core.app.post(LogicSugarMod::installEditor));
         // 变量界面/快照与编辑器所有权无关（其它 mod 接管编辑器时快照仍然可用），单独安装
         on(ClientLoadEvent.class, event -> Core.app.post(LogicSugarMod::installVars));
+        // 匿名使用统计是可选观测设施：初始化失败绝不能影响编辑器或编译。
+        on(ClientLoadEvent.class, event -> {
+            try{
+                PostHogReporter.install();
+            }catch(Throwable t){
+                Log.warn("LogicSugar: failed to install the PostHog usage reporter.", t);
+            }
+        });
     }
 
     /** Re-applies the localized mod bundle, which the game's own pass cannot find on Android.
@@ -605,5 +613,7 @@ public class LogicSugarMod extends Mod{
         LogicSugarSettings.addBoxSelectPrefs(table);
         LogicSugarSettings.addCompactCardsPref(table);
         JumpLineColor.buildSettings(table);
+        // 反馈入口放在整页最下面：两种形态都必须有，否则聚合用户看不到它。
+        table.pref(new LogicSugarSettings.FeedbackButtonSetting());
     }
 }

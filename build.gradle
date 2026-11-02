@@ -383,9 +383,17 @@ tasks.register("profilerTest", JavaExec){
     mainClass = "logicsugar.profile.ProfileInstrumentationTest"
 }
 
+// PostHog usage/feedback wire contract (event/property names, JSON escaping, minute accumulator)
+// and the dual-form feedback settings entry. No network request is made.
+tasks.register("postHogTest", JavaExec){
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "logicsugar.PostHogReporterTest"
+}
+
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, assertMessageTest, varsTest, varsUiTest, varsAccessTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, paletteHintTest, statementClipboardTest, canvasSourceTest, unitControlTest, spanTest, profilerTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, assertMessageTest, varsTest, varsUiTest, varsAccessTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, paletteHintTest, statementClipboardTest, canvasSourceTest, unitControlTest, spanTest, profilerTest, postHogTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

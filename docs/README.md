@@ -21,7 +21,7 @@ LogicSugar 的分类文档。文档以中文为主，功能名保留英文本名
 docs/
 |-- README.md            本页：文档导航
 |-- tutorials/           高级数据类型教程：中文在根目录, English 在 en/（每结构一章）
-|-- architecture.md      架构总览：双形态、编译器、重建（载体/反编译）、表达式子系统、数据子系统、跨类加载器约束、上游版本适配笔记
+|-- architecture.md      架构总览：双形态、编译器、重建（载体/反编译）、表达式子系统、数据子系统、匿名使用统计与反馈、跨类加载器约束、上游版本适配笔记
 |-- reconstruction.md    重建规则：载体还原、反编译推断、raw/stride、unit-control、span/getter 折叠、Expr 卡持久化
 |-- upstream.md          上游基线：MlogAssertions v0.11.8、跟进历史、不移植项、线格式例外
 |-- development.md       开发指南：环境、构建命令、代码风格、调试建议
