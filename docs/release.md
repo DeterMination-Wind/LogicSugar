@@ -52,6 +52,10 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 > 需要 **Mindustry v160.1+**（桌面 / Android）
 > Requires **Mindustry v160.1+** (Desktop / Android)
 
+> [!NOTE]
+> 用法：在 Expr 积木或 `expr` 条件里调用 `unit_family(u)`、`unit_tier(u)`、`unit_planet(u)`，与 `@__AIR__` 这类常量比较
+> Usage: call `unit_family(u)`, `unit_tier(u)`, or `unit_planet(u)` in an Expr card or an `expr` condition, and compare with constants like `@__AIR__`
+
 ## 中文
 
 ### 本次新增
@@ -78,7 +82,7 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 ````
 
 写作规则：
-1. **结构固定**：顶部只有一个 `> [!NOTE]` 两行引用块（中文一行 + 英文一行）写版本要求，然后 `## 中文`、`## English`。不再用 `> [!IMPORTANT]`，也不写构建命令、产物路径、测试数量与 commit 细节。
+1. **结构固定**：顶部只有一个 `> [!NOTE]` 两行引用块（中文一行 + 英文一行）写版本要求；本版有面向玩家的新功能时，可再跟一个 `> [!NOTE]`（中文一行 + 英文一行）写极简用法，只给「在哪里写什么」的一句话示例，具体说明留给教程与 `docs/`。纯修复版本不要加用法块。然后 `## 中文`、`## English`。不再用 `> [!IMPORTANT]`，也不写构建命令、产物路径、测试数量与 commit 细节。
 2. **小节**：默认只有 `### 本次新增` / `### 本次修复`（英文 `### Added` / `### Fixed`）；本版确有行为变化、又归不进「修复」时才加 `### 本次改动` / `### Changed`。**不写「已知问题 / 兼容性」小节**：跨版本线格式与调试产物事实写在 [architecture.md](architecture.md) / [glossary.md](glossary.md)，不逐版复述。中英小节一一对应。
 3. **条目就是一句完整的粗体话**：整条加粗、一行写完，例如 `**原版积木的悬停说明恢复显示**`。不写括号补充、不写「（A / B / C）」式枚举清单、也不在粗体后接解释尾巴；枚举与实现细节留在设置描述、提交信息与 `docs/`。
 4. **篇幅**：全篇最多 3 个小节、条目总数不超过 6 条；常见形态就是两小节各 2 条。一条一件事，同主题合并，宁可少写。
