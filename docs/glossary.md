@@ -75,6 +75,12 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 
 ## 表达式与恢复
 
+### 编译期常量（`@__` 前缀）
+表达式/条件字段里的常量，由 `SugarConstants` 在 `ExprCompiler` 中替换成数字字面量，不进入产物、不占运行时变量。名字大小写不敏感，`@__` 是 LogicSugar 保留命名空间：未登记的 `@__` 名字是编译错误，任何在简单条件字段、`exprsc`、`case` 或裸 `jump` 里残留的 `@__` token 会被 `SugarCompiler` 拒绝，避免运行时读成 null 变量。当前表含单位家族/等级/星球枚举与 `@__EPS__`、`@__TILESIZE__`、`@__TICKS_PER_SECOND__`、`@__SECONDS_PER_TICK__`。
+
+### 单位家族 / 逻辑 id / 单位等级（unit family / logic id / unit tier）
+`unit_family(u)` 返回原版**工厂 / 科技树家族**（0 未知、1 地面、2 空军、3 海军、8 核心、4 坦克、5 机甲、6 舰船、7 支援），不是移动方式——Erekir `elude` 是 ship 家族但地面，`avert` 等同家族却会飞。分类依据是单位类型的 **logic id**（`sensor u.type @id`，原版 v160 `logicids.dat` 的 0..55，模组/未来单位为 0）：`unit_tier` 在家族内按 `id % 5 + 1`（Erekir 先减 38）给出 1..5，`unit_planet` 给出 1 Serpulo（0..37）/ 2 Erekir（38..55）。三个 getter 都是编译期展开成原版 `sensor`/`op` 的 intrinsic，表冻结；改表会让旧存档的 `verifyRestore` 失败，语义变更应新增名字/版本。
+
 ### 容量解析（capacity resolution）
 声明卡的容量上限口径：`ArrayRegistry.capacityOf(memory)` 先向当前会话的处理器解析该变量链接到的方块（`LinkResolver`；mod 启动时用 `ArrayRegistry.setLinkResolverProvider(ArrayRegistry::processorLinks)` 装延迟提供者，按需从 `SugarLogicDialog.executor` 取），命中 `MemoryBlock` 就返回真实 `memoryCapacity`；解析到方块但不是内存块返回 0（确定不限制）；完全解析不到（无处理器上下文、变量缺失）才回落到按名字猜的 `memoryCapacity(String)`。三态由 `CapacitySource` 区分（`linked` / `notMemory` / `inferred` / `unknown`），只有 `inferred` 的错误信息会标注是猜的。函数库会话与无头自测没有处理器，因此回落分支必须保留；由 `arrayTest` 的 `resolvedMemoryCapacity` 钉住。span 名返回逻辑容量 `N * C`（`SpanInfo.logicalCapacity`）；每格容量 C 对未链接的成员走同一张名字表（即 `inferred`），只有全部成员都解析到链接时 `capacitySource(span)` 才是 `linked`——所以它比数组多一条硬约束：猜不出来（既无链接、名字也不像链接名）就不能编译，因为 `idiv`/`mod` 需要确定的除数。
 

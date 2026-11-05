@@ -8,7 +8,7 @@ Each chapter covers one topic: when to use it, the declaration card or card fiel
 
 ## Chapter map
 
-| Structure | One-liner | Typical calls | Chapter |
+| Structure / topic | One-liner | Typical calls | Chapter |
 | --- | --- | --- | --- |
 | Array | random access to a contiguous memory range | `buf[i]`, `len(buf)` | [array.md](array.md) |
 | Array bulk ops | whole-array queries and transforms | `array_sum` `array_fill` `array_sort` `array_lower_bound` | [array-bulk.md](array-bulk.md) |
@@ -24,6 +24,7 @@ Each chapter covers one topic: when to use it, the declaration card or card fiel
 | Min-heap | priority queue that peels the minimum | `heap_push` `heap_pop` | [heap.md](heap.md) |
 | Chain | free list plus node links | `chain_init` `chain_alloc` `chain_get` `chain_link` | [chain.md](chain.md) |
 | Combined memory | several equal blocks as one logical address space | `read x mem i`, `buf[i]` (array memory = mem) | [span.md](span.md) |
+| Unit classification | filter units by vanilla family / tier / planet | `unit_family` `unit_tier` `unit_planet` | [unit-classification.md](unit-classification.md) |
 
 > Note: the editor menus and cards use the new names (e.g. `stack_push`); the old short names (e.g. `spush`) still parse in existing saves, and new cards are always written with the new names.
 
@@ -163,6 +164,7 @@ The preview only applies to a complete quoted string. An unknown icon name is ke
 | repeatedly peel the minimum | [heap.md](heap.md) |
 | manual nodes and links (adjacency, LRU) | [chain.md](chain.md) |
 | control one or several units, one fleet per processor | [unit-control.md](unit-control.md) |
+| filter units by factory family / tech tier / planet | [unit-classification.md](unit-classification.md) |
 
 ## Unit-control cards
 
@@ -172,6 +174,13 @@ The selection guide above is mostly about data structures; unit control is a sep
 | --- | --- | --- |
 | Unit control | claim, bind, loop over, and release units with a flag | [unit-control.md](unit-control.md) |
 | Compilation | what each of the four cards actually emits | [unit-control-compilation.md](unit-control-compilation.md) |
+
+## Unit classification
+
+Unit classification is an expression topic rather than a data structure: `unit_family` / `unit_tier` /
+`unit_planet` expand at compile time into ordinary `sensor` / `op` instructions keyed by the vanilla
+logic id, so the product stays plain vanilla mlog. Family/tier/planet semantics, constants and limits:
+[unit-classification.md](unit-classification.md).
 
 ## Verifying the lowering yourself
 

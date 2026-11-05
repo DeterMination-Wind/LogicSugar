@@ -8,7 +8,7 @@ LogicSugar 的分类文档。文档以中文为主，功能名保留英文本名
 | --- | --- |
 | 玩家 | [README_zh.md](../README_zh.md)（功能与安装说明） |
 | 想了解 LogicSugar 怎么组织的人 | [架构总览](architecture.md) |
-| 想学进阶玩法 | [中文教程](tutorials/README.md) / [English tutorial](tutorials/en/README.md)（每章一个主题：数据结构、单位控制；含声明卡或卡片字段、函数表、转译、复杂度或预算、使用须知） |
+| 想学进阶玩法 | [中文教程](tutorials/README.md) / [English tutorial](tutorials/en/README.md)（每章一个主题：数据结构、单位控制、单位分类；含声明卡或卡片字段、函数表、转译、复杂度或预算、使用须知） |
 | 想改 LogicSugar 代码 | [开发指南](development.md) 与[架构总览](architecture.md) |
 | 改动需要验证 | [测试指南](testing.md) |
 | 想知道 v5 的值 / 失败 / 版本语义 | [v5 API 契约](api-v5.md) |
@@ -20,7 +20,7 @@ LogicSugar 的分类文档。文档以中文为主，功能名保留英文本名
 ```text
 docs/
 |-- README.md            本页：文档导航
-|-- tutorials/           进阶教程：中文在根目录, English 在 en/（每章一个主题，含数据结构与单位控制）
+|-- tutorials/           进阶教程：中文在根目录, English 在 en/（每章一个主题，含数据结构、单位控制与单位分类）
 |-- architecture.md      架构总览：双形态、编译器、重建（载体/反编译）、表达式子系统、数据子系统、匿名使用统计与反馈、跨类加载器约束、上游版本适配笔记
 |-- reconstruction.md    重建规则：载体还原、反编译推断、raw/stride、unit-control、span/getter 折叠、Expr 卡持久化
 |-- upstream.md          上游基线：MlogAssertions v0.11.8、跟进历史、不移植项、线格式例外

@@ -46,6 +46,7 @@ import logicsugar.assist.data.SetModule;
 import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprHook;
 import logicsugar.assist.expr.ExprIntrinsics;
+import logicsugar.assist.expr.UnitIntrinsics;
 import static arc.Events.on;
 
 public class LogicSugarMod extends Mod{
@@ -581,6 +582,10 @@ public class LogicSugarMod extends Mod{
         DataModules.register(new SetModule());
         DataModules.register(new ListHeapModule());
         DataModules.register(new ChainModule());
+
+        // Unit family/tier/planet getters. Pure compile-time expression expansions whose emitted
+        // instructions are vanilla sensor/op, so this does not touch the multiplayer gate.
+        ExprIntrinsics.register(new UnitIntrinsics());
 
         // single registration point shared with the decompiler preflight and the self-tests
         SugarStatements.installParsers();

@@ -611,6 +611,10 @@ public class ExprCompiler{
                         String intrinsic = ExprIntrinsics.canonicalName(name, args.size());
                         if(intrinsic != null){
                             base = new Call(intrinsic, args);
+                        }else if(SugarConstants.isReserved(name)){
+                            // Constants are values, not functions; do not let an @__ name fall
+                            // through to a user-function call and end up as a raw token later.
+                            throw new ParseException(SugarConstants.unknown(name));
                         }else if(checker != null && !checker.isFunction(name)){
                             // 编辑期校验：名字不是已知用户函数/库函数
                             throw new ParseException(msg("la.err.unknown_func", name));
@@ -620,7 +624,17 @@ public class ExprCompiler{
                         }
                     }
                 }else{
-                    base = new Var(name);
+                    // Reserved compile-time constants: substitute before the literal leaves the
+                    // expression compiler. A name in the @__ namespace that is not registered is
+                    // a hard error here, not a silently-null mlog variable.
+                    Double constant = SugarConstants.value(name);
+                    if(constant != null){
+                        base = new Num(constant);
+                    }else if(SugarConstants.isReserved(name)){
+                        throw new ParseException(SugarConstants.unknown(name));
+                    }else{
+                        base = new Var(name);
+                    }
                 }
             }else{
                 throw new ParseException(msg("la.err.unexpected_token", tok.text));

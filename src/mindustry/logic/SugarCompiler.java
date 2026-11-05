@@ -26,6 +26,7 @@ import logicsugar.assist.expr.ArrayRegistry;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprIntrinsics;
 import logicsugar.assist.expr.SpanAccess;
+import logicsugar.assist.expr.SugarConstants;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -591,7 +592,13 @@ public final class SugarCompiler{
                 + " shorten the program.");
         }
 
-        if(!containsSugar(statements)) return sugar;
+        if(!containsSugar(statements)){
+            // Plain vanilla programs never reach the lowering path below. A raw @__ constant in
+            // `set x @__T5__` must not be stored as an ordinary null variable; constants belong in
+            // expression/condition fields, which are only present when the program has sugar.
+            SugarConstants.rejectUnresolved(sugar, "a plain vanilla statement");
+            return sugar;
+        }
 
         // destIndex on begin cards is a jump comment. Older saves and hand-edited
         // carriers can leave it pointing past the program while if/for/while/switch
@@ -678,6 +685,10 @@ public final class SugarCompiler{
             // final destination directly. Semantics-preserving; merges stacked structure-exit
             // defaults and jump-table hole rows that would otherwise hop twice at runtime.
             String lowered = threadAlwaysJumpTargets(out.toString());
+            // Anything still in the reserved constant namespace at this point came from a raw
+            // token position (plain set/op card, simple condition fields, case values, raw jump).
+            // Reject it instead of writing a variable whose name vanilla will never resolve.
+            SugarConstants.rejectUnresolved(lowered, "the compiled program");
 
             // Persistence carriers: real "set" statements appended after the marker block. They
             // survive the vanilla parse/save round trip that drops the comment markers, and are

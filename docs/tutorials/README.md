@@ -8,7 +8,7 @@
 
 ## 章节导航
 
-| 结构 | 一句话 | 典型操作 | 章节 |
+| 结构 / 专题 | 一句话 | 典型操作 | 章节 |
 | --- | --- | --- | --- |
 | 一维数组 | 一段连续内存的随机访问容器 | `buf[i]`、`len(buf)` | [array.md](array.md) |
 | 数组批量运算 | 对整段数组求值/变换 | `array_sum` `array_fill` `array_sort` `array_lower_bound` | [array-bulk.md](array-bulk.md) |
@@ -24,6 +24,7 @@
 | 小顶堆 | 反复取最小值的优先队列 | `heap_push` `heap_pop` | [heap.md](heap.md) |
 | 链表 | 空闲链加节点链接 | `chain_init` `chain_alloc` `chain_get` `chain_link` | [chain.md](chain.md) |
 | 合并内存 | 把多块等容量内存拼成一段逻辑地址 | `read x mem i`、`buf[i]`（数组的内存填 mem） | [span.md](span.md) |
+| 单位分类 | 按原版工厂家族 / 等级 / 星球筛选单位 | `unit_family` `unit_tier` `unit_planet` | [unit-classification.md](unit-classification.md) |
 
 > 提示：编辑器菜单与积木显示的是新名字（如 `stack_push`）；旧短名（如 `spush`）仍能解析已有存档，但新写的卡片一律用新名。
 
@@ -163,6 +164,7 @@ chain c        -> __ls_chn_c_head / _free
 | 反复取最小值（Dijkstra、合并） | [heap.md](heap.md) |
 | 自己管理节点与链接（邻接表、LRU） | [chain.md](chain.md) |
 | 控制一个/多个单位，按处理器分队 | [unit-control.md](unit-control.md) |
+| 按工厂家族 / 科技等级 / 星球筛选单位 | [unit-classification.md](unit-classification.md) |
 
 ## 单位控制卡
 
@@ -172,6 +174,12 @@ chain c        -> __ls_chn_c_head / _free
 | --- | --- | --- |
 | 单位控制 | 用 flag 认领、绑定、循环和解控单位 | [unit-control.md](unit-control.md) |
 | 编译展开 | 四张卡各自生成了哪些原版指令 | [unit-control-compilation.md](unit-control-compilation.md) |
+
+## 单位分类
+
+单位分类是表达式专题而不是数据结构：`unit_family` / `unit_tier` / `unit_planet` 在编译期按原版
+logic id 展开成普通 `sensor` / `op`，产物仍是纯原版 mlog。家族、等级、星球语义、常量与使用限制见
+[unit-classification.md](unit-classification.md)。
 
 ## 怎么自己验证转译结果
 

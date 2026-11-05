@@ -300,6 +300,16 @@ read/write/matrix 三种形态。
 类型仍把每次出现都算读取——失败方向是“fold less, never fold wrong”。`exprCardTest` 的
 `duplicateChainsShareTempsWithoutBlockingEachOther`、`arrayTest`、`spanTest` 双向钉住。
 
+### 编译期常量 / 单位 getter 的重建边界
+
+- `@__...` 常量在表达式字段里被替换成数字，产物只含 `set`/`op`；原始 token 只留在载体、条件源文本或单行 Expr 卡的 `# @ls-expr-card` marker 注释中，
+  因此条件卡重开仍显示 `unit_family(u) == @__AIR__` 这类源文本。
+- `unit_family` / `unit_tier` / `unit_planet` 没有 `Provider.foldAt`：多行 Expr 卡按展开行保存，重开时由
+  通用 op 链重建得到一个**等价公式**，不保证函数名回来。不要把「函数名可读」写进持久化承诺；需要稳定
+  名字时写在条件卡里。
+- 分类表冻结在 v160：扩范围或改语义会改变已保存条件/载体源的重编译指令流，`verifyRestore` 判失败后
+  存档退回 vanilla 视图。语义变更应新增 intrinsic 名字/版本，而不是原地改表。
+
 ### 显示
 
 `ExprStatement.highlight` 给每个 token 包 `[color]…[]`。Arc 的 markup 把 `[[` 当一个字面 `[`、不处理 `]`，

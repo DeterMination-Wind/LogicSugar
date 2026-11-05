@@ -84,6 +84,26 @@
 - 细节（哨兵、skip list、可写内建与旧 payload 兼容）见[重建规则](../../../../docs/reconstruction.md)
   「文本导入」。
 
+## 编译期常量与单位 getter
+
+- `SugarConstants`：`@__` 保留前缀下的表达式常量（单位家族 / 等级 / 星球枚举、`@__EPS__`、
+  `@__TILESIZE__`、`@__TICKS_PER_SECOND__`、`@__SECONDS_PER_TICK__`），大小写不敏感，由 `ExprCompiler`
+  在词法/语法层替换成数字。它们不是 mlog 内建变量；支持位置是 Expr 卡、`expr` 表达式条件与函数 `return`
+  表达式。不要把常量或 `unit_family(...)` 等 getter 调用写进 `set`/`op` 卡、简单条件字段、`exprsc`
+  短路条件、`switch` 表达式、`case` 或裸 `jump`——`SugarConstants.rejectUnresolved` 对无 sugar 程序
+  在早返回前扫描源码、对 sugar 程序在 lowering 后扫描产物，拒绝残留的 `@__` token 和 raw getter 调用。
+  未登记的 `@__` 名字直接报错，不落到普通变量。
+- `UnitIntrinsics`：`unit_family(u)` / `unit_tier(u)` / `unit_planet(u)` 是函数，不是 sensor，也不做成员糖
+  （`u.family` 等会按 unit 还是 unit type 歧义，`isMemberBase` 恒 false）。实参是单位；分类表按 v160
+  logic id 冻结，模组/未来单位返回 0。`unit_family` 是工厂/科技树家族而非移动方式（Erekir `elude`
+  ship 家族但地面，`avert` 等同家族却会飞），不要用 `@flying`/`@naval` 反推。
+- 反向层：`UnitIntrinsics` **故意没有 `foldAt`**。多行 Expr 卡保存的是展开行，重开时由通用 op 链重建为
+  **等价公式**，不保证函数名回来；条件卡 / 结构卡的源文本进载体，重开仍保留 `unit_family(...)`。不要在
+  文档或测试里承诺「重开仍是函数调用」。
+- 改表会改变已保存条件/载体源的重编译指令流并让 `SugarCompiler.verifyRestore` 失败；语义要变就新增
+  intrinsic 名字/版本，不要原地扩范围或改值。回归入口：`unitClassTest`（常量替换/拒绝 + 三个 getter 的
+  表值与展开）。
+
 ## 显示与测试
 
 - `ExprStatement.highlight` 只转义 `[`（Arc 把 `[[` 当一个字面 `[`，转义 `]` 会多画一个括号）；error label
