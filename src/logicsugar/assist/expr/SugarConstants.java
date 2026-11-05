@@ -91,7 +91,9 @@ public final class SugarConstants{
 
     /**
      * Rejects any {@code @__...} token that survived compilation. Tokens inside quoted strings
-     * and {@code #} comments are ignored.
+     * and {@code #} comments are ignored, using the same escape rules as the v160.1
+     * {@code LParser.string()} ({@code \\}, {@code \"}, {@code \n}, and a backslash-u
+     * unicode escape).
      *
      * <p>Called twice: on the source of a program that has no sugar statements (the early return
      * path), and on the lowered instruction text of every sugar program. This is what keeps a raw
@@ -105,7 +107,14 @@ public final class SugarConstants{
         for(int i = 0; i < text.length(); i++){
             char c = text.charAt(i);
             if(inString){
-                if(c == '"'){
+                // v160.1's LParser.string() treats \\, \" and \n as escapes and accepts a
+                // backslash-u unicode escape, so a quote right after a backslash does not close
+                // the literal. Skipping the escaped character is enough for a quote scan: none of
+                // those escapes puts a bare quote in the text. A lone backslash is ordinary.
+                if(c == '\\' && i + 1 < text.length()){
+                    char next = text.charAt(i + 1);
+                    if(next == '\\' || next == '"' || next == 'n' || next == 'u') i++;
+                }else if(c == '"'){
                     inString = false;
                 }
                 continue;

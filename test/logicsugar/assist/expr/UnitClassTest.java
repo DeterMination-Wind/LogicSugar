@@ -303,12 +303,20 @@ public final class UnitClassTest{
         expectIllegal(() -> SugarCompiler.compile("set x unit_family(u)\n"), "unit_family");
         expectIllegal(() -> SugarCompiler.compile("ifbegin unit_tier(u) equal 2 2\nset x 1\nblockend\n"), "unit_tier");
         expectIllegal(() -> SugarCompiler.compile("switchbegin unit_planet(u) 3\ncase 1\nset y 1\nblockend\n"), "unit_planet");
-        // mlog strings have no backslash escapes: `print "C:\"` ends at the quote. The scanner
-        // must not desync on it (both a bypass and a false rejection used to be possible).
-        expectIllegal(() -> SugarCompiler.compile("print \"C:\\\"\nset x @__T5__\n"), "@__T5__");
-        expectIllegal(() -> SugarCompiler.compile("print \"C:\\\"\nifbegin unit_family(u) equal 2 2\nset x 1\nblockend\n"), "unit_family");
-        String backslash = SugarCompiler.compile("print \"C:\\\"\nprint \"@__T5__\"\n");
-        check(backslash.contains("\"C:\\\"") && backslash.contains("\"@__T5__\""), "backslash string desynced the scan");
+        // v160.1's LParser.string() supports \\, \" and \n escapes, so a quote right after a
+        // backslash does not close the literal. The reserved-token scan must follow the same rule:
+        // a naive "a quote always ends the string" scan both hid the statements after an escaped
+        // quote (bypass) and rejected literal text before the real closing quote (false
+        // positive). Exercised on the scanner directly, so the case does not depend on whether
+        // the game JAR on the local classpath already parses escaped strings.
+        SugarConstants.rejectUnresolved("print \"\\\"@__T5__\"\n", "test");
+        expectIllegal(() -> SugarConstants.rejectUnresolved("print \"\\\"\"\nset x @__T5__\n", "test"), "@__T5__");
+        expectIllegal(() -> SugarConstants.rejectUnresolved(
+            "print \"\\\"\"\nifbegin unit_family(u) equal 2 2\nset x 1\nblockend\n", "test"), "unit_family");
+        // A doubled backslash is a literal backslash; the following quote still ends the string.
+        SugarConstants.rejectUnresolved("print \"C:\\\\\"\nprint \"@__T5__\"\n", "test");
+        String backslash = SugarCompiler.compile("print \"C:\\\\\"\nprint \"@__T5__\"\n");
+        check(backslash.contains("\"C:\\\\\"") && backslash.contains("\"@__T5__\""), "backslash string desynced the scan");
         // Constants in a short-circuit condition are still raw tokens.
         expectIllegal(() -> SugarCompiler.compile(
             "ifbegin exprsc \"@__T5__ == 5\" 2\nset x 1\nblockend\n"), "@__T5__");

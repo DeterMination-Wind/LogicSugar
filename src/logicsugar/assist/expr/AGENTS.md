@@ -92,7 +92,9 @@
   表达式。不要把常量或 `unit_family(...)` 等 getter 调用写进 `set`/`op` 卡、简单条件字段、`exprsc`
   短路条件、`switch` 表达式、`case` 或裸 `jump`——`SugarConstants.rejectUnresolved` 对无 sugar 程序
   在早返回前扫描源码、对 sugar 程序在 lowering 后扫描产物，拒绝残留的 `@__` token 和 raw getter 调用。
-  未登记的 `@__` 名字直接报错，不落到普通变量。
+  未登记的 `@__` 名字直接报错，不落到普通变量。字符串扫描跟随 v160.1 `LParser.string()` 的转义规则
+  （`\\`、`\"`、`\n`、`\uXXXX`）：引号在反斜杠后不结束字符串，否则 `print "\""` 之后的所有 token 都会被
+  当成字符串内容而漏检。
 - `UnitIntrinsics`：`unit_family(u)` / `unit_tier(u)` / `unit_planet(u)` 是函数，不是 sensor，也不做成员糖
   （`u.family` 等会按 unit 还是 unit type 歧义，`isMemberBase` 恒 false）。实参是单位；分类表按 v160
   logic id 冻结，模组/未来单位返回 0。`unit_family` 是工厂/科技树家族而非移动方式（Erekir `elude`
