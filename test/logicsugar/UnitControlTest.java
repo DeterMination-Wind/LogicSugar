@@ -45,10 +45,16 @@ public class UnitControlTest{
     private static void nextSkipsOwnedFlag(){
         String code = executable("unitnext @flare scout\n");
         check(code.contains("ubind @flare\n"), "next must scan the requested type");
-        check(!code.contains("jump __ls_ub_take_0 equal __ls_ub_f_0 __ls_ub_uid\n"),
-            "next must not treat an already-owned unit as the next idle one");
-        check(code.contains("jump __ls_ub_loop_0 notEqual __ls_ub_f_0 0\n"), "next must skip non-zero flags");
-        check(code.contains("set scout @unit\n"), "next must assign its variable");
+        check(code.contains("jump __ls_ub_scan_0 equal __ls_ub_h_0 null\n"),
+            "next must confirm the remembered unit on the next entry");
+        check(count(code, "jump __ls_ub_take_0 equal __ls_ub_f_0 __ls_ub_uid\n") == 1,
+            "next must only confirm the remembered unit, not accept owned units during the scan");
+        check(code.contains("sensor __ls_ub_f_0 @unit @flag\njump __ls_ub_loop_0 notEqual __ls_ub_f_0 0\n"),
+            "next must skip non-zero flags during the scan");
+        check(code.contains("set scout @unit\nset __ls_ub_h_0 null\n"),
+            "next must assign its variable and clear the one-shot confirmation");
+        check(code.contains("set scout null\nset __ls_ub_h_0 null\n"),
+            "next must clear both the variable and the confirmation on failure");
     }
 
     private static void releaseClearsOwnFlagOnly(){
@@ -104,6 +110,12 @@ public class UnitControlTest{
         int at = compiled.indexOf("set __ls_sugar ");
         check(at >= 0, "no carrier in " + compiled);
         return compiled.substring(0, at);
+    }
+
+    private static int count(String text, String needle){
+        int total = 0;
+        for(int at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length())) total++;
+        return total;
     }
 
     private static void check(boolean condition, String message){

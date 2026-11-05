@@ -196,7 +196,7 @@ jump loop notEqual flag 0
 
 注意 `@flag` 读了两次：先在 `sensor flag` 后判断是不是自己的，再在 `@controlled` 检查之后重新读一次。这样做的目的是缩小“读 flag 和写 flag 之间被别的处理器插队”的窗口；它不是原子操作，只是把竞争窗口压窄。
 
-`jump take equal flag myFlag` 在跳过非零 flag 之前，所以扫描也可能捡到一只**已经带本处理器 flag** 的单位。这是 `unitbind` 和 `unitnext` 的一个区别：前者接受自己的单位，后者跳过所有非零 flag。
+`jump take equal flag myFlag` 在跳过非零 flag 之前，所以扫描也可能捡到一只**已经带本处理器 flag** 的单位。这是 `unitbind` 和 `unitnext` 的一个区别：前者的扫描接受自己的单位，后者在扫描里跳过所有非零 flag，只在顶部 `held` 分支确认上一轮刚认领的那一只。
 
 ### C. 认领握手
 
@@ -243,9 +243,9 @@ ok:
 
 `unit` 是你的变量，`@unit` 是原版当前绑定单位。成功时它们指向同一只；失败时 `unit` 保证是 `null`，但 `@unit` 不保证是 `null`，它可能还停在最后扫描到的那只单位上。
 
-## unitnext：完整 38 行（卡片 37 行），去掉复用分支
+## unitnext：完整 51 行（卡片 50 行），一次性确认
 
-示例是 `unitnext @flare scout`。下面 37 行是卡片本身；加上程序级入口跳过 `set @counter 0` 共 38 行。
+示例是 `unitnext @flare scout`。下面 50 行是卡片本身；加上程序级入口跳过 `set @counter 0` 共 51 行。
 
 ### 卡片 lowering（已改名）
 
@@ -253,6 +253,16 @@ ok:
 op mul myFlag @thisx 100000
 op add myFlag myFlag @thisy
 op add myFlag myFlag 1
+jump scan equal held null
+ubind held
+jump lost equal @unit null
+sensor dead @unit @dead
+jump lost notEqual dead 0
+sensor flag @unit @flag
+jump take equal flag myFlag
+lost:
+set held null
+scan:
 set steps 0
 set anchor null
 loop:
@@ -282,30 +292,33 @@ ubind held
 jump loop equal @unit null
 sensor flag @unit @flag
 jump loop notEqual flag myFlag
+take:
 set scout @unit
+set held null
 jump ok always x false
 fail:
 set scout null
+set held null
 ok:
 ```
 
 和 `unitbind` 对比，差异有几处：
 
-- 没有开头的 `held` 复用分支，所以每次执行都重新扫描；
-- 扫描里没有 `jump take equal flag myFlag`，所以任何非零 flag 都被跳过，包括自己的；
-- 失败分支把 `scout` 设成 `null`。
+- 开头也有 `held` 复核分支，但 `take` 里多了一条 `set held null`：确认并交付后立刻清空，下一次重新扫描，不会像 `unitbind` 那样粘住；
+- 扫描里没有 `jump take equal flag myFlag`，所以任何非零 flag 都被跳过，包括自己的；只有顶部的 `held` 分支会接受“上一轮刚认领的那一只”；
+- 失败分支把 `scout` 设成 `null`，同时清空 `held`。
 
-### 赋值位置：读这段 lowering 时必须注意的事
+### 一次性确认
 
-看列表里 `set scout @unit` 的位置：它在四个 `end` 之后。按上面说的 `end` 语义，执行不会顺着走到这里；下一次从顶部进入时又没有 `held` 复用分支来补做赋值。能到达的赋值只有 `fail:` 里的 `set scout null`。
+`take:` 在列表里位于认领握手之后。和 `unitbind` 一样，它不是靠 `end` 后面的顺序代码到达的，而是靠下一次进入卡片时的顶部 `held` 分支：
 
-因此，按这份 lowering 读，`unitnext` 会扫描、会给空闲单位写本处理器的 flag，但 `scout` 拿不到单位。`unitbind` 有 `take` 标签可以从顶部重入，`unitfor` 有 phase 0 重数；`unitnext` 两者都没有。
+1. 认领时 `set held @unit`，写 flag，`end`；
+2. 下一次进入卡片，`jump scan equal held null` 发现 `held` 非空；
+3. `ubind held` 绑回候选，查 `@dead`、查 `flag == myFlag`；
+4. 都通过就跳 `take`，执行 `set scout @unit`，然后 `set held null`；
+5. 下一次调用 `unitnext` 时 `held` 已经是 `null`，重新扫描，找下一只空闲单位。
 
-这不是让你去背的“固定结论”：lowering 以后可能改，判断依据始终是你编辑器里 Original 视图的实际文本。如果你看到的 `set scout @unit` 在 `end` 之前，或者多了复用分支，就以那份产物为准。在当前版本里要拿单位，优先 `unitbind` 或 `unitfor`。
-
-它仍然会把候选写进 `held`，因为认领握手需要记住 `@unit`；但下一次执行不会先复用 `held`，也不会用它来复核。扫描找的是“下一只空闲的”，不是“我的下一只”；只是在赋值位置这一点上，结果交不出来。
-
-重复执行时，`ubind @flare` 会沿着处理器的单位游标继续走；如果一轮扫描绕回 `anchor` 还没找到空闲单位，就 `fail`，变量为 `null`。如果有空闲单位，它会逐个认领（写 flag），然后继续扫下一只。
+所以 `unitnext` 的 `held` 是“一次性收据”：只用来确认上一轮刚认领的那只，确认完就丢掉。`unitbind` 的 `held` 是“长期记忆”，确认后继续指向同一只。两者的延迟确认都落在下一次进入卡片，但交付语义不同。
 
 ## unitfree：完整 14 行（卡片 13 行）
 
@@ -561,7 +574,7 @@ jump scan always x false
 
 把上面的细节压成几条设计理由：
 
-- **避免两台处理器认领同一只单位。** 先读 flag，再写 flag；写完回到顶部，下一次进入时重读（`unitbind` 的 `held` 分支）或重数（`unitfor` 的 phase 0）。没有这层重入检查，两台处理器可能同时看到 flag 0，然后都以为自己成功了。
+- **避免两台处理器认领同一只单位。** 先读 flag，再写 flag；写完回到顶部，下一次进入时重读（`unitbind` / `unitnext` 的 `held` 分支）或重数（`unitfor` 的 phase 0）。没有这层重入检查，两台处理器可能同时看到 flag 0，然后都以为自己成功了。
 - **避免抢走已被控制的单位。** 认领陌生单位前检查 `@controlled != 0` 并跳过，所以不会把玩家、指挥或其他逻辑正在用的单位拉进来。已经属于自己的单位不走这道检查，复用/投递不受影响。
 - **单位列表会变。** 扫描过程中单位可能死亡或出生，`ubind` 的游标也会动；`anchor` 用来判断是否绕完一圈，`steps > 8192` 是防止永远绕不回来的硬上限。
 - **跳过死单位。** `@dead` 检查在 flag 之前，死单位不参与认领。
@@ -631,7 +644,7 @@ jump take equal flag myFlag
 
 认领时已经把候选写进了 `held`。下一次从程序顶部重新执行，走到这张卡时，A 段会先 `ubind held`，再读 flag；如果 flag 还是 `myFlag`，就直接去 `take`。这就是“延迟确认”在实践中的落点。
 
-`end` 后面那几行 `ubind held` / `sensor flag` / `jump loop` 在正常路径上不会执行到；这不是 bug 报告，而是原版 `end` 语义和这份 lowering 放在一起时的读法。`unitbind` 用下一次进入卡片时的 `held` 分支完成同样的复核；`unitfor` 用下一次的 phase 0 重数来完成。`unitnext` 没有重入复核分支，所以它写在 `end` 后面的赋值不会执行——这是上一节讲过的赋值位置问题。
+`end` 后面那几行 `ubind held` / `sensor flag` / `jump loop` 在正常路径上不会执行到；这不是 bug 报告，而是原版 `end` 语义和这份 lowering 放在一起时的读法。`unitbind` / `unitnext` 用下一次进入卡片时的 `held` 分支完成同样的复核；`unitfor` 用下一次的 phase 0 重数来完成。区别只在交付后怎么处理 `held`：`unitbind` 继续留着，`unitnext` 在 `take` 里清空。
 
 `unitfor` 也是一样：认领后的 `end` 让这一轮结束、回到顶部；初始化会重新执行，phase 0 重新统计，把刚认领的单位算进 `owned`，phase 1 再投递。两段式让它不依赖“上次执行到哪一行”。
 
@@ -644,11 +657,11 @@ jump take equal flag myFlag
 1. 在编辑器里只放一张卡，保存，切到 Original 视图。
 2. 对照本文的完整列表，逐行看 `myFlag`、`ubind`、`sensor`、`ucontrol`、`jump` 的顺序；变量名应该是 `__ls_ub_*`，不是本文的短名。
 3. 用原版处理器或 `LAssembler.read` 验证每一行都能解析。仓库里的 `unitControlTest.productIsVanilla` 做的就是这件事：只允许 `op` / `set` / `ubind` / `sensor` / `ucontrol` / `jump` / `end` 和用户正文，并拒绝 `InvalidStatement`。
-4. 重点核对几个安全点：`@controlled` 只拦认领、`@flag` 双读、`steps > 8192`、`anchor` 判环，以及“复核代码写在 `end` 后面、不会顺序执行”这一事实；确认 `unitbind` 有 `take` 重入、`unitfor` 有 phase 0 重数，而 `unitnext` 没有。
+4. 重点核对几个安全点：`@controlled` 只拦认领、`@flag` 双读、`steps > 8192`、`anchor` 判环，以及“复核代码写在 `end` 后面、不会顺序执行”这一事实；确认 `unitbind` / `unitnext` 都有 `take` 重入、`unitfor` 有 phase 0 重数，并且 `unitnext` 的 `take` 会清空 `held`。
 5. 核对 `unitfor` 的两段式：phase 0 只 `owned++`，`wrap` 时算 `room = count - owned`，phase 1 才 `give` 和认领，`delivered` 封顶。
 6. 把 `set __ls_sugar "..."` 和 `# @logic-sugar-v2` 标记块都删掉再重开，观察推断是否恢复成卡；改一个扫描守卫或变量名，确认它保持原版而不是硬恢复。
 7. 想直接看 `end` 的效果，可以拿一段“`end` 后面还有赋值”的小程序在 `LExecutor` 里单步执行，观察计数器越界后被重置为 0、后面的行没有执行；这是读四个 `end` 最直接的验证。
-8. 开发时可以跑 `.\gradlew.bat unitControlTest`。它检查 lowering 形状（flag 拼接、四个 `end`、复核指令、`unitfor` 的 `break`/`continue`、原版可解析、载体往返），不模拟运行时；`unitnext` 的赋值位置要按第 7 步自己看。
+8. 开发时可以跑 `.\gradlew.bat unitControlTest`。它检查 lowering 形状（flag 拼接、四个 `end`、`unitbind` / `unitnext` 的 `take` 重入、`unitnext` 的一次性 `held` 清空、`unitfor` 的 `break`/`continue`、原版可解析、载体往返），不模拟运行时；运行时行为仍按第 7 步自己看。
 
 ## 小结与问题
 
@@ -656,7 +669,7 @@ jump take equal flag myFlag
 
 - `myFlag = @thisx * 100000 + @thisy + 1`，`0` 留给未认领；
 - `unitbind` 先复用 `held`，再扫描/认领；
-- `unitnext` 去掉复用并跳过所有非零 flag；当前赋值写在 `end` 之后，变量收不到结果；
+- `unitnext` 用一次性 `held` 复核，交付后清空；扫描跳过所有非零 flag，所以下一次继续找空闲单位；
 - `unitfree` 只清自己的 flag；
 - `unitfor` 先统计 `owned`，再算 `room`，最后投递/认领，`delivered` 封顶；
 - 载体保存卡片身份，推断只认固定 lowering，对不上就保持原版。
@@ -665,7 +678,7 @@ jump take equal flag myFlag
 
 1. 为什么 `unitfor` 要先统计再投递？如果边扫边认领，`room` 会出什么问题？
 2. 为什么扫描要在 `@controlled` 检查前后各读一次 `@flag`？这只缩小窗口，还是彻底消除竞争？
-3. 在 `end` 的语义下，`unitbind` 的确认实际发生在哪一段？为什么不能按行号读 `end` 后面的几行？`unitnext` 为什么没有同样的补偿？
+3. 在 `end` 的语义下，`unitbind` / `unitnext` 的确认实际发生在哪一段？为什么不能按行号读 `end` 后面的几行？`unitnext` 为什么在交付后清空 `held`？
 
 相关文档：
 

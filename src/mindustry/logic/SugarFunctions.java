@@ -2992,7 +2992,7 @@ public final class SugarFunctions{
         return "__ls_ub_" + kind + "_" + prefix + index;
     }
 
-    /** Writes the flag, yields, and jumps to {@code reject} unless the flag is still ours. */
+    /** Writes the flag, ends the pass, and jumps to {@code reject} unless the flag is still ours. */
     private static void emitClaim(String prefix, int index, String reject, StringBuilder out){
         String hold = ub(prefix, "h", index);
         String flag = ub(prefix, "f", index);
@@ -3061,16 +3061,33 @@ public final class SugarFunctions{
     }
 
     private static void emitUnitNext(UnitNextStatement next, String prefix, int index, StringBuilder out){
+        String hold = ub(prefix, "h", index);
         String flag = ub(prefix, "f", index);
         String dead = ub(prefix, "d", index);
         String ctrl = ub(prefix, "c", index);
         String anchor = ub(prefix, "a", index);
         String steps = ub(prefix, "s", index);
+        String scan = label(prefix, "ub_scan_", index);
+        String take = label(prefix, "ub_take_", index);
+        String lost = label(prefix, "ub_lost_", index);
         String loop = label(prefix, "ub_loop_", index);
         String keep = label(prefix, "ub_keep_", index);
         String fail = label(prefix, "ub_fail_", index);
         String ok = label(prefix, "ub_ok_", index);
         emitUnitId(out);
+        // Confirm the unit claimed on the previous entry. `held` is one-shot here: `take`
+        // clears it, so the next call scans for the next idle unit instead of sticking to
+        // this one (that is `unitbind`'s job).
+        out.append("jump ").append(scan).append(" equal ").append(hold).append(" null\n");
+        out.append("ubind ").append(hold).append('\n');
+        out.append("jump ").append(lost).append(" equal @unit null\n");
+        out.append("sensor ").append(dead).append(" @unit @dead\n");
+        out.append("jump ").append(lost).append(" notEqual ").append(dead).append(" 0\n");
+        out.append("sensor ").append(flag).append(" @unit @flag\n");
+        out.append("jump ").append(take).append(" equal ").append(flag).append(" __ls_ub_uid\n");
+        out.append(lost).append(":\n");
+        out.append("set ").append(hold).append(" null\n");
+        out.append(scan).append(":\n");
         out.append("set ").append(steps).append(" 0\n");
         out.append("set ").append(anchor).append(" null\n");
         out.append(loop).append(":\n");
@@ -3091,10 +3108,13 @@ public final class SugarFunctions{
         out.append("sensor ").append(flag).append(" @unit @flag\n");
         out.append("jump ").append(loop).append(" notEqual ").append(flag).append(" 0\n");
         emitClaim(prefix, index, loop, out);
+        out.append(take).append(":\n");
         out.append("set ").append(next.variable).append(" @unit\n");
+        out.append("set ").append(hold).append(" null\n");
         out.append("jump ").append(ok).append(" always x false\n");
         out.append(fail).append(":\n");
         out.append("set ").append(next.variable).append(" null\n");
+        out.append("set ").append(hold).append(" null\n");
         out.append(ok).append(":\n");
     }
 

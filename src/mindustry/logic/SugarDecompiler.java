@@ -1750,8 +1750,10 @@ public final class SugarDecompiler{
             Statement head = program.statements.get(at + 3);
             if(head.kind().equals("ubind")) return unitFreeFrame(at, limit);
             if(unitTempIndex(at + 3, 1, "n") != null) return unitForFrame(at, limit);
-            if(unitTempIndex(at + 3, 1, "s") != null) return unitNextFrame(at, limit);
-            if(head.kind().equals("jump")) return unitBindFrame(at, limit);
+            if(head.kind().equals("jump")){
+                Frame next = unitNextFrame(at, limit);
+                return next != null ? next : unitBindFrame(at, limit);
+            }
             return null;
         }
 
@@ -1830,40 +1832,53 @@ public final class SugarDecompiler{
         }
 
         /**
-         * {@code unitnext}: the same scan loop without the "rebind a unit that already wears our
-         * flag" branch. The region ends at the label both assignments jump to.
+         * {@code unitnext}: the same scan loop without accepting a unit that already wears our
+         * flag during the scan. It does keep a one-shot confirmation branch for the unit claimed
+         * on the previous entry, and clears {@code held} when it assigns, so the next call scans
+         * again instead of sticking to the same unit like {@code unitbind}.
          */
         private Frame unitNextFrame(int at, int limit){
-            String index = unitTempIndex(at + 3, 1, "s");
+            String index = unitTempIndex(at + 3, 3, "h");
             if(!unitIndexMatches(index)) return null;
-            String steps = unitTemp("s", index), anchor = unitTemp("a", index), flag = unitTemp("f", index),
-                dead = unitTemp("d", index), ctrl = unitTemp("c", index);
-            int loop = at + 5, keep = at + 12, fail = at + 32, end = at + 33;
+            String hold = unitTemp("h", index), flag = unitTemp("f", index), dead = unitTemp("d", index),
+                ctrl = unitTemp("c", index), anchor = unitTemp("a", index), steps = unitTemp("s", index);
+            int scan = at + 11, lost = at + 10, loop = at + 13, keep = at + 20,
+                take = at + 38, fail = at + 41, end = at + 43;
             if(end > limit) return null;
-            String type = program.statements.get(at + 7).token(1);
-            String variable = program.statements.get(at + 30).token(1);
+            String type = program.statements.get(at + 15).token(1);
+            String variable = program.statements.get(at + 38).token(1);
             if(!unitOperand(variable)) return null;
-            boolean ok = unitLine(at + 3, "set", steps, "0")
-                && unitLine(at + 4, "set", anchor, "null")
-                && unitLine(at + 5, "op", "add", steps, steps, "1")
-                && unitJump(at + 6, fail, "greaterThan", steps, "8192")
-                && unitLine(at + 7, "ubind", type)
-                && unitJump(at + 8, fail, "equal", "@unit", "null")
-                && unitJump(at + 9, fail, "equal", "@unit", anchor)
-                && unitJump(at + 10, keep, "notEqual", anchor, "null")
-                && unitLine(at + 11, "set", anchor, "@unit")
-                && unitLine(at + 12, "sensor", dead, "@unit", "@dead")
-                && unitJump(at + 13, loop, "notEqual", dead, "0")
-                && unitLine(at + 14, "sensor", flag, "@unit", "@flag")
-                && unitJump(at + 15, loop, "notEqual", flag, "0")
-                && unitLine(at + 16, "sensor", ctrl, "@unit", "@controlled")
-                && unitJump(at + 17, loop, "notEqual", ctrl, "0")
-                && unitLine(at + 18, "sensor", flag, "@unit", "@flag")
-                && unitJump(at + 19, loop, "notEqual", flag, "0")
-                && unitClaim(at + 20, index, loop)
-                && unitLine(at + 30, "set", variable, "@unit")
-                && unitJump(at + 31, end, "always", "x", "false")
-                && unitLine(at + 32, "set", variable, "null");
+            boolean ok = unitJump(at + 3, scan, "equal", hold, "null")
+                && unitLine(at + 4, "ubind", hold)
+                && unitJump(at + 5, lost, "equal", "@unit", "null")
+                && unitLine(at + 6, "sensor", dead, "@unit", "@dead")
+                && unitJump(at + 7, lost, "notEqual", dead, "0")
+                && unitLine(at + 8, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 9, take, "equal", flag, "__ls_ub_uid")
+                && unitLine(at + 10, "set", hold, "null")
+                && unitLine(at + 11, "set", steps, "0")
+                && unitLine(at + 12, "set", anchor, "null")
+                && unitLine(at + 13, "op", "add", steps, steps, "1")
+                && unitJump(at + 14, fail, "greaterThan", steps, "8192")
+                && unitLine(at + 15, "ubind", type)
+                && unitJump(at + 16, fail, "equal", "@unit", "null")
+                && unitJump(at + 17, fail, "equal", "@unit", anchor)
+                && unitJump(at + 18, keep, "notEqual", anchor, "null")
+                && unitLine(at + 19, "set", anchor, "@unit")
+                && unitLine(at + 20, "sensor", dead, "@unit", "@dead")
+                && unitJump(at + 21, loop, "notEqual", dead, "0")
+                && unitLine(at + 22, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 23, loop, "notEqual", flag, "0")
+                && unitLine(at + 24, "sensor", ctrl, "@unit", "@controlled")
+                && unitJump(at + 25, loop, "notEqual", ctrl, "0")
+                && unitLine(at + 26, "sensor", flag, "@unit", "@flag")
+                && unitJump(at + 27, loop, "notEqual", flag, "0")
+                && unitClaim(at + 28, index, loop)
+                && unitLine(at + 38, "set", variable, "@unit")
+                && unitLine(at + 39, "set", hold, "null")
+                && unitJump(at + 40, end, "always", "x", "false")
+                && unitLine(at + 41, "set", variable, "null")
+                && unitLine(at + 42, "set", hold, "null");
             return ok ? unitCardFrame(at, end, "unitnext " + type + " " + variable) : null;
         }
 
@@ -1954,8 +1969,9 @@ public final class SugarDecompiler{
             return frame;
         }
 
-        /** The flag claim every unit card shares: write the flag, yield four ticks so a peer
-         *  processor that read flag 0 just before us gets to write first, then re-read it. */
+        /** The flag claim every unit card shares: write the flag, end the pass, then let the
+         *  card's next entry re-read it. The lowering keeps four `end`s (only the first is
+         *  reachable) as part of the fixed shape that inference matches. */
         private boolean unitClaim(int at, String index, int reject){
             String hold = unitTemp("h", index), flag = unitTemp("f", index);
             return unitLine(at, "set", hold, "@unit")

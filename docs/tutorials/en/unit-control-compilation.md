@@ -194,7 +194,7 @@ The skip rules, in order:
 
 Notice that `@flag` is read twice: first to accept your own flag, then again after the `@controlled` check. The goal is to narrow the window between reading the flag and writing it; it is not atomic, only a smaller race.
 
-`jump take equal flag myFlag` comes before the nonzero-flag skip, so a scan can also pick up a unit that already carries this processor's flag. That is one difference between `unitbind` and `unitnext`: the former accepts its own units, the latter skips every nonzero flag.
+`jump take equal flag myFlag` comes before the nonzero-flag skip, so a scan can also pick up a unit that already carries this processor's flag. That is one difference between `unitbind` and `unitnext`: `unitbind`'s scan accepts its own units, while `unitnext`'s scan skips every nonzero flag and only the top `held` branch confirms the unit claimed on the previous pass.
 
 ### C. Claim handshake
 
@@ -241,9 +241,9 @@ On success, the unit goes into the user variable `unit`, `held` is updated, and 
 
 `unit` is your variable; `@unit` is vanilla's bound unit. On success they point at the same unit. On failure, `unit` is guaranteed to be `null`, but `@unit` is not: it may still point at the last scanned unit.
 
-## unitnext: 38 lines in full (37 for the card), no reuse branch
+## unitnext: 51 lines in full (50 for the card), one-shot confirmation
 
-The example is `unitnext @flare scout`. The 37 lines below are the card itself; adding the program-level entry skip `set @counter 0` makes 38.
+The example is `unitnext @flare scout`. The 50 lines below are the card itself; adding the program-level entry skip `set @counter 0` makes 51.
 
 ### Card lowering (renamed)
 
@@ -251,6 +251,16 @@ The example is `unitnext @flare scout`. The 37 lines below are the card itself; 
 op mul myFlag @thisx 100000
 op add myFlag myFlag @thisy
 op add myFlag myFlag 1
+jump scan equal held null
+ubind held
+jump lost equal @unit null
+sensor dead @unit @dead
+jump lost notEqual dead 0
+sensor flag @unit @flag
+jump take equal flag myFlag
+lost:
+set held null
+scan:
 set steps 0
 set anchor null
 loop:
@@ -280,30 +290,33 @@ ubind held
 jump loop equal @unit null
 sensor flag @unit @flag
 jump loop notEqual flag myFlag
+take:
 set scout @unit
+set held null
 jump ok always x false
 fail:
 set scout null
+set held null
 ok:
 ```
 
 Compared with `unitbind`, a few things differ:
 
-- there is no `held` reuse branch at the top, so every execution scans again;
-- the scan has no `jump take equal flag myFlag`, so every nonzero flag is skipped, including yours;
-- the failure branch sets `scout` to `null`.
+- it also has a `held` confirmation branch at the top, but `take` adds `set held null`: after confirming and handing the unit over, it clears the memory and scans again instead of sticking like `unitbind`;
+- the scan has no `jump take equal flag myFlag`, so every nonzero flag is skipped, including yours; only the top `held` branch accepts “the unit claimed on the previous pass”;
+- the failure branch sets `scout` to `null` and clears `held`.
 
-### The assignment position: a code-reading note
+### One-shot confirmation
 
-Look at where `set scout @unit` sits in the listing: after the four `end`s. Under the `end` semantics above, execution never falls through to it; and the next entry from the top has no `held` reuse branch to do the assignment. The only reachable assignment is `set scout null` under `fail:`.
+`take:` sits after the claim handshake. As with `unitbind`, it is not reached by falling through the code after `end`; it is reached on the next entry into the card through the top `held` branch:
 
-So, read as written, `unitnext` scans and writes this processor's flag onto idle units, but `scout` never receives the unit. `unitbind` has a `take` label reachable from the top; `unitfor` has the phase 0 recount; `unitnext` has neither.
+1. the claim runs `set held @unit`, writes the flag, and `end`s;
+2. on the next entry, `jump scan equal held null` sees that `held` is not null;
+3. `ubind held` binds the candidate again, checks `@dead`, then checks `flag == myFlag`;
+4. if both pass, it jumps to `take`, runs `set scout @unit`, and then `set held null`;
+5. the next `unitnext` call sees `held == null` and scans for the next idle unit.
 
-This is not a permanent rule to memorize: the lowering may change, and the authority is always the actual text in your Original view. If `set scout @unit` sits before the `end`s, or a reuse branch appears, that product is the one to follow. In the current version, use `unitbind` or `unitfor` to take units.
-
-It still writes the candidate into `held`, because the claim handshake needs to remember `@unit`; the next execution neither reuses it nor checks it. The scan finds “the next idle unit”, not “my next unit”; the delivery is what is missing.
-
-Repeated calls continue along `ubind @flare`'s unit cursor. If a full scan returns to `anchor` without finding an idle unit, it jumps to `fail` and the variable is `null`. If idle units exist, it claims them one by one (writing flags) and keeps scanning.
+So `unitnext`'s `held` is a one-shot receipt: it only confirms the unit claimed on the previous pass and is dropped after delivery. `unitbind`'s `held` is long-term memory: it keeps pointing at the same unit after confirmation. Both confirm on the next entry, but their delivery semantics differ.
 
 ## unitfree: 14 lines in full (13 for the card)
 
@@ -559,7 +572,7 @@ This also lets the card survive the re-entry caused by `end`: claiming a unit en
 
 Compressed into design reasons:
 
-- **Two processors must not claim the same unit.** Read the flag, write it, return to the top, then re-read on the next entry (`unitbind`'s `held` branch) or recount (`unitfor`'s phase 0). Without that re-entry check, both could see flag 0 and both could think they won.
+- **Two processors must not claim the same unit.** Read the flag, write it, return to the top, then re-read on the next entry (`unitbind` / `unitnext`'s `held` branch) or recount (`unitfor`'s phase 0). Without that re-entry check, both could see flag 0 and both could think they won.
 - **Do not steal controlled units.** Before claiming a strange unit, `@controlled != 0` is skipped, so a unit used by a player, a command, or another logic program is left alone. Units you already own skip that check, so reuse and delivery still work.
 - **The unit list changes.** Units die and spawn while scanning, and `ubind`'s cursor moves; `anchor` detects a full cycle and `steps > 8192` bounds the scan when the anchor never comes back.
 - **Skip dead units.** The `@dead` check comes before the flag check, so dead units cannot be claimed.
@@ -629,7 +642,7 @@ jump take equal flag myFlag
 
 The claim already wrote the candidate into `held`. On the next execution from the top, when the card is reached again, phase A binds `held` and reads its flag; if the flag is still `myFlag`, it goes straight to `take`. That is where the delayed confirmation actually happens.
 
-The `ubind held` / `sensor flag` / `jump loop` lines after the four `end`s are not reached by normal fall-through; execution has already returned to the top. `unitbind` does the same check on the next entry through its `held` branch; `unitfor` does it through the phase 0 recount. `unitnext` has no re-entry check, so the assignment after its `end`s never runs — the assignment-position issue covered above.
+The `ubind held` / `sensor flag` / `jump loop` lines after the four `end`s are not reached by normal fall-through; execution has already returned to the top. `unitbind` / `unitnext` do the same check on the next entry through their `held` branch; `unitfor` does it through the phase 0 recount. The only difference is what happens to `held` after delivery: `unitbind` keeps it, `unitnext` clears it in `take`.
 
 `unitfor` behaves the same way: the claim's `end` ends the current pass and returns to the top; initialization runs again, phase 0 recounts and includes the newly claimed unit in `owned`, and phase 1 delivers it. The two-phase design is what makes re-entry safe.
 
@@ -642,11 +655,11 @@ To confirm this page is not “prettifying” the product:
 1. Place one card in the editor, save, and switch to the Original view.
 2. Compare against the full listing; walk `myFlag`, `ubind`, `sensor`, `ucontrol`, and `jump` in order. The names should be `__ls_ub_*`, not this page's short names.
 3. Verify every line with a vanilla processor or `LAssembler.read`. The repo's `unitControlTest.productIsVanilla` does exactly this: it allows only `op` / `set` / `ubind` / `sensor` / `ucontrol` / `jump` / `end` plus user body, and rejects `InvalidStatement`.
-4. Check the safety points: `@controlled` blocking only claims, the double `@flag` read, `steps > 8192`, `anchor` cycle detection, and the fact that the confirmation code after `end` does not run sequentially; confirm that `unitbind` has the `take` re-entry, `unitfor` has the phase 0 recount, and `unitnext` has neither.
+4. Check the safety points: `@controlled` blocking only claims, the double `@flag` read, `steps > 8192`, `anchor` cycle detection, and the fact that the confirmation code after `end` does not run sequentially; confirm that `unitbind` / `unitnext` both have the `take` re-entry, `unitfor` has the phase 0 recount, and `unitnext`'s `take` clears `held`.
 5. Check the two-phase `unitfor`: phase 0 only does `owned++`; `wrap` computes `room = count - owned`; phase 1 does `give` and claims, with `delivered` capped.
 6. Delete both `set __ls_sugar "..."` and the `# @logic-sugar-v2` marker block, then reopen; see whether inference restores the cards. Break one scan guard or rename a variable and confirm it stays vanilla instead of being force-restored.
 7. To see the `end` effect directly, step a small “assignment after `end`” program through `LExecutor` and watch the counter reset to 0 after going out of range; the later lines do not run. This is the most direct check of the four `end`s.
-8. For development, run `.\gradlew.bat unitControlTest`. It checks the lowering's shape (flag packing, four `end`s, confirmation instructions, `unitfor` `break`/`continue`, vanilla parseability, carrier round-trip), not runtime behavior; use step 7 for the `unitnext` assignment position.
+8. For development, run `.\gradlew.bat unitControlTest`. It checks the lowering's shape (flag packing, four `end`s, the `unitbind` / `unitnext` `take` re-entry, `unitnext`'s one-shot `held` clear, `unitfor` `break`/`continue`, vanilla parseability, carrier round-trip), not runtime behavior; use step 7 for runtime behavior.
 
 ## Summary and questions
 
@@ -654,7 +667,7 @@ The four cards share one flag-claim protocol, and the product is vanilla mlog:
 
 - `myFlag = @thisx * 100000 + @thisy + 1`; `0` is reserved for unowned;
 - `unitbind` reuses `held`, then scans and claims;
-- `unitnext` drops the reuse branch and skips every nonzero flag; the current assignment sits after `end` and never writes back;
+- `unitnext` uses a one-shot `held` confirmation, clears it after delivery, and its scan skips every nonzero flag, so the next call finds the next idle unit;
 - `unitfree` clears only its own flag;
 - `unitfor` counts `owned`, computes `room`, then delivers and claims with `delivered` capped;
 - the carrier stores card identity; inference only accepts the fixed lowering and stays vanilla otherwise.
@@ -663,7 +676,7 @@ Three questions:
 
 1. Why does `unitfor` count before delivering? If it claimed while scanning, what would go wrong with `room`?
 2. Why read `@flag` both before and after the `@controlled` check? Does that narrow the race or eliminate it?
-3. Under vanilla `end` semantics, where does `unitbind`'s confirmation actually happen? Why can't you read the lines after the four `end`s by line number? Why does `unitnext` lack the same compensation?
+3. Under vanilla `end` semantics, where do `unitbind` / `unitnext` actually confirm? Why can't you read the lines after the four `end`s by line number? Why does `unitnext` clear `held` after delivery?
 
 Related docs:
 

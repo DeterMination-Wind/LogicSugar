@@ -158,7 +158,8 @@
 `tryUnitCard` 按编译器自己的 lowering 逐条比对私有名字 `__ls_ub_uid` / `__ls_ub_<kind>_<index>`（与
 `__ls_sw_*` 表同一思路），所以手写 `ubind` / `@flag` 代码永远不会命中。`unitfor` 帧保留作者写的体区——
 卡片自己的投递行与 step/回边之间——所以体内的 `break` / `continue` 仍是语句，嵌套块、循环、提升的函数体
-都能恢复。
+都能恢复。`unitnext` 也保留顶部的 `held` 复核，但 `take` 会清空 `held`；`unitNextFrame` 按这个一次性形状
+匹配，扫描本身不接受任何非零 flag。
 
 两条性质是承重的：
 

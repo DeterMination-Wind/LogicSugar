@@ -107,16 +107,17 @@ The card is “Control Next Idle Unit”:
 unitnext @flare scout
 ```
 
-It shares the scan, skip, and claim logic with `unitbind`, with two important differences:
+It shares the scan, skip, and claim logic with `unitbind`, but the goal is different: `unitbind` says “I want this one”, while `unitnext` says “give me the next idle one”.
 
-- there is no `held` reuse branch, so it does not stick to the previous unit;
-- the scan skips every unit with a nonzero flag, including units you already own.
+How it does that:
 
-So it looks for “the next idle unit”, not “my next unit”. Repeating the card continues along vanilla `ubind`'s cursor; if every `@flare` is already claimed by some processor, the scan takes the failure branch.
+- it also has a one-shot `held` confirmation branch: if the previous pass claimed a unit and has not handed it over yet, `ubind held` binds it again, and if the flag is still `myFlag`, the unit goes into `scout`;
+- after handing it over, it immediately runs `set held null`, so the next call does not stick to that unit and scans again;
+- the scan skips every unit with a nonzero flag, including units you already own, and only takes a flag-0 unit with `@controlled == 0`.
 
-> **A code-reading note.** In the current lowering, the assignment `set scout @unit` sits after the four `end`s. Under vanilla `end` semantics that line is never reached sequentially; and unlike `unitbind`, `unitnext` has no `held` reuse branch to do the assignment on the next entry. Read as written, `scout` never receives the scanned unit; the only reachable assignment is `set scout null` in the failure branch. The scan still writes this processor's flag onto idle units. To take units, use `unitbind` (one stable unit) or `unitfor` (a group); if your build has changed this part, trust the Original view.
+Repeating the card therefore walks the vanilla `ubind` cursor and takes one new idle unit at a time; units you already took stay in your fleet and are not handed over again. Use `unitfree` to give one back. If every `@flare` is already claimed by some processor, the scan takes the failure branch and sets `scout` to `null`.
 
-Until then, do not treat `unitnext` as your main way to take a unit. It is most useful for understanding the scan and skip rules; to rotate units, pair `unitbind` with `unitfree`, or use `unitfor`.
+> “One-shot” is the key difference: `unitbind` keeps `held` as long-term memory, while `unitnext` uses it once. After confirming and handing over, it clears `held` and scans again. Both confirm on the next entry into the card, but only `unitbind` keeps reusing the same unit.
 
 ## unitfree: release only your own
 
@@ -205,7 +206,7 @@ When `unitbind` fails, it only guarantees that your variable is `null`; it does 
 ## Pitfalls
 
 - **Do not write your own flag on the same units.** The protocol treats any nonzero flag as “owned by someone”. With a custom flag, `unitfor` treats those units as neither “mine” nor “idle” and skips them; `unitfree` will not clean them either. Clear the flag manually to recover.
-- **`unitbind` sticks, `unitnext` does not.** `unitbind` prefers its own `held`; `unitnext` always looks for an idle unit and skips your own. Note that the current `unitnext` writes its result after `end`, so the variable is never assigned (see the note above).
+- **`unitbind` sticks, `unitnext` does not.** Both use `held` to confirm across ticks; `unitbind` keeps `held` pointing at the unit after confirmation and prefers it next time, while `unitnext` clears `held` in `take`, so the next call scans again and skips units you already own.
 - **`unitfree` releases only your own.** Foreign flags, custom flags, and dead units are skipped; it is not a universal flag cleaner.
 - **`@controlled` blocks claiming, not reuse.** A unit that already carries `myFlag` is reused by `unitbind` and delivered by `unitfor` even if a player or a command has taken it over; `@controlled` is only checked when the card considers pulling in a strange unit. And owning the flag is not the same as owning control: `ucontrol` commands on a player-controlled unit do nothing.
 - **Placing the processor elsewhere changes the flag.** The flag comes from `@thisx` / `@thisy`; after you tear the processor down and rebuild it elsewhere, old units still carry the old flag, and the new position sees them as someone else's. Release first or clear the flags.
@@ -218,7 +219,7 @@ When `unitbind` fails, it only guarantees that your variable is `null`; it does 
 
 The processor hard limit is 1000 instructions. These cards are not sugar for one `ubind`; they expand a full claim protocol, and they eat into the budget quickly.
 
-At this chapter's example size (one card plus the body, plus the program-level `set @counter 0`, carrier excluded), `unitbind` / `unitnext` / `unitfree` / `unitfor` are roughly 53 / 38 / 14 / 65 lines. That is a reading aid, not a constant: type names, variable names, and the body change the count; label lines do not consume instruction slots, the instructions do, and every `jump` is one instruction. Every extra statement in a `unitfor` body adds that statement's own lowering, and nesting or stacking cards burns the budget quickly.
+At this chapter's example size (one card plus the body, plus the program-level `set @counter 0`, carrier excluded), `unitbind` / `unitnext` / `unitfree` / `unitfor` are roughly 53 / 51 / 14 / 65 lines. That is a reading aid, not a constant: type names, variable names, and the body change the count; label lines do not consume instruction slots, the instructions do, and every `jump` is one instruction. Every extra statement in a `unitfor` body adds that statement's own lowering, and nesting or stacking cards burns the budget quickly.
 
 Vanilla `LParser` also caps jump locations at 500, and labels in these cards count against that. With heavy stacking, you may hit the label cap before the 1000-instruction cap.
 
@@ -237,7 +238,7 @@ Compiling past the limit is an error; LogicSugar has no switch to raise it. Swit
 The point of the four cards is the flag-claim protocol, not `ubind` itself:
 
 - `unitbind` keeps one unit stable;
-- `unitnext` scans for the next idle unit (the current lowering writes its assignment after `end`; see above);
+- `unitnext` uses a one-shot `held` confirmation, clears it after handing the unit over, and scans for the next idle unit on the next call;
 - `unitfree` releases only your own;
 - `unitfor` processes a group by count and fills empty slots with idle units.
 

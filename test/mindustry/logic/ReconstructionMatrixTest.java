@@ -115,6 +115,8 @@ public final class ReconstructionMatrixTest{
             "unitfor 1 @flare other", "unitfor 1 @flare other");
         addInferred("unit.bind.inside.while", "whilebegin x lessThan 5 2\nunitbind @poly unit\nset x 5\nblockend\nprint unit\n",
             "unitbind @poly unit", "unitbind @poly unit");
+        addInferred("unit.next.inside.while", "whilebegin x lessThan 5 2\nunitnext @flare scout\nset x 5\nblockend\nprint scout\n",
+            "unitnext @flare scout", "unitnext @flare scout");
         addInferred("unit.for.inside.func", "funcdef f ~ 2\nunitfor 2 @poly unit 999\nprint unit\nblockend\nreturn \"0\"\nblockend\nfunccall f \"\" ~\n",
             "unitfor 2 @poly unit", "unitfor 2 @poly unit");
         addInferred("unit.mixed", "unitbind @poly unit\nunitnext @flare other\nunitfor 2 @dag unit 999\nprint unit\nblockend\nunitfree unit\n",
