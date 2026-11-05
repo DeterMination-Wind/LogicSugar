@@ -1,8 +1,8 @@
-# LogicSugar 高级数据类型使用教程
+# LogicSugar 进阶教程
 
-面向已经会用 LogicSugar 的 if / for / while 和 Expr 表达式，但还不确定「这种数据该用哪个结构」的玩家。
+面向已经会用 LogicSugar 的 if / for / while 和 Expr 表达式，但还不确定「这个任务该用哪个结构 / 哪张卡」的玩家。
 
-每章只讲一种数据结构，包含：什么时候用、声明卡、函数速查表、转译后的 mlog 解释、复杂度、使用须知。所有示例都假设你已经知道怎么放积木、怎么切换 Original / Sugar 视图；示例里的 Sugar 源码行也可以直接当文本粘贴（`x = expr` 这类行会导入成 Expr 卡）。
+每章只讲一个主题，包含：什么时候用、声明卡或卡片写法、函数速查表、转译后的 mlog 解释、复杂度或指令预算、使用须知。所有示例都假设你已经知道怎么放积木、怎么切换 Original / Sugar 视图；示例里的 Sugar 源码行也可以直接当文本粘贴（`x = expr` 这类行会导入成 Expr 卡）。
 
 > English version: [en/README.md](en/README.md)。先读 [README_zh.md](../../README_zh.md) 的「功能」了解基础；表达式语义和编译器细节见 [架构总览](../architecture.md) 的「表达式子系统」「数据子系统」。
 
@@ -162,6 +162,16 @@ chain c        -> __ls_chn_c_head / _free
 | 顺序表，中间要插入/删除 | [list.md](list.md) |
 | 反复取最小值（Dijkstra、合并） | [heap.md](heap.md) |
 | 自己管理节点与链接（邻接表、LRU） | [chain.md](chain.md) |
+| 控制一个/多个单位，按处理器分队 | [unit-control.md](unit-control.md) |
+
+## 单位控制卡
+
+上面的选择指南大多在讲数据结构；单位控制是另一条线，单独放这里：
+
+| 主题 | 一句话 | 章节 |
+| --- | --- | --- |
+| 单位控制 | 用 flag 认领、绑定、循环和解控单位 | [unit-control.md](unit-control.md) |
+| 编译展开 | 四张卡各自生成了哪些原版指令 | [unit-control-compilation.md](unit-control-compilation.md) |
 
 ## 怎么自己验证转译结果
 
