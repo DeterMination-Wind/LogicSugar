@@ -45,7 +45,7 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 
 ## 发布正文风格（Release body）
 
-发布正文就是 GitHub Release 的正文原文（Neon 聚合侧对应 `RELEASE_NOTES.md`），**只写当前版本**、中英对照；仓库只在发布当次临时保留草稿文件。条目范式经三次收敛，v5.9.0（2026-10-11，用户定稿）定为「整条粗体的一行话、不写括号补充与枚举清单、不写已知问题」；v5.11.0 起，面向玩家的新功能可在正文前加一个用法 `[!NOTE]` 与一张「名称 / 用途」表，其余规则不变。
+发布正文就是 GitHub Release 的正文原文（Neon 聚合侧对应 `RELEASE_NOTES.md`），**只写当前版本**、中英对照；仓库只在发布当次临时保留草稿文件。条目范式经三次收敛，v5.9.0（2026-10-11，用户定稿）定为「整条粗体的一行话、不写括号补充与枚举清单、不写已知问题」；v5.11.0 起，面向玩家的新功能可在正文前加一个用法 `[!NOTE]`，并在各语言的新增小节里放一张「名称 / 用途」表，其余规则不变。
 
 ````markdown
 > [!NOTE]
@@ -56,19 +56,19 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 > 用法：在 Expr 积木或 `expr` 条件里调用 `unit_family(u)`、`unit_tier(u)`、`unit_planet(u)`，与 `@__AIR__` 这类常量比较
 > Usage: call `unit_family(u)`, `unit_tier(u)`, or `unit_planet(u)` in an Expr card or an `expr` condition, and compare with constants like `@__AIR__`
 
-| 名称 Name | 用途 Use |
-| --- | --- |
-| `unit_family(u)` | 查询单位家族 / reads the unit family |
-| `unit_tier(u)` | 查询单位等级 / reads the unit tier |
-| `@__GROUND__` `@__AIR__` `@__NAVAL__` | 与 `unit_family(u)` 比较 / compare with `unit_family(u)` |
-| `@__T1__` `@__T2__` `@__T3__` `@__T4__` `@__T5__` | 与 `unit_tier(u)` 比较 / compare with `unit_tier(u)` |
-
 ## 中文
 
 ### 本次新增
 
 - **变量界面的显示开关会被记住**
 - **性能分析器支持百分比视图**
+
+| 名称 | 用途 |
+| --- | --- |
+| `unit_family(u)` | 查询单位家族 |
+| `unit_tier(u)` | 查询单位等级 |
+| `@__GROUND__` `@__AIR__` `@__NAVAL__` | 与 `unit_family(u)` 比较 |
+| `@__T1__` `@__T2__` `@__T3__` `@__T4__` `@__T5__` | 与 `unit_tier(u)` 比较 |
 
 ### 本次修复
 
@@ -82,6 +82,13 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 - **The Vars screen remembers your display switches**
 - **Profiler statistics support percentage view**
 
+| Name | Use |
+| --- | --- |
+| `unit_family(u)` | reads the unit family |
+| `unit_tier(u)` | reads the unit tier |
+| `@__GROUND__` `@__AIR__` `@__NAVAL__` | compare with `unit_family(u)` |
+| `@__T1__` `@__T2__` `@__T3__` `@__T4__` `@__T5__` | compare with `unit_tier(u)` |
+
 ### Fixed
 
 - **Vanilla statements show their hover hints again**
@@ -89,7 +96,7 @@ classes ──► d8InputJar ──► dexAndroid ──► jarAndroid ──►
 ````
 
 写作规则：
-1. **结构固定**：顶部只有一个 `> [!NOTE]` 两行引用块（中文一行 + 英文一行）写版本要求；本版有面向玩家的新功能时，可再跟一个 `> [!NOTE]`（中文一行 + 英文一行）写极简用法，只给「在哪里写什么」的一句话示例，具体说明留给教程与 `docs/`。新增常量较多时，可在用法块后跟一张紧凑表格（列为 `名称 Name` / `用途 Use`，同一类别写在一行，中英用途同格），逐项写「干什么用」，不写数值推导与分类名词。**只在 `expr` 模式下可写的内置函数也必须逐项列入**（例如 `unit_family(u)` 就写「查询单位家族」），不能只在用法 NOTE 里提一句；新增的是积木则在新增小节说明，不在表里重复。纯修复版本不要加用法块与表格。然后 `## 中文`、`## English`。不再用 `> [!IMPORTANT]`，也不写构建命令、产物路径、测试数量与 commit 细节。
+1. **结构固定**：顶部只有一个 `> [!NOTE]` 两行引用块（中文一行 + 英文一行）写版本要求；本版有面向玩家的新功能时，可再跟一个 `> [!NOTE]`（中文一行 + 英文一行）写极简用法，只给「在哪里写什么」的一句话示例，具体说明留给教程与 `docs/`。新增常量/内置函数较多时，在 `## 中文` 的 `### 本次新增` 条目下放中文表、在 `## English` 的 `### Added` 条目下放英文表（**不要一张双语表凌驾在两个语言标题之上**）；列为 `名称` / `用途`（英文 `Name` / `Use`），同一类别写在一行，逐项写「干什么用」，不写数值推导与分类名词。**只在 `expr` 模式下可写的内置函数也必须逐项列入**（例如 `unit_family(u)` 就写「查询单位家族」），不能只在用法 NOTE 里提一句；新增的是积木则在新增小节说明，不在表里重复。纯修复版本不要加用法块与表格。然后才是各语言小节，不再用 `> [!IMPORTANT]`，也不写构建命令、产物路径、测试数量与 commit 细节。
 2. **小节**：默认只有 `### 本次新增` / `### 本次修复`（英文 `### Added` / `### Fixed`）；本版确有行为变化、又归不进「修复」时才加 `### 本次改动` / `### Changed`。**不写「已知问题 / 兼容性」小节**：跨版本线格式与调试产物事实写在 [architecture.md](architecture.md) / [glossary.md](glossary.md)，不逐版复述。中英小节一一对应。
 3. **条目就是一句完整的粗体话**：整条加粗、一行写完，例如 `**原版积木的悬停说明恢复显示**`。不写括号补充、不写「（A / B / C）」式枚举清单、也不在粗体后接解释尾巴；枚举与实现细节留在设置描述、提交信息与 `docs/`。
 4. **篇幅**：全篇最多 3 个小节、条目总数不超过 6 条；常见形态就是两小节各 2 条。一条一件事，同主题合并，宁可少写。
