@@ -446,13 +446,16 @@ public final class ProcessorStatus{
             Draw.z(waitLayer);
             float z = Drawf.text();
             int blockSize = block.tile.block().size;
+            // World units: Fill/Lines below are in the camera transform, so multiplying by Scl
+            // would apply the UI scale twice and oversize the indicator on scaled-UI platforms
+            // (upstream v0.12.1). Only the text scale in draw() keeps its Scl.
             if(arc > 0.01){
                 Draw.color(Color.white);
-                Fill.arc(x, y, Scl.scl(blockSize * 2.1f - 0.5f), arc, 90 - 360f * arc, sides);
+                Fill.arc(x, y, blockSize * 2.1f - 0.5f, arc, 90 - 360f * arc, sides);
             }
             Draw.color(Color.white);
-            Lines.stroke(Scl.scl((blockSize + 1) * 0.25f));
-            Lines.poly(x, y, sides, Scl.scl(block.tile.block().size * 2.5f));
+            Lines.stroke((blockSize + 1) * 0.25f);
+            Lines.poly(x, y, sides, block.tile.block().size * 2.5f);
             Draw.z(z);
         }
     }

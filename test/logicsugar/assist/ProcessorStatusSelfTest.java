@@ -7,6 +7,7 @@ public class ProcessorStatusSelfTest{
         budgetScalesWithFrameTimeAndCapsOnLowFps();
         updatesPerTickMapping();
         legacyScanValueMigration();
+        waitIndicatorDrawsInWorldUnits();
         System.out.println("LogicSugar ProcessorStatus self-test passed.");
     }
 
@@ -67,6 +68,29 @@ public class ProcessorStatusSelfTest{
         check(ProcessorStatus.closestStep(200) == 6, "raw 200 must migrate to the closest step (250/frame)");
         check(ProcessorStatus.closestStep(5000) == ProcessorStatus.UPDATES_PER_TICK.length - 1,
             "raw 5000 must migrate to the last step");
+    }
+
+    /**
+     * The wait indicator is drawn in world units, so an extra {@code Scl.scl()} on the radius or
+     * stroke applies the UI scale twice and oversizes the ring wherever {@code uiScale != 1}
+     * (upstream v0.12.1). Drawing cannot be checked headlessly, so this pins the source: the three
+     * world-space calls must stay unscaled while the font scale in the same class keeps its Scl.
+     */
+    private static void waitIndicatorDrawsInWorldUnits(){
+        String body;
+        try{
+            body = logicsugar.SourceNails.methodBody(
+                logicsugar.SourceNails.readSource("src/logicsugar/assist/ProcessorStatus.java"),
+                "private static void drawWait(LogicBuild block){");
+        }catch(java.io.IOException e){
+            throw new AssertionError("could not read ProcessorStatus.java: " + e.getMessage(), e);
+        }
+
+        check(!body.contains("Scl.scl("), "drawWait scaled a world-space draw call by the UI scale again");
+        // Positive nails: a nail that only forbids one token passes on an emptied method body.
+        check(body.contains("Fill.arc(x, y, blockSize * 2.1f - 0.5f"), "drawWait no longer draws the progress arc in world units");
+        check(body.contains("Lines.stroke((blockSize + 1) * 0.25f)"), "drawWait no longer strokes the ring in world units");
+        check(body.contains("Lines.poly(x, y, sides, block.tile.block().size * 2.5f)"), "drawWait no longer draws the ring outline in world units");
     }
 
     private static void check(boolean condition, String message){

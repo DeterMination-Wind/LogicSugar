@@ -1,15 +1,15 @@
 # 上游基线（MlogDevTools / 原 MlogAssertions）
 
 LogicSugar 的断言/断点子系统与调试工具（Vars / Memory / Properties 界面、快照、Profiler、处理器日志）对齐
-cardillan/MlogDevTools 的 **v0.12.0**（仓库在 v0.12.0 前后从 MlogAssertions 改名为 MlogDevTools，tag 与源
+cardillan/MlogDevTools 的 **v0.12.1**（仓库在 v0.12.0 前后从 MlogAssertions 改名为 MlogDevTools，tag 与源
 码包的 `cardillan.mlogassertions` 包名未变）。本文记录基线怎么取得、跟了哪些行为、明确不移植什么，
 以及四处线格式例外；实现叙述见[架构总览](architecture.md)的「断言子系统」「变量/内存/属性界面与快照」
 「处理器日志」「Profiler」，测试入口见[测试指南](testing.md)。
 
 ## 参考源码与同步方式
 
-- 基线 v0.12.0：参考源码在工作区 `../_upstream/MlogDevTools-0.12.0`，由
-  `gh api repos/cardillan/MlogDevTools/tarball/refs/tags/v0.12.0` 取得。
+- 基线 v0.12.1：参考源码在工作区 `../_upstream/MlogDevTools-0.12.1`，由
+  `gh api repos/cardillan/MlogDevTools/tarball/refs/tags/v0.12.1` 取得；`../_upstream/MlogDevTools-0.12.0` 留着作上一版对照。
 - 历史快照 `../_upstream/MlogAssertions-0.11.8`、`-0.11.7`、`-0.11.6`、`-0.11.3` 与
   `../_upstream/MlogAssertions-pr`（v0.8.2）只当历史参考，不作为当前行为依据。
 - 不要 `git fetch upstream`：本仓库不保留上游 remote；同步以上述快照 + GitHub tag/tarball 为准。
@@ -76,6 +76,18 @@ cardillan/MlogDevTools 的 **v0.12.0**（仓库在 v0.12.0 前后从 MlogAsserti
 两处有意偏离：`LogI.vars()` 把分类槽算进指令变量（上游漏了，recording 快照会漏值）；旧 `log` 文本
 按第 3 槽写法分流成 `systemlog`（上游直接按新格式读，会串用 `LParser` 复用数组里的陈旧 token）。
 
+### v0.12.0 → v0.12.1
+
+上游只有一个发布提交（`7afbb002`），除 `mod.hjson` 版本号外只改 `ui/Assertions.java` 的 `drawWait`：
+
+- **wait 指示圈的尺寸修复**：`Fill.arc` 半径、`Lines.stroke` 线宽、`Lines.poly` 半径三处去掉外层的
+  `Scl.scl(...)`。这三者在相机变换下按**世界坐标**绘制，再乘一次 UI 缩放等于把 `uiScale` 应用两遍，
+  非 1 缩放（移动端、放大 UI）上圆环明显偏大；桌面默认 `uiScale=1` 时 `Scl.scl(1)=1` 才看不出。
+  同函数里字体缩放 `1 / 4f / Scl.scl(1f)` 上游没有动，本仓库也保留。
+
+绘制无法在无头环境断言，因此自动化侧是 `processorStatusTest` 里的源码钉子（`drawWait` 方法体不得出现
+`Scl.scl(`，同时正向钉住三条世界坐标调用），与 v0.11.7 / v0.11.8 那两次 UI 修复的约定相同。
+
 
 ## 明确不移植
 
@@ -108,4 +120,5 @@ cardillan/MlogDevTools 的 **v0.12.0**（仓库在 v0.12.0 前后从 MlogAsserti
    存量 `emit` 产物里的旧 `log` 指令同样安全：反编译 verify 门的输入归一化也先过 `parseLog`，
    `LAssembler.write` 会把旧式 `log` 写成 `systemlog`，两侧一致，恢复出的卡片保持写游戏日志的语义。
 
-除此之外，断言指令族、`profile` / `restart` 卡、`recording` 快照类型以及停机/断点语义均按 v0.12.0 对齐。
+除此之外，断言指令族、`profile` / `restart` 卡、`recording` 快照类型以及停机/断点语义均按 v0.12.0 对齐，
+wait 指示圈的绘制缩放按 v0.12.1 对齐。
