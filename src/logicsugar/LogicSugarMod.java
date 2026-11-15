@@ -386,6 +386,8 @@ public class LogicSugarMod extends Mod{
         try{
             Snapshots.init();
             MemoryVars.init();
+            // 处理器自带日志（上游 v0.12.0）：数据层存消息，LogDialog 只负责展示
+            logicsugar.vars.LogMessages.init();
             // profiler：反射桥的初始化（LParser 的源码列）失败了也只是降级，不影响快照与变量界面
             logicsugar.profile.InstrumentationEngine.init();
             VarsAccess.applySettings();

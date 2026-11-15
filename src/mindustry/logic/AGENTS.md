@@ -66,5 +66,6 @@
 
 `crossLoaderTest`、`decompileTest`、`reconstructionTest`、`reconstructionMatrixTest`、`canvasSourceTest`、
 `selfTest`、`assertTest` / `assertTypeTest`。断言线格式与上游基线的差异（`asserttype` 的 `null` 类型与
-token 顺序、`snapshot` 5 槽）见[上游基线](../../../docs/upstream.md)；改 `asserttype` / `snapshot` 前先看
-`SugarAsserts.AssertTypeCard` 的注释与 `assertTypeTest`。
+token 顺序、`snapshot` 5 槽、`log`/`systemlog` 的旧文本迁移）见[上游基线](../../../docs/upstream.md)；
+改 `asserttype` / `snapshot` / `log` 前先看 `SugarAsserts` 对应卡片的注释与 `assertTypeTest` / `assertTest`。
+新增断言卡或改其线格式时，`ReconstructionMatrixTest` 的 assertion 区必须同步（carrier 夹具 + 旧文本夹具）。

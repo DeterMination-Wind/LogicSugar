@@ -23,11 +23,11 @@ import mindustry.world.blocks.logic.MemoryBlock.MemoryBuild;
 import java.lang.reflect.Field;
 
 /**
- * 方块配置面板上的变量/快照入口（上游 MlogAssertions 的 {@code BuildConfiguration}）。
+ * 方块配置面板上的变量/快照/日志入口（上游 MlogAssertions 的 {@code BuildConfiguration}）。
  *
  * <p>做法：把 {@code InputHandler.config}（原版 {@link BlockConfigFragment}）换成一个包装了原
  * 实现的子类，在 {@link BlockConfigFragment#showConfig(Building)} 里给内存块 / 处理器 / 任意
- * 方块接上「快照、变量界面」按钮。原版这两个类的私有字段（{@code InputHandler.config}、
+ * 方块接上「快照、变量界面、日志」按钮。原版这两个类的私有字段（{@code InputHandler.config}、
  * {@code BlockConfigFragment.table/selected}）只能反射访问——跨类加载器规则见 AGENTS.md。</p>
  *
  * <p><b>与 MindustryX 共存</b>：MindustryX 自己给内存块（内存网格）与处理器（编辑/信息/重置链接/
@@ -105,9 +105,8 @@ public final class BlockConfigAccess{
             }
             table.button(Icon.menu, Styles.cleari, () -> openVars(memory)).size(40f);
         }else if(build instanceof LogicBuild logic){
-            if(Snapshots.maxSnapshots > 0){
-                table.button(Icon.box, Styles.cleari, () -> createSnapshot(logic)).size(40f);
-            }
+            // 上游 v0.12.0：处理器面板的「快速快照」按钮换成日志按钮（快照仍在 Vars 界面里）
+            table.button(logicsugar.vars.ui.VarsIcons.log, Styles.cleari, () -> new logicsugar.vars.ui.LogDialog(logic).show()).size(40f);
             // fork 的处理器的编辑按钮由它自己的工具条提供，不重复画
             if(!fork) table.button(Icon.pencil, Styles.cleari, logic::showEditDialog).size(40f);
             table.button(Icon.menu, Styles.cleari, () -> openVars(logic)).size(40f);

@@ -354,7 +354,10 @@ public final class ReconstructionMatrixTest{
         // tolerant reader has to keep those carriers loadable
         addCarrier("assert.type.legacyOrder", "asserttype @unit unit \"should be a unit\"\nset x 1\n", "asserttype @unit unit");
         addCarrier("assert.error", "error \"Runtime error at #{@counter}.\" null null null null null null null null null\nset x 1\n", "error \"Runtime error at");
-        addCarrier("assert.log", "log info \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "log info");
+        addCarrier("assert.log", "log info phase \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "log info phase");
+        // the pre-v0.12 `log` layout (no category) stays readable as systemlog
+        addCarrier("assert.log.legacy", "log info \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "log info");
+        addCarrier("assert.systemlog", "systemlog info \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "systemlog info");
         addCarrier("assert.breakpoint", "breakpoint always x false\nset x 1\n", "breakpoint always x false");
         // snapshot is client-side only but still a card: its sugar has to survive the carrier
         // (current five-slot text, and the legacy three-payload-token text a <=5.7.2 save carries)

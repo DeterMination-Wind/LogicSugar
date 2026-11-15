@@ -5,6 +5,7 @@ import arc.func.Func;
 import arc.graphics.Color;
 import arc.util.Log;
 import logicsugar.profile.ProfilingCommand;
+import logicsugar.vars.LogMessages;
 import logicsugar.vars.Snapshot;
 import logicsugar.vars.SnapshotType;
 import logicsugar.vars.Snapshots;
@@ -374,16 +375,65 @@ public final class AssertInstructions{
         }
     }
 
+    /** Records a message in the processor's own log (upstream v0.12.0). Unlike the old
+     *  {@code log} instruction it never writes the game log file; {@link SystemLogI} keeps that
+     *  behaviour. The category is the formatted prefix shown next to the frame id, or an empty
+     *  string for the {@code null} constant. Including the category slot in {@link #vars()}
+     *  is a LogicSugar fix: the profiler's recording snapshots read exactly these slots, and
+     *  upstream omits it, so a category variable would silently miss the recorded state. */
     public static class LogI implements DevToolsInstruction{
         public Log.LogLevel level = Log.LogLevel.info;
+        public LVar category;
         public LVar[] vars = new LVar[10];
 
-        public LogI(Log.LogLevel level, LVar[] vars){
+        public LogI(Log.LogLevel level, LVar category, LVar[] vars){
             this.level = level;
+            this.category = category;
             this.vars = vars;
         }
 
         public LogI(){
+        }
+
+        @Override
+        public LVar[] vars(){
+            // 分类槽也在读取变量表里（上游漏了它）；null 槽（无参构造的默认实例）不进表，
+            // 否则 recording 的 Snapshots.create 遍历时会碰 null。
+            LVar[] result = new LVar[vars.length + 1];
+            int count = 0;
+            if(category != null) result[count++] = category;
+            for(LVar var : vars){
+                if(var != null) result[count++] = var;
+            }
+            return count == result.length ? result : java.util.Arrays.copyOf(result, count);
+        }
+
+        /** 只记录日志，不让出。 */
+        @Override
+        public boolean yields(){
+            return false;
+        }
+
+        @Override
+        public final void run(LExecutor exec){
+            LogMessages.addMessage(exec.build, level,
+                category == null || category.isobj && category.objval == null ? "" : print(category),
+                buildMessage(exec, "", true, vars[0], vars));
+        }
+    }
+
+    /** Writes a formatted message into the game log file: the pre-v0.12 {@code log} instruction,
+     *  renamed by upstream v0.12.0 when {@code log} took over the processor-local log. */
+    public static class SystemLogI implements DevToolsInstruction{
+        public Log.LogLevel level = Log.LogLevel.info;
+        public LVar[] vars = new LVar[10];
+
+        public SystemLogI(Log.LogLevel level, LVar[] vars){
+            this.level = level;
+            this.vars = vars;
+        }
+
+        public SystemLogI(){
         }
 
         @Override

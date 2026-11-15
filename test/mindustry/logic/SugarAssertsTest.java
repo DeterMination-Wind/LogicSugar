@@ -51,8 +51,10 @@ public class SugarAssertsTest{
             compileLine("assertprints position \"frog\" \"bad output\""));
         checkLine("error \"Runtime error at #{@counter}.\" null null null null null null null null null",
             compileLine("error \"Runtime error at #{@counter}.\" null null null null null null null null null"));
-        checkLine("log info \"Logging a message at #{@counter}.\" null null null null null null null null null",
-            compileLine("log info \"Logging a message at #{@counter}.\" null null null null null null null null null"));
+        checkLine("log info null \"Logging a message at #{@counter}.\" null null null null null null null null null",
+            compileLine("log info null \"Logging a message at #{@counter}.\" null null null null null null null null null"));
+        checkLine("systemlog info \"Logging a message at #{@counter}.\" null null null null null null null null null",
+            compileLine("systemlog info \"Logging a message at #{@counter}.\" null null null null null null null null null"));
         checkLine("breakpoint always x false",
             compileLine("breakpoint always x false"));
         // v0.11.3's profiler control cards
@@ -73,7 +75,9 @@ public class SugarAssertsTest{
             "assertflush p1",
             "assertprints p1 \"out\" ~",
             "error \"boom [[2]\" @counter x1 null null null null null null null",
-            "log err \"logged [[1]\" @counter null null null null null null null null null",
+            "log err phase \"logged [[1]\" @counter null null null null null null null null null",
+            "log info null \"no category\" null null null null null null null null null",
+            "systemlog err \"logged [[1]\" @counter null null null null null null null null null",
             "breakpoint lessThan x 10",
             "profile clear cell1",
             "restart cell1",
@@ -93,9 +97,18 @@ public class SugarAssertsTest{
         check(bounds.opMin == ConditionOp.lessThanEq && bounds.opMax == ConditionOp.lessThanEq, "bounds ops not parsed");
         check(bounds.message.equals("\"Index out of bounds (0 to 10).\""), "quoted message kept raw, got: " + bounds.message);
 
-        SugarAsserts.LogCard log = (SugarAsserts.LogCard)parseOne("log debug \"[[1] done\" @counter 1 2 null null null null null null");
+        SugarAsserts.LogCard log = (SugarAsserts.LogCard)parseOne("log debug phase \"[[1] done\" @counter 1 2 null null null null null null");
         check(log.level == arc.util.Log.LogLevel.debug, "log level not parsed");
+        check(log.category.equals("phase"), "log category not parsed: " + log.category);
         check(log.params[3].equals("2"), "log param 3 not parsed: " + log.params[3]);
+
+        // the pre-v0.12 `log` text (no category slot) still means the game log file: it is read
+        // as systemlog, which is the card that kept the old behaviour
+        SugarAsserts.SystemLogCard systemLog = (SugarAsserts.SystemLogCard)parseOne("log debug \"[[1] done\" @counter 1 2 null null null null null null");
+        check(systemLog.level == arc.util.Log.LogLevel.debug, "legacy log level not parsed");
+        check(systemLog.params[3].equals("2"), "legacy log param 3 not parsed: " + systemLog.params[3]);
+        checkLine("systemlog debug \"[[1] done\" @counter 1 2 null null null null null null",
+            writeOne(systemLog), "legacy log must rewrite as systemlog (the v0.12.0 rename)");
 
         SugarAsserts.BreakpointCard bp = (SugarAsserts.BreakpointCard)parseOne("breakpoint equal x 1");
         check(bp.op == ConditionOp.equal, "breakpoint op not parsed");
@@ -137,6 +150,7 @@ public class SugarAssertsTest{
     private static void containsAssertStatementsScansLines(){
         check(SugarAsserts.containsAssertStatements("set x 1\nassertequals 0 y \"m\"\n"), "emit line not detected");
         check(SugarAsserts.containsAssertStatements("breakpoint always x false"), "breakpoint line not detected");
+        check(SugarAsserts.containsAssertStatements("systemlog info \"x\""), "systemlog line not detected");
         check(!SugarAsserts.containsAssertStatements("set x 1\nop add y x 1"), "plain program flagged");
         check(!SugarAsserts.containsAssertStatements("assertx nonsense"), "similar opcode prefix flagged");
         check(!SugarAsserts.containsAssertStatements(null), "null flagged");

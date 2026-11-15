@@ -37,6 +37,8 @@ public final class VarsDataTest{
         senseableEntityView();
         deadEntityClassification();
         snapshotRecordAccounting();
+        snapshotRecordTrimsBeforeAdd();
+        sensorViewHidesCameraAccesses();
         recordingSelectionFilter();
         liveViewGuardsUnloadedProcessors();
         memoryTextRoundTrip();
@@ -188,6 +190,36 @@ public final class VarsDataTest{
         }finally{
             Snapshots.maxSnapshots = limit;
         }
+    }
+
+    /** 上限被直接调小（没走 {@code updateLimit()}）时，{@code add} 先裁剪再加（上游 v0.12.0）。
+     *  旧写法先加后裁，超限的一笔会留在队列里直到下一次 add。 */
+    private static void snapshotRecordTrimsBeforeAdd(){
+        int limit = Snapshots.maxSnapshots;
+        try{
+            Snapshots.maxSnapshots = 5;
+            Snapshots.SnapshotRecord record = new Snapshots.SnapshotRecord();
+            for(int i = 0; i < 5; i++) record.add(new FakeSnapshot(1));
+            check(record.size == 5, "先填满上限: " + record.size);
+
+            Snapshots.maxSnapshots = 2;
+            record.add(new FakeSnapshot(1));
+            check(record.size == 3, "add 前的裁剪把旧账压到新上限，再加新条目: " + record.size);
+            check(record.queue.size == 3, "队列条目同样只剩上限 + 1: " + record.queue.size);
+        }finally{
+            Snapshots.maxSnapshots = limit;
+        }
+    }
+
+    /** Properties 视图不列 camera 访问（上游 v0.12.0）：v160 把它们标为 privilegedAccess，
+     *  对实体读数恒为 0，只会白占四行。源码钉子——{@code SensorVars} 的静态表要读
+     *  {@code Vars.content}，无头环境构造不出来。 */
+    private static void sensorViewHidesCameraAccesses(){
+        String source = readSource("src/logicsugar/vars/SensorVars.java");
+        check(source.contains("case cameraX, cameraY, cameraWidth, cameraHeight"),
+            "SensorVars 必须过滤四个 camera 访问（上游 v0.12.0）");
+        check(!source.contains("LAccess.all[index]"), "读取访问项必须走过滤后的 accesses 表，不能再用 LAccess.all[index]");
+        check(source.contains("entity.sense(accesses[index])"), "数值读取必须走过滤后的表");
     }
 
     /** recording 快照的默认变量过滤：{@code selectedVars} 为 null 时不过滤。 */

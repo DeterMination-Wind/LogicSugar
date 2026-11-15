@@ -1,8 +1,8 @@
 # logicsugar.vars / profile — 调试 UI、快照与 Profiler
 
-作用域：`src/logicsugar/vars/`（数据层）、`src/logicsugar/vars/ui/`（对话框与入口）、
-`src/logicsugar/profile/` 与 `profile/ui/`（Profiler）。改这里前先读本文件；实现细节见
-[架构总览](../../../docs/architecture.md)「变量/内存/属性界面与快照」「Profiler」，上游语义见
+作用域：`src/logicsugar/vars/`（数据层，含处理器日志 `LogMessages`）、`src/logicsugar/vars/ui/`（对话框与入口，
+含 `LogDialog`）、`src/logicsugar/profile/` 与 `profile/ui/`（Profiler）。改这里前先读本文件；实现细节见
+[架构总览](../../../docs/architecture.md)「变量/内存/属性界面与快照」「处理器日志」「Profiler」，上游语义见
 [上游基线](../../../docs/upstream.md)。
 
 ## 保存产物与联机口径
@@ -13,6 +13,10 @@
   `snapshot recording` 只在 `emit` 调试构建里落进程序文本，联机强制 `strip`。不要为了 UI 方便把这些行写进
   普通保存路径。
 - 快照不随地图保存，关图即丢；`Vars` / Memory / Properties 只是同一套 `VariableValues` 渲染。
+- 处理器日志（上游 v0.12.0）同样只活在客户端内存：`LogMessages` 每个处理器一份定长队列，关图/拆方块
+  丢弃，不进入载体。`log` 指令只在 `emit` 调试构建里落进程序文本，联机强制 `strip`；日志界面本身
+  不受单机门禁限制。上限/「重启清空」设置键固定为 `logicsugar.logMessageLimit` /
+  `logicsugar.logClearOnRestart`（不用上游 `mlogdevtools-*`），行注册在 `addVarsPrefs`。
 
 ## 持久化与双形态
 
@@ -24,7 +28,7 @@
   行走 `LogicSugarSettings.addVarsPrefs`，`logicsugar.startProfilerImmediately` 也在其中，别只在一边注册。
 - `Core.settings == null` 的无头环境要静默跳过持久化，不能崩。
 
-## 快照 / profiler 的已知守卫
+## 快照 / profiler / 日志的已知守卫
 
 - 三击入口与 `InstrumentationEngine.getInstrumentation` 都必须先判 `Building.displayable()`
   （= `LogicBuild.accessible()`）：世界处理器、禁止编辑地图上的处理器不弹窗、不统计。
@@ -42,6 +46,10 @@
   写入，部分失败不能写坏内存（`MemoryText`）。
 - profiler 读 `executor.instructions` 的每个点都必须先 `InstrumentationEngine.unwrap(...)`（包装器是另一个
   类）；`Instrumentation.isCovered` 合并 `steps` 与 `covered` 两个来源。改包装/记录口径先看 `profilerTest`。
+- 日志的「重启清空」读的是 `executor.instructions` 是否换了一份数组（不是 `@counter`）；上限为 0 时
+  `setLimit` 清空全部数据并停止记录。`LogI.vars()` 把分类槽也算进指令变量（上游漏了它），否则 recording
+  快照会漏掉分类变量的值。旧 `log` 文本的分流规则（第 3 槽为 `~`/空/引号开头 → `systemlog`）见
+  [上游基线](../../../docs/upstream.md) 线格式例外；`logMessageTest` 钉住数据层，`assertTest` 钉住分流。
 
 ## 入口与编辑
 
@@ -49,8 +57,8 @@
   `TripleTap`）、方块配置面板（`BlockConfigAccess`）。改入口先看 `varsAccessTest` 的纯状态机与源码钉子。
 - UI 代码可能被 Neon 的旧 arc 编译：Label 用 `setWrap(...)`，不用旧版没有的 `Cell.wrap(boolean)`
   （`varsUiTest` 源码钉子）。
-- 主要回归：`varsTest`、`varsUiTest`、`varsAccessTest`、`profilerTest`；需要活场景的对话框行为走
-  [测试指南](../../../docs/testing.md) 的手测清单。
+- 主要回归：`varsTest`、`logMessageTest`、`varsUiTest`、`varsAccessTest`、`profilerTest`；需要活场景的
+  对话框行为走 [测试指南](../../../docs/testing.md) 的手测清单。
 - 上游版本相关的判空/停机语义（v0.11.6 的 65535 字节上限与 `displayable()`、v0.11.7 的三处守卫、
   v0.11.8 的 `liveView` 空处理器守卫）见
   [上游基线](../../../docs/upstream.md)。

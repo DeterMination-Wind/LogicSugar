@@ -327,6 +327,15 @@ public final class LogicSugarSettings{
         // profiler（上游 v0.11.3 的 start-profiler-immediatelly）：默认关闭；在 Vars 界面的
         // 「Do not show again」勾选它，下一次打开 profiler 页面就直接开始统计。
         table.checkPref(settingStartProfilerImmediately, false);
+        // 处理器自带日志（上游 v0.12.0）：滑块存的是 LOG_LIMITS 的下标，与 snapshotLimit 同口径
+        table.sliderPref(logicsugar.vars.LogMessages.settingLimit,
+            logicsugar.vars.LogMessages.defaultLimitIndex, 0, logicsugar.vars.LogMessages.LIMITS.length - 1, i -> {
+                int value = logicsugar.vars.LogMessages.LIMITS[i];
+                logicsugar.vars.LogMessages.setLimit(value);
+                return value == 0 ? Core.bundle.get("logicsugar.off", "off") : Integer.toString(value);
+            });
+        table.checkPref(logicsugar.vars.LogMessages.settingClearOnRestart, true,
+            b -> logicsugar.vars.LogMessages.clearOnRestart = b);
     }
 
     /** 变量表数值列的对齐方式（左/中/右循环，存 arc 的 {@code Align} 常量）。 */

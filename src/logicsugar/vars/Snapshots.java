@@ -52,11 +52,10 @@ public class Snapshots{
             id = 0;
         });
 
-        // 建筑被拆时丢掉它的队列（上游在外层已判 breaking，这里合并成一个条件）
+        // 建筑被拆时丢掉它的队列（上游 v0.12.0：不再只限处理器/内存块——connected/global
+        // 快照可能把任意建筑收进表里，留着就是泄漏）
         Events.on(EventType.BlockBuildEndEvent.class, e -> {
-            if(e.breaking && (e.tile.build instanceof LogicBuild || e.tile.build instanceof MemoryBuild)){
-                snapshots.remove(e.tile.build);
-            }
+            if(e.breaking && e.tile.build != null) snapshots.remove(e.tile.build);
         });
     }
 
@@ -227,6 +226,9 @@ public class Snapshots{
         public int size = 0;
 
         public void add(Snapshot snapshot){
+            // 上游 v0.12.0：先按当前上限裁剪再加新条目。上限调小后即使 updateLimit() 还没跑，
+            // 新快照也不会让队列越界（原来的顺序会先加后裁，留下一条超限记录）。
+            adjustSize(maxSnapshots);
             queue.addFirst(snapshot);
             size += snapshot.recording() != null ? snapshot.recording().size : 1;
         }

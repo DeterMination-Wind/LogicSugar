@@ -1,16 +1,16 @@
-# 上游基线（MlogAssertions）
+# 上游基线（MlogDevTools / 原 MlogAssertions）
 
-LogicSugar 的断言/断点子系统与调试工具（Vars / Memory / Properties 界面、快照、Profiler）对齐
-cardillan/MlogAssertions 的 **v0.11.8**。本文记录基线怎么取得、跟了哪些行为、明确不移植什么，以及三处
-线格式例外；实现叙述见[架构总览](architecture.md)的「断言子系统」「变量/内存/属性界面与快照」「Profiler」，
-测试入口见[测试指南](testing.md)。
+LogicSugar 的断言/断点子系统与调试工具（Vars / Memory / Properties 界面、快照、Profiler、处理器日志）对齐
+cardillan/MlogDevTools 的 **v0.12.0**（仓库在 v0.12.0 前后从 MlogAssertions 改名为 MlogDevTools，tag 与源
+码包的 `cardillan.mlogassertions` 包名未变）。本文记录基线怎么取得、跟了哪些行为、明确不移植什么，
+以及四处线格式例外；实现叙述见[架构总览](architecture.md)的「断言子系统」「变量/内存/属性界面与快照」
+「处理器日志」「Profiler」，测试入口见[测试指南](testing.md)。
 
 ## 参考源码与同步方式
 
-- 基线 v0.11.8：参考源码在工作区 `../_upstream/MlogAssertions-0.11.8`，由
-  `gh api repos/cardillan/MlogAssertions/tarball/refs/tags/v0.11.8` 取得。
-- 旧快照 `../_upstream/MlogAssertions-0.11.7`、`../_upstream/MlogAssertions-0.11.6`、
-  `../_upstream/MlogAssertions-0.11.3` 与
+- 基线 v0.12.0：参考源码在工作区 `../_upstream/MlogDevTools-0.12.0`，由
+  `gh api repos/cardillan/MlogDevTools/tarball/refs/tags/v0.12.0` 取得。
+- 历史快照 `../_upstream/MlogAssertions-0.11.8`、`-0.11.7`、`-0.11.6`、`-0.11.3` 与
   `../_upstream/MlogAssertions-pr`（v0.8.2）只当历史参考，不作为当前行为依据。
 - 不要 `git fetch upstream`：本仓库不保留上游 remote；同步以上述快照 + GitHub tag/tarball 为准。
 - UI 落点：数据层 `logicsugar.vars`、对话框/入口 `logicsugar.vars.ui`、Profiler `logicsugar.profile`
@@ -55,6 +55,28 @@ cardillan/MlogAssertions 的 **v0.11.8**。本文记录基线怎么取得、跟�
 - 真实崩溃路径需要一块活的 `LogicBuild`（`LogicBlock` 构造会读 `Vars.content`），无头环境构造不出来，
   因此自动化侧是 `VarsDataTest` 的源码钉子 + 变异验证（与 v0.11.7 那次的约定相同）。
 
+### v0.11.8 → v0.12.0
+
+上游这一版只有一个功能提交（`a32fa15e`，发布提交为 `8bfa33b`）：
+
+1. **`log` 重命名为 `systemlog`**（破坏性）。旧的 `log` 写游戏日志文件，新 `log` 把消息存进处理器；
+   本仓库跟这个重命名，并额外保留旧 `log` 文本的读取（见「线格式例外」第 4 条）。
+2. **处理器自带日志**：`LogMessages`（每处理器一份定长队列、上限、「重启清空」）与 `LogDialog`
+   （级别/分类过滤、帧号、复制/导出/清空）。设置项落到本 mod 的 `logicsugar.logMessageLimit` /
+   `logicsugar.logClearOnRestart`，默认 100 条 / 开启清空，注册在 `addVarsPrefs`（自有设置页与 Neon
+   聚合页共用）。`log` 卡片新增分类槽，运行时用分类变量做前缀。
+3. **入口调整**：`VarsDialog` 标题栏与 Edit 菜单各加一个日志按钮；处理器配置面板的「快速快照」按钮
+   换成日志按钮（快照仍在 Vars 界面里）；`VarsDialog` 的帮助页加一行日志说明，并修了单图标帮助行
+   的居中（colspan 单元格里套一层子表）。
+4. **同批不显眼的两处修复**：`SensorVars` 把四个 camera 访问从 Properties 列表里剔除（v160 的
+   `LAccess.privilegedAccess`，对实体读数恒为 0）；`Snapshots.SnapshotRecord.add` 先按当前上限裁剪再
+   入队（上限调小、`updateLimit()` 还没跑时不再多留一条）。拆方块时的清理改成「任意建筑」
+   （connected/global 快照可能收进非处理器建筑）。
+
+两处有意偏离：`LogI.vars()` 把分类槽算进指令变量（上游漏了，recording 快照会漏值）；旧 `log` 文本
+按第 3 槽写法分流成 `systemlog`（上游直接按新格式读，会串用 `LParser` 复用数组里的陈旧 token）。
+
+
 ## 明确不移植
 
 - **`max-instructions`（指令预算覆盖）**：处理器保存产物恒 ≤1000 条是硬不变式，见根 `AGENTS.md`。
@@ -72,11 +94,18 @@ cardillan/MlogAssertions 的 **v0.11.8**。本文记录基线怎么取得、跟�
 
 ## 线格式例外（改前先读）
 
-三处与上游不完全一致。改动前先看 `SugarAsserts.AssertTypeCard` 的注释与 `assertTypeTest`：
+四处与上游不完全一致。改动前先看 `SugarAsserts` 里对应卡片的注释与 `assertTypeTest` / `assertTest`：
 
 1. **`asserttype` 的 `null` 类型**：LogicSugar 扩展（上游 `AssertionDataType` 不识别 `none`/`null`）。
 2. **`asserttype` token 顺序**：上游 v0.10 起为 `<type> <value>`；旧序仍可读，保存统一写新序。
 3. **`snapshot` 5 槽文本**：上游 v0.11.2 起为 `type block steps message`；旧 3 载荷 token 文本按第 4 槽写法
    分流仍可读，清空的 `steps` 保存时归一为默认 `20`。
+4. **`log` / `systemlog` 的旧文本迁移**：上游 v0.12.0 把旧 `log`（写游戏日志文件）硬改名为 `systemlog`，
+   旧 `log` 文本按新格式读会串用 `LParser` 复用数组的陈旧 token。本仓库的 `parseLog` 用第 3 槽的**写法**
+   分流：`~` / 空 / 引号开头 = 旧式消息模板（读成 `SystemLogCard`，重写输出 `systemlog`）；其余
+   （`null`、裸变量名、数字）按新 `log` 的 `category` 读。因此手写「带引号的分类」会被读成 `systemlog`
+   （唯一二义情形）；`LogCard.write` 把清空的分类归一为 `null`，保证新文本永远不会落进旧式分支。
+   存量 `emit` 产物里的旧 `log` 指令无法通过反编译 verify 门（候选会重编译成 `systemlog`），
+   打开时退回原版 mlog；载体里的 sugar 不受影响。
 
-除此之外，断言指令族、`profile` / `restart` 卡、`recording` 快照类型以及停机/断点语义均按 v0.11.8 对齐。
+除此之外，断言指令族、`profile` / `restart` 卡、`recording` 快照类型以及停机/断点语义均按 v0.12.0 对齐。

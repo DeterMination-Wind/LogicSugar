@@ -40,10 +40,11 @@ import java.util.Arrays;
 
 /**
  * Assertion statement set for runtime checks and debugging, ported from the upstream
- * MlogAssertions mod (cardillan/mlogassertions, currently v0.11.3) with its wire format, so
- * programs compiled in debug mode run identically under either mod and Mindcode-generated
- * code round-trips through the editor. The one extension is {@code asserttype}'s null
- * type — see {@link AssertTypeCard}.
+ * MlogDevTools (formerly MlogAssertions) mod (cardillan/MlogDevTools, currently v0.12.0)
+ * with its wire format, so programs compiled in debug mode run identically under either mod
+ * and Mindcode-generated code round-trips through the editor. The one extension is
+ * {@code asserttype}'s null type — see {@link AssertTypeCard} — plus reading the pre-v0.12
+ * {@code log} text as {@link SystemLogCard} (see {@link #parseLog}).
  *
  * <p>Synced from v0.8.2 to v0.11.3: the generic {@code assert} card, the failure messages
  * that name the compared values, {@code asserttype}'s expanded data-type taxonomy and its
@@ -53,6 +54,12 @@ import java.util.Arrays;
  * carries v0.11.2's {@code steps} slot and {@code recording} type, and the
  * {@code profile}/{@code restart} cards of v0.11.3 are present; the Vars/Memory/Properties
  * screens live in {@code logicsugar.vars} — see {@code docs/architecture.md}.</p>
+ *
+ * <p>v0.12.0 splits the message family: {@code log} records a message in the processor itself
+ * (viewable from the Vars screen, see {@code logicsugar.vars.LogMessages}) and takes an
+ * optional category, while {@code systemlog} keeps the old game-log-file behaviour. The
+ * processor log stores strings in client memory only, so it adds no multiplayer risk; the
+ * cards remain debug-build-only in the saved program.</p>
  *
  * <p>The cards serialize to the custom instruction tokens themselves ({@code assertBounds
  * ...}), which double as the sugar source format. The compiler decides their fate at
@@ -107,6 +114,7 @@ public final class SugarAsserts{
         register(SnapshotCard::new, SnapshotCard.opcode, SugarAsserts::parseSnapshot);
         register(ErrorCard::new, ErrorCard.opcode, SugarAsserts::parseError);
         register(LogCard::new, LogCard.opcode, SugarAsserts::parseLog);
+        register(SystemLogCard::new, SystemLogCard.opcode, SugarAsserts::parseSystemLog);
         register(BreakpointCard::new, BreakpointCard.opcode, SugarAsserts::parseBreakpoint);
         register(ProfileCard::new, ProfileCard.opcode, SugarAsserts::parseProfile);
         register(RestartCard::new, RestartCard.opcode, SugarAsserts::parseRestart);
@@ -132,8 +140,8 @@ public final class SugarAsserts{
      *  decide whether the assert-emit dimension matters for a program. */
     public static final String[] opcodes = {
         AssertConditionCard.opcode, AssertBoundsCard.opcode, AssertEqualsCard.opcode, AssertFlushCard.opcode,
-        AssertPrintsCard.opcode, AssertTypeCard.opcode, ErrorCard.opcode, LogCard.opcode, BreakpointCard.opcode,
-        SnapshotCard.opcode, ProfileCard.opcode, RestartCard.opcode
+        AssertPrintsCard.opcode, AssertTypeCard.opcode, ErrorCard.opcode, LogCard.opcode, SystemLogCard.opcode,
+        BreakpointCard.opcode, SnapshotCard.opcode, ProfileCard.opcode, RestartCard.opcode
     };
 
     /** Whether a sugar source line starts with one of the assertion opcodes (cheap scan
@@ -565,18 +573,29 @@ public final class SugarAsserts{
         }
     }
 
-    /** Shared editor/serializer for {@code error} and {@code log}: a message plus nine
-     *  parameter slots. The message may reference params via {@code [[1]}..{@code [[9]};
-     *  unused non-null params are appended after it. */
+    /** Shared editor/serializer for {@code error}, {@code log} and {@code systemlog}: a message
+     *  plus nine parameter slots. The message may reference params via {@code [[1]}..{@code [[9]};
+     *  unused non-null params are appended after it.
+     *
+     *  <p>Upstream v0.12.0 split the family: {@code log} now records a message in the processor
+     *  itself (viewable from the Vars screen) and carries an optional category between the level
+     *  and the message parameters; the old game-log-file behaviour moved to {@code systemlog}.
+     *  The category slot is never written as {@code ~}: a cleared field normalizes to the literal
+     *  {@code null} (see {@link #effectiveCategory}), so new text cannot be mistaken for the
+     *  legacy form the parser still accepts.</p> */
     public abstract static class MessageCard extends AssertCard{
         public final String opcode;
         public final boolean hasLevel;
+        public final boolean hasCategory;
         public Log.LogLevel level = Log.LogLevel.info;
+        /** 日志分类：默认写成 {@code null} 常量，运行时展示为「无分类」。 */
+        public String category = "null";
         public String[] params = new String[10];
 
-        public MessageCard(String opcode, boolean hasLevel, String defaultTemplate){
+        public MessageCard(String opcode, boolean hasLevel, boolean hasCategory, String defaultTemplate){
             this.opcode = opcode;
             this.hasLevel = hasLevel;
+            this.hasCategory = hasCategory;
             // Upstream v0.11.3 makes the counter a variable reference ({@code {@counter}}
             // renders as the instruction index) and leaves p1..p9 free for user params.
             // LogicSugar ≤5.5 used "[[1]" with p1 bound to @counter; that form still
@@ -604,6 +623,13 @@ public final class SugarAsserts{
                 }
                 field(row, params[0], s -> params[0] = s).width(0f).growX().pad(2f);
             }, true);
+            // v0.12.0：分类是 log 独有的槽位，独立成行，避免挤窄消息模板输入框
+            if(hasCategory){
+                line(table, tint, row -> {
+                    tag(row, "asserts.category", "category");
+                    input(row, category, s -> category = s, VAR_W);
+                }, false);
+            }
             // p1..p9 再自成一表：五行一组、共两行，列宽在表内共享，表格之间互不干扰。
             line(table, tint, row -> {
                 for(int i = 1; i < params.length; i++){
@@ -625,6 +651,7 @@ public final class SugarAsserts{
         public void write(StringBuilder out){
             out.append(opcode).append(' ');
             if(hasLevel) out.append(level.name()).append(' ');
+            if(hasCategory) out.append(optional(effectiveCategory())).append(' ');
             for(int i = 0; i < params.length; i++){
                 out.append(optional(params[i]));
                 if(i < params.length - 1) out.append(' ');
@@ -634,7 +661,14 @@ public final class SugarAsserts{
         protected void readTokens(String[] tokens){
             int i = 1;
             if(hasLevel) level = parseEnum(Log.LogLevel.class, tokens[i++], opcode + " level");
+            if(hasCategory) category = optionalValue(tokens[i++]);
             for(int j = 0; j < params.length; j++) params[j] = optionalValue(tokens[i++]);
+        }
+
+        /** 写进指令的分类：清空的输入框按 {@code null} 常量处理（运行时展示为无分类），
+         *  不能把空符号丢给 {@code LAssembler.var}。 */
+        public String effectiveCategory(){
+            return category == null || category.isEmpty() ? "null" : category;
         }
     }
 
@@ -643,7 +677,7 @@ public final class SugarAsserts{
         public static final String opcode = "error";
 
         public ErrorCard(){
-            super(opcode, false, "Runtime error");
+            super(opcode, false, false, "Runtime error");
         }
 
         @Override public String name(){ return cardText("asserts.error.card", "Error"); }
@@ -655,12 +689,16 @@ public final class SugarAsserts{
         }
     }
 
-    /** Writes a formatted message into the game log file. */
+    /** Records a formatted message in the processor's own log (upstream v0.12.0). The message
+     *  never reaches the game log file; {@link SystemLogCard} keeps that behaviour. Because the
+     *  message is stored per processor and read by a client-side dialog, it needs no multiplayer
+     *  gate of its own — like every card in this family it is only written into the program in
+     *  an {@code emit} debug build. */
     public static class LogCard extends MessageCard{
         public static final String opcode = "log";
 
         public LogCard(){
-            super(opcode, true, "Logging a message");
+            super(opcode, true, true, "Logging a message");
         }
 
         @Override public String name(){ return cardText("asserts.log.card", "Log"); }
@@ -668,7 +706,25 @@ public final class SugarAsserts{
 
         @Override
         public LInstruction build(LAssembler builder){
-            return new logicsugar.assist.AssertInstructions.LogI(level, buildVars(builder));
+            return new logicsugar.assist.AssertInstructions.LogI(level, builder.var(effectiveCategory()), buildVars(builder));
+        }
+    }
+
+    /** Writes a formatted message into the game log file; the pre-v0.12 {@code log} card, renamed
+     *  by upstream v0.12.0 because {@code log} now means the processor-local log. */
+    public static class SystemLogCard extends MessageCard{
+        public static final String opcode = "systemlog";
+
+        public SystemLogCard(){
+            super(opcode, true, false, "Logging a message");
+        }
+
+        @Override public String name(){ return cardText("asserts.systemlog.card", "System Log"); }
+        @Override public String typeName(){ return "System Log"; }
+
+        @Override
+        public LInstruction build(LAssembler builder){
+            return new logicsugar.assist.AssertInstructions.SystemLogI(level, buildVars(builder));
         }
     }
 
@@ -904,8 +960,42 @@ public final class SugarAsserts{
         return result;
     }
 
+    /** Parses {@code log}. Upstream v0.12.0 renamed the old game-log card to {@code systemlog}
+     *  and gave {@code log} a category slot, which changes the token count from 12 to 13.
+     *  LogicSugar keeps reading the old text as {@link SystemLogCard}: stored carriers and
+     *  emitted debug builds predate the rename, and dropping them would silently turn
+     *  "write to the game log" into "record in the processor". A rewrite then emits
+     *  {@code systemlog} — the semantics the author wrote. See docs/upstream.md (wire-format
+     *  exceptions).
+     *
+     *  <p>Why a content check instead of counting tokens: {@code LParser} hands every custom
+     *  parser the same reused 16-slot static array, so {@code tokens.length} is always 16 and
+     *  entries past the line's real end are stale. The old card's default message template is
+     *  a quoted string (and a cleared one is {@code ~}), while the new category slot is
+     *  normally a bare name or the {@code null} constant — and {@link LogCard#write} normalizes
+     *  a cleared category to {@code null}, so {@code ~}/quoted can only be legacy text. A
+     *  hand-written quoted category is the one ambiguous case; it reads back as {@code systemlog}.</p> */
     public static LStatement parseLog(String[] tokens){
+        if(isLegacyLogSlot(tokens)){
+            SystemLogCard legacy = new SystemLogCard();
+            legacy.readTokens(tokens);
+            return legacy;
+        }
         LogCard result = new LogCard();
+        result.readTokens(tokens);
+        return result;
+    }
+
+    /** Whether the third token of a {@code log} line is the old message template rather than the
+     *  v0.12.0 category. See {@link #parseLog} for why this cannot be a token count. */
+    private static boolean isLegacyLogSlot(String[] tokens){
+        if(tokens.length <= 2 || tokens[2] == null) return false;
+        String slot = tokens[2];
+        return slot.isEmpty() || slot.equals("~") || slot.charAt(0) == '"';
+    }
+
+    public static LStatement parseSystemLog(String[] tokens){
+        SystemLogCard result = new SystemLogCard();
         result.readTokens(tokens);
         return result;
     }

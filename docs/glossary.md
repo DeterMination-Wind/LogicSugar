@@ -37,17 +37,24 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 项目硬底线的执行机制：**多人联机环境必须兼容原版客户端**，因此会改变保存产物语义的调试类功能（目前是 AssertEmit=emit）只在 `!Vars.net.active()`（单机/地图编辑器）时生效，联机（已连接或自建）一律回落原版行为。门禁在代码层强制（`SugarCompiler.currentAssertEmit`）；不提供改变处理器指令预算的能力（指令上限覆盖曾试做后移除，处理器产物恒 ≤1000 条），不依赖用户自觉；纯展示类功能不受此限。全局函数库文件不是处理器产物，另有 `SugarFunctions.libraryInstructionLimit`（当前 10000 条语句）上限，见"函数库"。残余风险：单机创建的越界内容被分享到多人环境时原版客户端仍会截断/清空/静默降级，只能靠文档与设置描述讲清。
 
 ### 断言语句集（assertions）
-移植自 cardillan/MlogAssertions（本仓库基线 v0.11.8，最早的八条来自 v0.8.2、后续依次跟进）的运行时检查指令
-（`assert`/`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`asserttype`/`error`/`log`/`breakpoint`），
+移植自 cardillan/MlogDevTools（原名 MlogAssertions；本仓库基线 v0.12.0，最早的八条来自 v0.8.2、后续依次跟进）的运行时检查指令
+（`assert`/`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`asserttype`/`error`/`log`/`systemlog`/`breakpoint`），
 线格式逐字节兼容：断言失败置**停机标志**（`exec.stop`，上游 v0.11.4 起）并由 `ProcessorStatus` 显示消息
 （可经「断言失败即断点」改为在失败指令处暂停），`breakpoint` 暂停游戏、居中视角并按设置临时分离视角，
-全部 accumulator 在本帧结束后归还。与 MlogAssertions 并存时按"先到先得"跳过重复 opcode 注册。
+全部 accumulator 在本帧结束后归还。v0.12.0 把旧的「写游戏日志文件」`log` 重命名为 `systemlog`，
+新 `log` 把消息存进处理器自带日志（见“处理器日志”）。与 MlogAssertions 并存时按“先到先得”跳过重复 opcode 注册。
+
+### 处理器日志（processor log）
+`log` 指令在处理器自己身上留下的一串消息（级别/帧号/分类/文本），由 `LogMessages` 存在客户端内存里，
+由 `LogDialog` 展示；关图/拆方块即丢，不随地图保存。每个处理器一份定长队列，上限由
+`logicsugar.logMessageLimit`（默认 100，0 = 关闭）控制；代码重新编译时按「重启清空」
+（`logicsugar.logClearOnRestart`）决定是否丢弃旧消息。旧的「写游戏日志文件」语义由 `systemlog` 保留。
 
 ### 断点（breakpoint）
 暂停整个游戏并把视角定位到命中的处理器，用于在不改变处理器状态的前提下检查变量与内存。`ProcessorStatus.breakpoint` 负责暂停、视角、accumulator 冻结/归还与暂停期间的消息绘制；「禁用断点」让 breakpoint 与断点化断言变成空操作，「断点分离视角」决定是否临时改写原版 `detach-camera` 设置（取消暂停时恢复原值）。
 
 ### 线格式（wire format）
-自定义指令在 token 流中的精确形状（opcode 拼写、参数顺序、引号约定）。断言语句集的线格式必须与 MlogAssertions/Mindcode 保持逐字节一致，由 `assertTest` 钉住；任何一侧漂移都会破坏互操作。唯一例外是 `asserttype` 的 `null` 类型：它是 LogicSugar 扩展（上游 v0.8.1 的 `asserttype` 只有六种类型，`valueOf` 不识别 `null`），其余 token 与上游完全一致。
+自定义指令在 token 流中的精确形状（opcode 拼写、参数顺序、引号约定）。断言语句集的线格式必须与 MlogAssertions/Mindcode 保持逐字节一致，由 `assertTest` 钉住；任何一侧漂移都会破坏互操作。例外有三：`asserttype` 的 `null` 类型（LogicSugar 扩展，上游 v0.8.1 的 `asserttype` 只有六种类型，`valueOf` 不识别 `null`）；`snapshot` 的旧三载荷 token 文本仍可读；`log`/`systemlog` 的旧文本按第 3 槽写法分流成 `systemlog`（上游 v0.12.0 的破坏性重命名，详见[上游基线](upstream.md)）。
 
 ### 跳转表（jump table）
 `switch` 的一种下降结果：先做上下界守卫，再用 `op add @counter @counter` 按槽位分派；越界与空洞槽走默认路径。非整数或跨度过大的 case 集合自动回退比较链。

@@ -101,11 +101,18 @@ public final class VarsUiLogicTest{
         check(title.contains("ProfileDialog"), "标题栏必须有 profiler 入口");
         check(title.contains("setDisabled"), "标题栏的 profiler 入口必须对非处理器视图禁用");
         check(edit.contains("ProfileDialog"), "Edit 菜单必须有 profiler 入口（快照关闭时标题栏不存在）");
+        // 处理器日志（上游 v0.12.0）：两个入口与 profiler 同位置，且只对处理器视图可用
+        check(title.contains("LogDialog"), "标题栏必须有处理器日志入口");
+        check(title.contains("BlockDataType.processor"), "标题栏的日志入口必须只对处理器视图可用");
+        check(edit.contains("LogDialog"), "Edit 菜单必须有日志入口（快照关闭时标题栏不存在）");
 
         // 设置行的注册：LogicSugarSettings.addVarsPrefs 是自有设置页与 Neon 聚合页共用的唯一注册点
         String settings = readSource("src/logicsugar/LogicSugarSettings.java");
         check(logicsugar.SourceNails.methodBody(settings, "static void addVarsPrefs(").contains("settingStartProfilerImmediately"),
             "profiler 设置行必须由 addVarsPrefs 注册（自有设置页 + Neon 聚合页共用）");
+        check(logicsugar.SourceNails.methodBody(settings, "static void addVarsPrefs(")
+                .contains("LogMessages.settingLimit"),
+            "日志上限/重启清空设置行必须由 addVarsPrefs 注册（双形态要求）");
         check(logicsugar.SourceNails.methodBody(settings, "private static void build(").contains("addVarsPrefs"),
             "自有设置页必须调用 addVarsPrefs");
         String mod = readSource("src/logicsugar/LogicSugarMod.java");
@@ -152,6 +159,7 @@ public final class VarsUiLogicTest{
         for(String file : new String[]{
             "src/logicsugar/vars/ui/VarsDialog.java",
             "src/logicsugar/vars/ui/SnapshotsDialog.java",
+            "src/logicsugar/vars/ui/LogDialog.java",
             "src/logicsugar/profile/ui/ProfileDialog.java"
         }){
             String source = withoutComments(readSource(file));

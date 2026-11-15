@@ -3,6 +3,7 @@ package logicsugar.vars.ui;
 import arc.Core;
 import arc.Events;
 import arc.util.Log;
+import logicsugar.vars.LogMessages;
 import logicsugar.vars.Snapshots;
 import logicsugar.vars.VarsOptions;
 import mindustry.game.EventType;
@@ -56,6 +57,8 @@ public final class VarsAccess{
         VarsOptions.updateFrequency = frequency <= 0 ? 15 : frequency;
         VarsOptions.significantDigits = Core.settings.getInt("logicsugar.varsDigits", VarsOptions.significantDigits);
         VarsOptions.alignment = Core.settings.getInt("logicsugar.varsAlignment", VarsOptions.alignment);
+        // 处理器日志上限/重启清空（上游 v0.12.0）
+        LogMessages.applySettings();
         // 五个视图开关是持久化偏好（上游 v0.11.6 同）：对话框每次切换都会写盘，这里启动时读回
         VarsOptions.load();
         try{

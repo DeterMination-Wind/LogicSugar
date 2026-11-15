@@ -11,26 +11,46 @@ import mindustry.logic.Senseable;
 
 /**
  * 任意 Senseable 的「传感器」视图（{@code VarsDialog} 里的 Properties）：行是
- * {@code LAccess.all} 的全部传感项，能装物品/液体时再加上每种物品与液体。
+ * {@code LAccess} 的传感项（v0.12.0 起剔除四个 camera 访问），能装物品/液体时再加上每种物品与液体。
  *
  * <p>Ported from upstream MlogAssertions v0.11.3 ({@code cardillan.mlogassertions.data.SensorVars}),
- * verbatim：v0.11.2 把构造参数从建筑放宽到 {@link Senseable}（单位、队伍、内容物都能看
- * Properties），{@code hasItems()} 保留上游的写法——`entity instanceof Building &amp;&amp; … ||
+ * plus v0.12.0's camera filter：v0.11.2 把构造参数从建筑放宽到 {@link Senseable}（单位、队伍、
+ * 内容物都能看 Properties），{@code hasItems()} 保留上游的写法——`entity instanceof Building &amp;&amp; … ||
  * entity instanceof Senseable` 对任何 Senseable 都为真，所以单位视图也会列出全部物品/液体
  * 行（读数恒为 0）。这里刻意与上游保持一致而不是「修好」，否则同一份快照在两边的行号会错位。
  * 标签与内容表是静态缓存的，读取 {@code Vars.content}，所以本类只能在游戏内容加载完成后使用
  * （无界面自检里不要碰它）。</p>
  */
 public class SensorVars extends BaseVariableValues{
-    protected static String[] accessLabels = new String[LAccess.all.length];
+    /** 可见的传感项（上游 v0.12.0 过滤了四个 camera 访问）。
+     *
+     *  <p>v160 把 {@code cameraX}/{@code cameraY}/{@code cameraWidth}/{@code cameraHeight} 列为
+     *  {@code LAccess.privilegedAccess}：它们只对客户端相机有意义，属性表对任何实体读数恒为 0，
+     *  却占了四行。上游 v0.12.0 把它们从访问表里剔除；这里保留它的建表方式（只剔除这四个，
+     *  不像 {@code LAccess.senseable} 那样连带参数的控制项也一起剔）。</p> */
+    protected static LAccess[] accesses = getAccesses();
+    protected static String[] accessLabels = new String[accesses.length];
     protected static String[] itemLabels = new String[Vars.content.items().size];
     protected static String[] liquidLabels = new String[Vars.content.liquids().size];
     protected static MappableContent[] items = new MappableContent[Vars.content.items().size];
     protected static MappableContent[] liquids = new MappableContent[Vars.content.liquids().size];
 
+    private static LAccess[] getAccesses(){
+        // 不写死 LAccess.all.length - 4：游戏再加/减 privileged 项时这里不能越界
+        LAccess[] candidates = new LAccess[LAccess.all.length];
+        int target = 0;
+        for(LAccess access : LAccess.all){
+            switch(access){
+                case cameraX, cameraY, cameraWidth, cameraHeight -> { }
+                default -> candidates[target++] = access;
+            }
+        }
+        return java.util.Arrays.copyOf(candidates, target);
+    }
+
     static{
         for(int i = 0; i < accessLabels.length; i++){
-            accessLabels[i] = " @" + LAccess.all[i].name() + " ";
+            accessLabels[i] = " @" + accesses[i].name() + " ";
         }
 
         for(int i = 0; i < itemLabels.length; i++){
@@ -97,7 +117,7 @@ public class SensorVars extends BaseVariableValues{
     @Override
     public boolean isObj(int index){
         return index >= accessLabels.length ? LVar.invalid(entity.sense(contents[index - accessLabels.length]))
-                : entity.senseObject(LAccess.all[index]) != Senseable.noSensed || LVar.invalid(entity.sense(LAccess.all[index]));
+                : entity.senseObject(accesses[index]) != Senseable.noSensed || LVar.invalid(entity.sense(accesses[index]));
     }
 
     @Override
@@ -110,14 +130,14 @@ public class SensorVars extends BaseVariableValues{
         if(index >= accessLabels.length){
             return null;
         }else{
-            Object result = entity.senseObject(LAccess.all[index]);
+            Object result = entity.senseObject(accesses[index]);
             return result == Senseable.noSensed ? null : result;
         }
     }
 
     @Override
     public double num(int index){
-        double value = index >= accessLabels.length ? entity.sense(contents[index - accessLabels.length]) : entity.sense(LAccess.all[index]);
+        double value = index >= accessLabels.length ? entity.sense(contents[index - accessLabels.length]) : entity.sense(accesses[index]);
         return Double.isNaN(value) ? 0 : value;
     }
 
@@ -137,7 +157,7 @@ public class SensorVars extends BaseVariableValues{
 
     @Override
     public void eachObject(Cons<Object> getter){
-        for(int index = 0; index < LAccess.all.length; index++){
+        for(int index = 0; index < accesses.length; index++){
             Object value = obj(index);
             if(value != null) getter.get(value);
         }

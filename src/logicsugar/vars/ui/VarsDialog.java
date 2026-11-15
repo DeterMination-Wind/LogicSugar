@@ -45,9 +45,9 @@ import java.util.Arrays;
  * 变量 / 内存 / 属性视图对话框：列出某一时刻的变量表，可以前后翻看该建筑的历史快照，
  * 也可以还原快照、创建快照、清理内存，以及微调显示方式。
  *
- * <p>Ported from upstream MlogAssertions v0.11.3
+ * <p>Ported from upstream MlogDevTools v0.12.0
  * ({@code cardillan.mlogassertions.ui.VarsDialog})，布局、按钮顺序、禁用规则与快捷键
- * 全部逐字保留。与上游的差异只有下面四处，都是集成约定而不是行为改动：</p>
+ * 全部逐字保留（包括 v0.12.0 的处理器日志入口）。与上游的差异只有下面四处，都是集成约定而不是行为改动：</p>
  *
  * <ul>
  * <li>会话级显示偏好（{@code hex}/{@code sorted}/{@code filtered}/{@code hideLinks}/
@@ -291,6 +291,12 @@ public class VarsDialog extends BaseDialog{
 
             t.button(Icon.filters, style, this::viewOptions);
             t.button(Icon.edit, style, this::editCommands);
+            // processor log（上游 v0.12.0）：与 profiler 同位置，只对处理器视图可用
+            t.button(VarsIcons.log, style, () -> {
+                if(view.entity() instanceof mindustry.world.blocks.logic.LogicBlock.LogicBuild build){
+                    new LogDialog(build).show();
+                }
+            }).get().setDisabled(() -> view.dataType() != BlockDataType.processor);
             // profiler（上游 v0.11.2）：只对处理器视图可用；入口同时出现在标题栏与 Edit 菜单
             t.button(Icon.chartBar, style, () -> {
                 if(view.entity() instanceof mindustry.world.blocks.logic.LogicBlock.LogicBuild build){
@@ -520,7 +526,9 @@ public class VarsDialog extends BaseDialog{
 
     private void help(Table t, TextureRegionDrawable icon1, TextureRegionDrawable icon2, String text){
         if(icon2 == null){
-            t.image(icon1).colspan(2).color(Color.lightGray);
+            // 上游 v0.12.0：单图标也要包一层居中的子表，否则 colspan 单元格按元素原宽排，
+            // 图标与右侧文本列之间会出现一条缝
+            t.table(t2 -> t2.image(icon1).center()).colspan(2).color(Color.lightGray);
         }else{
             t.image(icon1).color(Color.lightGray).padRight(4f);
             t.image(icon2).color(Color.lightGray).padLeft(4f);
@@ -545,6 +553,7 @@ public class VarsDialog extends BaseDialog{
                         : tr("logicsugar.vars.help.navigate.keys", "Navigate to the previous/next snapshot (also the PgUp/PgDn and Home/End keys)."));
                 help(t, Icon.filters, tr("logicsugar.vars.help.filters", "Customize the view (for the duration of the session)."));
                 help(t, Icon.edit, tr("logicsugar.vars.help.edit", "Export, import or modify the data of this block."));
+                help(t, VarsIcons.log, tr("logicsugar.vars.help.log", "Show the current processor's log."));
                 help(t, Icon.chartBar, tr("logicsugar.vars.help.profiler", "Profile the current processor's execution."));
                 help(t, Icon.pause, Icon.play, tr("logicsugar.vars.help.pause", "Pause/resume the game."));
                 help(t, Icon.folderOpen, tr("logicsugar.vars.help.folder", "Show a list of this block's snapshots."));
@@ -633,8 +642,13 @@ public class VarsDialog extends BaseDialog{
                 TextButton.TextButtonStyle style = Styles.flatt;
                 t.defaults().size(360f, 60f).left();
 
-                // 快照关闭时标题栏不存在，profiler 入口由 Edit 菜单承担（上游 v0.11.2）
+                // 快照关闭时标题栏不存在，log / profiler 入口由 Edit 菜单承担（上游 v0.11.2 / v0.12.0）
                 if(Snapshots.maxSnapshots <= 0 && entity instanceof mindustry.world.blocks.logic.LogicBlock.LogicBuild build){
+                    t.button(tr("logicsugar.log.title", "Log"), VarsIcons.log, style, () -> {
+                        new LogDialog(build).show();
+                        dialog.hide();
+                    }).marginLeft(12f).row();
+
                     t.button(tr("logicsugar.profile.title", "Profiler"), Icon.chartBar, style, () -> {
                         new logicsugar.profile.ui.ProfileDialog(build).show();
                         dialog.hide();
