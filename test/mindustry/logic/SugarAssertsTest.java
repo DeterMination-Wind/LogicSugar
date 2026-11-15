@@ -23,6 +23,7 @@ public class SugarAssertsTest{
         emitModeWritesInstructions();
         verifyRestoreAcceptsBothBuildShapes();
         decompileDebugBuildRoundTrip();
+        legacyLogDebugBuildDecompilesAsSystemLog();
         assertTypeRoundTripAndClassification();
         assertConditionCardRoundTrip();
         snapshotCardRoundTrip();
@@ -204,6 +205,18 @@ public class SugarAssertsTest{
         check(result.verified, "debug build did not survive the recovery gate: " + result.notes);
         check(result.sugar.contains("assertequals 0 x"), "assert card lost in recovery: " + result.sugar);
         check(result.sugar.contains("op add y x 1"), "regular statements lost in recovery: " + result.sugar);
+    }
+
+    /** v5.11 and earlier emit builds carry the old `log <level> <p0..p9>` instruction. The
+     *  parser reads it as SystemLogCard, and the decompiler normalizes both sides of the verify
+     *  gate through {@code LAssembler.write}, which writes it back as `systemlog` — so the old
+     *  build still recovers as the game-log card instead of falling back to vanilla. */
+    private static void legacyLogDebugBuildDecompilesAsSystemLog(){
+        String mlog = "log info \"old\" @counter null null null null null null null null\n";
+        SugarDecompiler.Result result = SugarDecompiler.decompile(mlog);
+        check(result.verified, "legacy log debug build did not survive the recovery gate: " + result.notes);
+        check(result.sugar.contains("systemlog info \"old\""),
+            "legacy log should recover as systemlog: " + result.sugar);
     }
 
     /** asserttype covers the upstream v0.11 taxonomy (plus LogicSugar's null type): the wire

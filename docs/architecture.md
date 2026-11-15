@@ -244,9 +244,10 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
   新 `log` 的第 3 个 token 是分类（默认 `null`，清空归一为 `null`），所以 `parseLog` 只在第 3 槽为
   `~` / 空 / 引号开头时按旧式 `SystemLogCard` 读取，重写时输出 `systemlog`——语义不变。手写「带引号的
   分类」是唯一二义情形，会被读成 `systemlog`；细节见[上游基线](upstream.md)「线格式例外」。
-- **旧调试构建**：v5.11 及更早的 `emit` 产物里是真实的 `log` 指令，而现在的候选会把旧式 `log` 文本
-  读成 `systemlog`；两者归一化指令流不同，所以反编译 verify 门会拒绝，旧程序在编辑器里退回原版 mlog
-  （方向正确：多显示原版）。载体里的 sugar 不受影响，重开仍是卡片。
+- **旧调试构建**：v5.11 及更早的 `emit` 产物里是真实的 `log` 指令。反编译的比较两侧都先过
+  `parseLog`，而 `LAssembler.write` 会把旧式 `log` 重写成 `systemlog`，所以 verify 门看到的是同一条
+  `systemlog`，旧程序仍恢复成「写系统日志」卡片（运行时语义不变），不会退回原版。载体里的 sugar
+  走同一条路径，重开仍是卡片。
 - **Profiler**：`LogI.vars()` 把分类槽也算进指令读取的变量（上游漏了它），否则 recording 快照会
   漏掉分类变量的当前值。
 

@@ -105,7 +105,7 @@ cardillan/MlogDevTools 的 **v0.12.0**（仓库在 v0.12.0 前后从 MlogAsserti
    分流：`~` / 空 / 引号开头 = 旧式消息模板（读成 `SystemLogCard`，重写输出 `systemlog`）；其余
    （`null`、裸变量名、数字）按新 `log` 的 `category` 读。因此手写「带引号的分类」会被读成 `systemlog`
    （唯一二义情形）；`LogCard.write` 把清空的分类归一为 `null`，保证新文本永远不会落进旧式分支。
-   存量 `emit` 产物里的旧 `log` 指令无法通过反编译 verify 门（候选会重编译成 `systemlog`），
-   打开时退回原版 mlog；载体里的 sugar 不受影响。
+   存量 `emit` 产物里的旧 `log` 指令同样安全：反编译 verify 门的输入归一化也先过 `parseLog`，
+   `LAssembler.write` 会把旧式 `log` 写成 `systemlog`，两侧一致，恢复出的卡片保持写游戏日志的语义。
 
 除此之外，断言指令族、`profile` / `restart` 卡、`recording` 快照类型以及停机/断点语义均按 v0.12.0 对齐。
