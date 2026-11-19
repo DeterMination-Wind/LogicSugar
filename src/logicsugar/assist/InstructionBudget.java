@@ -12,9 +12,27 @@ import mindustry.logic.SugarFunctions;
  * {@link mindustry.logic.SugarLogicDialog} previously only surfaced an over-limit
  * compile error after {@code hide()} had already started. This helper is the shared
  * check used by the editor banner and the close-time gate.</p>
+ *
+ * <p><b>The 1000-instruction product limit is a hard invariant.</b>
+ * {@link LExecutor#maxInstructions} is a mutable {@code public static} that other mods
+ * (Mlog Dev Tools' slider among them) raise, but a saved processor program that another
+ * client cannot load is a bug regardless of who raised the static. Every <em>enforcement</em>
+ * site therefore compares against {@link #vanillaLimit()}
+ * ({@code Math.min(LExecutor.maxInstructions, VANILLA_LIMIT)}), and every user-visible
+ * message states that number. Only the function-library parse window
+ * ({@link SugarFunctions#libraryInstructionLimit}) is allowed to exceed it — a library file
+ * is not a processor product.</p>
  */
 public final class InstructionBudget{
     private InstructionBudget(){}
+
+    /** Vanilla's processor cap: the saved mlog is never allowed past this. */
+    public static final int VANILLA_LIMIT = 1000;
+
+    /** The limit enforcement uses: whichever is lower, the game/other-mod static or vanilla. */
+    public static int vanillaLimit(){
+        return Math.min(LExecutor.maxInstructions, VANILLA_LIMIT);
+    }
 
     public static final class Snapshot{
         public final int instructions;
@@ -46,7 +64,7 @@ public final class InstructionBudget{
 
     public static Snapshot of(String sugar, SugarCompiler.FuncMode mode,
                               SugarFunctions.LibraryIndex library, String libraryText){
-        int limit = LExecutor.maxInstructions;
+        int limit = vanillaLimit();
         int sourceLines = SugarCompiler.emittedInstructionCount(sugar);
         try{
             String compiled = SugarCompiler.compile(sugar, mode, library, libraryText);

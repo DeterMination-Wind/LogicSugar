@@ -121,67 +121,25 @@ tasks.register("varClipboardTest", JavaExec){
     mainClass = "logicsugar.assist.VarClipboardSelfTest"
 }
 
-tasks.register("processorStatusTest", JavaExec){
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "logicsugar.assist.ProcessorStatusSelfTest"
-}
-
 tasks.register("unitFlagsTest", JavaExec){
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = "logicsugar.assist.UnitFlagsSelfTest"
 }
 
-tasks.register("assertTest", JavaExec){
+// MDT debug opcodes as text only: all 13 wire shapes round-trip byte-identically (including the
+// legacy snapshot/log shapes and `~` padding), one inert instruction per line with jump targets
+// intact, AssertEmit strip/emit product shapes, the generated-bounds decompiler filter, and the
+// pinned 1000-instruction product budget while another mod raises LExecutor.maxInstructions.
+tasks.register("debugPassthroughTest", JavaExec){
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = "mindustry.logic.SugarAssertsTest"
+    mainClass = "mindustry.logic.DebugPassthroughTest"
 }
 
-tasks.register("assertTypeTest", JavaExec){
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "mindustry.logic.AssertTypeTest"
-}
-
-// The runtime message placeholder engine (assertions, error, log), pinned without a live
-// executor: see AssertMessageTest's class comment for why it needs its own task.
-tasks.register("assertMessageTest", JavaExec){
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "logicsugar.assist.AssertMessageTest"
-}
-
-// Vars / Memory / Properties screens and the snapshot subsystem: data layer, entry-side pure
-// logic, and the snapshot-list navigation state machine. The dialogs themselves need a live
-// scene and are only covered by compile + the manual checklist in docs/testing.md.
-tasks.register("varsTest", JavaExec){
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "logicsugar.vars.VarsDataTest"
-}
-
-// The processor-owned log store (upstream v0.12.0): limit trimming, recompile clearing and
-// the per-message fields. The log instruction/dialog need a live build/scene, so this covers
-// the headless state machine the same way varsTest covers the snapshot accounting.
-tasks.register("logMessageTest", JavaExec){
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "logicsugar.vars.LogMessagesTest"
-}
-
-tasks.register("varsUiTest", JavaExec){
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "logicsugar.vars.VarsUiLogicTest"
-}
-
-tasks.register("varsAccessTest", JavaExec){
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "logicsugar.vars.VarsAccessTest"
-}
+// The MDT debug opcodes are a text passthrough only (SugarDebugLines): no runtime message
+// engine, no Vars/Memory/Properties screens, no snapshots, no processor-owned log store and no
+// Profiler live here any more. MDT owns those; debugPassthroughTest above covers what is left.
 
 tasks.register("arrayTest", JavaExec){
     dependsOn testClasses
@@ -391,14 +349,6 @@ tasks.register("spanTest", JavaExec){
     mainClass = "mindustry.logic.SpanTest"
 }
 
-// Profiler: the wrapper unwrap contract, the pure step/quota math, and the reflection fallback
-// that degrades the source column to "unknown instruction" without breaking the rest.
-tasks.register("profilerTest", JavaExec){
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "logicsugar.profile.ProfileInstrumentationTest"
-}
-
 // PostHog usage/feedback wire contract (event/property names, JSON escaping, minute accumulator)
 // and the dual-form feedback settings entry. No network request is made.
 tasks.register("postHogTest", JavaExec){
@@ -409,7 +359,7 @@ tasks.register("postHogTest", JavaExec){
 
 
 test.enabled = false
-check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, processorStatusTest, unitFlagsTest, assertTest, assertTypeTest, assertMessageTest, varsTest, logMessageTest, varsUiTest, varsAccessTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, paletteHintTest, statementClipboardTest, canvasSourceTest, unitControlTest, spanTest, unitClassTest, profilerTest, postHogTest
+check.dependsOn selfTest, ifElseTest, decompileTest, reconstructionTest, reconstructionMatrixTest, recoveryPredicateTest, shortCircuitTest, crossLoaderTest, boxSelectTest, cfgTest, lintTest, varClipboardTest, unitFlagsTest, debugPassthroughTest, arrayTest, arrayBulkTest, dataFrameworkTest, recordTest, containerTest, bitsetTest, mapTest, setTest, listHeapTest, chainTest, dataSubsystemTest, dataCallTest, editHistoryTest, bottomBarLayoutTest, escapePreviewTest, v160SensorAccessTest, funclibLimitTest, dataRuntimeTest, exprTextImportTest, exprCardTest, conditionLabelTest, editorConflictTest, textWrapTest, paletteHintTest, statementClipboardTest, canvasSourceTest, unitControlTest, spanTest, unitClassTest, postHogTest
 
 // ===== Android packaging (D8) =====
 // The plain `jar` task only works on desktop: it contains .class bytecode, which

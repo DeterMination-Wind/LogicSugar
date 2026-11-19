@@ -340,10 +340,17 @@ public class ExprCompiler{
         }
     }
 
-    /** 数组/矩阵越界断言行（emit 调试构建专用）：线格式与
-     *  {@link mindustry.logic.SugarAsserts.AssertBoundsCard} 完全一致——
-     *  {@code assertBounds <type> <multiple> <min> <opMin> <value> <opMax> <max> "<message>"}。
-     *  结构化保存 value，条件/返回表达式 lowering 时按各自命名空间改名临时变量。 */
+    // KEEP(P4) — LogicSugar's own debug-build bounds line; not the MDT port, never delete.
+    /** 数组/矩阵越界断言行（emit 调试构建专用）：线格式
+     *  {@code assertBounds <type> <multiple> <min> <opMin> <value> <opMax> <max> "<message>"}，
+     *  消息签名由 {@link mindustry.logic.SugarDebugLines#isGeneratedBoundsMessage} 定义。
+     *
+     *  <p>KEEP(P4) — 这是 LogicSugar 自己的调试构建发射器（表达式层在非常量下标读写前插入
+     *  越界检查），不是 MDT 的移植，不要随 MDT 解耦删除：删掉它 {@code AssertEmit=emit} 就不再
+     *  有数组/矩阵越界检查。断言行只存在于编译产物里（strip 构建与糖源码都不含它），
+     *  MDT 安装与否都不影响这里。</p>
+     *
+     *  <p>结构化保存 value，条件/返回表达式 lowering 时按各自命名空间改名临时变量。</p> */
     public static class AssertBoundsLine extends RawLine{
         public final String type, multiple, min, opMin, value, opMax, max, message;
 
@@ -748,8 +755,8 @@ public class ExprCompiler{
     }
 
     /** 越界断言发射开关（emit 调试构建）。编译路径显式传入，编辑器/预览路径恒为 false：
-     *  编辑器侧的展开（{@code ExprHook.unfoldedText} 的文本层展开）按同一开关处理断言行，
-     *  而断言行本身只在真正的 lower 阶段生成。 */
+     *  emit 构建的编译产物在非常量下标读写前带 {@link AssertBoundsLine}，而糖源码、画布展开
+     *  和文本展开都不含它（{@code ExprHook} 只对既有文本做透传/透明处理）。 */
     private static boolean boundsAsserts;
 
     /**
@@ -1123,7 +1130,14 @@ public class ExprCompiler{
         return finishAddress(ops, matrix.memory, dest);
     }
 
-    /** emit 调试构建下发射一条越界断言行（strip 模式与编辑器路径恒不发射）。 */
+    /** emit 调试构建下发射一条越界断言行（strip 模式与编辑器路径恒不发射）。
+     *
+     *  <p>KEEP(P4) — 消息必须保持 {@code "<kind> '<name>' ... out of bounds (<min>..<max>)"}
+     *  这个精确形状：{@link mindustry.logic.SugarDebugLines#isGeneratedBoundsLine} 用它把
+     *  “LogicSugar 生成的检查”与“用户自己写的 assertBounds”区分开（折叠透明、反编译过滤都
+     *  依赖它）。同样不要删除本方法或它的调用点——它是 LogicSugar 自己的调试构建功能，不是
+     *  MDT 的移植。</p> */
+    // KEEP(P4) — own emitter, not the MDT port; call sites and wire format must survive.
     private static void emitBoundsAssert(List<Line> ops, String what, String operand, long min, long max){
         if(!boundsAsserts) return;
         String message = "\"" + what + " out of bounds (" + min + ".." + max + ")\"";

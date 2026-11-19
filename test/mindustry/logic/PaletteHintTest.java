@@ -124,11 +124,13 @@ public final class PaletteHintTest{
 
         // 循环没真跑起来的护栏（注册表被别人清空、或原版积木被误判成糖积木时立刻变红）
         check(vanilla >= 50, "调色板必须仍然列出全部原版积木，只走到 " + vanilla + " 条");
-        check(modCards >= 50, "调色板必须仍然列出糖积木，只走到 " + modCards + " 条");
+        // The assertion/debug family (13 cards) moved to Mlog Dev Tools, so the mod-owned share is
+        // now ~41 cards instead of ~54; the guard stays just below that to keep catching an empty
+        // or half-registered palette.
+        check(modCards >= 40, "调色板必须仍然列出糖积木，只走到 " + modCards + " 条");
 
-        // 尚未写译文的糖积木（当前 9 张：单位四卡、Mem、Assert 条件卡与 v0.11.3 的 snapshot/
-        // profile/restart）今天也不显示提示：这里是既有事实的度量，不是许可 —— 数量变大说明
-        // 新卡漏了 logicsugar.lst.<typeName>，该在 bundle 里补上。
+        // 尚未写译文的糖积木（当前 9 张：单位四卡、Mem 等）今天也不显示提示：这里是既有事实的度量，
+        // 不是许可 —— 数量变大说明新卡漏了 logicsugar.lst.<typeName>，该在 bundle 里补上。
         System.out.println("palette: " + vanilla + " vanilla + " + modCards + " mod cards, "
             + keyless + " mod cards without their own hint key");
     }

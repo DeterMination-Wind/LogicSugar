@@ -30,31 +30,24 @@ v2.0.0 旧程序的持久化方式：`# @logic-sugar-v1 begin` / `# @logic-sugar
 ### SwitchStrategy（分派策略）
 `switch` 的下降形态。`auto` = 整数 case 且值域跨度 ≤255 时按可执行指令成本在比较链与跳转表间二选一；`chainOnly` = 恒用比较链（与 2.3.1 之前输出逐字节一致）。设置项 `logicsugar.switchStrategy`。带 `raw` 的裸表不受它影响。
 
-### AssertEmit（调试断言构建）
-断言卡片的编译开关（设置项 `logicsugar.assertEmit`）。`strip`（默认）把断言编译掉，mlog 保持原版可解析；`emit` 把断言写回为真实自定义指令——原版客户端会把这些行降级为 InvalidStatement 占位（断言静默失效）。**仅单机/编辑器生效**：联机会话强制 `strip`（见"单机门禁"）。
+### AssertEmit（调试构建）
+调试行的编译开关（设置项 `logicsugar.assertEmit`）。`strip`（默认）把调试行编译掉，mlog 保持原版可解析；`emit` 把它们写回为真实自定义指令——原版客户端会把这些行降级为 InvalidStatement 占位（调试行为静默失效）。两类内容受它控制：载体糖源码里的 MDT 调试行（`SugarDebugLines.Line`），以及表达式层为非常量数组/矩阵下标生成的 `assertBounds` 越界检查。**仅单机/编辑器生效**：联机会话强制 `strip`（见"单机门禁"）。
 
 ### 单机门禁（single-player gate）
 项目硬底线的执行机制：**多人联机环境必须兼容原版客户端**，因此会改变保存产物语义的调试类功能（目前是 AssertEmit=emit）只在 `!Vars.net.active()`（单机/地图编辑器）时生效，联机（已连接或自建）一律回落原版行为。门禁在代码层强制（`SugarCompiler.currentAssertEmit`）；不提供改变处理器指令预算的能力（指令上限覆盖曾试做后移除，处理器产物恒 ≤1000 条），不依赖用户自觉；纯展示类功能不受此限。全局函数库文件不是处理器产物，另有 `SugarFunctions.libraryInstructionLimit`（当前 10000 条语句）上限，见"函数库"。残余风险：单机创建的越界内容被分享到多人环境时原版客户端仍会截断/清空/静默降级，只能靠文档与设置描述讲清。
 
-### 断言语句集（assertions）
-移植自 cardillan/MlogDevTools（原名 MlogAssertions；本仓库基线 v0.12.1，最早的八条来自 v0.8.2、后续依次跟进）的运行时检查指令
-（`assert`/`assertBounds`/`assertequals`/`assertflush`/`assertprints`/`asserttype`/`error`/`log`/`systemlog`/`breakpoint`），
-线格式逐字节兼容：断言失败置**停机标志**（`exec.stop`，上游 v0.11.4 起）并由 `ProcessorStatus` 显示消息
-（可经「断言失败即断点」改为在失败指令处暂停），`breakpoint` 暂停游戏、居中视角并按设置临时分离视角，
-全部 accumulator 在本帧结束后归还。v0.12.0 把旧的「写游戏日志文件」`log` 重命名为 `systemlog`，
-新 `log` 把消息存进处理器自带日志（见“处理器日志”）。与 MlogAssertions 并存时按“先到先得”跳过重复 opcode 注册。
-
-### 处理器日志（processor log）
-`log` 指令在处理器自己身上留下的一串消息（级别/帧号/分类/文本），由 `LogMessages` 存在客户端内存里，
-由 `LogDialog` 展示；关图/拆方块即丢，不随地图保存。每个处理器一份定长队列，上限由
-`logicsugar.logMessageLimit`（默认 100，0 = 关闭）控制；代码重新编译时按「重启清空」
-（`logicsugar.logClearOnRestart`）决定是否丢弃旧消息。旧的「写游戏日志文件」语义由 `systemlog` 保留。
-
-### 断点（breakpoint）
-暂停整个游戏并把视角定位到命中的处理器，用于在不改变处理器状态的前提下检查变量与内存。`ProcessorStatus.breakpoint` 负责暂停、视角、accumulator 冻结/归还与暂停期间的消息绘制；「禁用断点」让 breakpoint 与断点化断言变成空操作，「断点分离视角」决定是否临时改写原版 `detach-camera` 设置（取消暂停时恢复原值）。
+### 保存预算钉（budget pin）
+把处理器保存产物的上限钉死在原版 `1000` 条，不跟随 `LExecutor.maxInstructions`（后者是可被其它 mod 改写的 public static，MDT 的滑条就会抬高它）。`InstructionBudget.VANILLA_LIMIT = 1000`，`vanillaLimit()` 返回 `Math.min(LExecutor.maxInstructions, VANILLA_LIMIT)`；编辑器拦截、框选/复制/粘贴、编译拒绝、反编译输入检查都走它，报错文本也只写这个数字。唯一例外是函数库文本（`SugarFunctions.libraryInstructionLimit`，不是处理器产物）。超预算时关闭编辑器仍是拒绝保存，唯一出口是「丢弃修改并关闭」。
 
 ### 线格式（wire format）
-自定义指令在 token 流中的精确形状（opcode 拼写、参数顺序、引号约定）。断言语句集的线格式必须与 MlogAssertions/Mindcode 保持逐字节一致，由 `assertTest` 钉住；任何一侧漂移都会破坏互操作。例外有三：`asserttype` 的 `null` 类型（LogicSugar 扩展，上游 v0.8.1 的 `asserttype` 只有六种类型，`valueOf` 不识别 `null`）；`snapshot` 的旧三载荷 token 文本仍可读；`log`/`systemlog` 的旧文本按第 3 槽写法分流成 `systemlog`（上游 v0.12.0 的破坏性重命名，详见[上游基线](upstream.md)）。
+自定义指令在 token 流中的精确形状（opcode 拼写、参数顺序、引号约定、空槽的 `~` 占位）。LogicSugar 自己不再解释 MDT 调试行的语义，只要求**逐字节可逆**；已有的历史形状必须原样保留：`asserttype` 的旧 token 顺序（`<value> <type>`）与 `null` 类型、`snapshot` 的 4 token 旧文本、`log` 的 12 token 旧文本（无分类槽）。判别靠「判别槽的写法」而不是 token 数量——`LParser` 交给自定义解析器的是复用的 16 槽数组、不告诉实际长度。清单见[上游基线](upstream.md)「历史线格式例外」。`ExprCompiler` 生成的越界检查也有自己的消息签名，见 `SugarDebugLines.isGeneratedBoundsMessage`。
+
+### MDT 调试行直通（`SugarDebugLines`）
+Mlog Dev Tools（MDT，原名 MlogAssertions）的 13 个调试 opcode（`assert` / `assertBounds` / `assertequals` /
+`assertflush` / `assertprints` / `asserttype` / `error` / `log` / `systemlog` / `breakpoint` / `snapshot` /
+`profile` / `restart`）在 LogicSugar 里的**唯一**形态：按定长线格式解析、`write()` 原样写回、`build()` 返回
+`NoopI`。它不解释 token、没有卡片、没有运行时，运行时归 MDT。目的只是让存档里已有的调试行仍能打开、往返、
+再保存，且不让跳转目标错位。**绝不能变成**调色板卡片、运行时指令或 `build()` 返回 `null`。
 
 ### 跳转表（jump table）
 `switch` 的一种下降结果：先做上下界守卫，再用 `op add @counter @counter` 按槽位分派；越界与空洞槽走默认路径。非整数或跨度过大的 case 集合自动回退比较链。
@@ -78,7 +71,7 @@ lowering 之后对"无条件跳转到无条件跳转"的链做合并，减少冗
 表达式编译的栈式编号临时变量，每个一次写一次读形成线性链——这是反向把 `op` 链重建为表达式的关键前提。
 
 ### 内存对象存储（memory object storage）
-上游 #12459（v160）的 `MemoryBlock` 改动：内部改为数字 + 对象双数组（含哨兵），logic 的 `read` / `write` 可存取对象（单位、方块等），存档经 `TypeIO.writeObject` 带版本迁移（旧档全按数字读回）；越界 `read` 从返回 NaN 改为返回 null。LogicSugar 当前按 Mindustry v160.1 基线生成原版 `read`/`write`，`assertTypeTest` 覆盖 number/对象分型；若未来扩展 `MlogLint` 内存/类型检查，需明确区分旧版与当前语义。详见[架构总览](architecture.md)「上游版本适配笔记」。
+上游 #12459（v160）的 `MemoryBlock` 改动：内部改为数字 + 对象双数组（含哨兵），logic 的 `read` / `write` 可存取对象（单位、方块等），存档经 `TypeIO.writeObject` 带版本迁移（旧档全按数字读回）；越界 `read` 从返回 NaN 改为返回 null。LogicSugar 当前按 Mindustry v160.1 基线生成原版 `read`/`write`；若未来扩展 `MlogLint` 内存/类型检查，需明确区分旧版与当前语义。详见[架构总览](architecture.md)「上游版本适配笔记」。
 
 ## 表达式与恢复
 
@@ -208,51 +201,21 @@ Expr 模式下把只读 getter intrinsic 写得更像语言原生访问：`list[
 
 ## 调试与观测
 
-### 快照（snapshot）与快照类型
-对一块实体（处理器/内存/单位/队伍/内容物）在某一时刻的变量表存档；快照不随地图保存，关图即丢。
-四种类型：`isolated`（只该实体）、`connected`（实体 + 变量引用的建筑/单位 + 挂在该处理器上的
-`LogicAI` 单位）、`recording`（初始连通快照 + 接下来 `steps` 条指令的逐指令子快照）、
-`global`（地图上全部逻辑块）。线上写 `snapshot <type> <block> <steps> <message>`；旧的三载荷 token
-文本（上游 ≤v0.11.1、LogicSugar ≤5.7.2）按第 4 个 token 的写法分流仍可读，详见[架构总览](architecture.md)。
+### 调试行直通（debug-line passthrough）
+LogicSugar 对 MDT 调试 opcode 只做文本直通，定义见上文「MDT 调试行直通（`SugarDebugLines`）」。旧的
+Vars / Memory / Properties 界面、快照与队列计账、Profiler（`Instrumentation`、快路径/让出路径、执行配额与
+丢配额、源码列）、处理器日志、停机标志与处理器状态指示都已随移植移除，运行时全部由 MDT 提供；本仓库只保证
+这些行在存档里可解析、可回写、不移动跳转目标。
 
-### 队列计账（SnapshotRecord）
-每个实体一份快照队列 + 一个额度计数：普通快照占 1 格，recording 主快照按它的子快照数占格（子快照创建时
-`register()` 递增，条目离场时按 `recording().size` 整批扣回）。因此「快照上限」对 recording 是「总共能保留
-多少条指令记录」，而不是「多少个列表条目」。
+### profile / restart 行
+`profile <start|stop|clear> <block>` 与 `restart <block>` 现在是普通调试行：`AssertEmit=emit`（单机）下按原
+文本写进产物，`strip`（默认、联机强制）下编掉。它们的运行语义归 MDT；LogicSugar 不执行、不解释。
 
-### Instrumentation（本地包装器）
-profiler 把处理器的运行期指令数组换成转发包装器的那个对象（`logicsugar.profile.Instrumentation`）：
-每条指令的执行次数/指令预算/分支次数、覆盖率与丢配额，以及 recording 子快照的抓取。它**只存在于本地进程**，
-不进入保存产物；读 `executor.instructions` 的代码必须先 `InstrumentationEngine.unwrap(...)` 才能做
-`instanceof`（包装器是另一个类）。
-
-### 快路径 / 让出路径（profiler fast / yielding path）
-包装器的两种形态（上游 v0.11.6）。**快路径**用于永远不会 `exec.yield = true` 的指令
-（`InstrumentationEngine.noYielding` 里的原版指令 + `DevToolsInstruction.yields() == false` 的调试指令）：
-不读 `exec.yield`，恒 +1 步/+1 配额，覆盖率看 `steps[index] == 0`。**让出路径**用于可能让出的指令
-（`wait`/`stop`/`flushmsg` 与会失败的断言）：只有计数器真的前进了才算一步，配额按估算值累计，
-覆盖率看 `covered` 位图。两条路径的覆盖率来源不同，读方必须用 `Instrumentation.isCovered(index)`
-（`steps > 0 || covered.get(index)`）合并。
-
-### 停机标志（exec.stop）
-原版执行器的停机开关。上游 v0.11.4 起失败断言与 `error` 指令在回退计数器的同时置它（语义从「自旋」
-变成「停机」：世界处理器的 `LogicScript` 收工，profiler 的包装器读到它就 `stopAll()` 停下统计与录制；
-普通处理器因为原版 `runOnce` 不看 `stop`，仍然每帧重跑失败指令，消息因此持续刷新）。
-
-### 执行配额（instruction quota）与丢配额（lost quota）
-处理器每帧的执行预算由 `maxInstructionScale * ipt` 封顶，`accumulator` 是剩余额度。profiler 的「时间」列
-就是每条指令消耗的额度（普通一步 1，`yield` 时按 `accumulator + edelta*ipt - scale*ipt` 估算）；这个估算值
-累计到 `lostQuota` 就是「丢配额」——被等待/让出丢掉、无法用在本帧指令上的预算。
-
-### 源码列（profiler source column）与反射降级
-profiler 界面第一列显示的是指令文本，来自原版 `LParser` 对 `build.code` 的解析（v1 不映射回 sugar 行）。
-`LParser` 在跨类加载器下只能反射构造/调用；反射失败或解析失败时这一列退化为 `unknown instruction`，
-其余统计照常，绝不因可选功能让游戏崩。
-
-### profile / restart 指令
-`profile <start|stop|clear> <block>` 启停/清空目标处理器的统计；`restart <block>` 重载目标处理器并清空它的变量
-（用于从另一个处理器开始录制初始化代码，`accumulator < 2` 时先 `counter-- + yield` 保证下一帧真的从头跑）。
-两条指令都只在 `emit`（单机调试构建）下写进程序文本，联机强制 `strip`，因此不会进入多人地图的保存产物。
+### 生成式越界检查（generated bounds check）
+LogicSugar 自己在 `AssertEmit=emit` 下为非常量数组/矩阵下标生成的 `assertBounds` 行，消息签名由
+`SugarDebugLines.isGeneratedBoundsMessage` 定义（`array '<name>' index out of bounds (<min>..<max>)` 等）。
+它不是 MDT 的功能，也不是卡片；反编译保留该行，安全门用同一签名过滤两边后比对，详见
+[重建规则](reconstruction.md)「生成式越界检查」。
 
 ## 构建与发布
 

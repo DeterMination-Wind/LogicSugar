@@ -4,6 +4,7 @@ import arc.Core;
 import arc.struct.Seq;
 import arc.util.Log;
 import arc.util.serialization.Base64Coder;
+import logicsugar.assist.InstructionBudget;
 import mindustry.Vars;
 import mindustry.logic.LExecutor;
 import mindustry.logic.SugarStatements.BeginStatement;
@@ -111,12 +112,13 @@ public final class SugarCompiler{
      * value, which is the point.
      *
      * <p><b>It costs one instruction of capacity.</b> The skip is a real instruction being
-     * committed, so it counts towards the limit checked at the end of {@link #compile} along with
-     * the carriers: a program already at {@link LExecutor#maxInstructions} instructions stops
-     * fitting once the skip is added, and the save is refused with an
-     * {@link IllegalArgumentException} instead of being stored. The effective ceiling with the
-     * skip enabled is therefore {@code LExecutor.maxInstructions - 1} -- the price of keeping the
-     * carriers from executing, not a counting bug.</p>
+     * committed, so it counts towards the pinned vanilla product limit checked at the end of
+     * {@link #compile} along with the carriers: a program already at
+     * {@link InstructionBudget#VANILLA_LIMIT} instructions stops fitting once the skip is added,
+     * and the save is refused with an {@link IllegalArgumentException} instead of being stored.
+     * The effective ceiling with the skip enabled is therefore
+     * {@code InstructionBudget.vanillaLimit() - 1} -- the price of keeping the carriers from
+     * executing, not a counting bug.</p>
      *
      * <p>Which is why the line belongs to the <em>stored source</em> instead of being an extra
      * instruction the compiler appends to its output. {@link #verifyRestore} recompiles the
@@ -183,8 +185,10 @@ public final class SugarCompiler{
      *
      *  <p>Needed because the line can be lost on the way in: {@code LAssembler.read} runs the vanilla
      *  {@code LParser}, which stops after {@link LExecutor#maxInstructions} lines and drops the rest
-     *  silently, while a sugar source may legally be longer than that in lines (500 empty {@code if}
-     *  blocks are 1000 source lines and 500 instructions). See {@link #compile} for what happens then.
+     *  silently (LogicSugar counts against the pinned vanilla product limit, see
+     *  {@link InstructionBudget#vanillaLimit()}), while a sugar source may legally be longer than
+     *  that in lines (500 empty {@code if} blocks are 1000 source lines and 500 instructions).
+     *  See {@link #compile} for what happens then.
      *
      *  <p>Compared through the written text rather than by class, so it does not depend on how
      *  {@code set} is represented; a program whose author wrote the same statement by hand is
@@ -250,11 +254,11 @@ public final class SugarCompiler{
         }
     }
 
-    /** What happens to assertion statements (SugarAsserts) at lowering time. strip (the
-     *  default) compiles them away: the sugar — assertions included — lives in the
-     *  persistence carrier and the saved mlog stays vanilla-parseable. emit (debug build)
-     *  writes them as real custom instructions, which vanilla clients degrade to
-     *  InvalidStatement placeholders. */
+    /** What happens to debug lines (MDT's {@code assert}/{@code log}/… family, see
+     *  {@link SugarDebugLines}) at lowering time. strip (the default) compiles them away: the
+     *  sugar — debug lines included — lives in the persistence carrier and the saved mlog stays
+     *  vanilla-parseable. emit (debug build) writes them back as text, which vanilla clients
+     *  degrade to InvalidStatement placeholders. */
     public enum AssertEmit{
         strip, emit;
 
@@ -440,13 +444,13 @@ public final class SugarCompiler{
     private static boolean verifyLowering(String restored, String code,
                                           SugarFunctions.LibraryIndex embedded, String embeddedSource){
         for(FuncMode mode : FuncMode.values()){
-            // Programs saved as debug builds carry assert instructions in the stored stream;
+            // Programs saved as debug builds carry debug lines in the stored stream;
             // recompiling with the local (possibly strip) setting would drop them and fail
-            // the comparison, so both emit shapes are tried for assertion-bearing programs.
+            // the comparison, so both emit shapes are tried for debug-line-bearing programs.
             // The stored stream is checked as well as the sugar: array/matrix subscript
             // bounds asserts are generated at lowering time and never appear in the sugar.
-            AssertEmit[] emitShapes = SugarAsserts.containsAssertStatements(restored)
-                || SugarAsserts.containsAssertStatements(code)
+            AssertEmit[] emitShapes = SugarDebugLines.containsDebugLine(restored)
+                || SugarDebugLines.containsDebugLine(code)
                 ? AssertEmit.values() : new AssertEmit[]{AssertEmit.strip};
             for(AssertEmit emit : emitShapes){
                 // The stored stream was produced by some version of Logic Sugar, and versions
@@ -582,11 +586,15 @@ public final class SugarCompiler{
         boolean lostEntrySkip = !librarySource && entrySkip && containsSugar(statements)
             && !endsWithEntrySkip(statements);
         // Only worth a second parse when the window actually closed over a head that carries no sugar.
-        boolean lostSugar = !librarySource && statements.size >= LExecutor.maxInstructions
+        // KEEP(save budget): the window is the vanilla processor cap, not a third-party raise of
+        // LExecutor.maxInstructions (MDT's slider). Parsing further would only let an over-budget
+        // program through the window and be refused later by the count check below.
+        int sourceLimit = InstructionBudget.vanillaLimit();
+        boolean lostSugar = !librarySource && statements.size >= sourceLimit
             && !containsSugar(statements)
             && containsSugar(SugarFunctions.readLibrary(source, privileged));
         if(lostEntrySkip || lostSugar){
-            throw new IllegalArgumentException("The program's source is past the " + LExecutor.maxInstructions
+            throw new IllegalArgumentException("The program's source is past the " + sourceLimit
                 + "-statement parse limit, so its last statements are dropped before they can be compiled"
                 + " or stored (with the entry skip enabled, the skip this save appends is one of them);"
                 + " shorten the program.");
@@ -717,9 +725,12 @@ public final class SugarCompiler{
             // must be computed from the emitted text itself (one instruction per non-label line).
             // Shard lines are ordinary statements and count one each; nothing here assumes the
             // old single-line carrier shape.
+            // KEEP(save budget): enforcement is pinned to the vanilla 1000-instruction product
+            // limit even when another mod raises LExecutor.maxInstructions.
+            int instructionLimit = InstructionBudget.vanillaLimit();
             int loweredCount = countInstructions(new StringBuilder(lowered));
             int instructionCount = loweredCount + countInstructions(carriers);
-            if(instructionCount > LExecutor.maxInstructions && anySharded){
+            if(instructionCount > instructionLimit && anySharded){
                 // Before sharding, an oversized payload was dropped with a warning instead of
                 // blocking the save. Keep that degradation when the extra shard lines would push
                 // the program past the executor limit: drop the sharded payloads (the lowered
@@ -729,16 +740,16 @@ public final class SugarCompiler{
                 StringBuilder degraded = new StringBuilder();
                 appendCarriers(degraded, libPayload, sugarPayload, false);
                 int degradedCount = loweredCount + countInstructions(degraded);
-                if(degradedCount <= LExecutor.maxInstructions){
+                if(degradedCount <= instructionLimit){
                     Log.warn("LogicSugar: carrier shards would exceed the instruction limit (@ statements, limit @); the source will not survive this save",
-                        instructionCount, LExecutor.maxInstructions);
+                        instructionCount, instructionLimit);
                     carriers = degraded;
                     instructionCount = degradedCount;
                 }
             }
-            if(instructionCount > LExecutor.maxInstructions){
+            if(instructionCount > instructionLimit){
                 String hint = mode == FuncMode.inline ? " Switch to normal mode to share function bodies." : "";
-                throw new IllegalArgumentException("Compiled program has " + instructionCount + " instructions; maximum is " + LExecutor.maxInstructions + "." + hint);
+                throw new IllegalArgumentException("Compiled program has " + instructionCount + " instructions; maximum is " + instructionLimit + "." + hint);
             }
             // LParser errors on the 501st label ("Too many jump locations. Max jumps: 500")
             // before it ever looks at the 1000-instruction cap. A structured loop used to emit
@@ -1157,12 +1168,17 @@ public final class SugarCompiler{
         return SwitchStrategy.auto;
     }
 
-    /** The user-selected assertion emission shape (strip when settings are unavailable).
+    /** The user-selected debug-line emission shape (strip when settings are unavailable).
      *  Hard project requirement: multiplayer saves must stay vanilla-parseable, and emitted
-     *  assert instructions degrade to InvalidStatement on vanilla clients — so debug builds
+     *  debug instructions degrade to InvalidStatement on vanilla clients — so debug builds
      *  only exist in single-player/editor sessions (net inactive). The explicit
      *  {@code compile(..., AssertEmit)} overload bypasses this gate on purpose: it is used
-     *  by the verification matrix and self-tests, never by the save path. */
+     *  by the verification matrix and self-tests, never by the save path.
+     *
+     *  <p>KEEP(P4) — the {@code Vars.net.active() → strip} branch is the multiplayer safety
+     *  net and must survive any MDT decoupling. Deleting it would let a single-player debug
+     *  build leak debug instructions into a networked save, which vanilla clients cannot
+     *  parse and which shifts every jump target there.</p> */
     public static AssertEmit currentAssertEmit(){
         if(Vars.net != null && Vars.net.active()) return AssertEmit.strip;
         try{
@@ -1176,10 +1192,14 @@ public final class SugarCompiler{
     }
 
     private static boolean containsSugar(Seq<LStatement> statements){
-        // every LogicSugar-owned card (SugarStatements structures, SugarAsserts assertions)
-        // descends from SugarStatement; vanilla statements never do
+        // every LogicSugar-owned card (SugarStatements structures, data declarations, expression
+        // cards) descends from SugarStatement; vanilla statements never do. Debug passthrough
+        // lines (SugarDebugLines) count too: they are not cards, but they do change the saved
+        // stream (strip drops them, emit keeps them), so the program must go through lowering
+        // instead of the plain-vanilla early return — otherwise a strip save would keep them.
         for(LStatement statement : statements){
-            if(statement instanceof SugarStatements.SugarStatement) return true;
+            if(statement instanceof SugarStatements.SugarStatement
+                || statement instanceof SugarDebugLines.Line) return true;
         }
         return false;
     }

@@ -137,7 +137,7 @@ public class DataCallStatement extends SugarStatements.SugarStatement{
 
     @Override
     public void build(Table table){
-        // 卡内运算按钮切换运算后整卡重排（与 SugarAsserts 的条件/操作按钮同一模式）：
+        // 卡内运算按钮切换运算后整卡重排（LStatement 选择器按钮的常规模式）：
         // 目标变量字段随「该运算是否返回值」出现或消失，实参回到该运算的默认形状。
         table.clearChildren();
 

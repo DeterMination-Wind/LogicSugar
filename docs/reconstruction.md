@@ -23,13 +23,14 @@
 恢复结果；任何未识别的部分回退为原版语句。新恢复模式一律放在门后。
 
 - **验证矩阵**：`verify` 跨完整的 `FuncMode × SwitchStrategy` 矩阵编译候选，因为程序可能在别的用户设置下
-  保存；候选或原始程序含断言时再乘一维 `AssertEmit`（strip/emit）。无断言程序维持 2×2。
+  保存；候选或原始程序含调试行（`SugarDebugLines.containsDebugLine`）时再乘一维 `AssertEmit`
+  （strip/emit）。不含调试行的程序维持 2×2。
 - **`backtrack`**：贪心候选验证失败后才运行的有界重试；在一个决策点提升一个替代候选，且每个被提升的结果
   必须再次通过同一道门。`Candidate.unitCards` 这层可关闭：unit 候选失败时先关层重跑，通过则保留旧读法，
   再落到 `backtrack`。
 - **载体验证**：`SugarCompiler.verifyRestore` 重新编译恢复源码，与存储流逐条比较，比较经
   `matchesStoredStream` / `executableStream`（剥掉载体，并把 v1 的 `op add d s 0` 与 `set d s` 归一）。
-  它会尝试当前与 legacy 两套 v5 API、`FuncMode` 各值、断言程序的两种 `AssertEmit`，以及有无入口 skip
+  它会尝试当前与 legacy 两套 v5 API、`FuncMode` 各值、含调试行程序的两种 `AssertEmit`，以及有无入口 skip
   两个纪元；只有精确匹配才接受载体。
 - **折叠验证**：`ExprCompiler.resolveArrayFolds` 的每个存活候选仍要过 `verifyArrayFold` 的重编译比对
   （`foldPlan`）。Provider 不可能折出编译器不会逐字重发的形状。
@@ -105,7 +106,7 @@
 
 新 module/card/intrinsic 完成的标准是：使用它的程序能走 `restore` + `verifyRestore` +
 `SugarDecompiler.decompile`（载体路径）往返，并且卡片仍在。`reconstructionTest` 钉住这道门；
-`reconstructionMatrixTest` 用 100+ fixture 覆盖当前每个积木/卡片、每个 `datacall` 操作与断言/调试卡
+`reconstructionMatrixTest` 用 100+ fixture 覆盖当前每个积木/卡片、每个 `datacall` 操作与 MDT 调试行
 （实际 fixture / gate 数量由测试运行时打印，测试强制 ≥100）。
 
 **声明卡是身份元数据，不是对原版指令的声明。** `decl.array.exprcard` 钉住有标记的情形：载体视图保留
@@ -316,6 +317,51 @@ read/write/matrix 三种形态。
 所以只转义 `[`；把 `]` 转义成 `]]` 会在卡上多渲染一个括号（`result = list[1]` 曾显示成 `list[1]]`）。
 卡片的错误 label 同规则。`selfTest.highlightTextIsUnchanged` 剥掉 markup 后断言可见文本等于用户输入。
 
+## 生成式越界检查（KEEP(P4)）
+
+`AssertEmit=emit` 的调试构建下，表达式层在**非常量**数组/矩阵下标 `read` / `write` 之前插入一条
+`assertBounds`。这是 LogicSugar 自己的发射器（`ExprCompiler.emitBoundsAssert`），**不是** MDT 移植的一部分，
+也不随 MDT 解耦删除：删掉它 emit 构建就不再有任何越界检查。线格式是
+
+```text
+assertBounds <type> <multiple> <min> <opMin> <value> <opMax> <max> "<message>"
+```
+
+`message` 就是签名，由 `SugarDebugLines.isGeneratedBoundsMessage` 的整条消息正则定义（名字、种类、
+分隔符与两个数字边界都参与）：
+
+```text
+"array '<name>' index out of bounds (<min>..<max>)"
+"matrix '<name>' column out of bounds (<min>..<max>)"
+"matrix '<name>' row out of bounds (<min>..<max>)"
+```
+
+- **只认整条消息，不认 opcode**：用户手写的 `assertBounds`（任何别的消息）在编译、反编译、折叠里都原样
+  保留，并且断开折叠链。`isGeneratedBoundsLine(String)` / `isGeneratedBoundsLine(String[])` 是文本与已分词
+  两条入口，`Line.isGeneratedBoundsCheck()` 是同一条判定挂在解析结果上。
+- **没有卡片类型**：这一行不是调色板积木、不注册 parser、不依赖 MDT。它作为**纯文本**存在：
+  `SugarDebugLines.Line.fromBounds(ExprCompiler.AssertBoundsLine)` / `fromText(text)` 生成的 `Line` 的
+  `write()` 与 `AssertBoundsLine` 逐字节一致。
+- **strip / emit**：
+  - `strip`（默认，也是联机会话强制口径）**不发射**。`SugarCompiler.currentAssertEmit()` 在
+    `Vars.net.active()` 时恒为 strip，所以多人地图的保存产物里不会出现这一行。
+  - `emit` 只在单机/编辑器生效。表达式卡保存的是扁平的 mlog 链，因此画布展开（`unfoldAll`）与保存文本
+    （`ExprHook.unfoldedText`）在 emit 口径下把这一行**作为文本写回原位置**——下标计算之后、read/write
+    之前；折叠时它是链里的透明元素（随链移除，并作为数组访问的证据），重复展开用文本比较去重。
+  - 仍以表达式形式留在糖里的位置（`if`/`while`/`for` 条件、函数实参、`return`、数据调用）不在保存文本里
+    带这一行；它们在 lowering 重新编译进 emit 构建时才生成。
+- **反编译保留、安全门过滤**：反编译器**保留**输入里的生成行，让「反编译 → 编辑 → 重编译」在 emit 构建下
+  继续带越界检查；这条行也会作为 `SugarDebugLines.Line` 出现在恢复出的糖源码里（`debugPassthroughTest`
+  的 `generatedBoundsCheckStaysInRecoveredSugar` 钉住）。但 verify 门不能直接拿它和 strip 重编译的产物比：
+  strip 会把这一行丢掉。所以门在**输入确实带生成行**时，对两边都跑同一份
+  `SugarDebugLines.stripGeneratedBoundsLines` 再比（`SugarDecompiler.verify` 里的 `generatedBounds` 分支），
+  于是 emit 重编译（逐行复现）与 strip 重编译（丢掉）两种形态都能过门；输入不带生成行时不启用过滤，
+  比较口径完全不变。
+- **折叠透明**：`ExprHook.isGeneratedBoundsLine` 把它当链内透明元素——随链一起移除，并作为数组访问的证据；
+  它不阻止折叠，也不被折成卡片。
+- 回归：`debugPassthroughTest`（emit 复现 + strip 过滤 + 用户手写行不被过滤 + 只有生成行的退化程序）与
+  `reconstructionMatrixTest` 的调试行 fixture（整行文本穿过载体与反编译）。
+
 ## 文本导入
 
 `SugarCanvas.load` 先跑 `ExprTextImport.plan`：原版 `LParser` 无法分派的行（`x = buf[3]`、`buf[i] = 5`、
@@ -334,9 +380,10 @@ read/write/matrix 三种形态。
 - `reconstructionTest`：过期 `destIndex` 的世界处理器样例按嵌套重配对后载体仍验证；世界处理器样例走载体
   还原出 `ifbegin`/`forbegin`；`array`/`stack`/`record` 声明卡随载体回来；剥掉载体后不发明声明卡、不把
   `__ls_builtin_*` 恢复成用户函数。
-- `reconstructionMatrixTest`：100+ fixture 覆盖全部控制积木、数据积木、`datacall` 操作与断言/调试卡；
+- `reconstructionMatrixTest`：100+ fixture 覆盖全部控制积木、数据积木、`datacall` 操作与 MDT 调试行；
   每个 fixture 断言 compile → carrier restore → `verifyRestore` → 载体反编译，并检查每个已注册 `datacall`
-  操作都有 fixture。`unit.*` 是 `addInferred`；`decl.exprcard.staleDest`、`decl.exprcard.getter` /
+  操作都有 fixture。调试行 fixture 断言**整行文本**（含 legacy `snapshot` 4 token 与 `log` 12 token）与
+  arity 都不变，不是前缀匹配。`unit.*` 是 `addInferred`；`decl.exprcard.staleDest`、`decl.exprcard.getter` /
   `decl.exprcard.getter.size`、`decl.array.exprcard` / `decl.array.vanillaRead` 是载体侧的身份与折叠钉子。
 - `decompileTest`：`realworld-jump-table.mlog`（手写无载体、带无守卫跳转表）、
   `editorOpensHandWrittenProgramsAsSugar`、`unreadableSourceFallsBackToTheStoredProgram`、

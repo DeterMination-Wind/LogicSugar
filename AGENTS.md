@@ -25,8 +25,9 @@ Mindustry Java mod：在逻辑编辑器里提供 `for` / `while` / `switch` / �
 - **反编译 verify 门**：`SugarDecompiler` 只有把恢复源码重新编译、与输入归一化可执行指令流比对通过后
   才能返回；未识别的保持原版。新恢复模式一律放在门后；`backtrack` 只在贪心候选失败后运行且同样过门。
   细节见 [重建规则](docs/reconstruction.md)「安全门」。
-- **上游基线**：断言/断点子系统与调试工具对齐 cardillan/MlogAssertions `v0.11.8`；跟进历史、明确不移植项
-  与线格式例外见 [上游基线](docs/upstream.md)。
+- **上游基线**：断言/断点等 Mlog Dev Tools（MDT）重叠功能已解耦移除（阶段 A）：运行时卡片、Vars/快照、
+  Profiler 不再由本模组提供，只剩 `SugarDebugLines` 的**文本直通层**保证存档里已有的调试行仍可解析、可回写。
+  线格式与历史差异见 [上游基线](docs/upstream.md)。
 
 ## 构建与验证
 
@@ -47,10 +48,9 @@ Mindustry Java mod：在逻辑编辑器里提供 `for` / `while` / `switch` / �
 | [src/mindustry/logic/AGENTS.md](src/mindustry/logic/AGENTS.md) | 编译器/反编译器/语句卡/画布/对话框（同包扩展层） |
 | [src/logicsugar/assist/expr/AGENTS.md](src/logicsugar/assist/expr/AGENTS.md) | 表达式、Expr 卡、span/getter 折叠与恢复 |
 | [src/logicsugar/assist/data/AGENTS.md](src/logicsugar/assist/data/AGENTS.md) | 数据模块、声明卡、datacall、`__ls_builtin_*` |
-| [src/logicsugar/vars/AGENTS.md](src/logicsugar/vars/AGENTS.md) | 调试 UI、快照、Profiler（含 `profile/`） |
 | [docs/architecture.md](docs/architecture.md) | 实现结构、双形态、编译/恢复流水线、上游 v160 适配 |
 | [docs/reconstruction.md](docs/reconstruction.md) | 重建规则：载体/推断、raw/stride、unit-control、span、getter、Expr 保存恢复 |
-| [docs/upstream.md](docs/upstream.md) | MlogAssertions 基线、跟进历史、明确不移植项、线格式例外 |
+| [docs/upstream.md](docs/upstream.md) | MDT 解耦决定、文本直通边界、历史线格式例外 |
 | [docs/testing.md](docs/testing.md) | 自测任务表、新增测试约定、手测清单 |
 | [docs/development.md](docs/development.md) / [docs/release.md](docs/release.md) | 环境/工具/产物链 / 版本与发布 |
 | [docs/api-v5.md](docs/api-v5.md) / [docs/glossary.md](docs/glossary.md) | v5 契约 / 术语 |
@@ -63,7 +63,6 @@ Mindustry Java mod：在逻辑编辑器里提供 `for` / `while` / `switch` / �
 | `src/mindustry/logic/`（编译/反编译/卡片/画布/对话框） | `src/mindustry/logic/AGENTS.md` → `docs/reconstruction.md` |
 | `src/logicsugar/assist/expr/` 或 Expr/span/getter 折叠 | `src/logicsugar/assist/expr/AGENTS.md` → `docs/reconstruction.md` |
 | `src/logicsugar/assist/data/` 声明卡/datacall/builtin | `src/logicsugar/assist/data/AGENTS.md` → `docs/architecture.md`「数据子系统」 |
-| `src/logicsugar/vars/`、`profile/`、调试 UI/快照 | `src/logicsugar/vars/AGENTS.md` → `docs/architecture.md`「变量/Profiler」 |
 | 设置项 / Neon 聚合 | `docs/architecture.md`「双形态」 |
 | 构建、测试、发布 | `build.gradle` → `docs/testing.md` / `docs/release.md` |
 | 文档本身 | `docs/README.md` |

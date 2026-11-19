@@ -43,6 +43,9 @@ import java.util.Set;
 public class ArraySugarTest{
     public static void main(String[] args){
         SugarStatements.installParsers();
+        // Production installs the debug passthrough parsers from the post-ClientLoadEvent pass;
+        // headless tests mirror that here so stored/emitted debug lines parse the same way.
+        SugarDebugLines.installParsers();
         Vars.logicVars = new GlobalVars();
 
         literalSubscriptBaseZero();
@@ -80,10 +83,10 @@ public class ArraySugarTest{
         matrixFoldWriteAndUncertain();
         arrayFoldVerifyGate();
         foldGateAcceptsRealChains();
-        unfoldInsertsBoundsAsserts();
-        unfoldAssertIdempotentAndMarked();
+        emitBoundsAssertStaysInTheCompiler();
+        generatedBoundsLinesAreTransparentToFolding();
         unfoldProductCompilesAsSugar();
-        autoAssertDoesNotBlockFolding();
+        expressionCardBoundsCheckSurvivesSaveAndDecompile();
         System.out.println("LogicSugar Array self-test passed.");
     }
 
@@ -830,42 +833,55 @@ public class ArraySugarTest{
 
     // ===== F3: expression-statement bounds asserts (emit) =====
 
-    /** emit 下 x = buf[i] / x = m[i][j] 展开时在 read/write 之前插入 assertBounds 卡；
-     *  strip 不插入。 */
-    private static void unfoldInsertsBoundsAsserts(){
+    /** 越界检查是 LogicSugar 自己的调试发射器（KEEP(P4)）：emit 编译链在非常量下标读写前带
+     *  {@code assertBounds} 行，strip 链不带。展开按 emit 口径时这一行作为**文本**
+     *  （{@link SugarDebugLines.Line}）插回下标计算之后、read/write 之前——没有卡片类型、
+     *  没有调色板条目、不依赖 MDT；strip 口径（单参数 {@link ExprHook#toStatements(List)}）不合成。 */
+    private static void emitBoundsAssertStaysInTheCompiler(){
         withRegistry("array buf cell1 0 8", () -> {
             List<ExprCompiler.Line> ops = ExprCompiler.compile("x", "buf[i]", null, true);
-            // 编译产物保持 F1 的断言行格式；标记只加在展开出的卡片消息上（autoAssertCard）
             checkLine("assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"array 'buf' index out of bounds (0..7)\"\nread x cell1 i",
                 textOf(ops));
-            List<LStatement> statements = ExprHook.toStatements(ops, null, true);
-            check(statements.size() == 2, "emit unfold should insert exactly one assert card, got " + statements.size());
-            check(statements.get(0) instanceof SugarAsserts.AssertBoundsCard && statements.get(1) instanceof ReadStatement,
-                "assert card must precede the read card");
-            check(ExprHook.isAutoAssert(statements.get(0)), "auto assert card must carry the marker");
 
-            // write 路径同样在 write 之前
+            List<LStatement> statements = ExprHook.toStatements(ops, new ArrayList<>(), true);
+            check(statements.size() == 2,
+                "emit unfold must keep the check and the read, got " + statements.size() + " statement(s)");
+            check(ExprHook.isGeneratedBoundsLine(statements.get(0)),
+                "the bounds check must be re-inserted as passthrough text");
+            check(statements.get(1) instanceof ReadStatement, "the read must stay after the check");
+            checkLine("assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"array 'buf' index out of bounds (0..7)\"\nread x cell1 i\n",
+                statementsText(statements));
+
+            List<LStatement> strip = ExprHook.toStatements(ops);
+            check(strip.size() == 1 && strip.get(0) instanceof ReadStatement,
+                "strip unfold must keep only the read, got " + strip.size() + " statement(s)");
+
             List<LStatement> writeStatements = ExprHook.toStatements(
-                ExprCompiler.compile("buf[i]", "5", null, true), null, true);
-            check(writeStatements.size() == 2
-                && writeStatements.get(0) instanceof SugarAsserts.AssertBoundsCard
-                && writeStatements.get(1) instanceof WriteStatement, "assert card must precede the write card");
+                ExprCompiler.compile("buf[i]", "5", null, true), new ArrayList<>(), true);
+            check(writeStatements.size() == 2 && ExprHook.isGeneratedBoundsLine(writeStatements.get(0))
+                    && writeStatements.get(1) instanceof WriteStatement,
+                "emit unfold must put the check before the write");
 
-            // strip：即使传入带断言行的链也不插入卡片（生产路径 strip 下 compile 本身不产断言行）
-            List<LStatement> stripped = ExprHook.toStatements(ops, null, false);
-            check(stripped.size() == 1 && stripped.get(0) instanceof ReadStatement, "strip must not insert assert cards");
+            check(!textOf(ExprCompiler.compile("x", "buf[i]", null, false)).contains("assertBounds"),
+                "strip compile must not emit bounds asserts");
         });
 
         withRegistry("matrix m cell1 0 2 3", () -> {
             List<ExprCompiler.Line> ops = ExprCompiler.compile("x", "m[i][j]", null, true);
-            List<LStatement> statements = ExprHook.toStatements(ops, null, true);
-            int asserts = 0, readAt = -1;
-            for(int i = 0; i < statements.size(); i++){
-                if(statements.get(i) instanceof SugarAsserts.AssertBoundsCard) asserts++;
-                if(statements.get(i) instanceof ReadStatement) readAt = i;
-            }
-            check(asserts == 2, "matrix read should insert row+column asserts, got " + asserts);
-            check(readAt == statements.size() - 1, "matrix asserts must precede the read card");
+            int asserts = 0;
+            for(ExprCompiler.Line line : ops) if(line instanceof ExprCompiler.AssertBoundsLine) asserts++;
+            check(asserts == 2, "matrix read must carry row+column asserts in the emit chain, got " + asserts);
+            List<LStatement> unfolded = ExprHook.toStatements(ops, new ArrayList<>(), true);
+            check(unfolded.size() == ops.size(),
+                "emit unfold must keep exactly the chain (two checks + instructions): " + unfolded.size()
+                    + " of " + ops.size());
+            check(ExprHook.isGeneratedBoundsLine(unfolded.get(0))
+                    && ExprHook.isGeneratedBoundsLine(unfolded.get(1)),
+                "the two generated checks must lead the matrix read");
+            check(unfolded.get(unfolded.size() - 1) instanceof ReadStatement,
+                "the matrix read must stay last after unfolding");
+            check(ExprHook.toStatements(ops).size() == ops.size() - 2,
+                "strip unfold must drop exactly the two generated asserts");
         });
 
         // 无数组上下文（纯原版表达式）不产生任何断言行
@@ -878,113 +894,147 @@ public class ArraySugarTest{
         }
     }
 
-    /** 重复展开不重复插入；自动断言卡带固定前缀且经 write/read 往返后仍可识别。 */
-    private static void unfoldAssertIdempotentAndMarked(){
+    /** 生成式断言行是纯文本谓词（消息签名），不是卡片类型：折叠时作为链内透明元素跳过，
+     *  用户手写的 {@code assertBounds}（任何别的消息）保持原样并断开链。 */
+    private static void generatedBoundsLinesAreTransparentToFolding(){
         withRegistry("array buf cell1 0 8", () -> {
-            List<ExprCompiler.Line> ops = ExprCompiler.compile("x", "buf[i]", null, true);
-            List<LStatement> first = ExprHook.toStatements(ops, null, true);
-            check(first.size() == 2, "first unfold should insert the assert");
+            SugarDebugLines.Line generated = passthrough(
+                "assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"array 'buf' index out of bounds (0..7)\"");
+            check(ExprHook.isGeneratedBoundsLine(generated), "the generated message signature was not recognized");
+            check(ExprHook.isChainLine(generated), "a generated bounds line must be a chain element");
 
-            // 重复展开：插入点之前已有等价自动断言卡 → 不再插入
-            // （真实展开路径传入的 preceding 就是链前的连续自动断言卡）
-            List<LStatement> second = ExprHook.toStatements(ops, Arrays.<LStatement>asList(first.get(0)), true);
-            check(second.size() == 1 && second.get(0) instanceof ReadStatement,
-                "repeat unfold must not duplicate the auto assert");
+            SugarDebugLines.Line manual = passthrough(
+                "assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"my own check\"");
+            check(!ExprHook.isGeneratedBoundsLine(manual), "a user-authored message must not match the signature");
+            check(!ExprHook.isChainLine(manual), "a user-authored assertBounds must break the chain");
 
-            // 用户手写断言卡（无前缀）不参与去重：自动断言照常插入
-            SugarAsserts.AssertBoundsCard manual = new SugarAsserts.AssertBoundsCard();
-            manual.value = "i";
-            check(!ExprHook.isAutoAssert(manual), "default assert card must not be treated as auto");
-            List<LStatement> manualPreceding = new ArrayList<>();
-            manualPreceding.add(manual);
-            check(ExprHook.toStatements(ops, manualPreceding, true).size() == 2,
-                "manual assert card must not suppress the auto insert");
+            List<LStatement> single = new ArrayList<>();
+            single.add(generated);
+            single.add(readLine("x", "cell1", "i"));
+            ExprHook.Chain singleChain = ExprHook.collectChain(single, 0);
+            check(singleChain.end == 2 && singleChain.ops.size() == 1,
+                "the generated line must be transparent to chain collection: end=" + singleChain.end
+                    + " ops=" + singleChain.ops.size());
+            // The generated check is evidence that this read came from an array expression, so the
+            // pair folds back into a card and the debug line disappears from the sugar (the emit
+            // build regenerates it).
+            check(ExprHook.foldableChain(singleChain), "the generated check must make the read foldable");
+            ExprHook.Plan folded = ExprHook.foldPlan(single, singleChain);
+            check(folded != null && "x".equals(folded.dest()) && "buf[i]".equals(folded.expr()),
+                "the generated check must not block folding, got " + folded);
 
-            // 折叠清理：链前连续的自动断言卡被识别（折叠时移除、下次展开重建），
-            // 用户手写卡片不参与
-            check(ExprHook.trailingAutoAsserts(Arrays.asList(first.get(0))).size() == 1,
-                "fold cleanup must recognize the trailing auto assert");
-            check(ExprHook.trailingAutoAsserts(Arrays.asList(manual)).isEmpty(),
-                "fold cleanup must not treat a manual assert card as auto");
-            check(ExprHook.trailingAutoAsserts(Arrays.asList(manual, first.get(0))).size() == 1,
-                "the trailing auto run must stop at the manual card");
+            List<LStatement> multi = new ArrayList<>();
+            multi.add(opLine("add", "_0", "i", "1"));
+            multi.add(generated);
+            multi.add(readLine("x", "cell1", "_0"));
+            ExprHook.Chain chain = ExprHook.collectChain(multi, 0);
+            ExprHook.Plan plan = ExprHook.foldPlan(multi, chain);
+            check(plan != null && "x".equals(plan.dest()) && "buf[i+1]".equals(plan.expr()),
+                "the generated bounds line must not block folding, got " + plan);
 
-            // 标记经 write/read 往返后仍可识别（存档 / 载体路径）
-            StringBuilder text = new StringBuilder();
-            first.get(0).write(text);
-            check(text.toString().startsWith("assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"ls-auto: "),
-                "auto assert wire format drifted: " + text);
-            Seq<LStatement> parsed = LAssembler.read(text.toString(), true);
-            check(parsed.size == 1 && ExprHook.isAutoAssert(parsed.get(0)),
-                "auto marker must survive the write/read round trip");
-            List<LStatement> afterRoundTrip = ExprHook.toStatements(ops, Arrays.<LStatement>asList(parsed.get(0)), true);
-            check(afterRoundTrip.size() == 1, "round-tripped auto assert must still suppress the duplicate insert");
-
-            // 编辑器路径的既有防御：ExprStatement.build() 跳过 RawLine（断言行）不崩溃
-            ExprStatement broken = new ExprStatement();
-            broken.dest = "x";
-            broken.expr = "foo("; // 编译失败 → 回退 lastOps
-            broken.lastOps = Arrays.asList(
-                new ExprCompiler.AssertBoundsLine("integer", "~", "0", "lessThanEq", "i", "lessThanEq", "7", "\"x\""),
-                new ExprCompiler.OpLine("add", "x", "1", "2"));
-            check(broken.build(new LAssembler()) instanceof LExecutor.OpI,
-                "ExprStatement.build must skip RawLine entries instead of crashing");
+            // 链外读取判定也不受影响：生成行引用的链内临时量属于链范围
+            List<ExprCompiler.Line> chainOps = ExprCompiler.compile("x", "buf[i+1]", null, false);
+            check(!ExprHook.hasExternalReads(multi, 0, multi.size(), chainOps),
+                "the generated bounds line must not count as an external read");
         });
     }
 
-    /** 展开产物（自动断言卡 + 原版 read/write 卡）序列化后仍是合法糖文本：
-     *  emit 构建保留断言、strip 构建剥离断言，载体往返通过。 */
+    /** 展开产物序列化后按 emit 口径就是带 {@code assertBounds} 文本行的糖源码（没有卡片）；
+     *  emit 编译保留它、strip 编译移除它；表达式条件卡（仍以表达式保存在糖里）在 lowering 时
+     *  发射同一份检查，载体验证通过。 */
     private static void unfoldProductCompilesAsSugar(){
         withRegistry("array buf cell1 0 8", () -> {
             List<LStatement> statements = ExprHook.toStatements(
-                ExprCompiler.compile("x", "buf[i]", null, true), null, true);
+                ExprCompiler.compile("x", "buf[i]", null, true), new ArrayList<>(), true);
             StringBuilder sugar = new StringBuilder();
             for(LStatement statement : statements){
                 statement.write(sugar);
                 sugar.append('\n');
             }
-            String text = sugar.toString();
-            check(text.contains("assertBounds integer ~ 0 lessThanEq i lessThanEq 7"),
-                "assert card did not serialize:\n" + text);
-            String emit = stripCompile(text, SugarCompiler.AssertEmit.emit);
-            check(emit.contains("assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"ls-auto: array 'buf' index out of bounds (0..7)\""),
-                "emit build dropped the unfolded assert card:\n" + emit);
-            check(emit.contains("read x cell1 i"), "emit build dropped the read card:\n" + emit);
-            String strip = stripCompile(text, SugarCompiler.AssertEmit.strip);
-            check(!strip.contains("assertBounds"), "strip build leaked the assert card:\n" + strip);
-            check(strip.contains("read x cell1 i"), "strip build dropped the read card:\n" + strip);
-            check(SugarCompiler.verifyRestore(compile(text, SugarCompiler.AssertEmit.emit), text),
-                "verifyRestore rejected the unfolded emit product");
+            String assertLine = "assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"array 'buf' index out of bounds (0..7)\"";
+            check(sugar.toString().startsWith(assertLine + "\n"), "the emitted sugar must lead with the check:\n" + sugar);
+            for(LStatement statement : statements){
+                check(!(statement instanceof ExprStatement), "the check must be text, never an expression card");
+            }
+
+            // 展开文本自己就是可编译的糖源码：emit 保留检查（read 之前），strip 一条都不留。
+            String unfolded = "array buf cell1 0 8\n" + sugar;
+            String unpackedEmit = stripCompile(unfolded, SugarCompiler.AssertEmit.emit);
+            check(unpackedEmit.contains(assertLine), "emit build dropped the unfolded check:\n" + unpackedEmit);
+            check(unpackedEmit.indexOf(assertLine) < unpackedEmit.indexOf("read x cell1 i"),
+                "the unfolded check must precede the read:\n" + unpackedEmit);
+            String unpackedStrip = stripCompile(unfolded, SugarCompiler.AssertEmit.strip);
+            check(!unpackedStrip.contains("assertBounds"), "strip build leaked the unfolded check:\n" + unpackedStrip);
+
+            String conditionSugar = "array buf cell1 0 8\n"
+                + "ifbegin expr \"buf[i] > 1\" 3\n"
+                + "set y 1\n"
+                + "blockend\n";
+            String emit = stripCompile(conditionSugar, SugarCompiler.AssertEmit.emit);
+            check(emit.contains(assertLine),
+                "emit build dropped the array bounds check:\n" + emit);
+            check(emit.contains("read __ls_cond_1 cell1 i"), "emit build dropped the read:\n" + emit);
+            String strip = stripCompile(conditionSugar, SugarCompiler.AssertEmit.strip);
+            check(!strip.contains("assertBounds"), "strip build leaked the bounds check:\n" + strip);
+            check(strip.contains("read __ls_cond_1 cell1 i"), "strip build dropped the read:\n" + strip);
+            check(SugarCompiler.verifyRestore(compile(conditionSugar, SugarCompiler.AssertEmit.emit), conditionSugar),
+                "verifyRestore rejected the emit product");
         });
     }
 
-    /** 自动断言卡位于链内（下标计算之后、read/write 之前），引用链内临时变量但不构成
-     *  "链外读取"（否则带临时下标的链永远折不回来）；链外语句引用链内临时变量仍然阻止折叠。 */
-    private static void autoAssertDoesNotBlockFolding(){
-        withRegistry("array buf cell1 10 8", () -> {
-            List<ExprCompiler.Line> emitOps = ExprCompiler.compile("x", "buf[i+1]", null, true);
-            List<LStatement> canvas = ExprHook.toStatements(emitOps, null, true);
-            // [op add _0 i 1, A(_0), op add _0 10 _0, read x cell1 _0]
-            check(canvas.size() == 4, "expected one assert card plus three instructions, got " + canvas.size());
-            check(canvas.get(1) instanceof SugarAsserts.AssertBoundsCard,
-                "assert card should sit after the subscript computation");
-            StringBuilder assertText = new StringBuilder();
-            canvas.get(1).write(assertText);
-            check(assertText.toString().contains("lessThanEq _0 lessThanEq 7"),
-                "the auto assert should reference the chain temp: " + assertText);
+    /**
+     * 表达式卡（{@code set x arr[i]} 的常见形态）在 emit 构建下保存为带生成式断言行的展开文本；
+     * 反编译 emit 产物时这一行留在恢复糖源码里（按精确签名过滤已取消），重新编译仍在 read
+     * 之前——整条链条上没有 MDT 卡片，只有文本。
+     */
+    private static void expressionCardBoundsCheckSurvivesSaveAndDecompile(){
+        String assertLine = "assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"array 'buf' index out of bounds (0..7)\"";
+        withRegistry("array buf cell1 0 8", () -> {
+            ExprStatement card = new ExprStatement();
+            card.dest = "x";
+            card.expr = "buf[i]";
 
-            List<ExprCompiler.Line> chainOps = ExprCompiler.compile("x", "buf[i+1]", null, false);
-            check(!ExprHook.hasExternalReads(canvas, 0, canvas.size(), chainOps),
-                "auto assert inside the chain must not block folding");
+            // 1) 保存文本（SugarCanvas.save → ExprHook.unfoldedText）：emit 带检查，strip 不带。
+            String emitText = ExprHook.unfoldedText(new ArrayList<>(List.of(card)), true);
+            checkLine(assertLine + "\nread x cell1 i\n", emitText);
+            String stripText = ExprHook.unfoldedText(new ArrayList<>(List.of(card)), false);
+            check(!stripText.contains("assertBounds"), "strip save text must not contain the check:\n" + stripText);
+            check(stripText.contains("read x cell1 i"), "strip save text lost the read:\n" + stripText);
 
-            // 链外语句引用链内临时变量仍然阻止折叠
-            List<LStatement> external = new ArrayList<>();
-            SugarAsserts.AssertBoundsCard manual = new SugarAsserts.AssertBoundsCard();
-            manual.value = "_0";
-            external.add(manual);
-            external.addAll(canvas.subList(2, canvas.size()));
-            check(ExprHook.hasExternalReads(external, 1, external.size(), chainOps),
-                "external read of a chain temp must block folding");
+            // 2) 展开文本作为糖源码重新编译：emit 保留检查（在 read 之前），strip 不保留。
+            String program = "array buf cell1 0 8\n" + emitText;
+            String emit = stripCompile(program, SugarCompiler.AssertEmit.emit);
+            check(emit.contains(assertLine), "emit build dropped the expression-card check:\n" + emit);
+            check(emit.indexOf(assertLine) < emit.indexOf("read x cell1 i"),
+                "the expression-card check must precede the read:\n" + emit);
+            check(!stripCompile(program, SugarCompiler.AssertEmit.strip).contains("assertBounds"),
+                "strip build emitted a bounds check for the same program");
+
+            // 3) 反编译 emit 产物（载体路径）：恢复糖源码保留该行，再编译仍带检查。
+            SugarDecompiler.Result carried = SugarDecompiler.decompile(emit, true);
+            check(carried.verified, "the emit build must still verify: " + carried.notes);
+            check(carried.sugar.contains(assertLine),
+                "the recovered sugar must keep the generated bounds check:\n" + carried.sugar);
+            String again = stripCompile(carried.sugar, SugarCompiler.AssertEmit.emit);
+            check(again.contains(assertLine), "recompiling the recovered sugar dropped the check:\n" + again);
+            check(again.indexOf(assertLine) < again.indexOf("read x cell1 i"),
+                "recompiling moved the check after the read:\n" + again);
+
+            // 4) 去掉载体的纯指令流走推断路径：同样保留该行，并过安全门。
+            String bare = withoutCarrier(emit);
+            SugarDecompiler.Result inferred = SugarDecompiler.decompile(bare, true);
+            check(inferred.verified, "the bare emit stream must still verify: " + inferred.notes);
+            check(inferred.sugar.contains(assertLine),
+                "inference must keep the generated bounds check:\n" + inferred.sugar);
+            check(inferred.sugar.contains("read x cell1 i"),
+                "inference lost the read:\n" + inferred.sugar);
+            String inferredAgain = stripCompile(inferred.sugar, SugarCompiler.AssertEmit.emit);
+            check(inferredAgain.contains(assertLine)
+                    && inferredAgain.indexOf(assertLine) < inferredAgain.indexOf("read x cell1 i"),
+                "recompiling the inferred sugar must reproduce the check before the read:\n" + inferredAgain);
+            // 同一份恢复源码按 strip 重编译时检查消失，安全门靠对两边做同一过滤仍然成立。
+            check(!stripCompile(inferred.sugar, SugarCompiler.AssertEmit.strip).contains("assertBounds"),
+                "strip recompilation of the recovered sugar must drop the check");
         });
     }
 
@@ -1021,9 +1071,33 @@ public class ArraySugarTest{
         }
     }
 
+    /** Parses one stored debug line into the text-passthrough statement. */
+    private static SugarDebugLines.Line passthrough(String text){
+        Seq<LStatement> parsed = LAssembler.read(text, true);
+        check(parsed.size == 1 && parsed.get(0) instanceof SugarDebugLines.Line,
+            "expected one passthrough debug line, got " + parsed.size);
+        return (SugarDebugLines.Line)parsed.get(0);
+    }
+
+    private static ReadStatement readLine(String output, String target, String address){
+        ReadStatement read = new ReadStatement();
+        read.output = output;
+        read.target = target;
+        read.address = address;
+        return read;
+    }
+
+    private static LStatements.OperationStatement opLine(String op, String dest, String a, String b){
+        LStatements.OperationStatement statement = new LStatements.OperationStatement();
+        statement.op = LogicOp.valueOf(op);
+        statement.dest = dest;
+        statement.a = a;
+        statement.b = b;
+        return statement;
+    }
+
     /** Lines of one compiled expression as mlog text (what unfold would insert / write() outputs). */
-    private static String textOf(List<ExprCompiler.Line> ops){
-        StringBuilder out = new StringBuilder();
+    private static String textOf(List<ExprCompiler.Line> ops){        StringBuilder out = new StringBuilder();
         for(int i = 0; i < ops.size(); i++){
             if(i > 0) out.append('\n');
             out.append(ops.get(i).toText());
@@ -1038,6 +1112,27 @@ public class ArraySugarTest{
         statement.expr = expr;
         StringBuilder out = new StringBuilder();
         statement.write(out);
+        return out.toString();
+    }
+
+    /** Canvas statements as mlog text, one line each (what an unfold writes). */
+    private static String statementsText(List<LStatement> statements){
+        StringBuilder out = new StringBuilder();
+        for(LStatement statement : statements){
+            statement.write(out);
+            out.append('\n');
+        }
+        return out.toString();
+    }
+
+    /** A compiled product without its persistence carrier (`set __ls_sugar "..."`): the bare
+     *  instruction stream another machine / an outside edit would see. */
+    private static String withoutCarrier(String mlog){
+        StringBuilder out = new StringBuilder();
+        for(String line : mlog.replace("\r\n", "\n").split("\n", -1)){
+            if(line.startsWith("set __ls_sugar \"")) continue;
+            out.append(line).append('\n');
+        }
         return out.toString();
     }
 

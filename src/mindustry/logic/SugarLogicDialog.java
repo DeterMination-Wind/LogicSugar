@@ -17,10 +17,10 @@ import arc.scene.ui.TextButton.TextButtonStyle;
 import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Table;
 import arc.struct.Seq;
+import arc.util.Align;
 import arc.util.Log;
 import arc.util.Time;
 import mindustry.Vars;
-import mindustry.core.GameState;
 import mindustry.gen.Building;
 import mindustry.gen.Icon;
 import mindustry.gen.LogicIO;
@@ -41,7 +41,6 @@ import logicsugar.assist.SugarTooltip;
 import logicsugar.assist.VarClipboard;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprStatement;
-import logicsugar.vars.ui.VarsDialog;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -58,12 +57,6 @@ public class SugarLogicDialog extends LogicDialog{
      *  IllegalAccessError). Both this and consumer keep the hard field(): they are load-bearing
      *  for the dialog (there is no degraded mode), unlike SugarCanvas's optional feature fields. */
     private static final Field privilegedField = field(LogicDialog.class, "privileged");
-    /** LogicDialog.globalsDialog (the built-in {@code @logic.*} variables dialog) is package-private
-     *  and has to be read reflectively for the same reason: the direct access compiles — same source
-     *  package — and threw IllegalAccessError the first time a user pressed 「内置变量」 (2026-10
-     *  crash report). Optional rather than hard: a fork that renames the field degrades to our own
-     *  instance of that dialog (public class, rebuilt on every show) instead of a dead editor. */
-    private static final Field globalsDialogField = optionalField(LogicDialog.class, "globalsDialog");
     /** Mirrors LogicBlock.maxCompressedLen (private upstream); read reflectively so the limit
      *  tracks upstream instead of drifting silently when the game adjusts it. */
     private static final int maxCompressedBytes = compressedLimit();
@@ -75,16 +68,14 @@ public class SugarLogicDialog extends LogicDialog{
     private TextButton originalViewButton;
     private Table originalViewMenu;
     private Dialog originalViewDialog;
-    /** Fallback built-in-variables dialog, used when {@link #globalsDialogField} is gone (see there). */
-    private Dialog ownedGlobalsDialog;
     /** Raw code and recovered source for the optional original/Sugar view toggle. */
     private String originalCode;
     private String recoveredSugar;
     private boolean showingOriginal;
     public LExecutor executor;
 
-    /** 原版「变量」按钮被本类换成 Vars/Memory/Properties 界面后的替身（见 {@link #installVarsButton}）。 */
-    private TextButton varsButton;
+    /** 原版「变量」按钮由本类保留：它打开原版变量表/内置变量对话框。
+     *  本类不再替换它（Vars/Memory/Properties 界面属于 Mlog Dev Tools 的重叠功能，已移除）。 */
     /** When true, a failed compile during a close is passed back to the caller as raw sugar
      *  instead of being dropped. Used by the function library editing session (executor == null),
      *  so processor edits are never affected. */
@@ -111,6 +102,14 @@ public class SugarLogicDialog extends LogicDialog{
     private Label budgetLabel;
     private float budgetTimer;
     private boolean budgetToastShown;
+    /** One-time notice that another mod raised {@code LExecutor.maxInstructions}; LogicSugar
+     *  keeps enforcing the vanilla 1000-instruction product limit regardless. */
+    private boolean budgetPinNoticeShown;
+    /** One-shot: the over-budget escape chose "discard changes and close", so the close-time
+     *  submit must not write sugar (the processor keeps the program it opened with). */
+    private boolean closingWithoutSave;
+    /** The over-budget confirm is modal; this keeps a repeated close attempt from stacking copies. */
+    private boolean overBudgetConfirmOpen;
     private InstructionBudget.Snapshot lastBudget;
     private final EditHistory history = new EditHistory();
     private String lastHistorySnap = "";
@@ -152,9 +151,6 @@ public class SugarLogicDialog extends LogicDialog{
         discardButton = buttons.button("@logicsugar.funclib.discard", Icon.cancel, this::discardLibraryChanges).get();
         discardButton.name = "funclib-discard";
         discardButton.visible = false;
-        // VarsDialog（处理器会话的变量界面）不引用 mindustry.logic.LogicDialog，它的「内置变量」
-        // 按钮靠这个集成钩子接线；未注入时那个按钮不显示（见 VarsDialog 类注释）。
-        VarsDialog.globalsOpener = this::showGlobalsDialog;
         // vanilla LogicDialog registers shown(setup), and setup() rebuilds the button row
         // (clearChildren) on EVERY show — wiping anything added outside it. Re-append the
         // Sugar-owned buttons after each rebuild; find() guards make it idempotent.
@@ -178,7 +174,6 @@ public class SugarLogicDialog extends LogicDialog{
                 installCompiledCopy();
                 installOriginalView();
                 installInspectionCopy();
-                installVarsButton();
             }
             selectionClipboard.tick(canvas, this);
             budgetTimer += Time.delta;
@@ -250,7 +245,6 @@ public class SugarLogicDialog extends LogicDialog{
         // fixed-width cells are what pushed it off narrow windows.
         installBudgetLabel();
         installHistoryButtons();
-        installVarsButton();
         bottomButtonsWidth = -1f;
         layoutBottomButtons();
     }
@@ -262,84 +256,16 @@ public class SugarLogicDialog extends LogicDialog{
      * silently dropping it.
      *
      * <p>2026-10 报告（底栏「添加积木」直接消失）的成因是这次声明跑得太晚且靠位置认人：
-     * {@link #installVarsButton} 会先把原版变量按钮摘掉、再把替身接到行尾，位置猜测因此落在函数库
+     * 那次改动先把原版变量按钮摘掉、再把替身接到行尾，位置猜测因此落在函数库
      * 按钮上，真正的 Add 随整行一起被 {@link #layoutBottomButtons} 清掉。按形状认人不看位置，但仍
      * 必须发生在清行之前，所以调用点就在 {@code layoutBottomButtons} 开头。</p>
+     * <p>（变量按钮的替身已随 MDT 重叠功能移除，原版按钮现在原样保留；这段历史说明仍适用：
+     * 认按钮只按形状，不按位置。）</p>
      */
     private void installAddButton(){
         if(BottomBarLayout.claimAddButton(buttons) != null) return;
         buttons.button("@add", Icon.add, this::showAddDialog).name("add")
-            .disabled(t -> canvas.statements.getChildren().size >= LExecutor.maxInstructions);
-    }
-
-    /**
-     * 把原版「变量」按钮换成 Vars/Memory/Properties 界面——上游 MlogAssertions 的入口：
-     * 编辑器的变量按钮不再打开原版变量表，而是打开 {@link VarsDialog}（编辑器态仍走原版全局变量
-     * 对话框，由 {@link #openVars} 分流）。
-     *
-     * <p>为什么要摘掉原按钮重建：arc 的 {@code Button} 自身也注册了 ClickListener（悬停/按下
-     * 态），直接清监听器会把按钮外观一并弄坏；而重写原版 {@code setup()} 又会把整个按钮行复制
-     * 一遍。摘掉后换一个同名新按钮，行布局靠名字找人（{@code layoutBottomButtons}），不受影响。</p>
-     *
-     * <p>必须每次显示都重跑：原版 {@code setup()} 每显示一次就重建整行按钮，所以本方法挂在
-     * {@link #installSugarButtons}（shown 回调）里，并在 update 的周期扫描里兜底。</p>
-     */
-    private void installVarsButton(){
-        Element vanilla = buttons.find("variables");
-        if(vanilla == varsButton) return;
-        if(vanilla != null) vanilla.remove();
-        TextButton button = buttons.button("@variables", Icon.menu, this::openVars).name("variables").get();
-        button.update(() -> button.setText(shouldShowVariables() ? "@variables" : "@logic.globals"));
-        varsButton = button;
-    }
-
-    /** 变量按钮的动作分流：编辑器/函数库会话（无处理器）走原版全局变量；处理器走变量界面。 */
-    private void openVars(){
-        if(!shouldShowVariables() || executor == null || executor.build == null){
-            showGlobalsDialog();
-            return;
-        }
-
-        VarsDialog dialog = new VarsDialog(executor.build);
-        // 原版变量对话框的暂停编排：打开时恢复运行（否则变量不会更新），关闭时停回暂停态。
-        // 联机与主菜单不碰游戏状态；wasPaused 是 BaseDialog 的 protected 字段（子类访问合法）。
-        dialog.hidden(() -> {
-            if(!wasPaused && !Vars.net.active() && !Vars.state.isMenu()){
-                Vars.state.set(GameState.State.paused);
-            }
-        });
-        dialog.shown(() -> {
-            if(!wasPaused && !Vars.net.active() && !Vars.state.isMenu()){
-                Vars.state.set(GameState.State.playing);
-            }
-        });
-        dialog.show();
-    }
-
-    /**
-     * 打开原版「内置变量」（{@code @logic.*}）对话框。
-     *
-     * <p>原版按钮直接读包私有字段 {@code LogicDialog.globalsDialog}；本类与它同名包，但运行时在
-     * 两个加载器里，直接读字段就是 2026-10 的崩溃（点「内置变量」抛 IllegalAccessError），所以照
-     * {@code consumer} / {@code privileged} 的做法走反射。字段被 fork 改名时退化为自建实例（
-     * {@code GlobalVarsDialog} 是 public 且无状态，每次 shown 重建内容），而不是让编辑器崩掉。</p>
-     *
-     * <p>这也是 {@link VarsDialog#globalsOpener} 的注入目标，变量界面里的同名按钮走同一条路径。</p>
-     */
-    private void showGlobalsDialog(){
-        Dialog dialog = null;
-        if(globalsDialogField != null){
-            try{
-                if(globalsDialogField.get(this) instanceof Dialog vanilla) dialog = vanilla;
-            }catch(ReflectiveOperationException ignored){
-                // fall through to the owned instance
-            }
-        }
-        if(dialog == null){
-            if(ownedGlobalsDialog == null) ownedGlobalsDialog = new GlobalVarsDialog();
-            dialog = ownedGlobalsDialog;
-        }
-        dialog.show();
+            .disabled(t -> canvas.statements.getChildren().size >= InstructionBudget.vanillaLimit());
     }
 
     /**
@@ -1032,6 +958,8 @@ public class SugarLogicDialog extends LogicDialog{
         this.lastBudget = null;
         this.budgetToastShown = false;
         this.budgetTimer = 24f;
+        this.overBudgetConfirmOpen = false;
+        this.closingWithoutSave = false;
         clearOriginalViewCache();
         // drafts are keyed by Building; drop entries whose processor is gone so the map
         // cannot grow without bound over a session
@@ -1096,6 +1024,13 @@ public class SugarLogicDialog extends LogicDialog{
     }
 
     private void submit(String sugar, LExecutor executor, Cons<String> modified, Object key, boolean closing){
+        if(closing && closingWithoutSave){
+            // Over-budget escape (see dismissOverBudget…/discardOverBudgetChanges): the processor
+            // keeps its stored program; never write sugar for this close.
+            closingWithoutSave = false;
+            if(key != null) drafts.remove(key);
+            return;
+        }
         // Stale-close protection: an untouched canvas must not clobber a save that happened
         // while the dialog was open; an edited canvas always submits (last writer wins).
         if(executor != null && !SugarCompiler.shouldSubmit(sugar, editable, openedCode, currentCode(executor))){
@@ -1153,7 +1088,9 @@ public class SugarLogicDialog extends LogicDialog{
             return;
         }
         if(executor != null && !passThroughSugarOnError && overProcessorBudget()){
-            Core.app.post(() -> Vars.ui.showErrorMessage(budgetCloseError().getMessage()));
+            // Refusal stays the normal outcome; the confirm is the only supported escape, and it
+            // never offers a way to save more than the pinned budget (see discardOverBudgetChanges).
+            Core.app.post(this::showOverBudgetClosePrompt);
             return;
         }
         clearCompiledCopyCache();
@@ -1164,6 +1101,52 @@ public class SugarLogicDialog extends LogicDialog{
     /** 画布上是否存在从未成功编译的表达式（ExprStatement.write 会因此抛错）。 */
     private boolean hasUncompilableExpression(){
         return uncompilableExpressionMessage() != null;
+    }
+
+    /**
+     * The only supported escape from an over-budget program: <b>discard changes and close</b>.
+     *
+     * <p>The pinned 1000-instruction product limit means a program authored elsewhere at, say,
+     * 1200 instructions cannot be saved here — without this prompt the editor could never be
+     * closed again. There is deliberately no "save anyway": the processor keeps the program it
+     * had when the session opened, and this session's edits are dropped.</p>
+     *
+     * <p>Reachable only from the over-budget branch of {@link #hide()}; the ordinary refusal
+     * (including every close that fits the budget) is unchanged.</p>
+     */
+    private void showOverBudgetClosePrompt(){
+        if(overBudgetConfirmOpen || !isShown()) return;
+        overBudgetConfirmOpen = true;
+        String message = Core.bundle.format("logicsugar.budget.escape.text",
+            budgetCloseError().getMessage(), InstructionBudget.vanillaLimit());
+        BaseDialog dialog = new BaseDialog(Core.bundle.get("logicsugar.budget.escape.title"));
+        dialog.cont.add(message).width(Vars.mobile ? 400f : 500f).wrap().pad(4f)
+            .get().setAlignment(Align.center, Align.center);
+        dialog.buttons.defaults().size(220f, 54f).pad(2f);
+        dialog.buttons.button("@cancel", Icon.cancel, () -> {
+            overBudgetConfirmOpen = false;
+            dialog.hide();
+        });
+        dialog.buttons.button(Core.bundle.get("logicsugar.budget.escape.confirm"), Icon.trash, () -> {
+            overBudgetConfirmOpen = false;
+            dialog.hide();
+            discardOverBudgetChanges();
+        });
+        // Esc / any other dismissal must clear the guard too, or a later close attempt would
+        // silently do nothing.
+        dialog.hidden(() -> overBudgetConfirmOpen = false);
+        dialog.show();
+    }
+
+    /** Closes without writing sugar: the close-time submit is short-circuited and the retained
+     *  draft for this processor is dropped, so reopening shows the program that was stored before
+     *  this session (the user's over-budget edits are gone, by explicit choice). */
+    private void discardOverBudgetChanges(){
+        Object key = draftKey(executor);
+        if(key != null) drafts.remove(key);
+        closingWithoutSave = true;
+        // Bypass this class's own close guards; the confirm already replaced them.
+        super.hide();
     }
 
     /** 第一个不可编译表达式的错误消息；全部合法时返回 null。
@@ -1235,18 +1218,6 @@ public class SugarLogicDialog extends LogicDialog{
         }
     }
 
-    /** Like {@link #field}, but a renamed upstream field degrades the feature instead of the mod
-     *  (see {@link #globalsDialogField}); mirrors {@code SugarCanvas.optionalField}. */
-    private static Field optionalField(Class<?> type, String name){
-        try{
-            Field result = type.getDeclaredField(name);
-            result.setAccessible(true);
-            return result;
-        }catch(ReflectiveOperationException exception){
-            return null;
-        }
-    }
-
     private void showCompileError(IllegalArgumentException exception, boolean draftKept){
         String key = draftKept ? "logicsugar.error.draft" : "logicsugar.error.compile";
         Vars.ui.showErrorMessage(Core.bundle.format(key, exception.getMessage()));
@@ -1254,6 +1225,11 @@ public class SugarLogicDialog extends LogicDialog{
 
     /** Recompiles the canvas and updates the live instruction-budget banner. */
     private void refreshInstructionBudget(){
+        // Sampled from the existing 24-frame tick: a foreign raise of LExecutor.maxInstructions
+        // does not change LogicSugar's enforcement (always the pinned vanilla 1000), so say it
+        // once instead of letting the banner/limit look inconsistent. Never in headless runs
+        // (Vars.ui is null there and the tick does not run anyway).
+        noticePinnedBudget();
         if(!isShown() || budgetLabel == null || canvas == null) return;
         String sugar;
         try{
@@ -1287,6 +1263,18 @@ public class SugarLogicDialog extends LogicDialog{
                 lastBudget.displayCount(), lastBudget.instructionLimit));
         }
         if(!over) budgetToastShown = false;
+    }
+
+    /** One-time notice: {@code LExecutor.maxInstructions} no longer matches vanilla because
+     *  another mod (MDT's slider) raised it. LogicSugar keeps enforcing the pinned 1000 limit,
+     *  so tell the user instead of letting them believe the larger number applies. */
+    private void noticePinnedBudget(){
+        if(budgetPinNoticeShown) return;
+        if(LExecutor.maxInstructions == InstructionBudget.VANILLA_LIMIT) return;
+        if(Vars.ui == null) return; // headless / test runs never warn
+        budgetPinNoticeShown = true;
+        Vars.ui.showInfoFade(Core.bundle.format("logicsugar.budget.pinned",
+            LExecutor.maxInstructions, InstructionBudget.VANILLA_LIMIT));
     }
 
     private void updateBudgetLabel(int storage){

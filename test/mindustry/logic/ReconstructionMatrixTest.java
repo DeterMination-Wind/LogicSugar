@@ -30,6 +30,9 @@ public final class ReconstructionMatrixTest{
     public static void main(String[] args){
         Vars.logicVars = new GlobalVars();
         LogicSugarMod.registerStatements();
+        // Production installs the debug passthrough parsers after ClientLoadEvent; the headless
+        // matrix mirrors that so stored/emitted debug lines round-trip like the game does.
+        SugarDebugLines.installParsers();
 
         addControlFixtures();
         addDeclarationFixtures();
@@ -339,35 +342,76 @@ public final class ReconstructionMatrixTest{
     }
 
     /**
-     * Assertion/debug cards are part of the current block set.  They serialize as
-     * pseudo-instructions and are stripped by default; the carrier still has to restore
-     * every one of them under the same verify gate.
+     * Debug opcodes are a text passthrough now: LogicSugar creates no card for them and hands
+     * the runtime back to Mlog Dev Tools. What still has to hold is reconstruction — a stored
+     * carrier that contains one of these lines must give the exact same line back, byte for
+     * byte and token for token (the two legacy wire shapes included), and it must also survive
+     * the decompiler's carrier path. Anything looser than the full line would let the
+     * passthrough silently rewrite an old save.
      */
     private static void addAssertionFixtures(){
-        addCarrier("assert.op", "assert lessThanEq index 10 ~\nset x 1\n", "assert lessThanEq index 10");
-        addCarrier("assert.bounds", "assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"msg\"\nset x 1\n", "assertBounds integer");
-        addCarrier("assert.equals", "assertequals 0 i \"should be 0\"\nset x 1\n", "assertequals 0 i");
-        addCarrier("assert.flush", "assertflush position\nset x 1\n", "assertflush position");
-        addCarrier("assert.prints", "assertprints position \"frog\" \"bad output\"\nset x 1\n", "assertprints position");
-        addCarrier("assert.type", "asserttype unit @unit \"should be a unit\"\nset x 1\n", "asserttype unit @unit");
-        // upstream <= v0.9 and LogicSugar <= 5.5 wrote the operands the other way round; the
-        // tolerant reader has to keep those carriers loadable
-        addCarrier("assert.type.legacyOrder", "asserttype @unit unit \"should be a unit\"\nset x 1\n", "asserttype @unit unit");
-        addCarrier("assert.error", "error \"Runtime error at #{@counter}.\" null null null null null null null null null\nset x 1\n", "error \"Runtime error at");
-        addCarrier("assert.log", "log info phase \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "log info phase");
-        // the pre-v0.12 `log` layout (no category) stays readable as systemlog
-        addCarrier("assert.log.legacy", "log info \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "log info");
-        addCarrier("assert.systemlog", "systemlog info \"Logging a message at #{@counter}.\" null null null null null null null null null\nset x 1\n", "systemlog info");
-        addCarrier("assert.breakpoint", "breakpoint always x false\nset x 1\n", "breakpoint always x false");
-        // snapshot is client-side only but still a card: its sugar has to survive the carrier
-        // (current five-slot text, and the legacy three-payload-token text a <=5.7.2 save carries)
-        addCarrier("assert.snapshot", "snapshot connected cell1 20 \"name\"\nset x 1\n", "snapshot connected cell1 20 \"name\"");
-        addCarrier("assert.snapshot.legacy", "snapshot isolated @unit \"old\"\nset x 1\n", "snapshot isolated @unit \"old\"");
+        addDebugCarrier("assert.op", "assert lessThanEq index 10 ~", 5);
+        addDebugCarrier("assert.bounds", "assertBounds integer 2 0 lessThanEq index lessThanEq 10 \"msg\"", 9);
+        addDebugCarrier("assert.equals", "assertequals 0 i \"should be 0\"", 4);
+        addDebugCarrier("assert.flush", "assertflush position", 2);
+        addDebugCarrier("assert.prints", "assertprints position \"frog\" \"bad output\"", 4);
+        addDebugCarrier("assert.type", "asserttype unit @unit \"should be a unit\"", 4);
+        // older carriers wrote the operands the other way round; the passthrough must not
+        // normalize either order, so both remain loadable
+        addDebugCarrier("assert.type.legacyOrder", "asserttype @unit unit \"should be a unit\"", 4);
+        addDebugCarrier("assert.error", "error \"Runtime error at #{@counter}.\" null null null null null null null null null", 11);
+        addDebugCarrier("assert.log", "log info phase \"Logging a message at #{@counter}.\" null null null null null null null null null", 13);
+        // the pre-v0.12 `log` layout (no category slot): 12 tokens, not 13
+        addDebugCarrier("assert.log.legacy", "log info \"Logging a message at #{@counter}.\" null null null null null null null null null", 12);
+        addDebugCarrier("assert.systemlog", "systemlog info \"Logging a message at #{@counter}.\" null null null null null null null null null", 12);
+        addDebugCarrier("assert.breakpoint", "breakpoint always x false", 4);
+        // snapshot is client-side only (MDT owns it) but the line still has to survive the
+        // carrier: current five-token text, and the legacy four-token text a <=5.7.2 save has
+        addDebugCarrier("assert.snapshot", "snapshot connected cell1 20 \"name\"", 5);
+        addDebugCarrier("assert.snapshot.legacy", "snapshot isolated @unit \"old\"", 4);
         // the v0.11.2 recording type carries its own steps slot
-        addCarrier("assert.snapshot.recording", "snapshot recording @this 8 \"rec\"\nset x 1\n", "snapshot recording @this 8");
-        // profiler control instructions (v0.11.3): carrier-only cards like the rest of the family
-        addCarrier("assert.profile", "profile start cell1\nset x 1\n", "profile start cell1");
-        addCarrier("assert.restart", "restart cell1\nset x 1\n", "restart cell1");
+        addDebugCarrier("assert.snapshot.recording", "snapshot recording @this 8 \"rec\"", 5);
+        // profiler control instructions (MDT owns their runtime)
+        addDebugCarrier("assert.profile", "profile start cell1", 3);
+        addDebugCarrier("assert.restart", "restart cell1", 2);
+    }
+
+    /** One debug line: the fixture asserts the exact wire text, and its arity is pinned at
+     *  definition time so a fixture cannot quietly drift into a loose prefix. */
+    private static void addDebugCarrier(String name, String line, int wireTokens){
+        check(wireTokens(line) == wireTokens,
+            "[" + name + "] fixture must carry " + wireTokens + " wire tokens: " + line);
+        // The passthrough's own promise: fromText(text).text() is the same text.
+        check(SugarDebugLines.fromText(line).text().equals(line),
+            "[" + name + "] passthrough rewrote its own wire text: " + line);
+        addCarrier(name, line + "\nset x 1\n", line);
+    }
+
+    /** Whitespace token count that keeps a quoted message together, the same rule the
+     *  passthrough's own splitter uses (a space inside quotes does not start a token). */
+    private static int wireTokens(String line){
+        int count = 0;
+        boolean quoted = false, escaped = false, inToken = false;
+        for(int i = 0; i < line.length(); i++){
+            char c = line.charAt(i);
+            if(quoted){
+                if(escaped) escaped = false;
+                else if(c == '\\') escaped = true;
+                else if(c == '"') quoted = false;
+                continue;
+            }
+            if(c == '"'){
+                quoted = true;
+                if(!inToken){ count++; inToken = true; }
+                continue;
+            }
+            if(Character.isWhitespace(c)){
+                inToken = false;
+                continue;
+            }
+            if(!inToken){ count++; inToken = true; }
+        }
+        return count;
     }
 
     /**

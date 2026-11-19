@@ -87,7 +87,10 @@ public final class SugarStatements{
         LAssembler.customParsers.put("whileend", tokens -> new SugarStatements.BlockEndStatement());
         LAssembler.customParsers.put("switchend", tokens -> new SugarStatements.BlockEndStatement());
 
-        SugarAsserts.installParsers();
+        // Debug passthrough parsers (assert/log/snapshot/…) are NOT installed here: this runs
+        // during mod init(), before other mods register theirs, and LAssembler.customParsers is
+        // first-wins. Mlog Dev Tools must be able to claim its own opcodes, so
+        // SugarDebugLines.installParsers() runs from the post-ClientLoadEvent pass instead.
     }
 
     private static String optional(String value){
@@ -109,7 +112,7 @@ public final class SugarStatements{
 
     /** {@link #text} for card titles only ({@code name()} overrides): returns the
      *  untranslated English fallback while card-title localization is switched off. Public
-     *  because the {@link SugarAsserts} card titles share the same policy. */
+     *  so card families outside this file can share the same policy. */
     public static String cardText(String key, String fallback){
         try{
             return cardsLocalized() ? text(key, fallback) : fallback;

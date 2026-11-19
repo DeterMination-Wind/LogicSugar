@@ -89,6 +89,7 @@ public class ExprStatement extends LStatement{
         // 积木。多行卡片由 foldAll 的 >= 2 门槛折回，不需要标记（那会改变语句条数）；单行
         // read/write 同样写标记——数组声明只说明这些 cell 归数组所有，不能说明这一行是下标
         // 访问，声明卡旁边的原版读写积木必须保持原版（2026-10 报告）。
+        // write() 恒按 strip 口径编译：emit 构建的越界检查只属于编译产物，糖源码不含它。
         if(ExprHook.keepsCard(lines) && dest != null){
             builder.append('\n').append(ExprTextImport.cardMarker(dest, expr));
         }

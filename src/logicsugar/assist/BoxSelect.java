@@ -949,10 +949,11 @@ public class BoxSelect{
         int copySize = copies.size;
 
         int generatedEnds = copiedBlockEndCount(copySources);
-        if(children.size + copySize + generatedEnds > LExecutor.maxInstructions){
+        int limit = InstructionBudget.vanillaLimit();
+        if(children.size + copySize + generatedEnds > limit){
             dragNoteOnce("abort|duplicate", "duplicate aborted: would exceed maxInstructions (children="
                 + children.size + " copies=" + copySize + " ends=" + generatedEnds
-                + " limit=" + LExecutor.maxInstructions + ")");
+                + " limit=" + limit + ")");
             return;
         }
 
@@ -2061,10 +2062,11 @@ public class BoxSelect{
 
         int currentSize = canvas.statements.getChildren().size;
         int generatedEnds = copiedBlockEndCount(clipboardSources);
-        if(currentSize + clipboardSize + generatedEnds > LExecutor.maxInstructions){
+        int limit = InstructionBudget.vanillaLimit();
+        if(currentSize + clipboardSize + generatedEnds > limit){
             // 静默拒绝复制在用户看来只是"拖了没反应"，留一行可见日志。
             dragNoteOnce("abort|copy", "copy aborted: would exceed maxInstructions (children=" + currentSize
-                + " copies=" + clipboardSize + " ends=" + generatedEnds + " limit=" + LExecutor.maxInstructions + ")");
+                + " copies=" + clipboardSize + " ends=" + generatedEnds + " limit=" + limit + ")");
             enterSelectedState(canvas);
             reportDuplicateCheck(canvas, "copy-aborted");
             return;
@@ -2426,7 +2428,7 @@ public class BoxSelect{
 
         int insertPos = pasteInsertPosition(canvas);
         int currentSize = canvas.statements.getChildren().size;
-        if(currentSize + incoming.size > LExecutor.maxInstructions){
+        if(currentSize + incoming.size > InstructionBudget.vanillaLimit()){
             Log.debug("[LogicAssist] Paste aborted: would exceed maxInstructions");
             return StatementClipboard.Result.TOO_BIG;
         }
