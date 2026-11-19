@@ -27,6 +27,8 @@ Mindustry Java mod：在逻辑编辑器里提供 `for` / `while` / `switch` / �
   细节见 [重建规则](docs/reconstruction.md)「安全门」。
 - **上游基线**：断言/断点等 Mlog Dev Tools（MDT）重叠功能已解耦移除（阶段 A）：运行时卡片、Vars/快照、
   Profiler 不再由本模组提供，只剩 `SugarDebugLines` 的**文本直通层**保证存档里已有的调试行仍可解析、可回写。
+  独立形态首次启动会弹一次 MDT 推荐（中国 IP 走镜像下载并重启，其它地区转模组浏览器；聚合形态不弹，
+  标志写在 `logicsugar.mdt.recommendShown`），它不碰保存产物，无联机门禁。
   线格式与历史差异见 [上游基线](docs/upstream.md)。
 
 ## 构建与验证

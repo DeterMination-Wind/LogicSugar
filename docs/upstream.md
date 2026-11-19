@@ -64,6 +64,41 @@ Vars / Memory / Properties 界面、快照、Profiler、处理器状态指示、
 2. `AssertEmit=emit` 构建下表达式层自己发射的数组/矩阵越界检查（`assertBounds`，KEEP(P4)），它的线格式
    签名与 strip/emit 规则见[重建规则](reconstruction.md)「生成式越界检查」。
 
+## 首次启动的 MDT 推荐（`MdtRecommendation`）
+
+解耦后单独安装 LogicSugar 就没有调试界面了，所以独立形态首次启动时会弹一次推荐：建议玩家再装 MDT。
+它**不碰保存产物**（只下载/安装另一个 mod，不改变任何编译结果），因此没有联机门禁；但它会改磁盘上的
+`mods/` 并重启游戏，所以实现上刻意保守：
+
+- **只弹一次**：`ClientLoadEvent` 后延后约 1 秒，标志 `logicsugar.mdt.recommendShown` 在对话框
+  `shown()` 时写入——按 Esc 关掉也算看过，不会下次启动再弹。检测到 MDT 已安装（旧名
+  `mlog-assertions*`、新名 `mlogdevtools`、显示名、或 `mod-<name>-repo` 指向
+  `cardillan/MlogDevTools` 任一命中）时直接写标志、不弹窗；装在但禁用也算已安装，因为再下一份副本
+  并不能解决问题。
+- **不打断别的弹窗**：同一事件里编辑器冲突询问也会弹窗，所以本弹窗延后并在
+  `Core.scene.hasDialog()` 时重试（最多 20 次、每次约 2 秒）；重试耗尽则本次启动放弃且**不写标志**。
+- **不在聚合形态出现**：`bekBundled`（Neon）自带模组选择，不该再指路去装一个聚合包外的 mod；headless
+  服务器也没有玩家可问。这是刻意的双形态差异，Neon 侧不需要对应入口。
+- **四个按钮**：`不了` / `跳转到 Github Release` / `跳转到模组浏览器` / `下载`。前两个手动通道永远可用，
+  也是「最新 MDT 要求更新的游戏」时的唯一出路。
+- **`下载` 按 IP 分流**：并行探测 Cloudflare trace、`api.ip.sb`、`ipapi.co`（任一命中中国即按中国处理，
+  全部失败则回落到系统 `Locale` 的 CN 判定）。中国网络走镜像池立即下载并重启；非中国网络直接打开
+  游戏内模组浏览器并把搜索框填成 `Mlog Dev Tools`（GitHub 本身可达，浏览器也是正常更新通道）。
+- **镜像池**：取 Xenon `MirrorDownloader.MIRRORS` 的子集并按 2026-11 实测排序（`gh-proxy.com`、
+  `github.chenc.dev` 同时支持 API 与 jar，其余只支持 jar），每条约写成 `<mirror>/<完整 github URL>`，
+  **直连 GitHub 永远是最后一条**。先经镜像读 release 元数据拿到带版本号的资产地址（资产在 v0.12.0
+  由 `MlogAssertions.jar` 改名成 `MlogDevTools.jar`，写死一个名字迟早失效），元数据拿不到才回落到
+  `releases/latest/download/MlogDevTools.jar`。每个响应都校验 zip 头与 `Content-Length`（实测有镜像
+  200 后只吐 49KB），坏响应换下一条；元数据 25 秒、jar 90 秒各自独立预算，取消按钮随时生效。
+- **版本门**：导入前用 `Vars.mods.findMeta(new ZipFi(file))` 读 MDT 的 `minGameVersion`，低于
+  `Version.isAtLeast` 就拒绝并提示两个版本号——直接导入只会得到一个游戏不认的 mod。
+- **安装与重启**：走游戏自己的 `Vars.mods.importMod(file, true)` 并补 `setRepo(repo)`（否则模组浏览器
+  认为没装、也不会给更新提示），随后 `showInfoOnHidden` + `Core.app.exit()`，与游戏导入 mod 后的
+  `mods.reloadexit` 流程一致。
+
+实现见 `src/logicsugar/MdtRecommendation.java`，无网自测见[测试指南](testing.md) 的
+`mdtRecommendTest`。
+
 ## 历史线格式例外（改前先读）
 
 这些形状是**已有存档里真实存在**的文本，直通层必须逐字节保留它们；它不判断语义，因此没有「读成哪张卡」

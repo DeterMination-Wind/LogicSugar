@@ -10,6 +10,7 @@ import arc.struct.IntSeq;
 import arc.struct.Seq;
 import arc.util.Align;
 import arc.util.Log;
+import arc.util.Time;
 import arc.util.io.PropertiesUtils;
 import java.util.Locale;
 import mindustry.Vars;
@@ -160,6 +161,9 @@ public class LogicSugarMod extends Mod{
         // heuristic inside ArrayRegistry.
         ArrayRegistry.setLinkResolverProvider(ArrayRegistry::processorLinks);
         on(ClientLoadEvent.class, event -> Core.app.post(LogicSugarMod::installEditor));
+        // 一次性推荐 MDT。延后一帧再排入 Time.run：ClientLoadEvent 同一帧里其它 mod（包括本模组
+        // 自己的编辑器冲突询问）也会弹窗，延后一次让出屏幕，避免两个模态互相盖住。
+        on(ClientLoadEvent.class, event -> Core.app.post(() -> Time.run(60f, MdtRecommendation::maybeShow)));
         // 匿名使用统计是可选观测设施：初始化失败绝不能影响编辑器或编译。
         on(ClientLoadEvent.class, event -> {
             try{
