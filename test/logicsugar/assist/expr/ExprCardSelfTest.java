@@ -124,7 +124,7 @@ public class ExprCardSelfTest{
             "a single-line card must keep the card instead of being unfolded (the block would vanish/downgrade)");
         check(!ExprHook.hasUnmappableLine(ops), "a value copy must not count as an unmappable line");
 
-        List<LStatement> statements = ExprHook.toStatements(ops, null, false);
+        List<LStatement> statements = ExprHook.toStatements(ops);
         check(statements.size() == 1 && statements.get(0) instanceof SetStatement,
             "a value copy must unfold to a set card: " + statements.size() + " statement(s)");
         SetStatement set = (SetStatement)statements.get(0);
@@ -152,7 +152,7 @@ public class ExprCardSelfTest{
             for(ExprCompiler.Line line : ops){
                 if(!(line instanceof ExprCompiler.AssertBoundsLine)) instructionLines++;
             }
-            List<LStatement> statements = ExprHook.toStatements(ops, null, false);
+            List<LStatement> statements = ExprHook.toStatements(ops);
             check(statements.size() == instructionLines,
                 "expression '" + expression + "' dropped statements while unfolding: expected "
                     + instructionLines + ", got " + statements.size() + " from " + text(ops));
@@ -165,15 +165,15 @@ public class ExprCardSelfTest{
         ops.add(new ExprCompiler.RawLine("mystery x y"));
         check(ExprHook.hasUnmappableLine(ops), "an unknown raw line was not reported as unmappable");
         check(!ExprHook.keepsCard(ops), "an unknown raw line must not be treated as a kept card");
-        check(ExprHook.toStatements(ops, null, false).isEmpty(),
+        check(ExprHook.toStatements(ops).isEmpty(),
             "an unknown raw line must not produce a half-declared statement list");
 
-        // 断言行按模式转换/丢弃，不算不可映射
+        // 断言行是编译产物里的调试检查：不算不可映射，展开时不合成任何语句
         List<ExprCompiler.Line> asserts = new ArrayList<>();
-        asserts.add(new ExprCompiler.AssertBoundsLine("integer", "~", "0", "lessThanEq", "buf", "lessThan", "8", "\"ls-auto: x\""));
+        asserts.add(new ExprCompiler.AssertBoundsLine("integer", "~", "0", "lessThanEq", "buf", "lessThan", "8", "\"array 'buf' index out of bounds (0..8)\""));
         check(!ExprHook.hasUnmappableLine(asserts), "bounds asserts must stay mappable");
-        check(ExprHook.toStatements(asserts, null, true).size() == 1,
-            "an emitted bounds assert must unfold to one assert card");
+        check(ExprHook.toStatements(asserts).isEmpty(),
+            "a generated bounds assert must not be synthesized onto the canvas");
     }
 
     /**
@@ -337,7 +337,7 @@ public class ExprCardSelfTest{
 
             String written = instructionText(writeOf(card.dest, expression));
 
-            List<LStatement> statements = ExprHook.toStatements(compile(card), null, false);
+            List<LStatement> statements = ExprHook.toStatements(compile(card));
             check(!statements.isEmpty(), "expression '" + expression + "' unfolded to nothing");
 
             Seq<LStatement> seq = new Seq<>(statements.size());
@@ -460,12 +460,12 @@ public class ExprCardSelfTest{
         canvas.add(op);
         canvas.add(jump);
 
-        String pure = ExprHook.unfoldedText(canvas, false);
+        String pure = ExprHook.unfoldedText(canvas);
 
         // 1) 与旧路径（画布展开后再写）逐字一致。旧路径里 jump 的 destIndex 会被 saveUI()
         //    写成展开后的下标，这里显式对齐同一个口径。
         List<LStatement> expanded = new ArrayList<>();
-        expanded.addAll(ExprHook.toStatements(compile(card), null, false));
+        expanded.addAll(ExprHook.toStatements(compile(card)));
         int opIndex = expanded.size();
         expanded.add(op);
         LStatements.JumpStatement expandedJump = (LStatements.JumpStatement)LAssembler.read("jump 0 equal y 1", true).first();
@@ -497,7 +497,7 @@ public class ExprCardSelfTest{
         block.add(card);
         block.add(begin);
         block.add(new SugarStatements.BlockEndStatement());
-        String blockText = ExprHook.unfoldedText(block, false);
+        String blockText = ExprHook.unfoldedText(block);
         check(begin.destIndex == 2, "text-layer unfolding must not leave the canvas index rewritten");
         Seq<LStatement> parsedBlock = LAssembler.read(blockText, true);
         int endIndex = parsedBlock.size - 1;
@@ -512,7 +512,7 @@ public class ExprCardSelfTest{
         markerCanvas.add(single);
         markerCanvas.add(opLine("op mul w 2 2"));
         markerCanvas.add(singleJump);
-        String markerText = ExprHook.unfoldedText(markerCanvas, false);
+        String markerText = ExprHook.unfoldedText(markerCanvas);
         check(markerText.contains(ExprStatement.cardMarkerPrefix), "a single-line card must keep its marker: " + markerText);
         Seq<LStatement> parsedMarker = LAssembler.read(markerText, true);
         check(parsedMarker.size == 3, "a comment marker must not add a statement: " + parsedMarker.size);
@@ -534,8 +534,8 @@ public class ExprCardSelfTest{
         check(temp != null && ExprCompiler.isTemp(temp), "the first chain line must write a temp, got " + temp);
 
         List<LStatement> duplicate = new ArrayList<>();
-        duplicate.addAll(ExprHook.toStatements(chain, null, false));
-        duplicate.addAll(ExprHook.toStatements(chain, null, false));
+        duplicate.addAll(ExprHook.toStatements(chain));
+        duplicate.addAll(ExprHook.toStatements(chain));
         check(duplicate.size() == 4, "the duplicate fixture must be two chains of two, got " + duplicate.size());
         check(!ExprHook.hasExternalReads(duplicate, 0, 2, chain),
             "the pasted second chain must not block the first chain's fold (its own first line defines " + temp + ")");

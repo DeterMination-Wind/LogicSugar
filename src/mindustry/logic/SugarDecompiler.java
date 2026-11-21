@@ -1,5 +1,6 @@
 package mindustry.logic;
 
+import logicsugar.assist.InstructionBudget;
 import logicsugar.assist.expr.ExprCompiler;
 import logicsugar.assist.expr.ExprStatement;
 import logicsugar.assist.expr.ExprTextImport;
@@ -714,13 +715,26 @@ public final class SugarDecompiler{
             //（它们的 jump 目标还是 __ls_* 标签，数字那一趟是空操作）。串起来一起用。
             String threadedTarget = normalize(SugarCompiler.threadAlwaysJumpTargets(
                 SugarCompiler.threadNumericJumpTargets(original)), privileged);
+            // KEEP(P4) — recovered sugar keeps the generated bounds checks (see Candidate.emit),
+            // but a strip recompilation of that sugar drops every debug line. So when the stored
+            // stream carries one, both sides are also compared with the generated-bounds lines
+            // filtered out; that keeps the strip shape verifiable without widening the gate for
+            // programs that never had such a line. The filter is safe because the line is a
+            // debug-only check of an emit build, and a recovered expression that regenerates a
+            // check on top of the kept one collapses under the same filter (the gate compares
+            // the executable instruction stream, not the literal text).
+            boolean generatedBounds = SugarDebugLines.containsGeneratedBoundsLine(target);
+            String targetNoBounds = generatedBounds
+                ? SugarDebugLines.stripGeneratedBoundsLines(target) : target;
+            String threadedTargetNoBounds = generatedBounds
+                ? SugarDebugLines.stripGeneratedBoundsLines(threadedTarget) : threadedTarget;
             // The lowering also depends on the switch strategy and the assert-emit shape,
             // which are user settings: a program saved under different settings must still
             // verify, so the gate compiles every candidate across the full matrix instead of
             // only the locally configured one. The assert-emit dimension only matters for
-            // candidates containing assertion cards (2 modes x 2 strategies otherwise).
-            boolean hasAsserts = SugarAsserts.containsAssertStatements(candidate)
-                || SugarAsserts.containsAssertStatements(original);
+            // candidates containing debug lines (2 modes x 2 strategies otherwise).
+            boolean hasAsserts = SugarDebugLines.containsDebugLine(candidate)
+                || SugarDebugLines.containsDebugLine(original);
             SugarCompiler.AssertEmit[] emitShapes = hasAsserts
                 ? SugarCompiler.AssertEmit.values() : new SugarCompiler.AssertEmit[]{SugarCompiler.AssertEmit.strip};
             // Two lowering eras of the trailing entry skip, exactly like
@@ -740,6 +754,15 @@ public final class SugarDecompiler{
                                 String stripped = normalize(stripGeneratedMetadata(compiled), privileged);
                                 if(stripped.equals(target) || stripped.equals(threadedTarget)){
                                     return new Verification(true, mode.name() + "/" + strategy.name() + "/" + emit.name());
+                                }
+                                if(generatedBounds){
+                                    // Same comparison with the generated bounds lines filtered out
+                                    // of both sides (see the KEEP(P4) note above).
+                                    String strippedNoBounds = SugarDebugLines.stripGeneratedBoundsLines(stripped);
+                                    if(strippedNoBounds.equals(targetNoBounds)
+                                        || strippedNoBounds.equals(threadedTargetNoBounds)){
+                                        return new Verification(true, mode.name() + "/" + strategy.name() + "/" + emit.name());
+                                    }
                                 }
                             }catch(Throwable ignored){
                                 // Try the next matrix combination.
@@ -768,12 +791,20 @@ public final class SugarDecompiler{
      *  vanilla mlog. */
     private static void installSugarParsers(){
         logicsugar.LogicSugarMod.registerStatements();
+        // Recovered sugar can now keep LogicSugar's own generated bounds lines as text, so the
+        // recompilation gate has to parse them. Decompiling is a user action (open a processor),
+        // i.e. after every mod's init has registered, and installParsers() is first-wins — MDT
+        // still owns the opcodes when present. Headless self-tests get the parsers here too.
+        SugarDebugLines.installParsers();
     }
 
     private static void validateInput(String code, boolean privileged){
         List<String> heads = logicalHeads(code);
-        if(heads.size() > LExecutor.maxInstructions){
-            throw new IllegalArgumentException("logic program exceeds the " + LExecutor.maxInstructions + " instruction limit");
+        // KEEP(save budget): the processor product is capped by the vanilla 1000-instruction
+        // limit, never by a third-party (e.g. MDT slider) raise of LExecutor.maxInstructions.
+        int limit = InstructionBudget.vanillaLimit();
+        if(heads.size() > limit){
+            throw new IllegalArgumentException("logic program exceeds the " + limit + " instruction limit");
         }
         int index = 0;
         for(LStatement statement : LAssembler.read(code, privileged)){
@@ -926,6 +957,9 @@ public final class SugarDecompiler{
     private static final class RawItem extends Item{
         final String[] tokens;
         RawItem(int origin, String[] tokens){ super(origin, origin); this.tokens = tokens; }
+        /** One of LogicSugar's own generated bounds checks (KEEP(P4), see
+         *  {@link SugarDebugLines#isGeneratedBoundsMessage}). */
+        boolean isGeneratedBoundsLine(){ return SugarDebugLines.isGeneratedBoundsLine(tokens); }
         @Override void write(StringBuilder out, Emitter emitter){
             for(int i = 0; i < tokens.length; i++){
                 if(i > 0) out.append(' ');
@@ -3259,7 +3293,25 @@ public final class SugarDecompiler{
                 && s.token(2).equals(variable) && s.token(3).equals(variable);
         }
 
-        String emit(){ return new Emitter(items, program.statements.size()).emit(); }
+        /**
+         * KEEP(P4) — the recovered sugar keeps the bounds checks LogicSugar's own debug emitter
+         * generates ({@code ExprCompiler.emitBoundsAssert}). They match the exact generated
+         * message signature, so a user-authored {@code assertBounds} with any other message was
+         * never touched. Keeping them as passthrough text is what makes an emit product survive
+         * decompile → edit → recompile: the line is plain text (no card type, no MDT
+         * dependency), an expression card saves as its flattened mlog chain, and dropping the
+         * line here would silently lose the check the moment the recovered program is re-saved.
+         *
+         * <p>The gate stays tolerant of the strip shape: recompiling the recovered source with
+         * {@code AssertEmit=strip} removes the lines again (a debug build is single-player only),
+         * so {@code verify} compares both sides with {@link SugarDebugLines#stripGeneratedBoundsLines}
+         * whenever the input carried one. That also absorbs a line that a recovered expression
+         * (condition/argument/return) regenerates on top of the kept one — the executable
+         * instruction stream is compared after removing all of them.</p>
+         */
+        String emit(){
+            return new Emitter(items, program.statements.size()).emit();
+        }
     }
 
     // ===== Emitter ========================================================================

@@ -101,6 +101,10 @@ public final class SugarFunctions{
      * parsed with this raised limit instead. A processor that inlines library functions still has
      * to fit the vanilla 1000-instruction cap; only the library file itself is allowed to be
      * larger. 10000 is the current supported ceiling.
+     *
+     * <p>KEEP(P4) — 不要随 MDT 解耦删除或下调。函数库文本不是处理器产物，必须用
+     * {@link #readLibrary} 按这个上限解析；删掉它会让超过 1000 条的函数库在打开/保存时
+     * 被原版上限静默截断。</p>
      */
     public static final int libraryInstructionLimit = 10000;
 
@@ -118,8 +122,19 @@ public final class SugarFunctions{
             LExecutor.maxInstructions = libraryInstructionLimit;
             return LAssembler.read(text, privileged);
         }finally{
-            LExecutor.maxInstructions = previous;
+            restoreLimit(previous, libraryInstructionLimit);
         }
+    }
+
+    /**
+     * Compare-and-set restore of the global parse window.
+     *
+     * <p>{@code LExecutor.maxInstructions} is shared with other mods. If one of them wrote its
+     * own value while our window was installed, putting the old value back would silently
+     * clobber that write; only the value we installed is ours to undo.</p>
+     */
+    private static void restoreLimit(int previous, int installed){
+        if(LExecutor.maxInstructions == installed) LExecutor.maxInstructions = previous;
     }
 
     /**
@@ -131,13 +146,14 @@ public final class SugarFunctions{
     public static boolean libraryOverLimit(String text){
         if(text == null || text.isEmpty()) return false;
         int previous = LExecutor.maxInstructions;
+        int installed = Math.max(previous, libraryInstructionLimit + 1);
         try{
-            LExecutor.maxInstructions = Math.max(previous, libraryInstructionLimit + 1);
+            LExecutor.maxInstructions = installed;
             return LAssembler.read(text, true).size > libraryInstructionLimit;
         }catch(Throwable ignored){
             return false;
         }finally{
-            LExecutor.maxInstructions = previous;
+            restoreLimit(previous, installed);
         }
     }
 
@@ -148,11 +164,12 @@ public final class SugarFunctions{
      */
     public static void withLibraryLimit(Runnable action){
         int previous = LExecutor.maxInstructions;
-        if(previous < libraryInstructionLimit) LExecutor.maxInstructions = libraryInstructionLimit;
+        int installed = Math.max(previous, libraryInstructionLimit);
         try{
+            LExecutor.maxInstructions = installed;
             action.run();
         }finally{
-            LExecutor.maxInstructions = previous;
+            restoreLimit(previous, installed);
         }
     }
 
@@ -163,11 +180,12 @@ public final class SugarFunctions{
      *  {@code NoSuchMethodError} on API 21-23 devices.</p> */
     public static <T> T withLibraryLimitValue(arc.func.Prov<T> action){
         int previous = LExecutor.maxInstructions;
-        if(previous < libraryInstructionLimit) LExecutor.maxInstructions = libraryInstructionLimit;
+        int installed = Math.max(previous, libraryInstructionLimit);
         try{
+            LExecutor.maxInstructions = installed;
             return action.get();
         }finally{
-            LExecutor.maxInstructions = previous;
+            restoreLimit(previous, installed);
         }
     }
 
@@ -1915,12 +1933,19 @@ public final class SugarFunctions{
                 SpanAccess.appendRead(out, read.output, read.target, read.address);
             }else if(statement instanceof WriteStatement write && SpanAccess.isSpan(write.target)){
                 SpanAccess.appendWrite(out, write.input, write.target, write.address);
-            }else if(statement instanceof SugarAsserts.AssertCard){
-                // debug builds (emit) pass assertion instructions through as real custom
-                // instructions; the default (strip) compiles them away so the saved mlog
-                // stays vanilla-parseable — the sugar lives in the persistence carrier
+            }else if(SugarDebugLines.isDebugStatement(statement)){
+                // Debug builds (emit) pass MDT's assert/log/… lines through as text; the
+                // default (strip) compiles them away so the saved mlog stays vanilla-parseable
+                // — the sugar lives in the persistence carrier. The test is the written text,
+                // so it also catches MDT's own statement classes (MDT removes our parsers and
+                // owns the opcodes whenever it is installed). Nothing runs here: runtime
+                // behaviour is Mlog Dev Tools' job.
                 if(assertEmit == SugarCompiler.AssertEmit.emit){
-                    statement.write(out);
+                    if(!SugarDebugLines.writeDebugStatement(statement, out)){
+                        // write() failed (it already logged); keep the old failure direction:
+                        // the normal write path runs and reports it exactly as before.
+                        statement.write(out);
+                    }
                     out.append('\n');
                 }
             }else{

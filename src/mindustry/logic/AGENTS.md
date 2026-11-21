@@ -1,6 +1,6 @@
 # mindustry.logic — 同包扩展层
 
-作用域：`SugarCompiler`、`SugarDecompiler`、`SugarStatements`、`SugarAsserts`、`SugarCanvas`、
+作用域：`SugarCompiler`、`SugarDecompiler`、`SugarStatements`、`SugarDebugLines`、`SugarCanvas`、
 `SugarLogicDialog`、`SugarCoexist`、`SugarFunctions`、`MlogCFG`、`RecoveryPredicate`。改这里前先读本文件；
 实现背景见[架构总览](../../../docs/architecture.md)，恢复细节见[重建规则](../../../docs/reconstruction.md)。
 
@@ -65,7 +65,10 @@
 ## 测试入口与上游线格式
 
 `crossLoaderTest`、`decompileTest`、`reconstructionTest`、`reconstructionMatrixTest`、`canvasSourceTest`、
-`selfTest`、`assertTest` / `assertTypeTest`。断言线格式与上游基线的差异（`asserttype` 的 `null` 类型与
-token 顺序、`snapshot` 5 槽、`log`/`systemlog` 的旧文本迁移）见[上游基线](../../../docs/upstream.md)；
-改 `asserttype` / `snapshot` / `log` 前先看 `SugarAsserts` 对应卡片的注释与 `assertTypeTest` / `assertTest`。
-新增断言卡或改其线格式时，`ReconstructionMatrixTest` 的 assertion 区必须同步（carrier 夹具 + 旧文本夹具）。
+`selfTest`、`debugPassthroughTest`。MDT 调试行的线格式（`snapshot` 4/5 槽、`log` 12/13 槽的旧文本判别）由
+`SugarDebugLines` 统一处理，背景见[上游基线](../../../docs/upstream.md)；改线格式前先看该类的 arity 表与注释。
+表达式层自己的越界检查（`assertBounds`，KEEP(P4)）也由该类的
+`isGeneratedBoundsMessage` / `isGeneratedBoundsLine` 定义精确签名：`Line.fromBounds` / `fromText` 把它作为
+纯文本写进糖源码（下标计算之后、read/write 之前，无卡片类型），反编译保留它、安全门在输入带生成行时对两边
+做同一过滤；折叠时透明跳过。用户手写同 opcode 的行不受影响。
+`ReconstructionMatrixTest` 的 assertion 区仍保留 carrier 夹具与旧文本夹具，新增/调整调试行时同步。

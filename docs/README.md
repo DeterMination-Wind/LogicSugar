@@ -23,7 +23,7 @@ docs/
 |-- tutorials/           进阶教程：中文在根目录, English 在 en/（每章一个主题，含数据结构、单位控制与单位分类）
 |-- architecture.md      架构总览：双形态、编译器、重建（载体/反编译）、表达式子系统、数据子系统、匿名使用统计与反馈、跨类加载器约束、上游版本适配笔记
 |-- reconstruction.md    重建规则：载体还原、反编译推断、raw/stride、unit-control、span/getter 折叠、Expr 卡持久化
-|-- upstream.md          上游基线：MlogAssertions v0.11.8、跟进历史、不移植项、线格式例外
+|-- upstream.md          上游基线：Mlog Dev Tools 解耦决定、文本直通边界、历史线格式例外
 |-- development.md       开发指南：环境、构建命令、代码风格、调试建议
 |-- release.md           版本与发布：版本号体系、构建产物链、Release 资产安全
 |-- testing.md           测试指南：JavaExec 自测任务、新增测试约定、手测清单
@@ -35,8 +35,8 @@ docs/
 
 - [README.md](../README.md) / [README_zh.md](../README_zh.md)：面向玩家的功能与安装说明（英文 / 中文）。
 - [AGENTS.md](../AGENTS.md)：根路由与硬约束（重建完成定义、多人兼容底线、构建入口）。
-- 模块 AGENTS：[mindustry/logic](../src/mindustry/logic/AGENTS.md)、[assist/expr](../src/logicsugar/assist/expr/AGENTS.md)、[assist/data](../src/logicsugar/assist/data/AGENTS.md)、[vars/profile](../src/logicsugar/vars/AGENTS.md)。
-- [重建规则](reconstruction.md) / [上游基线](upstream.md)：从原版 mlog 恢复的完整约束 / MlogAssertions 同步历史与线格式例外。
+- 模块 AGENTS：[mindustry/logic](../src/mindustry/logic/AGENTS.md)、[assist/expr](../src/logicsugar/assist/expr/AGENTS.md)、[assist/data](../src/logicsugar/assist/data/AGENTS.md)。
+- [重建规则](reconstruction.md) / [上游基线](upstream.md)：从原版 mlog 恢复的完整约束 / MDT 解耦后的直通边界与线格式例外。
 - [mod.json](../mod.json)：模组描述符（入口 `logicsugar.LogicSugarMod`、最低 Mindustry `v160.1`）。
 - [build.gradle](../build.gradle)：编译依赖、自测任务（清单以 `check.dependsOn` 为准）与 Android 打包管线的唯一事实来源。
 - 发布说明：每个版本的双语（中文/English）正文随 GitHub Release 发布，仓库不再保留副本；写作范式见 [版本与发布](release.md)。

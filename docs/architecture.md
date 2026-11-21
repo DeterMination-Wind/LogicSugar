@@ -1,14 +1,14 @@
 # 架构总览
 
-改 `src/` 下的任何代码前先读本文。它解释 LogicSugar 的组织方式：Sugar 结构如何编译成 mlog、程序如何在保存后还原、以及为什么跨类加载器访问与反编译安全门是两条硬约束。模块级“改这里要注意什么”见 [mindustry/logic AGENTS](../src/mindustry/logic/AGENTS.md)、[assist/expr AGENTS](../src/logicsugar/assist/expr/AGENTS.md)、[assist/data AGENTS](../src/logicsugar/assist/data/AGENTS.md)、[vars/profile AGENTS](../src/logicsugar/vars/AGENTS.md)；重建细节见[重建规则](reconstruction.md)。
+改 `src/` 下的任何代码前先读本文。它解释 LogicSugar 的组织方式：Sugar 结构如何编译成 mlog、程序如何在保存后还原、以及为什么跨类加载器访问与反编译安全门是两条硬约束。模块级“改这里要注意什么”见 [mindustry/logic AGENTS](../src/mindustry/logic/AGENTS.md)、[assist/expr AGENTS](../src/logicsugar/assist/expr/AGENTS.md)、[assist/data AGENTS](../src/logicsugar/assist/data/AGENTS.md)；重建细节见[重建规则](reconstruction.md)。
 
 ## 双形态：独立运行 / 并入 Neon 聚合
 
 LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（id `ls`）。两种形态共用同一套代码，由主类上的静态标记切换：
 
 - `logicsugar.LogicSugarMod#bekBundled`：宿主（Neon）注入时置 `true`。
-- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试断言构建、函数库入口、处理器状态、单位 flag 显示/按 flag 着色、隐藏内部变量、框选、跳转线着色）。
-- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试断言构建、函数库入口、处理器状态滑杆、单位 flag 显示/按 flag 着色、隐藏变量、框选、跳转线着色与底部的反馈入口；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
+- **独立运行**：`init()` 在 `ClientLoadEvent` 后调用 `LogicSugarSettings.setup(true)`，注册自己的 `@logicsugar.settings` 设置分类（函数模式、Switch 分派策略、调试构建、编辑器冲突、函数库入口、单位 flag 显示/按 flag 着色、框选、紧凑卡片、跳转线着色、反馈入口）。
+- **Neon 聚合态**：宿主调用 `bekBuildSettings(SettingsTable)` 把设置行挂进 Neon 总设置页；模组自建分类被整体跳过（`if(!bekBundled)`），避免重复条目。注意 `bekBuildSettings` 当前聚合的是函数模式、调试构建、编辑器冲突、函数库入口、单位 flag 显示/按 flag 着色、框选、紧凑卡片、跳转线着色与底部的反馈入口；`SwitchStrategySetting` 只在独立态的 `build()` 中注册。
 
 除设置入口外，两种形态的行为完全一致；不存在单独的聚合分支代码。
 
@@ -27,7 +27,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 1. **注册语句**：`registerStatements()` 把 18 种 `SugarStatements` 卡片（`ForBegin` / `WhileBegin` / `SwitchBegin` / `IfBegin` / `Case` / `Default` / `ElseIf` / `Else` / `Break` / `Continue` / `BlockEnd` / `FuncDef` / `FuncCall` / `Return` / `Array` / `Matrix` / `ArrayInit` / `Span`）加入 `LogicIO.allStatements`；随后注册数据子系统模块（`DataModules.register(new ArrayBulkModule/RecordModule/ContainerModule/BitsetModule/MapModule/SetModule/ListHeapModule/ChainModule())`，同时注册表达式 intrinsic provider），再调用 `SugarStatements.installParsers()` 与 `DataModules.registerParsers()` 向 `LAssembler.customParsers` 注册全部 token 解析器（含 `forend` / `whileend` / `switchend` 三个旧开发版本标记的只读兼容，以及 `record` / `stack` / `queue` / `deque` / `bitset` / `map` / `uset` / `list` / `heap` / `chain` 十张数据声明卡）。整个 `registerStatements()` 由静态 `registered` 守卫，重复 `init()` 不会重复添加卡片或解析器。这是与反编译器、自测共享的唯一注册点。
 2. **接管编辑器**：`ClientLoadEvent` 后把 `Vars.ui.logic` 换成 `SugarLogicDialog`（构造函数内使用 `SugarCanvas`）。替换前把旧对话框上除 canvas/buttons 外的子元素（如 MindustryX 的逻辑辅助浮层）按 z 顺序迁移到新对话框。
-3. **挂辅助功能**：`BoxSelect.init()`（框选）、`ExprHook.init()`（表达式语句）、`VarDisplayFilter.init()`（隐藏 `__ls_*` 内部变量）、`ProcessorStatus.init()`（处理器状态指示）、`UnitFlags.init()`（单位 flag 叠加），并注册关闭对话框时清空跳转线着色缓存。
+3. **挂辅助功能**：`BoxSelect.init()`（框选）、`ExprHook.init()`（表达式语句）、`VarDisplayFilter.init()`（隐藏 `__ls_*` 内部变量）、`UnitFlags.init()`（单位 flag 叠加），并注册关闭对话框时清空跳转线着色缓存。调试行解析器不在这里注册，见下面「MDT 调试行直通」。
 
 ## 匿名使用统计与反馈（PostHog）
 
@@ -109,14 +109,14 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
   **重建**：多行 getter（`stack.top()` / `queue.front()` / `deque.back()`）的展开以一条落在容器声明内存块上的 `read` 结尾，折叠链必须把它算作链元素（`ExprIntrinsics.Provider.declaresMemory`），再由 `ContainerIntrinsics.foldAt` 把整段折回——形状表不手写：用正向展开重新编译候选 getter（`s.top()` / `s.size()` / `q.front()` / `d.front()` / `d.back()`）再逐行比对，正向 lowering 改了反向层立刻失配而不是静默失效。别名（`peek` / `peekfront` / …）与函数形式（`speek(s)` / `qpeek(q)`）的展开逐字相同，折回统一收敛到规范写法（表达式文本按重建器的规范空白输出，不留用户原样的空格）；单行的 `size` 类展开单独一张卡走 `ExprStatement.cardMarkerPrefix` 自描述标记，混在别的 getter 链里（`x = q.front() + q.size()`）时由同一条反向层折回。会写隐藏状态的变更类操作（`spop`/`qpop`/`dpopf`/`dpopb` 与各 push）**故意不在反向表里**：它们的链会写隐藏状态变量，容器在别处再被用到时链外读取判定就会拦下，重开仍是裸指令（这是显式接受的“显示原版”口径，见[重建规则](reconstruction.md)「container getter」）。回归见 `containerTest` 的 `getterFold`（全表 + getter 当数组下标 + 两张卡 + 载体 restore 端到端 + 反例）。
 - **容量检查**：容量优先取**处理器当前链接的方块**——解析 `memory` 变量到 `LogicBuild.optionalLink`，命中原版 `MemoryBlock` 就用它的真实 `memoryCapacity`（模组内存块、world-cell 都由此得到正确值）。解析不到时才回落按名字猜的 `<cellN>` = 64、`<bankN>` / `<worldN>` = 512（大小写不敏感）；解析到方块但不是内存块则确定不限制、跳过检查。`base+size`（矩阵为 `base+rows*cols`，哈希表为 `base+2*capacity`，集合为 `base+capacity`）超容量编译期报错；猜出来的容量在错误信息里明确标注 `inferred from the variable name`。名字不是证据：原版 `LogicBlock.getLinkName` 取方块名最后一个 `-` 之后的部分，所以 **world-cell（512 格）的变量名同样是 `cellN`**，纯按名字判断会把它错限成 64。`ArrayRegistry.capacityOf` / `capacitySource` 是唯一口径，各模块不得自己读 `memoryCapacity`。
 - **多格 span**：声明卡在编辑器里是一行表达式 `mem = cell1 + cell3 + cell2`。`+` 只表示按书写顺序拼接，第一项是地址 0，个数不限（没有 `op rand`）。存档收成定长 3 token `span <name> "<expr>"`，因为 LParser 复用静态 token 数组，可变个数的 cell 名不能各占一个 token。卡片不产指令。成员必须至少两块、容量相同；每格容量优先取链接上的 `memoryCapacity`，解析不到的成员与数组侧同一口径回落名字启发式（`cellN`=64、`bankN`/`worldN`=512，见「容量检查」），猜不出来（既无链接、名字也不像链接名）才是编译错误——span 的 `idiv`/`mod` 需要一个确定的除数，不能像数组容量那样「不限制」；混合容量、特权内存块挂在非特权处理器上、以及不足两格也是编译错误。猜测口径对齐数组侧是 2026-09 复核的修正：在此之前只接受全 `cellN`，共享/换图后未链接的 `bank1 + bank2` 直接编译失败，而编译失败会让编辑器回落 vanilla 视图，用户下次保存就丢掉只存在于载体里的 span/array 卡。逻辑容量是 `N * C`，`capacityOf(span 名)` 把这个和交给数组、矩阵、容器、位集、哈希表、集合、列表、堆和链表的区间检查。`record` 仍是处理器变量，不走 span。变量逻辑地址在 `SpanAccess` 一处展开：`idiv` / `mod`、`N` 条 `select equal q k`（第一条失败分支是数字 `0`），最后一条 `read` 或 `write`，共 `N+3` 条（N=2 时 5 条）。`idiv` 是 `Math.floor`，负数的商 `<= -1`，和 `q >= N` 一样对不上 `0..N-1`，留在数字 `0` 上；常量地址折叠成指向选中成员的一条 `read`/`write`。前导段的三个临时量（`__ls_span_q/r/b`）是程序级固定 scratch：它们不像表达式临时变量那样会进条件/函数/数据内联的命名空间，所以**前导段必须与它自己的 read/write 紧邻发射**，任何把 `relocate()`/`appendRead()` 结果延后使用的改法都会让两次展开互相覆盖（`spanTest` 把产物形状钉在固定名上，改名字是显式决定）；折叠链的「链外读取」检查必须忽略这三个 scratch，否则画布上两张 span 表达式卡会互相判成外部读取、谁都折不回来。**重建分两半**：反编译器不把 `idiv`/`select` 这个形状推断回 span 卡；而编辑器侧 `ExprHook.foldAll` 必须把展开文本折回 `buf[i]`——`ExprCompiler` 的 span 视角把「成员 + 格内地址」还原成 `k*C + local`，把前导段按「成员序列 + 每格容量」反查 span 别名并以 idiv 的被除数当逻辑地址，前导段行随折叠一起消费，安全门仍是 `verifyArrayFold` 重编译比对；前导段 select 参与折叠链（`ExprHook.foldsSpanPrologue`）但没有对应的原版积木，因此 `statementFor` 不映射它、`unfoldAll` 遇到它就保留表达式卡。变量逻辑地址的两端也都要能进折叠链（2026-10 复核修正）：前导段的 `idiv`/`mod` 写的是固定 scratch 名（不是临时变量形态），不能让它结束链；`read`/`write` 的内存名是 building scratch 而不是 span 成员块，`isArrayMemory` 认不出来，要由 `ExprHook.foldsMemoryLine` 的 scratch 分支放行——两者缺一，载体里的展开文本重开时都折不回 `buf[i]`（常量下标那种单行 `read` 不受影响，因此这个缺口在文本层的折叠测试里看不出来）。回归见 `spanTest` 的 `variableReadFoldsOnReopen`。旧的 `__ls_builtin_*` 函数体不改；内存名是 span 时，批量运算若仍会只读第一格，编译直接报错。新的 `__ls_builtin_spanread` / `__ls_builtin_spanwrite` 是另加的函数，目前没有发射点（给以后的批量算法），但和 data 模块内置函数一样并进编辑器可识别的函数名集合，避免「编辑器标红、编译器却接受」。内置函数只并进本次编译的 `LibraryIndex`，不写进载体；`withBuiltins(null, …)` 仍标 `userMissing`，所以缺库时的调用错误照旧指向设置里的函数库，不会被内置函数顶成「函数不存在」。
-- **越界断言**：仅 `AssertEmit=emit` 的调试构建下、下标为非常量时，在 `read` / `write` 前发射 `assertBounds`（复用 `SugarAsserts` 线格式）；`strip` 模式不发射。数组/矩阵字面量越界始终是编译错误。
+- **越界断言**：仅 `AssertEmit=emit` 的调试构建下、下标为非常量时，在 `read` / `write` 前发射 `assertBounds`（LogicSugar 自己的发射器，线格式签名由 `SugarDebugLines.isGeneratedBoundsMessage` 定义，KEEP(P4)）；`strip` 模式不发射。表达式卡保存的是扁平 mlog 链，因此 emit 口径的展开（画布与保存文本）把这一行作为纯文本写回原位（`SugarDebugLines.Line.fromBounds`，下标计算之后、read/write 之前，无卡片类型、不依赖 MDT）；strip 与联机一律不写。以表达式形式留在糖里的位置（条件/实参/return/数据调用）在 lowering 时重新生成。反编译保留该行，安全门在输入带生成行时对两边做同一签名过滤（strip 重编译会丢掉它们），折叠时透明跳过。数组/矩阵字面量越界始终是编译错误。
 - **空容器语义**：pop / peek 在空时返回 NaN（`op div <tmp> 0 0` 或越界 `read`）；可失败操作（push / append / insert / delete / set / free）失败时按 v5 API 统一返回 **-1**，且不写入（`vector_push_back` / `vector_insert` / `heap_push` / `vector_set` / `chain_set` / `chain_link` / `chain_free` / `map_erase` / `set_remove` 同理；`bitset_set` / `bitset_reset` 越界不写入但恒返回 1，是无结果卡，见 [api-v5.md](api-v5.md) 第 3、4 节）；`vector_at` 越界返回 NaN，`vector_erase` 越界返回 NaN、成功返回被删除值，`vector_find` 未找到返回 -1，`map_get` 未命中返回 NaN，`map_set` / `set_add` 在 NaN/±Inf 键上返回 -1，查询类 `map_contains` / `set_contains` / `bitset_test` 恒为 0/1（`bitset_test` 越界也是 0）；链表 `chain_get` 越界返回 NaN，`chain_next` 越界返回 -1，`chain_alloc` 在空闲链为空时返回 -1，`chain_len` 空链返回 0。`array_lower_bound` 在升序数组上未命中返回 -1。
 - **保留命名空间**：隐藏状态变量与注入函数名都以 `__ls_` 开头（`VarDisplayFilter` 自动隐藏，用户声明名使用该前缀会被模块拒绝）。记录字段变量 `<name>_<field>` 是普通用户变量，不隐藏、可调试。
 
 ### 单机 / 联机与 1000 指令约束
 
 - 声明卡不产指令，全部运算都是原版指令：产物在任何原版客户端可解析、可运行，联机（含自建服）与单机一致；数据子系统不引入任何 `AssertEmit` 例外。
-- 1000 条上限沿用 `SugarCompiler` 既有检查（lowered 指令 + 载体行一起计数），新功能不绕过。保存产物还必须落在原版 `LParser` 的 500 个跳转标签以内：lowering 之后若标签超过 500，编译直接拒绝，避免写出原版读不了的 mlog。没有 `continue` 的 `for` 不再发射空的 `for_continue_` 标签。处理器指令上限仍是 1000；「放宽到 756 个 for」没有做——那既放不进 1000 条指令，也放不进 500 个标签。循环型操作（push / sort / find / 哈希探测等）在 normal 模式做成共享 `funcdef`，指令预算与调用点数量线性、与结构数量无关；inline 模式会复制函数体，长程序需切回 normal（编译器在超限报错里提示）。
+- 1000 条上限沿用 `SugarCompiler` 既有检查（lowered 指令 + 载体行一起计数），新功能不绕过。**这是硬不变式**：`LExecutor.maxInstructions` 是可被其它 mod（MDT 的滑条）抬高的 mutable static，所有**执行**口径（编辑器拦截、`InstructionBudget`、编译拒绝、反编译输入检查、框选/粘贴）一律用 `Math.min(LExecutor.maxInstructions, InstructionBudget.VANILLA_LIMIT)`，报错文本也只写这个数字；只有函数库文本的解析窗口（`SugarFunctions.libraryInstructionLimit`）允许更大，因为它不是处理器产物。保存产物还必须落在原版 `LParser` 的 500 个跳转标签以内：lowering 之后若标签超过 500，编译直接拒绝，避免写出原版读不了的 mlog。没有 `continue` 的 `for` 不再发射空的 `for_continue_` 标签。循环型操作（push / sort / find / 哈希探测等）在 normal 模式做成共享 `funcdef`，指令预算与调用点数量线性、与结构数量无关；inline 模式会复制函数体，长程序需切回 normal（编译器在超限报错里提示）。
 - **函数库文件不受 1000 条限制**：`functions.txt` 不是保存到处理器的程序，`SugarFunctions.libraryInstructionLimit`（当前 10000 条语句）是库文件自身的安全上限。处理器仍然只能保存 ≤1000 条；调用库函数时只通过 `extractLibrarySource` 嵌入用到的子集，子集与主程序一起计入 1000 条预算。
 
 ### 已知限制
@@ -127,199 +127,55 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 - **状态变量不随存档持久化**：隐藏计数是普通 mlog 变量，处理器代码重新载入（存档往返 / 重编译 / 换处理器）后归零，而内存块内容保留；跨存档运行的结构需要在程序开头显式重建状态（`stack_clear` / `queue_clear` / `deque_clear` / 重新初始化内存或计数）。
 - 矩阵不支持 `len()`（用 `rows*cols`）；`len(a, b)` 仍是原版向量长度。
 
-## 断言子系统（调试构建）
+## MDT 调试行直通（`SugarDebugLines`）
 
-`mindustry.logic.SugarAsserts` + `logicsugar.assist.AssertInstructions` 移植自 cardillan/MlogDevTools（原名 MlogAssertions，当前基线 **v0.12.1**，线格式兼容，致谢其作者 cardillan；Mindcode 产出的断言代码可被本编辑器识别）：十条自定义指令 `assert` / `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `asserttype` / `error` / `log` / `systemlog` / `breakpoint`。v0.12.0 把旧的「写游戏日志文件」`log` 重命名为 `systemlog`，新的 `log` 把消息存进处理器自己（见下面的「处理器日志」一节）。**断言失败是停机不是自旋**（上游 v0.11.4）：回退 `counter` + `yield` 之外还置 `exec.stop`，消息仍由 `ProcessorStatus` 绘制在处理器上方；只能说「停机状态 + 停在失败行上重跑」——原版 `LExecutor.runOnce` 不看 `stop`，所以普通处理器每帧仍重跑失败指令（消息因此持续刷新），而世界处理器的 `LogicScript` 循环真的收工。profiler 的包装器读 `exec.stop` 后停止统计与录制（见下面的 Profiler 一节），这对单机/联机行为一致，也不影响保存产物。失败文本按上游 v0.11 语义生成：消息留空（线上写 `~`）时用带比较值的本地化默认文本（`logicsugar.asserts.assertFailedWithValues` / `equalFailedWithValues` / `boundsFailedWithValues`），写了消息则原样显示；消息内 `{1}`… 引用比较值，`{变量名}` 取该变量当前值（`{@counter}` 渲染为失败行号），LogicSugar ≤5.5 的 `[[1]` 旧写法仍被识别（`AssertInstructions.formatMessage`）。`assert` 是通用的条件断言（`ConditionOp` + 值 + 比较值 + 可选消息），上游 v0.11.0 新增。`breakpoint` 语义与上游一致（视角居中到处理器、按设置临时分离视角、冻结全部 accumulator 并在本帧更新结束后归还，暂停期间消息持续绘制），但**联机（`Vars.net.active()`）下拒绝暂停**（上游 v0.10 起的门禁）：显式 `breakpoint` 直接跳过，断言失败退回「停机 + 处理器上方消息」的非断点路径（与上游「静默丢弃断言」不同，见 `AssertInstructions.assertion` 注释）。设置「断言失败即断点」（`logicsugar.assertsAreBreakpoints`）可让断言失败改为在失败指令处暂停；「禁用断点」（`logicsugar.disableBreakpoints`）让 breakpoint 与断点化断言直接跳过。
+`mindustry.logic.SugarDebugLines` 只做一件事：把 Mlog Dev Tools（MDT，原名 MlogAssertions）的调试 opcode
+当成**文本**保留下来，使存档里已有的这些行仍能打开、往返、再保存。opcode 家族固定为 13 个：
 
-- **asserttype 线格式**：上游 v0.10 起顺序为 `<type> <value> <message>`（本 mod 同）；类型表与上游对齐（24 种，v0.11.3 起未变：基础类型 + 内容物细分 item / block / bulletType / liquid / statusEffect / unitType / weather / team / unitCommand / unitStance + building 细分 processor / memory / message / display / canvas + property / readable / writable / senseable），LogicSugar 额外支持 `none`（线上写 `null`）——上游 `AssertionDataType` 无法断言空值。旧的 `<value> <type>` 顺序仍可读取（`parseAssertType` 以「哪个 token 是类型名」判定；两个都是类型名时按新序），保存时统一写新序。类型分类是层级而非互斥：`senseable` 同时匹配单位/建筑/队伍，失败消息用 `AssertionDataType.actualType` 取最窄匹配（如 building 而不是 senseable）。
-- **assertprints 缓冲语义**：按上游 v0.11，在比较前就把缓冲区截断到记录位置——失败重试不再累积输出，也不把被检查区域的文本留给下一条 `assertprints`。
-- **失败消息的默认文本不含消息槽**：上游把消息槽当作 `{0}` 传给默认文本，导致默认消息里印出 `null`；LogicSugar 只渲染比较值（`assertionText` 注释记录了这处有意偏离）。
-- **`snapshot` 指令**：与其它断言卡同一家族（`SugarAsserts.SnapshotCard` + `AssertInstructions.SnapshotI`）。线格式为 `snapshot <type> <block> <steps> <message>`（上游 v0.11.2 起；`isolated` / `connected` / `recording` / `global`），**旧的三载荷 token 文本仍可读取**（上游 ≤v0.11.1、LogicSugar ≤5.7.2 没有 `steps` 槽，第 4 槽就是消息）。因为原版 `LParser` 不告诉自定义解析器本行有多少个 token（复用的静态数组，见[重建规则](reconstruction.md)「卡片 write/parse 闭合」的既有陷阱），`parseSnapshot` 不是按数量而是按**第 4 个 token 的写法**分流：`~` / 引号字符串 / `null` / 空 视为旧式消息（`steps` 取默认值），其余按 `steps` 槽读、消息取第 5 槽——所以「变量形式的 `steps`」优先于「旧式未加引号消息」这个真正二义的情形；清空的 `steps` 字段写盘时归一为默认 `20`，`steps` 槽永远不会写出空值。`recording`（记录目标处理器接下来 `steps` 条指令，每条一份子快照）的运行时语义见下面的 Profiler 一节。strip/emit 与载体覆盖同其它断言卡；它是纯客户端动作（不改保存产物），因此不受联机门禁限制。
+`assert` / `assertBounds` / `assertequals` / `assertflush` / `assertprints` / `asserttype` / `error` /
+`log` / `systemlog` / `breakpoint` / `snapshot` / `profile` / `restart`
 
-### 残余风险与不跟随的上游改动
+- **只有文本，没有语义**：`parse` 按 opcode 的定长 arity 截取 token，`Line.write` 逐 token 原样输出，
+  `Line.build` 返回 `NoopI`。断言失败、断点、快照、Profiler 的运行时由 MDT 自己的指令执行——本仓库不再
+  移植，也不再解释这些 token（原因与历史线格式见[上游基线](upstream.md)）。
+- **绝不允许变成**：① 调色板卡片（`installParsers()` 只写 `LAssembler.customParsers`，不碰
+  `LogicIO.allStatements`）；② 运行时指令（`build(LAssembler)` 只能是 `NoopI`）；③ `build()` 返回
+  `null`（`LAssembler` 会丢掉 null 指令，之后每个跳转目标都会错位）。
+- **解析器注册先到先得**：`installParsers()` 跳过已在 `LAssembler.customParsers` 里的 opcode，因此装了
+  MDT 时永远是 MDT 的解析器。它**不**在 `SugarStatements.installParsers()`（模组 `init()`）里调用，而是
+  在 `ClientLoadEvent` 之后的 `Core.app.post` 步骤（`LogicSugarMod.installEditor`）与反编译安全门的预检
+  （`SugarDecompiler.installSugarParsers`）里调用——那时其它 mod 都已注册完毕。
+- **保存口径**：`SugarFunctions.lower` 遇到 `SugarDebugLines.Line` 时，`AssertEmit=emit` 原样写出，
+  `strip`（默认、联机强制）编掉。糖源码始终在载体里，所以 strip 产物重开仍是同一行。
+- **arity 与旧形状**：`snapshot` 4/5 token、`log` 12/13 token 靠「判别槽的写法」分流（`~` / 引号 /
+  `null` / 空 = 旧式），其余 opcode 定长。原版 `LParser` 交给自定义解析器的是复用的 16 槽数组且不给 token
+  数量（`src/mindustry/logic/SugarDebugLines.java:209`），所以数量只能由定长表 + 判别槽得出。旧形状清单见
+  [上游基线](upstream.md)「历史线格式例外」。
+- **编译/反编译预扫描**：`containsDebugLine(text)` 是 `SugarCompiler` / `SugarDecompiler` 用的廉价行首
+  匹配；含调试行时 verify 矩阵扩展一维 `AssertEmit`（否则恢复出的源码重编译形状对不上）。
+- **生成式越界检查也在这一类里**：`isGeneratedBoundsMessage` / `isGeneratedBoundsLine` 定义 LogicSugar
+  自己在 `AssertEmit=emit` 下发射的数组/矩阵越界检查的文本签名，见[重建规则](reconstruction.md)「生成式
+  越界检查」。它不是卡片，也不是 MDT 的功能；用户手写的同 opcode 行不受影响。
 
-上游基线的完整记录（参考源码、跟进历史、明确不移植项、线格式例外）见[上游基线](upstream.md)；本节只保留与实现相关的残余风险。
+## 保存预算钉（1000 条）
 
-- **不认识的外来 token 仍会中止整段解析**。原版 `LParser` 只把 `LogicIO.read(tokens, tok)` 包在 try/catch 里，自定义解析器抛出的异常（未知类型名等 `IllegalArgumentException`）会中止整个程序的解析，编辑器因此拒绝打开（`snapshot recording` 在本次改动之前就是这种情形）。本次只消除了这一个具体缺口：新增 `recording` 类型与 `steps` 槽、并让旧文本继续可读；**不引入「把解析异常吞成 InvalidStatement」的兜底**，否则用户手打错 token 的定位报错会退化成静默的 noop 卡片（`SugarAssertsTest.parseFailureIsACleanError` 钉住这条）。上游以后新增的枚举 token 仍会以同样方式暴露，`SugarDecompiler.openableSource` 只会把载体文本换成存储的程序。
-- **不跟随上游的身份类改动与三个明确不移植项**（`max-instructions`、自动 profile 全部处理器、`ConfigEvent` 精细判断）见[上游基线](upstream.md)「明确不移植」；本 mod 仍需同步线格式与指令语义，持久化键保持 `logicsugar.vars*`。
+处理器保存产物恒 ≤1000 条指令是硬不变式。`LExecutor.maxInstructions` 是**可被其它 mod 改写的 public
+static**（MDT 的滑条就会抬高它），所以执行口径不能直接读它：`InstructionBudget.VANILLA_LIMIT = 1000`，
+`vanillaLimit()` 返回 `Math.min(LExecutor.maxInstructions, VANILLA_LIMIT)`。
 
-- **双身份序列化**：卡片 `write()` 直接输出指令 token，既是编辑器卡片也是 mlog 指令行；空槽位按 LogicSugar 惯例写 `~` 保持定长 token（上游无此约定，仅空字段场景降级）。
-- **AssertEmit 开关**（设置项 `logicsugar.assertEmit`，默认 `strip`，**仅单机/编辑器生效**）：`strip` 把断言编译掉——sugar（含断言）随载体保存，mlog 保持原版可解析；`emit`（调试构建）把断言写回为真实指令，**原版客户端会将其降级为 InvalidStatement 占位**（程序能跑但断言静默失效）。联机会话（`Vars.net.active()`，已连接或自建）下 `currentAssertEmit()` 一律强制 `strip`——兼容底线在代码层强制，不依赖用户自觉；显式 `compile(..., AssertEmit)` 重载仅供验证矩阵与自测使用。
-- **共存去重**：注册时若 `LAssembler.customParsers` 已有同名 opcode（如 MlogAssertions 先加载），整组跳过，不重复加面板卡片、不覆盖他人解析器。注意 MlogAssertions 后加载时会覆盖解析器并追加自己的卡片，两 mod 并存时面板可能出现两套卡片，属上游行为。
-- **验证门**：候选或原始程序含断言时，verify 矩阵扩展为 FuncMode × SwitchStrategy × AssertEmit；无断言程序维持 2×2，编译成本不涨。`ProcessorStatus` 的地图扫描跳过断言指令（消息生命周期归指令自身管）。
-
-## 变量/内存/属性界面与快照（调试工具）
-
-移植自上游 MlogDevTools v0.12.1（v0.11.3 的子系统，之后跟进到 v0.12.1）的
-「Vars / Memory / Properties」三合一对话框与快照子系统。三者共用
-同一个 `VarsDialog`，标题由数据源决定（`BlockDataType`：`变量`/`内存`/`属性`）；快照也是同一种数据源，
-因此浏览快照与浏览活数据用的是同一套渲染。
-
-- **数据层 `logicsugar.vars`**（无 UI 依赖）：`VariableValues`（活值/快照共用的读取接口）、
-  `ProcessorVars`/`MemoryVars`/`SensorVars`、`Snapshot` + `ProcessorSnapshot`/`MemorySnapshot`/`SensorSnapshot`、
-  `Snapshots`（每实体一份队列、上限、创建/删除、recording 子快照计账）、`MemoryText`（内存块文本的导出/导入）、
-  `VarsOptions`（会话级显示状态与 `COLOR_LIMIT`）、`SnapshotType`。
-- **Senseable 化（上游 v0.11.2）**：数据源从建筑放宽到任意 `Senseable`（建筑、单位、队伍、内容物），
-  `VariableValues` 的 `entity()/entityDesc()/entityPos()/icon()` 按实体分派，`connected` 快照还会把
-  挂在该处理器上的 `LogicAI` 单位算进连通集合。两处与上游的已知差异：非建筑/单位实体的图标为 null，
-  对话框会拿不到图就不画（`SnapshotsDialog`）或退回逻辑图标（`VarsDialog`），而不是像上游那样在绘制时 NPE；
-  `SensorVars.hasItems()` 保留上游写法（对任何 Senseable 都为真，单位视图也会列出物品/液体行），
-  因为同一份快照的行号必须与上游一一对应。
-- **tick 显示**：时间列从「毫秒拼出的 h:mm:ss.mmm」改为 `Vars.state.tick` 的两位小数文本（上游 v0.11.2），
-  与游戏时钟一一对应；`ValueType.dead` 负责把失效（已拆除/已死）的建筑与单位与正常的 building/unit 区分开。
-- **recording 快照与队列计账**：`snapshot recording <block> <steps>` 创建一份「初始连通快照 + 接下来
-  N 条指令的逐指令子快照」；子快照由主快照的 `recording()` 列表访问，默认变量过滤是触发指令的变量表
-  （`ProcessorVars.selectedVars`）。上限记的是「队列条目 + 子快照」总数：`Snapshots.SnapshotRecord.size`
-  在子快照创建时 `register()` 递增，条目离场时按 `recording().size` 整批扣回（与上游一致的计账口径，
-  `varsTest` 钉住）。
-- **界面层 `logicsugar.vars.ui`**：`VarsDialog`、`SnapshotList`（活数据 + 快照队列的导航视图）、
-  `SnapshotsDialog`（快照列表）、`EllipsisLabel`，以及两个入口类见下。
-- **三个入口**：
-  1. 逻辑编辑器的「变量」按钮（`SugarLogicDialog.installVarsButton` 接管同名原版按钮；编辑器/函数库
-     会话仍走原版全局变量对话框），打开时的暂停编排照搬原版（`wasPaused`）。原版那个「内置变量」
-     对话框存在包私有字段 `LogicDialog.globalsDialog` 里，只能经 `globalsDialogField` 反射打开（直接
-     访问就是 2026-10 的崩溃）；`VarsDialog.globalsOpener` 也接到同一个方法上，所以处理器会话的变量
-     界面里那颗「内置变量」按钮和它是同一个对话框。
-  2. 三击任意方块（`VarsAccess`，`EventType.TapEvent` + 纯状态机 `TripleTap`，窗口 `logicsugar.tripleTap`）。
-     本客户端不可访问的方块（世界处理器、禁止编辑的地图上的处理器）**连对话框都不开**：
-     `Building.displayable()`（= `LogicBuild.accessible()`）为假时直接返回，既不攒计数也不弹窗
-     （上游 v0.11.6；这类方块读不到实体，弹窗会崩）。`displayable()` 是原版 public API，跨类加载器安全。
-     同一把钥匙在 v0.11.7 也补到了 profiler 的收口点（`InstrumentationEngine.getInstrumentation`），
-     所以「不可访问」的范围与判定在两处一致。
-     刚放下、尚未载入任何代码的处理器曾另有一个崩溃口：`Snapshots.liveView` 给这类方块构造
-     `ProcessorVars`，而它的构造期 `numvar(...)` 会立刻求值 `timeWaited()` → `executor.counter.numval`，
-     空处理器的 `@counter` 根本不存在（只有 `LExecutor.load` 才会创建）。上游 v0.11.8 加
-     `executor.counter != null` 守卫，这类方块退化成属性视图（`SensorVars`）；配置面板的「快照」按钮
-     走同一份 `liveView`，同一守卫一起挡住（对空处理器建快照是静默不产，`ProcessorSnapshot.create`
-     的 `vars.length == 0` 守卫返回 `null`；`varsTest` 钉住守卫与分派顺序）。
-  3. 内存块/处理器的配置面板（`BlockConfigAccess`，反射替换 `InputHandler.config`）。
-- **MindustryX 共存（原则要求）**：探测到 fork 自带 `mindustryX.features.ui.LogicSupport` 时，内存块/处理器的
-  配置面板**先调用方块自己的 `buildConfiguration` 再追加**本 mod 的按钮（否则会把 MindustryX 的内存网格/
-  处理器工具条整块顶掉）；原版则按上游做法自建按钮（原版处理器的面板只有一个编辑铅笔，重复调用会出现两个）。
-- **老内核兼容**：v160 才有的对象内存（`objectMemory`/`numberMemory`/`sentinel`）探测不到时，
-  `MemoryVars` 退回老 fork 的单个 `double[] memory`（全部槽位视为数值槽），两个模型都探测不到则视图退化为 0 行。
-- **视图偏好持久化（上游 v0.11.6）**：`hex` / `sorted`（hide temps）/ `hideLinks` / `fullPrecision` 五个
-  会话开关在界面上切换时经 `VarsOptions.save()` 写进 `Core.settings`，启动时由 `VarsAccess.applySettings()`
-  调用 `VarsOptions.load()` 读回（`Core.settings == null` 的无头环境静默跳过）。持久化键是本 mod 自己的
-  `logicsugar.varsHex` / `logicsugar.varsSorted` / `logicsugar.varsHideTemps` / `logicsugar.varsHideLinks` /
-  `logicsugar.varsFullPrecision`，**不跟上游的 `mlogdevtools-*`**（那是上游身份命名空间，与本 mod 的设置键
-  前缀规则冲突；见下面的「不跟随的上游改动」）。写入点是 `VarsDialog.refreshView`/`updateView`——标题栏的
-  hex/全位数与 Options 面板的所有开关都走这两个入口，所以新增开关只要经由它们就自动持久化。
-  `varsAccessTest` 钉住「常量 / 写盘 / 读回」三处一致（键名写错不会报错，只会表现为「重启后变回默认」）。
-- **导入长度上限（上游 v0.11.6）**：`MemoryText.read` 按内存块的 `writeUTF` 口径拒绝超过 65535 **UTF-8 字节**
-  的字符串（NUL 记 2、`<0x800` 记 2、其余 3，代理对自然 6）。超长按坏行报行号且**不写入**（两段式仍是
-  「先 validate 再 read」）；不这么做的话内存块序列化时会抛异常，整块内存都存不下来。
-- **不改变保存产物**：界面与快照都只存在于客户端内存；快照不随地图保存，关图即丢。失败自动快照、断点自动快照、
-  上限与三击窗口等设置在自有设置页与 Neon 聚合页（`bekBuildSettings`）**两处**注册（双形态要求，见本文「双形态」），
-  设置值由 `VarsAccess.applySettings` / `ProcessorStatus.applySettings` 读入运行期字段。
-- **字符串转义与大字符串**：变量表里只有 `ValueType.string` 的值会做 `[` → `[[` 转义
-  （`VarsDialog.escape`，与 `ExprStatement.highlight` 同规则；`]` 是字面量，转义会多渲染一个括号）；
-  `EllipsisLabel` 把原文截到 256 字符（`maxStringLength`）后才测量，二分上界就是截断后的长度，
-  MB 级字符串也只做 O(log n) 次 layout。
-- **内存值的文件导入/导出**：`Edit` 菜单里的导出/导入文件与剪贴板导入走同一个 `MemoryText` 与
-  `importData`（两段式：先 `validate` 再 `read`，部分失败不写坏内存）；恢复/删除快照固定在
-  `Edit` 菜单里，不再按紧凑布局隐藏。
-
-## 处理器日志（上游 v0.12.0）
-
-新的 `log` 指令不写游戏日志文件，而是把消息存进**创建它的处理器**，由 `logicsugar.vars.LogMessages`
-（数据层）与 `logicsugar.vars.ui.LogDialog`（界面）展示；旧的「写游戏日志文件」语义由 `systemlog`
-保留。两者同一张卡片族 `SugarAsserts.MessageCard`，线格式分别是
-`log <level> <category> <p0..p9>` 与 `systemlog <level> <p0..p9>`。
-
-- **只在客户端内存**：`LogMessages` 为每个处理器保存一个定长队列，关图（`ResetEvent`）或拆掉处理器时
-  丢弃；不随地图保存，也不进入载体。因此它和快照一样不受「多人必须兼容原版」的单机门禁约束。
-  `log`/`systemlog` 卡片本身仍只在 `emit` 调试构建里写进程序文本（普通保存只有载体里的卡片，
-  原版客户端看不到这两个 opcode）。
-- **上限与「重启清空」**：设置项 `logicsugar.logMessageLimit`（滑块存的是档位下标，默认 100 条，
-  0 = 关闭）与 `logicsugar.logClearOnRestart`（默认开）。两条设置行由
-  `LogicSugarSettings.addVarsPrefs` 注册——自有设置页与 Neon 聚合页共用这一处；启动/设置变更时
-  由 `LogMessages.applySettings()` / 设置回调写入运行期字段（`Core.settings == null` 时静默跳过）。
-  「重启清空」读的是 `executor.instructions` 是否换了一份数组（重新编译/重启），不是 `@counter`。
-- **四个入口**：逻辑编辑器的变量界面标题栏、`Vars` 界面 Edit 菜单（快照关闭时标题栏不存在，
-  与 profiler 同一编排）、处理器配置面板的日志按钮（上游把原来的「快速快照」按钮换成了它），
-  以及实现本身（`log` 指令）。日志按钮只对处理器视图可用。
-- **旧文本迁移**：`LParser` 给自定义解析器的永远是同一个复用 16 槽数组（`tokens.length` 恒为 16），
-  不能按 token 数量分流。旧 `log` 的第 3 个 token 是消息模板（卡片默认写引号字符串，清空写 `~`），
-  新 `log` 的第 3 个 token 是分类（默认 `null`，清空归一为 `null`），所以 `parseLog` 只在第 3 槽为
-  `~` / 空 / 引号开头时按旧式 `SystemLogCard` 读取，重写时输出 `systemlog`——语义不变。手写「带引号的
-  分类」是唯一二义情形，会被读成 `systemlog`；细节见[上游基线](upstream.md)「线格式例外」。
-- **旧调试构建**：v5.11 及更早的 `emit` 产物里是真实的 `log` 指令。反编译的比较两侧都先过
-  `parseLog`，而 `LAssembler.write` 会把旧式 `log` 重写成 `systemlog`，所以 verify 门看到的是同一条
-  `systemlog`，旧程序仍恢复成「写系统日志」卡片（运行时语义不变），不会退回原版。载体里的 sugar
-  走同一条路径，重开仍是卡片。
-- **Profiler**：`LogI.vars()` 把分类槽也算进指令读取的变量（上游漏了它），否则 recording 快照会
-  漏掉分类变量的当前值。
-
-## Profiler（性能分析器）
-
-`logicsugar.profile` + `logicsugar.profile.ui`，移植自上游 MlogAssertions v0.11.8（v0.11.3 基线，之后跟进
-v0.11.4 的界面/停机、v0.11.6 的性能口径、v0.11.7 的两个崩溃守卫与 v0.11.8 的 liveView 空处理器守卫）——统计每条指令的执行次数/消耗的指令预算、分支比例与覆盖率，
-界面入口在变量界面的 📊 按钮与 `Edit` 菜单（快照关闭时标题栏不存在，两处都要留），设置项
-`logicsugar.startProfilerImmediately` 控制空数据页是否直接开始统计。
-
-- **只改运行期的指令数组，不碰保存产物**：`Instrumentation` 把 `LExecutor.instructions` 的每条指令换成
-  转发包装器，`InstrumentedWait` 另外继承原版 `WaitI`（让原版的 `instanceof WaitI` 判断与 wait 指示弧
-  继续可用，包装器每步同步 `curTime`）。包装只发生在本地进程，处理器保存的 mlog 一个字不变；
-  保存产物 ≤1000 条的硬不变式不受影响（`profile`/`restart`/`snapshot recording` 这些定制行仍只在
-  `emit` + 单机时落进程序文本）。
-- **两条记录路径（上游 v0.11.6）**：包装器分两种。**快路径**（`InstrumentationEngine.noYielding` 里的
-  原版指令，以及 `DevToolsInstruction.yields() == false` 的调试指令）不读 `exec.yield`，非让出指令恒 +1 步、
-  +1 份配额（跳转指令才读一次 `counter` 记分支）；**让出路径**（`wait`/`stop`/`flushmsg` 与会失败的断言）
-  按 `countsAsStep` 判断是否真算一步、按 `stepQuota`（`acc + edelta*ipt - scale*ipt`，负值归零）估算丢掉的
-  配额。`noYielding` 的判定依据是逐条核对 `LExecutor` 得到的：只有 `WaitI`/`StopI`/`FlushMessageI` 会
-  `exec.yield = true`（`profilerTest` 用反射钉住「恰好这三个之外的全部」）。自定义指令的让出表必须与
-  上游 12 个实现逐字一致（同样由 `profilerTest` 钉住）；`RestartI.yields()` 返回 `false` 而 accumulator
-  不足的分支会让出，是**与上游一致的有意近似**（见该方法的注释）。
-- **覆盖率有两个来源，读方必须合并**：快路径只写 `steps`（`steps[index] == 0` 时 +1），让出路径只写
-  `covered` 位图（`wait 1` 这种「让出但一步都没计」的指令也会被标记已访问）。所以界面用
-  `Instrumentation.isCovered(index)`（= `steps > 0 || covered.get(index)`），只读一个会漏掉另一半；
-  `clearProfilingData` 同时清 arrays 与位图。`time` 是 `double`（配额可能是小数），快路径下它就等于步数。
-- **停机检测（上游 v0.11.4）**：两个包装器的 `run()` 在快照分支之后检查 `exec.stop` → `stopAll()`
-  （停统计 + 放弃未完成的 recording）；`InstrumentedWait` 不加（原版 `WaitI` 不会置 stop，上游同）。
-  配合上面的「失败断言/`error` 置 `exec.stop`」，断言失败后界面顶部的启停按钮会自行变暗、数字不再增长。
-- **两个崩溃守卫（上游 v0.11.7）**：`getInstrumentation` 对 `!build.displayable()`
-  （= `LogicBuild.accessible()`：世界处理器、禁止编辑的地图）直接返回 `null`，与变量界面三击入口
-  用的是同一把钥匙——这类处理器本客户端读不到实体，不该进统计（调用方本来就判空，表现为「没有统计」）；
-  `Instrumentation.createSnapshot` 在 `Snapshots.create` 返回 `null`（快照上限为 0——用户在录制中途
-  把上限设成 0 就是这条路）时既不 `recording().add` 也不 `Snapshots.register`。两句都在处理器线程上，
-  漏判就是 NPE。`profilerTest` 用源码钉子锁住两条（两处都需要活的 `LogicBlock`，无法无头真跑）；
-  `Snapshots.create` 的「先判上限、后碰实体」由 `varsTest` 用 null 实体直接钉住。
-- **计数器集中在 `Counters`（本 mod 的有意差异）**：上游把 `coverage`/`maxSteps`/`totalSteps`/`maxTime`/
-  `totalTime`/`lostQuota` 与 `steps`/`time`/`covered` 一起摊在 `Instrumentation` 字段上，而
-  `Instrumentation` 需要一块活的 `LogicBlock` 才能构造（无头造不出来）。这里把「只有计步会动」的那部分
-  抽成 `Instrumentation.Counters`，两个静态计步方法（`recordFastStep`/`recordYieldedStep`）因而可以完全
-  无头地验证；数值语义与上游逐字一致（含让出路径峰值取自增前值的那个上游口径）。
-- **界面（上游 v0.11.4 + v0.11.6）**：行控件只建一次，数字/源码/序号靠 `Label.update` 刷新（序号变没变
-  看 `prevIndex`）；排序开启时每 500ms 检查一次相邻行差值，超阈值只重排行序（`Instrumentation.order`，
-  静态可测：计数降序、并列保持原序、大计数不溢出），**不再整页重建**——重建会吃掉输入焦点、列表会闪
-  （这就是上游 0.11.4 修的问题）。未访问的指令整行压暗（`emptyColor`），分支列常建、按当前的「%」视图在
-  百分比与次数之间切换，总计行的丢配额/覆盖率也随「%」视图切换（覆盖率标题带上指令总数）。
-  刷新/复制/清空三个按钮收进 `Edit` 菜单（清空、清空并重启、复制到剪贴板）；复制的 TSV 有表头且含配额列。
-- **`unwrap` 约定（新增任何读取 `executor.instructions` 的代码都必须遵守）**：包装器是**另一个类**，
-  直接 `instanceof` 会全部失效。所有读点先调 `InstrumentationEngine.unwrap(...)`：`ProcessorStatus.check`
-  （断言/停机/等待分诊）、`ProcessorStatus.drawWait`、`ProcessorVars.timeWaited`、
-  `ProcessorSnapshot.writeTo`。漏一处的表现是「profiler 开着时处理器状态消息被自己的扫描清掉」或
-  「等待时间显示 0」，`processorStatusTest` 给扫描加了保护。
-- **源码列与反射降级**：源码列用原版 `LParser` 解析 `build.code` 得到语句文本（v1 = upstream parity，
-  不映射回 sugar 行——载体的 sugar 源码是后续增强）。`LParser` 的构造器/`parse()` 都是包内可见，
-  跨类加载器只能反射；初始化或解析失败时源码列退化为 `unknown instruction`，计数、配额、分支、
-  recording 全部照常（`profilerTest` 钉住这条降级路径）。
-- **联机口径**：profiler 是本地只读观测（没有跨端语义），联机下允许使用，每个客户端只看自己的统计；
-  `restart` 会重载目标处理器并清空它的变量，属于调试副作用，只在 `emit` 构建里存在，而联机强制
-  `strip`，所以它不会进入多人地图的保存产物。
-- **recording 快照的运行期**：`snapshot recording` 指令创建主快照（初始连通状态）并把
-  `snapshotSteps = min(steps, snapshotLimit)` 交给 `Instrumentation`；此后每执行一条指令就补一份子快照，
-  主快照自己作为 `recording()` 的第 0 项，所以子列表从「第一条被记录指令之前的状态」开始。
-- **图标与 Neon 资产同步**：6 张自绘图标在 `assets/sprites/ui/*.png`，图集名是 `<mod.name>-<文件名>`，
-  所以运行时前缀必须按「实际加载我们的那个 mod」拼（`ProfilerIcons`：先 `Vars.mods.getMod(LogicSugarMod.class)`，
-  聚合形态下按类加载器反查宿主 mod，最后按图集探测）。**Neon 聚合必须同步这批资源**：
-  `Neon/tools/submods.json` 的 `ls` 项要有 `extraResourceDirs: ["src/main/resources/sprites/ui"]` +
-  `sourceExtraResourceDirs: ["assets/sprites/ui"]`，改图标或新增资源目录后重跑 `update_submods.py`，
-  并用 `unzip -l` 确认产物里有 `sprites/ui/*.png`。
-- **旧版 arc 编译陷阱**：Neon 聚合把工作区里的旧 arc 放在编译类路径最前面，旧版 `Cell` 没有
-  `wrap(boolean)`（只有无参 `wrap()`），新增界面代码里对 Label 一律 `Label.setWrap(...)`
-  （`varsUiTest` 的源码钉子挡住同类编译失败）。
+- **所有强制点都走 `vanillaLimit()`**：编辑器「添加积木」的禁用判断与框选/复制/粘贴上限
+  （`BoxSelect`）、`InstructionBudget.of` 的实时读数与关闭拦截（`SugarLogicDialog`）、`SugarCompiler` 的
+  源码解析窗口与编译后指令计数、`SugarDecompiler.validateInput` 的输入检查。用户可见的报错文本只写这个
+  数字，不回声被抬高的 static。
+- **唯一的例外是函数库文本**：`SugarFunctions.libraryInstructionLimit`（10000 条语句）不是处理器产物，
+  解析期间需要临时抬高 static；用完必须还原，且还原时要尊重别人在此期间写过的值。
+- **被抬高时提示一次**：`SugarLogicDialog.noticePinnedBudget` 在预算标签的周期刷新里发现
+  `LExecutor.maxInstructions != VANILLA_LIMIT` 时，用 `logicsugar.budget.pinned` 说明「仍按 1000 条执行」。
+- **超预算的逃生口**：关闭编辑器时超预算仍是拒绝保存；唯一支持的出口是确认框里的「丢弃修改并关闭」
+  （`SugarLogicDialog.showOverBudgetClosePrompt`），它不写糖源码、保留处理器原有程序。没有「仍然保存」
+  选项——那等于把别人抬高的 static 变成可分享的超标产物。
+- 回归：`debugPassthroughTest` 把 `LExecutor.maxInstructions` 抬到 2000，断言 1000 条可保存、1001 条被拒
+  且报错写 1000。
 
 ## 函数与全局函数库
 
@@ -374,7 +230,7 @@ v0.11.4 的界面/停机、v0.11.6 的性能口径、v0.11.7 的两个崩溃守�
 
 **门与开屏**：两次归一化（入口 skip 两个纪元、数字 + 标签跳转穿线）、`openingSource` 的 `stored`/`inferred`/`raw` 决策、`openableSource` 的草稿回退，以及卡片 write/parse 闭合（清空/乱填是卡片状态、LParser `~` 占位、`funcdef` 引号写回）是手写/第三方程序能开成 Sugar 的前提；完整规则、失败方向与测试见[重建规则](reconstruction.md)「门的两次归一化」「开屏决策」「卡片 write/parse 闭合」。
 
-`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 100+ fixture（测试运行时打印实际数量；测试强制 ≥100）覆盖当前全部控制积木、全部声明卡、全部 `datacall` 操作和断言/调试卡：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且不得只改数字。
+`reconstructionTest` 钉住：过期 destIndex 的世界处理器样例走载体还原、数据声明卡随载体回来、剥掉载体后不发明 `stack`/`funcdef __ls_builtin_*`。`reconstructionMatrixTest` 用 100+ fixture（测试运行时打印实际数量；测试强制 ≥100）覆盖当前全部控制积木、全部声明卡、全部 `datacall` 操作和 MDT 调试行：每个新积木至少补一个 carrier fixture，可推断的新控制流形状还要补 inference fixture；矩阵自动检查每个已注册 `datacall` 操作都有 fixture，且不得只改数字。调试行 fixture 断言整行文本（含 `snapshot` 4/5 槽与 `log` 12/13 槽）原样穿过载体与反编译，见[上游基线](upstream.md)「历史线格式例外」。
 
 **裸表 / 步长表 / 单位控制卡的源码形态与推断规则**（`switchbegin … raw`、`switchbegin … stride`、`default`、`tryBareSwitchTable`、`unitIndexMatches`、`Candidate.unitCards`）集中在[重建规则](reconstruction.md)「raw leap table 与 default」「stride table」「unit-control」；本节不再重复。
 
@@ -418,9 +274,8 @@ v0.11.4 的界面/停机、v0.11.6 的性能口径、v0.11.7 的两个崩溃守�
 | 跨处理器剪贴板 | `assist.StatementClipboard` + `assist.SelectionClipboardUi` | 编辑菜单「复制选区 / 粘贴选区」，Ctrl+C/V 驱动同一实现。**剪贴板放糖源码而不是编译后的 mlog**，片段落进另一个处理器后仍可继续编辑；唯一必须区别对待的是 `jump`——跨程序时旧的数字目标是另一程序的指令下标，因此复制与粘贴**双侧拒绝**。块配对由 `pairBlockEnds` 在插入前校验，之后每帧 `syncStatementIndices` 自愈。全程只有语句与字符串，无画布依赖（`statementClipboardTest` 无头跑）。入口不绑死在自家对话框上：接管档由 `SugarLogicDialog` 每帧 `tick`，共存档由 `CoexistCanvas` 对对方对话框 `tick`——否则不切到接管就没有这项功能。让位档不挂。快捷键只能轮询不能事件驱动：`UI.update()` 会把焦点清成 `null`，挂在对话框上的 capture 监听器再也收不到，而 arc 的 `handle()` 不停止冒泡、`TextField` 也保护不了自己；两件事由 `Core.scene.hasField()` 一次问清（原版无 Ctrl+C/V 键位）。后打开的对话框盖住时，快捷键只交给最上面那张 |
 | 提示折行 | `assist.TextWrap` + `assist.SugarTooltip` | arc 的 `Tooltip` 只把容器**位置**夹进舞台，比屏幕宽的容器仍会两边溢出 ⇒ 提前把**文字**折行（按 `min(屏宽×0.5, 560 design)` 预折、resize 时重折）。规则是纯函数（测量函数可替换，`textWrapTest` 用字符数精确断言）：只在空格断、超长单词硬断不丢字符、markup 标签绝不拆开、幂等 |
 | 跳转线着色 | `assist.JumpLineColor` | 按目标着色三模式：关闭 / 分散色 / 积木色 |
-| 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效 |
+| 隐藏内部变量 | `assist.VarDisplayFilter` | 过滤 MindustryX 变量浏览器里的 `__ls_*` 与 `_N`；只动展示用的 `allVars`，绝不碰 `executor.vars`（`sync` 指令的索引空间）；原版无 `allVars`，自动不生效。读取的设置键 `logicsugar.hideVars`（默认 `true`）**保留但没有 UI 行**：MDT 解耦时 Vars 设置页一起删了，读取/恢复逻辑仍在，删键会让老存档静默改行为。 |
 | 复制变量/打印缓冲 | `assist.VarClipboard` | 全精度 TSV 变量导出（按名排序）+ 打印缓冲；executor 经反射读取，失败则不显示入口。**入口在编辑菜单，不在底部按钮行**——原先两个固定宽按钮正是把底栏顶出窄窗口的原因，能力由 `SugarLogicDialog.installInspectionCopy()` 装配（旧的 public `VarClipboard.addButtons(Table, LogicDialog)` 已移除，能力迁到私有装配点） |
-| 处理器状态指示 | `assist.ProcessorStatus` | drawOver 分帧轮询全图处理器（`Groups.build`，视野外按 hitbox 裁剪）：停止显示「已停在第 N 条」、长 wait 画进度圆环、断言失败显示消息；扫描预算按帧时长换算（`min(delta*60,5) × 每帧扫描数`，低帧率不爆发）；设置三滑杆（阈值 0 关闭 / 每帧扫描数 1–5000 档位 / 警告特效）+ 断点三开关（禁用断点 / 断言失败即断点 / 断点分离视角）。进度圆环按**世界坐标**绘制（相机变换内），半径与线宽绝不乘 `Scl`——乘了等于把 `uiScale` 应用两遍、非 1 缩放平台上圆环偏大（上游 v0.12.1）；同文件只有文字缩放留 `Scl` |
 | 单位 flag 显示 | `assist.UnitFlags` | 设置可选；drawOver 遍历 `Groups.unit`，在单位正上方绘制逻辑 `flag`。默认使用红色；打开 `logicsugar.colorizeUnitFlags` 后，不同 flag 按首次遇到顺序优先使用 10 种高对比度颜色，超出后分配高饱和度随机色；默认 0 / 非有限值不显示，视野外与迷雾中的单位跳过。纯展示，不改保存产物 |
 | 结构引导线 | `SugarCanvas.StructureController` | 块结构竖线与折叠；`load()` 后必须重装引导层 |
 | 卡片左侧序号 | `SugarCanvas` | 用户看到的是 Sugar 视图。`updateMlogAddresses()` 把左侧标签写成 **mlog 指令下标**（多行 Expr 卡写指令区间 `1->2`），覆盖原版的积木序号；`Stopped at #N` 才是 `LExecutor.counter` |
@@ -442,7 +297,7 @@ v0.11.4 的界面/停机、v0.11.6 的性能口径、v0.11.7 的两个崩溃守�
 
 窄屏不放指令预算标签：它是最宽的一格（196px），且在 640px 这类宽度上会独占一行——多出来的整行高度只为显示一个「超限有 toast 兜底」的读数。**只有这一格会让位**：其余可按的按钮在任何宽度下都保留（最坏一格独占一行），因为按不到的按钮是真实损失，读数是可替代信息。
 
-**原版 Add 按钮是无名的，只能按形状认。** 上游 `setup()` 给 `back` / `edit` / `variables` 都起了名字，唯独 `@add` 没有，而每次显示都会 `clearChildren()` 重建整行，所以只剩一个抓手：行里**唯一没有名字的 `Button` 子元素**就是它（`BottomBarLayout.claimAddButton`，`bottomBarLayoutTest` 钉住形状、幂等性与歧义处理）。行里出现**两个**无名 `Button`（例如 fork 自己加了一个）时什么都不认：猜错会把别人的控件改名又丢掉真正的 Add，而返回 null 只会让调用方重建自己的同名按钮。这段声明必须跑在 `layoutBottomButtons()` 开头、清行之前：2026-10 的报告就是位置猜测跑在 `installVarsButton()` 之后——后者摘掉变量按钮、再把替身接到行尾，位置猜测于是认到了函数库按钮，真正的 Add 随整行一起被清掉（底栏直接少了「添加积木」）。按形状认人不看位置，所以后续再往行里加按钮也不会重演；真认不出来时（fork 改名或换了控件）就地重建一个同名同行为的按钮，绝不静默丢掉控件。
+**原版 Add 按钮是无名的，只能按形状认。** 上游 `setup()` 给 `back` / `edit` / `variables` 都起了名字，唯独 `@add` 没有，而每次显示都会 `clearChildren()` 重建整行，所以只剩一个抓手：行里**唯一没有名字的 `Button` 子元素**就是它（`BottomBarLayout.claimAddButton`，`bottomBarLayoutTest` 钉住形状、幂等性与歧义处理）。行里出现**两个**无名 `Button`（例如 fork 自己加了一个）时什么都不认：猜错会把别人的控件改名又丢掉真正的 Add，而返回 null 只会让调用方重建自己的同名按钮。这段声明必须跑在 `layoutBottomButtons()` 开头、清行之前：2026-10 的报告就是位置猜测跑在一个「摘掉变量按钮、再把替身接到行尾」的步骤之后——位置猜测于是认到了函数库按钮，真正的 Add 随整行一起被清掉（底栏直接少了「添加积木」）。那个替身已随 MDT 重叠功能移除（原版变量按钮现在原样保留），但按形状认人的结论不变：后续再往行里加按钮也不会重演；真认不出来时（fork 改名或换了控件）就地重建一个同名同行为的按钮，绝不静默丢掉控件。
 
 ### 调色板分类
 
@@ -453,7 +308,6 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 | `advcontrol` | Advanced Flow Control | For / While / Switch / If / Case / Default / Elif / Else / Break / Continue / BlockEnd / FuncDef / FuncCall / Return |
 | `datastruct` | Data Structures | record / stack / queue / deque / bitset / map / uset / list / heap / chain |
 | `arrayalgo` | Array Algorithms | array / matrix，以及**一张**批量运算卡（卡内按钮切换求和、平均值、最小值、最大值等 14 个运算）；旧 `arrayinit` 仅兼容读取 |
-| `asserts` | Assertions | 既有断言卡 |
 | 原版 `control` / `operation` | Flow Control / Operations | 原版 jump/end 与 `ExprStatement` |
 
 **栏位 ≠ 分组**（`DataModules.paletteColumn`）：分组键（`DataModules.groupKey`，即各族 `LCategory` 的名字 `stackops` / `mapops` / …）只用来回答「哪几个运算属于同一结构」，它本身**不是选板栏**，只作分组标签与悬停标题；运算卡该进哪一栏由**该结构的声明卡在哪一栏**决定。规则表 `DataModules.GROUP_COLUMNS` 目前只登记数组组（`arrayAlgo`），未登记的结构一律落在 `dataStructures`——因为数组/矩阵是三处例外，它们的声明卡在「数组算法」栏，若不登记就会把声明卡与运算卡拆到两栏、跳转行滚动条配色也跟着错。**新结构若不在数据结构栏，必须在这张表里补一行**（`DataCallStatement.category()` 取用该查询）。
@@ -469,7 +323,7 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 ### 内存对象存储（上游 #12459，fac33d08d）
 
 - **上游变化**：`MemoryBlock` 改为双数组（数字数组 + 对象数组 + 哨兵），logic 的 `read` / `write` 可存取对象（单位、方块等）；存档经 `TypeIO.writeObject` 序列化并带 version 迁移（旧存档全按数字读回）。**行为变化：越界 `read` 从返回 NaN 改为返回 null**。2026-09-09 的 Anuken/Mindustry master 已落地：`MemoryBuild.read` 越界走 `output.setobj(null)`。
-- **影响/风险**：v155.4 / v159.7 的内存 cell 只存数字、越界 `read` 返回 NaN，LogicSugar 的产物与测试目前都建立在这套语义上（`assertTypeTest` 已为「内存对象存储」场景预留 number/对象分型）。栈/队列/双端队列的空 pop/peek 用越界 `read` 地址 −1 作为 NaN 哨兵，因此在已含 #12459 的 BE/master 上会读回 **null** 而不是 NaN；哈希表/集合的空槽仍靠 `op div 0 0` 写出 NaN 再用 `strictEqual` 判定，不受越界语义影响。`MlogLint` 当前只做 token 形状检查、不涉及内存语义。
+- **影响/风险**：v155.4 / v159.7 的内存 cell 只存数字、越界 `read` 返回 NaN，LogicSugar 的产物与测试目前都建立在这套语义上。栈/队列/双端队列的空 pop/peek 用越界 `read` 地址 −1 作为 NaN 哨兵，因此在已含 #12459 的 BE/master 上会读回 **null** 而不是 NaN；哈希表/集合的空槽仍靠 `op div 0 0` 写出 NaN 再用 `strictEqual` 判定，不受越界语义影响。`MlogLint` 当前只做 token 形状检查、不涉及内存语义。
 - **适配动作**：v160.1 已确定含 #12459；空容器哨兵改为不依赖越界 `read`（例如 `op div 0 0`），并为 `MlogLint` 引入按版本分叉的越界语义。空槽判定保持 `strictEqual`，不要改成 `equal`。
 
 ### 本批功能与 BE 新 logic（deque / uset / 数组算法 / 撤销）
@@ -514,7 +368,7 @@ Sugar 卡片不再全部挤在原版 Flow Control 里：
 ### 无新 opcode 与逻辑显示器修复
 
 - **上游变化**：`LogicIO` 无改动（无新 opcode）；`logicids.dat` 仅新增 target-dummy 方块条目（既有内容逻辑 ID 的稳定映射不受影响）；逻辑显示器修复：拼接大屏统一 `rootDisplay.buffer`（#12514）、图源屏强制刷新（#12418）。
-- **影响/风险**：线格式稳定，Sugar 载体、反编译器与断言线格式均不受影响。
+- **影响/风险**：线格式稳定，Sugar 载体、反编译器与调试行直通（`SugarDebugLines`）均不受影响。
 - **适配动作**：无需动作。
 
 ### 升级 checklist
@@ -523,7 +377,7 @@ bump 到新上游版本时按序执行：
 
 1. `build.gradle` bump `mindustryVersion`，同步 CI 检出的 Mindustry 固定 commit 与 [development.md](development.md) / [release.md](release.md) 的版本表述；按需 bump `mod.json` 的 `minGameVersion`。
 2. 在 `Mindustry-master` 工作区重建配套 `Mindustry.jar`（`desktop:dist`，需配套 Arc 检出）。
-3. `./gradlew check` 全绿；重点盯 `crossLoaderTest`（跨类加载器访问模式）、`lintTest`、`assertTypeTest`（内存 number/对象分型）。
+3. `./gradlew check` 全绿；重点盯 `crossLoaderTest`（跨类加载器访问模式）、`lintTest`、`debugPassthroughTest`（调试行线格式与 1000 条预算钉）。
 4. 逐条核对上文各节标记为「升级时做」的适配动作：MlogLint 内存/越界语义按新版本分叉、`instruction.*` 键与上游 `statementKey()` 约定仍对齐、上游成员签名变化未破坏既有反射目标。
 5. 按 [testing.md](testing.md) 的手测清单上游戏验证（卡片渲染、本地化开关），并按工作区默认模式产出 `构建/LogicSugar/LogicSugar-dev.jar` 做本地确认。
 
@@ -532,14 +386,13 @@ bump 到新上游版本时按序执行：
 ```text
 src/logicsugar/           模组侧：入口与编辑器所有权判定（LogicSugarMod）、设置、函数库、FunctionLibraryDialog
 src/logicsugar/assist/    编辑器辅助：BoxSelect、StatementClipboard、JumpLineColor、VarDisplayFilter、MlogLint、
-                          VarClipboard、TextWrap/SugarTooltip、ProcessorStatus、UnitFlags、AssertInstructions、
-                          EditHistory、InstructionBudget
+                          VarClipboard、TextWrap/SugarTooltip、UnitFlags、EditHistory、InstructionBudget
 src/logicsugar/assist/expr/  表达式子系统：ExprCompiler、ExprStatement、ExprHook、ArrayRegistry、
                           ShortCircuitCompiler、ExprIntrinsics 与各数据结构的 *Intrinsics
 src/logicsugar/assist/data/  数据子系统：DataModule/DataModules/DataDeclaration 框架（含 paletteColumn 栏位查询）+
                           ArrayBulkModule、RecordModule、ContainerModule、BitsetModule、MapModule、SetModule、ListHeapModule
-src/mindustry/logic/      与游戏同包名的扩展层：SugarCompiler、SugarDecompiler、SugarStatements、
-                          SugarAsserts、SugarCanvas、SugarLogicDialog、SugarCoexist、SugarFunctions、
+src/mindustry/logic/      与游戏同包名的扩展层：SugarCompiler、SugarDecompiler、SugarStatements、SugarDebugLines、
+                          SugarCanvas、SugarLogicDialog、SugarCoexist、SugarFunctions、
                           RecoveryPredicate、MlogCFG
 test/                     与 src 同构的 main() 式自测（无 JUnit）
 assets/bundles/           bundle.properties / bundle_zh_CN / bundle_zh_TW（用户可见文案）

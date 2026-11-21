@@ -61,7 +61,7 @@ public class BitsetModule extends DataModule{
 
     @Override
     public void registerParsers(){
-        // 幂等：集成阶段可能重复调用（SugarAsserts 同款 containsKey 守卫）
+        // 幂等：集成阶段可能重复调用（SugarDebugLines.installParsers 同款 containsKey 守卫）
         if(LAssembler.customParsers.containsKey(BitsetStatement.TOKEN)) return;
         LogicIO.allStatements.add(BitsetStatement::new);
         LAssembler.customParsers.put(BitsetStatement.TOKEN, BitsetModule::parseBitset);

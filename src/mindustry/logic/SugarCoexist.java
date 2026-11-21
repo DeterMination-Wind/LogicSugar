@@ -15,7 +15,12 @@ import java.util.Map;
 import java.util.WeakHashMap;
 
 /**
- * 「共存」档：让第三方逻辑编辑器（例如逻辑工具）的界面直接驱动 LogicSugar 的画布。
+ * KEEP(P4) — 这不是 Mlog Dev Tools 的重叠功能，不要随 MDT 解耦一起删除。
+ * 它处理的是「**其它 mod** 的 {@code LogicDialog} 子类」（共存档把我们的画布装进对方编辑器），
+ * 与断言/变量/快照等功能无关。删掉它，共存档会静默回落到「接管」，对方的浮层面板、历史与
+ * 快捷键全部失效。
+ *
+ * <p>「共存」档：让第三方逻辑编辑器（例如逻辑工具）的界面直接驱动 LogicSugar 的画布。</p>
  *
  * <p><b>为什么不是把对方的界面搬过来。</b>对方的浮层面板是在它的构造函数里
  * {@code new ClipboardFloatingBar(this, ...)} 造出来的，每个面板都持有那个对话框实例，并通过

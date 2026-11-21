@@ -15,8 +15,19 @@
   （`read`/`write` 也一样），展开后没有折叠路径能把孤行折回。单行卡的持久化靠自描述 marker，不靠折叠。
 - `save()` 走 `ExprHook.unfoldedText`，是**纯文本读取**：只在文本层展开多行卡，并把 jump/begin 记的画布
   语句下标临时换算到文本下标（`finally` 还原），不重建画布元素。不要改回
-  `unfoldAll → super.save → foldAll`。emit 模式的自动断言卡只存在于某一次 unfold 内，同一次调用的 fold
-  又会移除它，所以去掉画布 unfold 不丢可见内容。
+  `unfoldAll → super.save → foldAll`。
+- **生成式越界检查是文本谓词，不是卡片**：`AssertEmit=emit` 时表达式层在非常量数组/矩阵下标读写前发射
+  `assertBounds`（`ExprCompiler.emitBoundsAssert`，KEEP(P4)）。表达式卡保存的是扁平 mlog 链，所以展开
+  （画布 `unfoldAll` 与保存文本 `unfoldedText`）在 emit 口径下把这一行**作为文本**写回原位置——下标计算之后、
+  read/write 之前，载体是 `SugarDebugLines.Line`（`fromBounds` / `fromText`，`write()` 与
+  `AssertBoundsLine` 逐字节一致）；没有卡片类型、没有调色板条目、不依赖 MDT。strip 模式与联机
+  （`currentAssertEmit()` 自带 `Vars.net.active()` 门禁）一律不写，单参数 `toStatements` 也不合成。
+  仍以表达式形式保存在糖里的位置（条件/实参/return/数据调用）重新编译进 emit 构建时才生成。
+  反编译**保留**这种行（不再从恢复糖源码里过滤），这样 decompile → 编辑 → 重编译仍带检查；
+  安全门在输入确实带生成行时对两边做同一 `stripGeneratedBoundsLines` 过滤后再比对（strip 重编译会丢掉
+  它们），因此两种形态都能过门。折叠时 `ExprHook.isGeneratedBoundsLine` 把它当链内透明元素
+  （随链移除，并作为数组访问的证据）；重复展开用文本比较去重。用户手写的 `assertBounds`（任何别的消息）
+  永远原样保留、并且断开链。
 
 ## 链外读取（`hasExternalReads`）
 

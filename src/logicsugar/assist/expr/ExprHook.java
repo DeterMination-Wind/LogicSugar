@@ -9,9 +9,6 @@ import mindustry.gen.*;
 import mindustry.logic.*;
 import mindustry.logic.LCanvas.*;
 import mindustry.logic.LStatements.*;
-import mindustry.logic.SugarAsserts.AssertBoundsCard;
-import mindustry.logic.ConditionOp;
-import mindustry.logic.SugarAsserts.AssertionType;
 import mindustry.logic.SugarStatements.BeginStatement;
 import mindustry.logic.SugarStatements.FuncCallStatement;
 
@@ -226,10 +223,11 @@ public class ExprHook{
         while(j < statements.size()){
             LStatement st = statements.get(j);
             if(st == null) break;
-            if(st instanceof AssertBoundsCard && isAutoAssert(st)){
-                // 自动断言卡随链生成（位于下标计算之后、read/write 之前）：作为链内
-                // 透明元素跳过——不进入 ops，但折叠时随链一起移除，下次展开按折回后的
-                // 表达式重建。用户手写断言卡不是链元素（链在此断开）。
+            if(isGeneratedBoundsLine(st)){
+                // 生成式越界检查随链一起折掉：它是展开文本里的调试行，不是画布积木。
+                // 作为链内透明元素跳过——不进入 ops，但折叠时随链一起移除；重新展开时由
+                // toStatements 在原位置按 emit 口径重新写出。用户手写的 assertBounds
+                // （消息不是生成签名）不是链元素，链在此断开。
                 j++;
                 continue;
             }
@@ -304,7 +302,7 @@ public class ExprHook{
 
     /** 语句能否作为表达式链的节点：op 语句、type 为 @LAccess 常量的 sensor 语句、
      *  实参为纯值的 funccall 语句、memory 命中数组/span/结构注册表的 read/write 语句、
-     *  span 前导段 select，以及展开时随链生成的自动越界断言卡（链内透明元素，折叠时一并移除）。
+     *  span 前导段 select，以及编译产物里的生成式越界检查行（链内透明元素，折叠时一并移除）。
      *
      *  <p>链收集（{@link #collectChain}）与自测共用这一道判据：它决定“哪些行会被折进卡片”，
      *  也决定了链在哪里断掉——而链在外面断掉的行会被 {@link #hasExternalReads} 当成“链外读取”，
@@ -315,9 +313,9 @@ public class ExprHook{
             return sensor.type.startsWith("@") && ExprCompiler.resolveMember(sensor.type) != null;
         }
         if(st instanceof FuncCallStatement call) return isFoldableCall(call);
-        // 自动断言卡随链生成：作为链元素参与折叠（不产出 ops，但会被移除并重建）。
-        // 用户手写的断言卡不是链元素，链在它之前断开。
-        if(st instanceof AssertBoundsCard) return isAutoAssert(st);
+        // 生成式越界检查（展开文本里的调试行）：参与折叠并被移除；用户手写的
+        // assertBounds 不是链元素，链在它之前断开。
+        if(isGeneratedBoundsLine(st)) return true;
         // read/write 行只有在注册表把 memory 解析到已声明数组时才入链：
         // 用户手写的普通 read/write 与纯原版 mlog（无声明卡）不受影响
         if(st instanceof ReadStatement || st instanceof WriteStatement) return foldsMemoryLine(st);
@@ -458,7 +456,8 @@ public class ExprHook{
         }
     }
 
-    /** 越界断言只在 emit 调试构建（单机）下成为真实语句；strip 模式与联机恒不发射。 */
+    /** 越界检查只属于 emit 调试构建（单机）：strip 模式与联机（{@code currentAssertEmit()}
+     *  自带 {@code Vars.net.active()} 门禁）恒不插入。 */
     private static boolean assertEmitEnabled(){
         return SugarCompiler.currentAssertEmit() == SugarCompiler.AssertEmit.emit;
     }
@@ -467,7 +466,16 @@ public class ExprHook{
      * 语句列表口径（无画布，可单测）：{@code statements} 的下标就是画布语句下标。
      *
      * <p>画布上下文（数组/span 注册表）由调用方负责；画布侧入口是
-     * {@link #unfoldedText(LCanvas)}。</p>
+     * {@link #unfoldedText(LCanvas)}。单参数重载按 strip 口径写文本（不合成生成式断言行），
+     * emit 调试构建由画布入口与测试显式传 {@code true}。</p>
+     */
+    public static String unfoldedText(List<LStatement> statements){
+        return unfoldedText(statements, false);
+    }
+
+    /**
+     * 语句列表口径，显式指定是否按 emit 调试构建展开（{@code emitAsserts=true} 时表达式卡
+     * 展开文本里的 {@code assertBounds} 生成行随链写出）。
      */
     public static String unfoldedText(List<LStatement> statements, boolean emitAsserts){
         int size = statements.size();
@@ -500,8 +508,10 @@ public class ExprHook{
     private record TextPlan(List<LStatement> lines, int statements){}
 
     /** 展开一条画布语句的文本形态：多行表达式卡在文本层展开成它的 op 行（画布不动），
-     *  其余语句原样一条。展开判定与 {@link #unfoldAll} 共用 {@link #cardLines}，两条路径不会漂。 */
-    private static TextPlan planStatement(List<LStatement> statements, int index, List<TextPlan> plan, boolean emitAsserts){
+     *  其余语句原样一条。展开判定与 {@link #unfoldAll} 共用 {@link #cardLines}，两条路径不会漂。
+     *  {@code plan} 是已算好的前序展开计划（emit 构建下“重复展开不重复插断言行”要用它往回看）。 */
+    private static TextPlan planStatement(List<LStatement> statements, int index, List<TextPlan> plan,
+                                          boolean emitAsserts){
         LStatement statement = statements.get(index);
         if(statement instanceof ExprStatement card){
             List<ExprCompiler.Line> ops = cardLines(card, emitAsserts);
@@ -518,7 +528,7 @@ public class ExprHook{
         return new TextPlan(Collections.singletonList(statement), 1);
     }
 
-    /** 展开计划尾部连续的自动断言语句：{@link #toStatements} 的“重复展开不重复插卡”靠它，
+    /** 展开计划尾部连续的生成式断言行：{@link #toStatements} 的“重复展开不重复插行”靠它，
      *  口径与画布侧的 {@code trailingAutoAsserts} 一致（可以跨多条画布语句往回看）。 */
     private static List<LStatement> previousLines(List<TextPlan> plan){
         List<LStatement> tail = new ArrayList<>();
@@ -526,7 +536,7 @@ public class ExprHook{
             List<LStatement> lines = plan.get(i).lines;
             for(int k = lines.size() - 1; k >= 0; k--){
                 LStatement line = lines.get(k);
-                if(!isAutoAssert(line)) return tail;
+                if(!isGeneratedBoundsLine(line)) return tail;
                 tail.add(0, line);
             }
         }
@@ -592,8 +602,8 @@ public class ExprHook{
     private static void unfoldAllInContext(LCanvas canvas, Seq<Element> children){
         saveUIAll(canvas);
 
-        // 越界断言只在 emit 调试构建（单机）下展开成 assertBounds 卡；strip 模式与联机
-        // 恒不插入（currentAssertEmit() 已含联机门禁）。
+        // 越界检查只在 emit 调试构建（单机）下展开成生成式断言行；strip 模式与联机恒不插入
+        // （currentAssertEmit() 已含联机门禁）。
         boolean emitAsserts = assertEmitEnabled();
 
         boolean changed = false;
@@ -629,10 +639,10 @@ public class ExprHook{
                 continue;
             }
 
-            // 插入点之前的连续自动断言卡（画布顺序）：重复展开时等价的断言行不再插入
+            // 插入点之前的连续生成式断言行（画布顺序）：重复展开时等价的断言行不再插入
             List<LStatement> preceding = new ArrayList<>();
             for(int k = i - 1; k >= 0; k--){
-                if(!(children.get(k) instanceof StatementElem prev) || !isAutoAssert(prev.st)) break;
+                if(!(children.get(k) instanceof StatementElem prev) || !isGeneratedBoundsLine(prev.st)) break;
                 preceding.add(0, prev.st);
             }
             List<LStatement> statements = toStatements(ops, preceding, emitAsserts);
@@ -655,12 +665,17 @@ public class ExprHook{
         }
     }
 
-    // ===== 展开产物：Line 链 → 画布语句（含自动越界断言） =====
+    // ===== 展开产物：Line 链 → 画布语句（emit 下含生成式断言行） =====
 
     /**
      * 表达式卡编译后的行为（{@code null} = 编译失败，调用方保留卡片、{@code write()} 走 lastOps
      * 回退）。画布展开（{@link #unfoldAll}）与文本展开（{@link #unfoldedText}）共用这一处，
      * 因此"什么卡不展开"的判定不会在两边漂。
+     *
+     * <p>{@code emitAsserts} 与保存路径的 {@code AssertEmit} 同口径：emit 调试构建编译出
+     * {@link ExprCompiler.AssertBoundsLine}，并且它必须随展开文本一起落盘——表达式卡保存的是
+     * 扁平 mlog 链，展开时若不写出这一行，越界检查就只剩编译期，重开后再保存便永久消失。
+     * strip 模式与联机不传 {@code true}。</p>
      *
      * <p>与 {@code ExprStatement.write()}/{@code SugarLogicDialog} 预检同口径：使用
      * {@link ExprStatement#functionChecker()} 校验函数名，否则未定义函数会被展开成 will-fail 的
@@ -700,9 +715,23 @@ public class ExprHook{
         return chain.length() >= 2;
     }
 
+    /** 展开产物里的生成式越界检查：emit 构建编译链里的调试行，展开成一条文本行
+     *  （{@link SugarDebugLines.Line}，没有卡片类型）。折叠时（{@link #collectChain}）作为
+     *  链内透明元素跳过并随链移除。
+     *
+     *  <p>安装 MDT 后同一行由 MDT 的语句类解析，本模组看不到 {@link SugarDebugLines.Line}：
+     *  所以先走快速 {@code instanceof} 分支，再把外来语句渲染成文本，复用
+     *  {@link SugarDebugLines#isGeneratedBoundsLine(String)} 的消息签名判定（渲染失败一律不认领，
+     *  失败方向仍是“多显示原版”）。*/
+    public static boolean isGeneratedBoundsLine(LStatement statement){
+        if(statement instanceof SugarDebugLines.Line line) return line.isGeneratedBoundsCheck();
+        String text = SugarDebugLines.statementText(statement);
+        return text != null && SugarDebugLines.isGeneratedBoundsLine(text);
+    }
+
     /**
-     * 链里是否存在没有画布语句对应的行。{@link ExprCompiler.AssertBoundsLine} 按模式转换或
-     * 丢弃，不算丢失；其它无法映射的行展开后会静默丢掉指令，调用方必须保留原卡片。
+     * 链里是否存在没有画布语句对应的行。{@link ExprCompiler.AssertBoundsLine} 会按模式转成
+     * 文本行或丢弃，不算丢失；其它无法映射的行展开后会静默丢掉指令，调用方必须保留原卡片。
      */
     public static boolean hasUnmappableLine(List<ExprCompiler.Line> ops){
         for(ExprCompiler.Line line : ops){
@@ -712,36 +741,41 @@ public class ExprHook{
         return false;
     }
 
-    /** 自动插入的越界断言卡消息前缀。用于两处识别：展开时避免重复插入、折叠时清理
-     *  由表达式生成的断言卡（用户手写的断言卡没有该前缀，永远不动）。 */
-    public static final String AUTO_ASSERT_PREFIX = "ls-auto: ";
+    /**
+     * 把表达式链（{@link ExprCompiler#compile} 的产物）转成画布语句序列（strip 口径：不合成
+     * 生成式断言行，等同 {@code toStatements(ops, null, false)}）。
+     */
+    public static List<LStatement> toStatements(List<ExprCompiler.Line> ops){
+        return toStatements(ops, Collections.emptyList(), false);
+    }
 
     /**
      * 把表达式链（{@link ExprCompiler#compile} 的产物）转成画布语句序列。
      *
-     * <p>{@link ExprCompiler.AssertBoundsLine} 只在 {@code emit}（单机调试构建）下转成
-     * {@link AssertBoundsCard}，线格式与 F1 的 lower 路径一致（消息带
-     * {@link #AUTO_ASSERT_PREFIX} 前缀）；{@code emit=false}（strip 模式 / 联机）时断言行
-     * 被丢弃。断言卡按原行位置插入，因此始终位于对应 read/write 之前。</p>
+     * <p>{@link ExprCompiler.AssertBoundsLine} 在 {@code emit}（单机调试构建）下转成一条
+     * {@link SugarDebugLines.Line} 文本行——与编译器写的 mlog 逐字节一致，没有任何卡片类型、
+     * 没有调色板条目、不依赖 MDT。它按原行位置插入，因此始终位于对应 read/write 之前；
+     * {@code emit=false}（strip 模式 / 联机）时丢弃。</p>
      *
      * <p>幂等：{@code preceding} 是插入点之前的画布语句（画布顺序，可为 null）。若其尾部
-     * 已有的自动断言卡与链首连续的断言行逐一等价，则这些断言行不再重复插入——重复展开
-     * （展开 → 折叠 → 再展开）不会产生重复卡片。</p>
+     * 已有的生成行与链首连续的断言行逐一等价（文本比较），则这些断言行不再重复插入——重复
+     * 展开（展开 → 折叠 → 再展开）不会产生重复行。</p>
      */
-    public static List<LStatement> toStatements(List<ExprCompiler.Line> ops, List<LStatement> preceding, boolean emit){
+    public static List<LStatement> toStatements(List<ExprCompiler.Line> ops, List<LStatement> preceding,
+                                                boolean emit){
         List<LStatement> result = new ArrayList<>(ops.size());
-        List<LStatement> existing = emit ? trailingAutoAsserts(preceding) : Collections.<LStatement>emptyList();
+        List<LStatement> existing = emit ? trailingAutoAsserts(preceding) : Collections.emptyList();
         int existingIndex = 0;
-        boolean leading = true; // 只有链首连续的断言行才可能与插入点之前的卡片对应
+        boolean leading = true; // 只有链首连续的断言行才可能与插入点之前的行对应
         for(ExprCompiler.Line line : ops){
             if(line instanceof ExprCompiler.AssertBoundsLine bounds){
                 if(!emit) continue;
                 if(leading && existingIndex < existing.size()
                     && equivalentAssert(existing.get(existingIndex), bounds)){
                     existingIndex++;
-                    continue; // 画布上已有等价自动断言（上次展开插入）→ 不重复插入
+                    continue; // 画布上已有等价生成行（上次展开插入）→ 不重复插入
                 }
-                result.add(autoAssertCard(bounds));
+                result.add(SugarDebugLines.fromBounds(bounds));
                 continue;
             }
             leading = false;
@@ -749,6 +783,23 @@ public class ExprHook{
             if(statement != null) result.add(statement);
         }
         return result;
+    }
+
+    /** 列表尾部连续的生成式断言行（画布顺序）。 */
+    public static List<LStatement> trailingAutoAsserts(List<LStatement> statements){
+        if(statements == null || statements.isEmpty()) return Collections.emptyList();
+        int from = statements.size();
+        while(from > 0 && isGeneratedBoundsLine(statements.get(from - 1))) from--;
+        return new ArrayList<>(statements.subList(from, statements.size()));
+    }
+
+    /** 画布上已有的生成行与链首断言行是否等价：文本逐字节比较（生成行没有字段可比）。
+     *  走 {@link SugarDebugLines#statementText} 是为了同时覆盖本模组的 {@code Line} 与
+     *  MDT 自己的语句类——后者不能转型成本模组的 {@code Line}。 */
+    private static boolean equivalentAssert(LStatement statement, ExprCompiler.AssertBoundsLine line){
+        if(!isGeneratedBoundsLine(statement)) return false;
+        String text = SugarDebugLines.statementText(statement);
+        return text != null && text.equals(line.toText());
     }
 
     /** 一条指令行 → 原版画布语句；未知 RawLine 返回 null（编辑期防御，不崩溃）。
@@ -808,82 +859,6 @@ public class ExprHook{
         return st;
     }
 
-    /** 断言行 → 自动断言卡（消息加固定前缀；枚举解析失败时退回默认值，绝不抛错）。 */
-    private static AssertBoundsCard autoAssertCard(ExprCompiler.AssertBoundsLine line){
-        AssertBoundsCard card = new AssertBoundsCard();
-        card.type = parseAssertionType(line.type);
-        card.multiple = optionalValue(line.multiple);
-        card.min = optionalValue(line.min);
-        card.opMin = parseBoundsOp(line.opMin);
-        card.value = optionalValue(line.value);
-        card.opMax = parseBoundsOp(line.opMax);
-        card.max = optionalValue(line.max);
-        card.message = autoMessage(line.message);
-        return card;
-    }
-
-    private static AssertionType parseAssertionType(String token){
-        try{
-            return AssertionType.valueOf(token);
-        }catch(Exception e){
-            return AssertionType.integer;
-        }
-    }
-
-    /** Bounds operators are the game's {@link ConditionOp} (the card stores that type), and
-     *  only the two inequality forms are legal in a saved {@code assertBounds} line. */
-    private static ConditionOp parseBoundsOp(String token){
-        try{
-            ConditionOp op = ConditionOp.valueOf(token);
-            return op == ConditionOp.lessThan || op == ConditionOp.lessThanEq ? op : ConditionOp.lessThanEq;
-        }catch(Exception e){
-            return ConditionOp.lessThanEq;
-        }
-    }
-
-    /** 自动断言的消息：在引号内加固定前缀（write/read 往返后仍可识别）。 */
-    private static String autoMessage(String message){
-        if(message == null || message.isEmpty()) return "\"" + AUTO_ASSERT_PREFIX.trim() + "\"";
-        if(message.startsWith("\"")) return "\"" + AUTO_ASSERT_PREFIX + message.substring(1);
-        return AUTO_ASSERT_PREFIX + message;
-    }
-
-    /** 卡片是否是本钩子自动插入的越界断言卡（消息带 {@link #AUTO_ASSERT_PREFIX}）。 */
-    public static boolean isAutoAssert(LStatement statement){
-        return statement instanceof AssertBoundsCard card
-            && card.message != null
-            && card.message.startsWith("\"" + AUTO_ASSERT_PREFIX);
-    }
-
-    /** 列表尾部连续的自动断言卡（画布顺序）。 */
-    public static List<LStatement> trailingAutoAsserts(List<LStatement> statements){
-        if(statements == null || statements.isEmpty()) return Collections.emptyList();
-        int from = statements.size();
-        while(from > 0 && isAutoAssert(statements.get(from - 1))) from--;
-        return new ArrayList<>(statements.subList(from, statements.size()));
-    }
-
-    /** 画布上的自动断言卡与链首断言行是否等价（字段逐项比较，空槽 "~" 归一化）。 */
-    private static boolean equivalentAssert(LStatement statement, ExprCompiler.AssertBoundsLine line){
-        if(!(statement instanceof AssertBoundsCard card) || !isAutoAssert(card)) return false;
-        return card.type.name().equals(line.type)
-            && sameOptional(card.multiple, line.multiple)
-            && sameOptional(card.min, line.min)
-            && card.opMin.name().equals(line.opMin)
-            && sameOptional(card.value, line.value)
-            && card.opMax.name().equals(line.opMax)
-            && sameOptional(card.max, line.max)
-            && card.message.equals(autoMessage(line.message));
-    }
-
-    /** 空槽归一化比较：null/""/"~" 视为同一个"无值"槽（write/read 往返会丢掉 "~"）。 */
-    private static boolean sameOptional(String a, String b){
-        return optionalValue(a).equals(optionalValue(b));
-    }
-
-    private static String optionalValue(String value){
-        return value == null || value.isEmpty() || value.equals("~") ? "" : value;
-    }
 
     // ===== 目标索引调整 =====
 

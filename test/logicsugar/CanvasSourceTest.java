@@ -20,6 +20,7 @@ public final class CanvasSourceTest{
         try{
             saveIsAPureTextRead();
             addressLabelsDoNotOscillate();
+            dialogResizeAndMdtIsolationNails();
         }catch(java.io.IOException exception){
             check(false, "canvas sources could not be read: " + exception.getMessage());
         }
@@ -81,6 +82,73 @@ public final class CanvasSourceTest{
                 + "every frame)");
         check(body.contains("if(!changed) return;"),
             "the idle path must not force a layout pass at all (it runs every frame for every card)");
+    }
+
+    /**
+     * 与 MDT 共存的四条界面不变量（无头测试没有 Scene，只能钉源码）：
+     *
+     * <ol>
+     *   <li>压缩/竖屏尺寸变化后底栏必须回来：原版 {@code onResize} 会重跑 {@code setup()} 清空
+     *       {@code buttons}，而 {@code shown} 不会再触发，所以构造函数必须挂 resize 钩子重跑幂等的
+     *       {@code installSugarButtons()}。</li>
+     *   <li>编译副本菜单只挂进**我们自己**打开的原版导出对话框：MDT 的 LogDialog 也有
+     *       {@code copy.clipboard} 按钮，整场景按文本扫描会把菜单注入别人的窗口。</li>
+     *   <li>Ctrl+Z / Delete 只在逻辑编辑器是最上层对话框时生效。</li>
+     *   <li>原版 {@code @add} 按钮的禁用阈值必须钉在 {@link logicsugar.assist.InstructionBudget#vanillaLimit()}，
+     *       不能跟着 MDT 抬高的 {@code LExecutor.maxInstructions} 走。</li>
+     * </ol>
+     */
+    private static void dialogResizeAndMdtIsolationNails() throws java.io.IOException{
+        System.out.println("== MDT 共存：底栏/菜单/快捷键/预算 ==");
+        String dialog = SourceNails.readSource("src/mindustry/logic/SugarLogicDialog.java");
+
+        String constructor = withoutComments(SourceNails.methodBody(dialog, "public SugarLogicDialog(){"));
+        check(constructor.contains("onResize(this::installSugarButtons)"),
+            "the constructor must re-install the Sugar buttons on resize: vanilla setup() clears the row "
+                + "when compact/portrait flips, and shown() does not fire again");
+        check(SourceNails.methodBody(dialog, "private void installSugarButtons()")
+                .contains("layoutBottomButtons()"),
+            "the resize hook must end in the packed layout, not only re-add buttons");
+
+        String copy = withoutComments(SourceNails.methodBody(dialog, "private void installCompiledCopy(){"));
+        check(!copy.contains("findCopyButton(Core.scene.root)"),
+            "the copy-button scan must not search the whole scene: MDT's LogDialog has a button with "
+                + "the same localized label and would receive LS's menu");
+        check(copy.contains("findCopyButton(export)"),
+            "the scan must be scoped to one export dialog, never the scene");
+        check(copy.contains("pendingExportDialog"),
+            "the export dialog captured from LS's own edit click must be preferred");
+        check(copy.contains("SelectionClipboardUi.exportDialog()"),
+            "when the click-time capture missed, the fallback must still be the title-checked export dialog");
+        check(copy.contains("Core.scene.getDialog() != export"),
+            "the dialog being scanned must still be the front dialog, or the scan is abandoned");
+        String editHook = withoutComments(SourceNails.methodBody(dialog, "private void installEditHook(){"));
+        check(editHook.contains("pendingExportDialog = SelectionClipboardUi.exportDialog()"),
+            "the edit button's click must capture the export dialog it just opened");
+
+        String shortcuts = withoutComments(SourceNails.methodBody(dialog, "private void pollEditorShortcuts(){"));
+        check(shortcuts.contains("SelectionClipboardUi.isFront(this)"),
+            "Ctrl+Z/Y must stop while a stacked dialog (MDT's Vars/Log/Profiler) is in front");
+
+        String add = withoutComments(SourceNails.methodBody(dialog, "private void installAddButton(){"));
+        check(add.contains("setDisabled"), "the claimed vanilla @add button must have its predicate replaced");
+        check(add.contains("InstructionBudget.vanillaLimit()"),
+            "the @add button must stop at the pinned vanilla limit, not LExecutor.maxInstructions");
+
+        String clipboard = SourceNails.readSource("src/logicsugar/assist/SelectionClipboardUi.java");
+        check(!clipboard.contains("public static TextButton findCopyButton(Element"),
+            "the scene-wide public findCopyButton(Element) scan must be gone");
+        String export = withoutComments(SourceNails.methodBody(clipboard, "public static Dialog exportDialog(){"));
+        check(export.contains("Core.scene.getDialog()"),
+            "only the front dialog may be treated as the export dialog");
+        check(export.contains("isExportDialog"), "the front dialog must also match @editor.export");
+        String exportCheck = withoutComments(SourceNails.methodBody(clipboard, "public static boolean isExportDialog(Dialog dialog){"));
+        check(exportCheck.contains("\"editor.export\""),
+            "the title check must use the game's @editor.export string");
+
+        String box = SourceNails.readSource("src/logicsugar/assist/BoxSelect.java");
+        check(box.contains("SelectionClipboardUi.isFront(dialog)"),
+            "Delete/Backspace must require the logic editor to be the front dialog");
     }
 
     /** 一段源码去掉注释（整行与行尾），只留可执行文本：源码钉子应该钉代码，不该被注释里的

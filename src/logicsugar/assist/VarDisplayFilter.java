@@ -26,8 +26,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Hides Logic Sugar's compiler-generated variables (the {@code __ls_*} reserved namespace and
- * {@code _0}, {@code _1}... expression temporaries) from both variable viewers:
+ * KEEP(P4) — 这不是 Mlog Dev Tools 的重叠功能，不要随 MDT 解耦一起删除。
+ * 它过滤的是 **LogicSugar 自己**生成的变量名（{@code __ls_*} 保留前缀与 {@code _0}、{@code _1}…
+ * 表达式临时量），让 MindustryX 的变量面板与处理器配置面板只显示用户变量。删掉它，用户会在变量
+ * 面板里看到大量编译器临时量；删掉 {@link #settingHideVars} 的读取/恢复逻辑还会破坏联机
+ * {@code sync} 的变量下标空间。
+ *
+ * <p>Hides Logic Sugar's compiler-generated variables (the {@code __ls_*} reserved namespace and
+ * {@code _0}, {@code _1}... expression temporaries) from both variable viewers:</p>
  * <ul>
  *   <li>MindustryX's floating logic-support panel, which enumerates {@code executor.allVars}
  *       (a display-only array MindustryX patches in; absent on vanilla);</li>

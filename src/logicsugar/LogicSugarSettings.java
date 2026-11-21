@@ -24,10 +24,10 @@ import java.util.Map;
 public final class LogicSugarSettings{
     public static final String settingFuncMode = "logicsugar.funcMode";
     public static final String settingSwitchStrategy = "logicsugar.switchStrategy";
+    /** KEEP(P4) — key 名不要改、不要随 MDT 解耦删除。它是保存产物语义的唯一切换点
+     *  （strip / emit），也是联机门禁的入口：{@code SugarCompiler.currentAssertEmit()} 在网络
+     *  会话中强制 strip。改 key 会让老存档的设置静默回落到默认值，删掉则失去单机调试构建能力。 */
     public static final String settingAssertEmit = "logicsugar.assertEmit";
-    /** Profiler 的空数据页是否直接开始统计（也就是「Do not show again」勾选框写入的键）。
-     *  默认 false：profiler 是观测工具，不能不经用户同意就开始包装指令。 */
-    public static final String settingStartProfilerImmediately = "logicsugar.startProfilerImmediately";
 
     /** The page this mod owns. Kept so its descriptions can be re-flowed whenever the page is
      *  opened: the line breaks depend on the window width, which can change while the game runs. */
@@ -66,10 +66,7 @@ public final class LogicSugarSettings{
         table.pref(new AssertEmitSetting(settingAssertEmit, "strip"));
         table.pref(new EditorConflictSetting(LogicSugarMod.settingEditorConflict, LogicSugarMod.EditorConflict.ask.id));
         table.pref(new LibraryButtonSetting("logicsugar.funclib"));
-        addProcessorStatusPrefs(table);
-        addVarsPrefs(table);
         addUnitFlagsPref(table);
-        addHideVarsPref(table);
         addBoxSelectPrefs(table);
         addCompactCardsPref(table);
         if(includeJumpLines){
@@ -118,14 +115,6 @@ public final class LogicSugarSettings{
         }
     }
 
-    /** Checkbox for hiding compiler-generated variables in MindustryX's variable viewers. */
-    static void addHideVarsPref(SettingsMenuDialog.SettingsTable table){
-        table.checkPref(logicsugar.assist.VarDisplayFilter.settingHideVars, true, b -> {
-            // Both directions: turning the setting off must restore the full arrays at once.
-            logicsugar.assist.VarDisplayFilter.applyToAll();
-        });
-    }
-
     /** Checkbox for the compact card layout (zero spacing between statement cards). */
     static void addCompactCardsPref(SettingsMenuDialog.SettingsTable table){
         table.checkPref(mindustry.logic.SugarCanvas.settingCompactCards, true, b -> {
@@ -139,33 +128,6 @@ public final class LogicSugarSettings{
         table.checkPref(logicsugar.assist.BoxSelect.settingCtrlDragCopy, true);
         // 拖动时是否临时把积木间距扩到 10f。关闭可根治视野/虚拟块偏移，但往折叠语句拖语句会更"随机"。
         table.checkPref(logicsugar.assist.BoxSelect.settingDragExpandSpacing, false);
-    }
-
-    /** Sliders for the processor status overlay (wait threshold, scan rate, warn effects)
-     *  plus the breakpoint behavior switches (upstream v0.8.2). */
-    static void addProcessorStatusPrefs(SettingsMenuDialog.SettingsTable table){
-        table.checkPref("logicsugar.disableBreakpoints", false,
-            b -> logicsugar.assist.ProcessorStatus.disableBreakpoints = b);
-        table.checkPref("logicsugar.assertsAreBreakpoints", false,
-            b -> logicsugar.assist.ProcessorStatus.assertsAreBreakpoints = b);
-        table.checkPref("logicsugar.detachCameraOnBreakpoint", true,
-            b -> logicsugar.assist.ProcessorStatus.detachCameraOnBreakpoint = b);
-        table.sliderPref("logicsugar.waitIndication", 1000, 0, 10000, 500, i -> {
-            logicsugar.assist.ProcessorStatus.minWaitMillis = i;
-            return i == 0 ? Core.bundle.get("logicsugar.off", "off") : (i / 1000.0) + "s";
-        });
-        // stored value is the step index into ProcessorStatus.UPDATES_PER_TICK
-        table.sliderPref("logicsugar.processorScan", 4, 0, logicsugar.assist.ProcessorStatus.UPDATES_PER_TICK.length - 1, i -> {
-            int value = logicsugar.assist.ProcessorStatus.updatesPerTick(i);
-            logicsugar.assist.ProcessorStatus.scanPerTick = value;
-            return Integer.toString(value);
-        });
-        table.sliderPref("logicsugar.warnEffect", 0, -5, 60, 5, i -> {
-            logicsugar.assist.ProcessorStatus.warnEffectFrequency = i;
-            return i < 0 ? Core.bundle.get("logicsugar.warn.never", "never")
-                : i == 0 ? Core.bundle.get("logicsugar.warn.once", "once")
-                : Core.bundle.format("logicsugar.warn.every", i);
-        });
     }
 
     /** Checkboxes for drawing unit flags and assigning distinct colors per flag value. */
@@ -288,92 +250,6 @@ public final class LogicSugarSettings{
 
         private String label(){
             return Core.bundle.get("logicsugar.settings.assertemit." + current, current);
-        }
-    }
-
-    /** 快照上限的档位表（与上游 MlogAssertions 相同）；0 = 完全关闭快照：不创建、不显示、
-     *  配置面板上的快照按钮也不出现。 */
-    static final int[] SNAPSHOT_LIMITS = {0, 5, 10, 20, 50, 100, 200, 500, 1000};
-
-    /** 变量/内存/属性界面与快照的设置行。与 {@link #addProcessorStatusPrefs} 同一约定：自有
-     *  设置页（{@link #build}）与 Neon 聚合页（{@code LogicSugarMod.bekBuildSettings}）都必须
-     *  调用本方法，否则聚合形态下这些设置无从修改（AGENTS.md 的双形态要求）。 */
-    static void addVarsPrefs(SettingsMenuDialog.SettingsTable table){
-        // 三击任意方块打开属性界面的时间窗（上游 setting.triple-tap-speed）
-        table.sliderPref("logicsugar.tripleTap", 500, 0, 3000, 50, i -> {
-            logicsugar.vars.ui.VarsAccess.tripleTapMillis = i;
-            return i == 0 ? Core.bundle.get("logicsugar.off", "off") : i + " ms";
-        });
-        // stored value is the step index into SNAPSHOT_LIMITS
-        table.sliderPref("logicsugar.snapshotLimit", 3, 0, SNAPSHOT_LIMITS.length - 1, i -> {
-            int value = SNAPSHOT_LIMITS[i];
-            logicsugar.vars.Snapshots.maxSnapshots = value;
-            logicsugar.vars.Snapshots.updateLimit();
-            return value == 0 ? Core.bundle.get("logicsugar.off", "off") : Integer.toString(value);
-        });
-        table.checkPref("logicsugar.snapshotOnBreakpoint", false,
-            b -> logicsugar.assist.ProcessorStatus.snapshotOnBreakpoint = b);
-        table.checkPref("logicsugar.snapshotOnAssertion", false,
-            b -> logicsugar.assist.ProcessorStatus.snapshotOnAssertion = b);
-        table.sliderPref("logicsugar.varUpdateFrequency", 15, 1, 60, 5, i -> {
-            logicsugar.vars.VarsOptions.updateFrequency = i;
-            return Core.bundle.format("logicsugar.vars.ticks", i);
-        });
-        table.sliderPref("logicsugar.varsDigits", 7, 3, 16, 1, i -> {
-            logicsugar.vars.VarsOptions.significantDigits = i;
-            return i >= 16 ? Core.bundle.get("logicsugar.vars.fullDigits", "all digits") : Integer.toString(i);
-        });
-        table.pref(new VarsAlignmentSetting("logicsugar.varsAlignment", logicsugar.vars.VarsOptions.alignment));
-        // profiler（上游 v0.11.3 的 start-profiler-immediatelly）：默认关闭；在 Vars 界面的
-        // 「Do not show again」勾选它，下一次打开 profiler 页面就直接开始统计。
-        table.checkPref(settingStartProfilerImmediately, false);
-        // 处理器自带日志（上游 v0.12.0）：滑块存的是 LOG_LIMITS 的下标，与 snapshotLimit 同口径
-        table.sliderPref(logicsugar.vars.LogMessages.settingLimit,
-            logicsugar.vars.LogMessages.defaultLimitIndex, 0, logicsugar.vars.LogMessages.LIMITS.length - 1, i -> {
-                int value = logicsugar.vars.LogMessages.LIMITS[i];
-                logicsugar.vars.LogMessages.setLimit(value);
-                return value == 0 ? Core.bundle.get("logicsugar.off", "off") : Integer.toString(value);
-            });
-        table.checkPref(logicsugar.vars.LogMessages.settingClearOnRestart, true,
-            b -> logicsugar.vars.LogMessages.clearOnRestart = b);
-    }
-
-    /** 变量表数值列的对齐方式（左/中/右循环，存 arc 的 {@code Align} 常量）。 */
-    public static class VarsAlignmentSetting extends SettingsMenuDialog.SettingsTable.Setting{
-        private static final int[] VALUES = {arc.util.Align.left, arc.util.Align.center, arc.util.Align.right};
-        private int current;
-        private Button button;
-
-        public VarsAlignmentSetting(String name, int def){
-            super(name);
-            Core.settings.defaults(name, def);
-            this.current = Core.settings.getInt(name, def);
-            logicsugar.vars.VarsOptions.alignment = current;
-        }
-
-        @Override
-        public void add(SettingsMenuDialog.SettingsTable table){
-            // single-cell row for the same grid alignment reason as FuncModeSetting
-            addDesc(table.table(box -> {
-                box.left();
-                box.add(title).padRight(12f).padLeft(4f);
-                button = box.button(button -> button.add(label()), Styles.logict, () -> {
-                    int index = 0;
-                    for(int i = 0; i < VALUES.length; i++){
-                        if(VALUES[i] == current) index = i;
-                    }
-                    current = VALUES[(index + 1) % VALUES.length];
-                    Core.settings.put(name, current);
-                    logicsugar.vars.VarsOptions.alignment = current;
-                    button.clearChildren();
-                    button.add(label());
-                }).minWidth(150f).height(44f).get();
-            }).minWidth(Math.min(500f, Core.graphics.getWidth() / 1.2f / Scl.scl(1f))).fillX().left().padTop(4f).get());
-            table.row();
-        }
-
-        private String label(){
-            return Core.bundle.get("logicsugar.vars.align." + current, Integer.toString(current));
         }
     }
 

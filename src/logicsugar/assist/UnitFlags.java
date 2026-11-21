@@ -29,7 +29,8 @@ import static mindustry.Vars.tilesize;
  *
  * <p>Zero is the vanilla default and is omitted so unmarked units stay clean. Non-finite
  * values are skipped. Units outside the camera (plus a generous margin) and units hidden
- * by fog are not drawn. Text placement matches {@link ProcessorStatus}: the label sits
+ * by fog are not drawn. Text placement follows the same convention the removed
+ * {@code ProcessorStatus} overlay used: the label sits
  * on the top edge of the hitbox, using {@code Drawf.text()} for the pixelate-aware layer
  * and {@code Fonts.outline} in world space.</p>
  */

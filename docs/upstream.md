@@ -1,124 +1,137 @@
-# 上游基线（MlogDevTools / 原 MlogAssertions）
+# 上游基线（Mlog Dev Tools / 原 MlogAssertions）
 
-LogicSugar 的断言/断点子系统与调试工具（Vars / Memory / Properties 界面、快照、Profiler、处理器日志）对齐
-cardillan/MlogDevTools 的 **v0.12.1**（仓库在 v0.12.0 前后从 MlogAssertions 改名为 MlogDevTools，tag 与源
-码包的 `cardillan.mlogassertions` 包名未变）。本文记录基线怎么取得、跟了哪些行为、明确不移植什么，
-以及四处线格式例外；实现叙述见[架构总览](architecture.md)的「断言子系统」「变量/内存/属性界面与快照」
-「处理器日志」「Profiler」，测试入口见[测试指南](testing.md)。
+**结论：LogicSugar 不再移植 Mlog Dev Tools（MDT，原名 MlogAssertions）。** 断言/断点指令卡与运行时、
+Vars / Memory / Properties 界面、快照、Profiler、处理器状态指示、处理器日志窗口、三击入口和方块配置面板
+都已删除；存档里已有的调试行只由 `mindustry.logic.SugarDebugLines` 做**文本直通**，运行时行为归 MDT。
+本文记录这个决定、它成立的技术原因、仍然必须保持的线格式，以及明确不带走的部分。实现细节见
+[架构总览](architecture.md)「MDT 调试行直通」；测试入口见[测试指南](testing.md)。
 
-## 参考源码与同步方式
+## 为什么移除
 
-- 基线 v0.12.1：参考源码在工作区 `../_upstream/MlogDevTools-0.12.1`，由
-  `gh api repos/cardillan/MlogDevTools/tarball/refs/tags/v0.12.1` 取得；`../_upstream/MlogDevTools-0.12.0` 留着作上一版对照。
-- 历史快照 `../_upstream/MlogAssertions-0.11.8`、`-0.11.7`、`-0.11.6`、`-0.11.3` 与
-  `../_upstream/MlogAssertions-pr`（v0.8.2）只当历史参考，不作为当前行为依据。
-- 不要 `git fetch upstream`：本仓库不保留上游 remote；同步以上述快照 + GitHub tag/tarball 为准。
-- UI 落点：数据层 `logicsugar.vars`、对话框/入口 `logicsugar.vars.ui`、Profiler `logicsugar.profile`
-  与 `logicsugar.profile.ui`。这些只在客户端内存工作，不改变保存产物，因此不受“多人必须兼容原版”的
-  单机门禁约束。
+- **功能重叠**：MDT 自己提供同一批 opcode 的卡片、运行时和界面。两边同时安装时，同一个 opcode 只能有一个
+  解析器生效（`LAssembler.customParsers` 先到先得），移植版实际上只是 MDT 的第二份、且必须逐版本追平
+  它的线格式与运行时语义，维护成本全部落在本仓库，收益为零。
+- **保存产物不需要它**：LogicSugar 的存在前提是产物在任意原版客户端可解析。调试 opcode 本来就不是原版
+  指令，LogicSugar 做到「存档里的这些行不丢、不串行、不让后续跳转目标偏移」就够了，不需要自己执行它们。
 
-## 跟进历史
+## 为什么只能做文本直通（不能做语义层）
 
-### v0.11.3 → v0.11.6
+原版 `LParser` 把所有自定义解析器交给**同一个复用的 16 槽 token 数组**，并且**不告诉解析器本行实际写了
+多少个 token**（`tokens.length` 恒为 16）。上游 v0.12.0 的破坏性改名（旧 `log` 写游戏日志文件、新 `log`
+把消息存进处理器，旧语义改叫 `systemlog`）与 `snapshot` 新增 `steps` 槽，都要求解析器知道「这一槽在新版
+是分类、在旧版是消息」才能正确解释；只靠 `tokens.length` 永远分不清，而按写法分流只能还原**行形状**、不能
+还原语义。LogicSugar 既然不再拥有这些卡片，就不该继续维护那张语义表——那正是移植版要逐版本追平、也最容易
+漂移的部分。
 
-- **内存表导入上限**：`logicsugar.vars.MemoryText` 按内存块 `writeUTF` 的口径拒绝超过 65535 **UTF-8 字节**
-  的字符串；导入仍是两阶段 `validate → read`，超长按坏行报行号且不写入，部分失败不会写坏内存。
-- **三击不打开本客户端不可访问的方块**：三击入口与 `InstrumentationEngine.getInstrumentation` 都先判
-  `Building.displayable()`（即 `LogicBuild.accessible()`）；世界处理器、禁止编辑地图上的处理器不弹窗、不统计。
-- **失败断言 / `error` 的停机语义**：非断点分支在回退 `counter` + `yield` 之外写 `exec.stop`，消息仍由
-  `ProcessorStatus` 绘制在处理器上方。
-- **Profiler 界面重做与快路径**：`noYielding` 名单 + `DevToolsInstruction.yields()`；12 个调试指令的
-  `yields()` 取值与上游逐字一致；`Instrumentation.isCovered` 合并 `steps` 与 `covered` 两个来源。
-- **五个视图开关持久化**：hex / 排序 / 隐藏临时变量 / 隐藏链接 / 全精度。键名用本 mod 自己的
-  `logicsugar.vars*`，不跟上游的 `mlogdevtools-*`。
+直通层只做两件事：
 
-### v0.11.6 → v0.11.7
+1. 记录该 opcode 的**定长线格式**（`snapshot`/`log` 两个家族按判别槽的写法选 4/5 或 12/13），把一行原样
+   还原成同样的 token 序列；
+2. 产出一条**惰性指令**（`NoopI`）占住一个指令槽。
 
-上游只有一个提交「Fix possible crash」，三处守卫全部跟：
+详细规则见 `SugarDebugLines.tokenCount`（`src/mindustry/logic/SugarDebugLines.java:209`）与它的 arity
+表；`SugarDebugLines.Line.build(LAssembler)` 永远返回 `NoopI`，绝不返回 `null`——`LAssembler` 会丢掉 null
+指令，之后的每个跳转目标都会错位。
 
-1. `Instrumentation.createSnapshot`：`Snapshots.create` 返回 `null`（快照上限被设成 0）时既不登记也不入列。
-2. `InstrumentationEngine.getInstrumentation`：对 `!build.displayable()`（本客户端不可访问的世界处理器）
-   返回 `null`。
-3. `SnapshotI`：`master == null` 时不写 recording（本仓库从 v0.11.3 移植起已带着，`assertTest` 钉住）。
+## 直通层的边界
 
-### v0.11.7 → v0.11.8
+- **没有卡片**：`installParsers()` 只写 `LAssembler.customParsers`，不往 `LogicIO.allStatements` 加任何
+  条目，因此选板里没有调试积木，也没有分类。
+- **没有运行时**：解析出的行在画布上是只读文本，装配成 `NoopI`；断言失败、断点、快照、Profiler 全部由
+  MDT 自己的运行时处理。
+- **注册顺序**：本模组在 `ClientLoadEvent` 之后的 `Core.app.post` 步骤里调用
+  `SugarDebugLines.installParsers()` 并且**跳过已被占用的 opcode**，所以 MDT 先注册就永远是 MDT 的解析器
+  （`src/logicsugar/LogicSugarMod.java:233`，位于 `installEditor` 内）。反编译的安全门在用户动作时也会确保解析器存在
+  （`SugarDecompiler.installSugarParsers`），同样遵循先到先得。
+- **保存产物**：`AssertEmit=emit`（调试构建）把糖源码里的调试行原样写进产物；`strip`（默认、也是联机强制
+  口径）编掉它们。判据是**写出的文本**（`SugarDebugLines.isDebugStatement` / `writeDebugStatement`），
+  不是本模组的 `Line` 类型：装了 MDT 时这些 opcode 归 MDT 的解析器，程序里拿到的是 MDT 自己的语句类，
+  strip 仍按 opcode 文本把它编掉，emit 则逐字节调用它自己的 `write()`。糖源码本身始终在载体里，所以
+  两种口径下重开都能拿回同一行。
 
-上游只有一个修复提交：`SnapshotManager.liveView` 对「从未载入过代码的处理器」加
-`executor.counter != null` 守卫（三击刚创建的空处理器不再崩溃）。
+## 明确不随移植带走的部分
 
-- 没载入过代码的处理器 `executor.counter` 是 `null`——只有 `LExecutor.load` 才会创建它并赋 `@counter`——
-  而 `ProcessorVars` 的构造期 `numvar(...)` 会立刻求值 `timeWaited()` → `executor.counter.numval`，
-  所以旧写法对这类方块必 NPE。加守卫后这类方块在 `liveView` 里退化为 `SensorVars`（属性视图）。
-- 本仓库同根的第二条可达路径是处理器配置面板的「快照」按钮（`BlockConfigAccess` 通往同一套快照
-  创建代码），同一守卫一起挡住。修完后对空处理器建快照是**静默不产**而不是崩溃：
-  `ProcessorSnapshot.create` 的 `executor.vars.length == 0` 守卫让创建返回 `null`。
-- 真实崩溃路径需要一块活的 `LogicBuild`（`LogicBlock` 构造会读 `Vars.content`），无头环境构造不出来，
-  因此自动化侧是 `VarsDataTest` 的源码钉子 + 变异验证（与 v0.11.7 那次的约定相同）。
+| 能力 | 现在归谁 | 本仓库的处理 |
+| --- | --- | --- |
+| 断言/断点/`error`/`log`/`systemlog`/`snapshot`/`profile`/`restart` 的运行时语义 | MDT | 只保留文本直通；`SugarDebugLines` 不解释 token |
+| 断言指令卡、`assert` 卡、失败消息占位符引擎 | MDT | 卡片与消息格式化代码已删除 |
+| Vars / Memory / Properties 对话框、三击入口、方块配置面板按钮 | MDT | 全部删除；原版「变量」按钮原样保留 |
+| 快照（isolated / connected / recording / global）与快照队列 | MDT | 删除；`snapshot` 行只作文本保存 |
+| Profiler、指令包装器、覆盖率/配额统计 | MDT | 删除；`profile`/`restart` 行只作文本保存 |
+| 处理器状态指示、处理器自带日志窗口、wait 指示圈 | MDT | 删除；`log`/`systemlog` 行只作文本保存 |
+| `max-instructions`（指令预算覆盖） | 不提供（本仓库硬不变式：产物恒 ≤1000 条） | 见[架构总览](architecture.md)「保存预算钉」 |
 
-### v0.11.8 → v0.12.0
+本仓库**保留**的调试相关能力只有两项，都不依赖 MDT：
 
-上游这一版只有一个功能提交（`a32fa15e`，发布提交为 `8bfa33b`）：
+1. 调试行文本直通（上面全部内容）；
+2. `AssertEmit=emit` 构建下表达式层自己发射的数组/矩阵越界检查（`assertBounds`，KEEP(P4)），它的线格式
+   签名与 strip/emit 规则见[重建规则](reconstruction.md)「生成式越界检查」。
 
-1. **`log` 重命名为 `systemlog`**（破坏性）。旧的 `log` 写游戏日志文件，新 `log` 把消息存进处理器；
-   本仓库跟这个重命名，并额外保留旧 `log` 文本的读取（见「线格式例外」第 4 条）。
-2. **处理器自带日志**：`LogMessages`（每处理器一份定长队列、上限、「重启清空」）与 `LogDialog`
-   （级别/分类过滤、帧号、复制/导出/清空）。设置项落到本 mod 的 `logicsugar.logMessageLimit` /
-   `logicsugar.logClearOnRestart`，默认 100 条 / 开启清空，注册在 `addVarsPrefs`（自有设置页与 Neon
-   聚合页共用）。`log` 卡片新增分类槽，运行时用分类变量做前缀。
-3. **入口调整**：`VarsDialog` 标题栏与 Edit 菜单各加一个日志按钮；处理器配置面板的「快速快照」按钮
-   换成日志按钮（快照仍在 Vars 界面里）；`VarsDialog` 的帮助页加一行日志说明，并修了单图标帮助行
-   的居中（colspan 单元格里套一层子表）。
-4. **同批不显眼的两处修复**：`SensorVars` 把四个 camera 访问从 Properties 列表里剔除（v160 的
-   `LAccess.privilegedAccess`，对实体读数恒为 0）；`Snapshots.SnapshotRecord.add` 先按当前上限裁剪再
-   入队（上限调小、`updateLimit()` 还没跑时不再多留一条）。拆方块时的清理改成「任意建筑」
-   （connected/global 快照可能收进非处理器建筑）。
+## 首次启动的 MDT 推荐（`MdtRecommendation`）
 
-两处有意偏离：`LogI.vars()` 把分类槽算进指令变量（上游漏了，recording 快照会漏值）；旧 `log` 文本
-按第 3 槽写法分流成 `systemlog`（上游直接按新格式读，会串用 `LParser` 复用数组里的陈旧 token）。
+解耦后单独安装 LogicSugar 就没有调试界面了，所以独立形态首次启动时会弹一次推荐：建议玩家再装 MDT。
+它**不碰保存产物**（只下载/安装另一个 mod，不改变任何编译结果），因此没有联机门禁；但它会改磁盘上的
+`mods/` 并重启游戏，所以实现上刻意保守：
 
-### v0.12.0 → v0.12.1
+- **只弹一次**：`ClientLoadEvent` 后延后约 1 秒，标志 `logicsugar.mdt.recommendShown` 在对话框
+  `shown()` 时写入——按 Esc 关掉也算看过，不会下次启动再弹。检测到 MDT 已安装（旧名
+  `mlog-assertions*`、新名 `mlogdevtools`、显示名、或 `mod-<name>-repo` 指向
+  `cardillan/MlogDevTools` 任一命中）时直接写标志、不弹下载窗；装在但禁用也算已安装，因为再下一份副本
+  并不能解决问题。
+- **最低版本 0.12.3**（`minMdtVersion`）：0.12.3 之前的 MDT 加载项在窗口尺寸变化时会击穿 LS 编辑器
+  （MDT PR #11 修的就是这个）。所以「已安装但版本过低」走另一条**一次性**提示
+  （`logicsugar.mdt.updateNoticeShown`，文案 `logicsugar.mdt.update`）：只给 GitHub / 模组浏览器两个手动
+  更新入口，**不提供下载**（那会并排再装一份）。版本比较是 `MdtRecommendation.versionAtLeast` 的纯
+  数字点段比较：`-` / `+` 后缀忽略，缺段按 0，null / 乱码一律判 false（未知版本不算够新）。
+- **下载也过版本门**：镜像可能落后于最新 release，所以 `readMeta` 之后、`importMod` 之前用同一比较器
+  拒绝低于 0.12.3 的 jar，删掉文件并弹 `logicsugar.mdt.tooold`。
+- **不打断别的弹窗**：同一事件里编辑器冲突询问也会弹窗，所以本弹窗延后并在
+  `Core.scene.hasDialog()` 时重试（最多 20 次、每次约 2 秒）；重试耗尽则本次启动放弃且**不写标志**。
+- **不在聚合形态出现**：`bekBundled`（Neon）自带模组选择，不该再指路去装一个聚合包外的 mod；headless
+  服务器也没有玩家可问。这是刻意的双形态差异，Neon 侧不需要对应入口。
+- **四个按钮**：`不了` / `跳转到 Github Release` / `跳转到模组浏览器` / `下载`。前两个手动通道永远可用，
+  也是「最新 MDT 要求更新的游戏」时的唯一出路。
+- **`下载` 按 IP 分流**：并行探测 Cloudflare trace、`api.ip.sb`、`ipapi.co`（任一命中中国即按中国处理，
+  全部失败则回落到系统 `Locale` 的 CN 判定）。中国网络走镜像池立即下载并重启；非中国网络直接打开
+  游戏内模组浏览器并把搜索框填成 `Mlog Dev Tools`（GitHub 本身可达，浏览器也是正常更新通道）。
+- **镜像池**：取 Xenon `MirrorDownloader.MIRRORS` 的子集并按 2026-11 实测排序（`gh-proxy.com`、
+  `github.chenc.dev` 同时支持 API 与 jar，其余只支持 jar），每条约写成 `<mirror>/<完整 github URL>`，
+  **直连 GitHub 永远是最后一条**。先经镜像读 release 元数据拿到带版本号的资产地址（资产在 v0.12.0
+  由 `MlogAssertions.jar` 改名成 `MlogDevTools.jar`，写死一个名字迟早失效），元数据拿不到才回落到
+  `releases/latest/download/MlogDevTools.jar`。每个响应都校验 zip 头与 `Content-Length`（实测有镜像
+  200 后只吐 49KB），坏响应换下一条；元数据 25 秒、jar 90 秒各自独立预算，取消按钮随时生效。
+- **版本门**：导入前用 `Vars.mods.findMeta(new ZipFi(file))` 读 MDT 的 `minGameVersion`，低于
+  `Version.isAtLeast` 就拒绝并提示两个版本号——直接导入只会得到一个游戏不认的 mod。
+- **安装与重启**：走游戏自己的 `Vars.mods.importMod(file, true)` 并补 `setRepo(repo)`（否则模组浏览器
+  认为没装、也不会给更新提示），随后 `showInfoOnHidden` + `Core.app.exit()`，与游戏导入 mod 后的
+  `mods.reloadexit` 流程一致。
 
-上游只有一个发布提交（`7afbb002`），除 `mod.hjson` 版本号外只改 `ui/Assertions.java` 的 `drawWait`：
+实现见 `src/logicsugar/MdtRecommendation.java`，无网自测见[测试指南](testing.md) 的
+`mdtRecommendTest`。
 
-- **wait 指示圈的尺寸修复**：`Fill.arc` 半径、`Lines.stroke` 线宽、`Lines.poly` 半径三处去掉外层的
-  `Scl.scl(...)`。这三者在相机变换下按**世界坐标**绘制，再乘一次 UI 缩放等于把 `uiScale` 应用两遍，
-  非 1 缩放（移动端、放大 UI）上圆环明显偏大；桌面默认 `uiScale=1` 时 `Scl.scl(1)=1` 才看不出。
-  同函数里字体缩放 `1 / 4f / Scl.scl(1f)` 上游没有动，本仓库也保留。
+## 历史线格式例外（改前先读）
 
-绘制无法在无头环境断言，因此自动化侧是 `processorStatusTest` 里的源码钉子（`drawWait` 方法体不得出现
-`Scl.scl(`，同时正向钉住三条世界坐标调用），与 v0.11.7 / v0.11.8 那两次 UI 修复的约定相同。
+这些形状是**已有存档里真实存在**的文本，直通层必须逐字节保留它们；它不判断语义，因此没有「读成哪张卡」
+的问题，但**任何归一化都会改写用户存档**，所以下面每一条都必须在 `debugPassthroughTest` 与
+`ReconstructionMatrixTest` 的调试行 fixture 里钉住：
 
+1. **`asserttype` 的 token 顺序**：上游 v0.10 起是 `<type> <value> <message>`；旧存档里仍可能是
+   `<value> <type> <message>`。直通层两者都按同一 arity（4）原样保留，不猜测哪个是类型名。
+2. **`asserttype` 的 `null` 类型**：LogicSugar 曾扩展「空值断言」（线上写 `null`，上游
+   `AssertionDataType` 不识别）。直通层不解释类型表，这个 token 与其它 token 一样原样保留。
+3. **`snapshot` 的两种形状**：当前是 `snapshot <type> <block> <steps> <message>`（5 token，v0.11.2 起，
+   含 `recording`）；旧文本是 `snapshot <type> <block> <message>`（4 token，LogicSugar ≤5.7.2）。判别靠
+   **第 4 槽的写法**：`~` / 引号开头 / `null` / 空只能是旧式消息，因此旧存档不会多长出一个 `steps` 槽。
+4. **`log` 的两种形状**：当前是 `log <level> <category> <msg> <p1..p9>`（13 token，v0.12）；旧文本是
+   `log <level> <msg> <p1..p9>`（12 token，没有分类槽）。判别同样靠**第 3 槽的写法**（`~` / 引号开头 /
+   `null` / 空 = 旧式消息）。这是上面「16 槽复用数组」问题的直接后果：按 token 数量永远分不清，只能按写法。
+5. **`~` 占位**：空槽在线上写 `~`（LogicSugar 的既有约定）。直通层保留 `~` 原样，不把空槽归一成别的
+   占位符。
 
-## 明确不移植
+## 参考源码
 
-- **`max-instructions`（指令预算覆盖）**：处理器保存产物恒 ≤1000 条是硬不变式，见根 `AGENTS.md`。
-- **v0.11.5「自动 profile 全部处理器」游戏规则**（`data/CustomGameRules` + `Accessor` + `MapIndex`）：
-  需要反射挂 4 个 `CustomRulesDialog`（MindustryX 路径不同）并把 `rules.tags` 写进地图状态，收益小、兼容风险大。
-- **`ConfigEvent` 的精细判断**（`instructions != instrumentation.instructions` 才重建）：那是为自动 profile
-  服务的微优化；本 mod 保持“配置变更就丢弃重建”的简单口径。
-- **身份类改动**：设置键前缀 `mlogdevtools-*`、mod 改名、Gradle Groovy → KTS、`README_zh` 均不跟。
-  持久化键用 `logicsugar.vars*`，设置分类仍是本 mod 自己的 `logicsugar.*`。
-
-## 与 MindustryX 共存
-
-方块配置面板必须与 MindustryX 共存：探测到 fork 自带 `LogicSupport` 时，先调用方块自己的
-`buildConfiguration`，再追加本 mod 的按钮——是 append，不是 replace。
-
-## 线格式例外（改前先读）
-
-四处与上游不完全一致。改动前先看 `SugarAsserts` 里对应卡片的注释与 `assertTypeTest` / `assertTest`：
-
-1. **`asserttype` 的 `null` 类型**：LogicSugar 扩展（上游 `AssertionDataType` 不识别 `none`/`null`）。
-2. **`asserttype` token 顺序**：上游 v0.10 起为 `<type> <value>`；旧序仍可读，保存统一写新序。
-3. **`snapshot` 5 槽文本**：上游 v0.11.2 起为 `type block steps message`；旧 3 载荷 token 文本按第 4 槽写法
-   分流仍可读，清空的 `steps` 保存时归一为默认 `20`。
-4. **`log` / `systemlog` 的旧文本迁移**：上游 v0.12.0 把旧 `log`（写游戏日志文件）硬改名为 `systemlog`，
-   旧 `log` 文本按新格式读会串用 `LParser` 复用数组的陈旧 token。本仓库的 `parseLog` 用第 3 槽的**写法**
-   分流：`~` / 空 / 引号开头 = 旧式消息模板（读成 `SystemLogCard`，重写输出 `systemlog`）；其余
-   （`null`、裸变量名、数字）按新 `log` 的 `category` 读。因此手写「带引号的分类」会被读成 `systemlog`
-   （唯一二义情形）；`LogCard.write` 把清空的分类归一为 `null`，保证新文本永远不会落进旧式分支。
-   存量 `emit` 产物里的旧 `log` 指令同样安全：反编译 verify 门的输入归一化也先过 `parseLog`，
-   `LAssembler.write` 会把旧式 `log` 写成 `systemlog`，两侧一致，恢复出的卡片保持写游戏日志的语义。
-
-除此之外，断言指令族、`profile` / `restart` 卡、`recording` 快照类型以及停机/断点语义均按 v0.12.0 对齐，
-wait 指示圈的绘制缩放按 v0.12.1 对齐。
+- 历史基线快照仍在工作区 `../_upstream/`：`MlogDevTools-0.12.1`（最后的移植基线）、`-0.12.0`、
+  `MlogAssertions-0.11.8` / `-0.11.7` / `-0.11.6` / `-0.11.3` 与 `MlogAssertions-pr`（v0.8.2）。
+- 它们现在只用于**核对线格式**与回答「旧存档里这一行为什么是这个样子」，不再是本仓库的行为基线，也不再
+  要求逐提交跟进。不要 `git fetch upstream`：本仓库不保留上游 remote。
+- MDT 的运行时与界面以 MDT 自己的发布为准；本仓库不改写、不替代它。

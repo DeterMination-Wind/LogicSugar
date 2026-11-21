@@ -384,8 +384,8 @@ public class BottomBarLayoutTest{
         Element vanillaAdd = row.getChildren().get(3);
         check(row.find("add") == null, "vanilla leaves its Add button anonymous");
 
-        // SugarLogicDialog.installSugarButtons(): funclib + discard appended, then
-        // installVarsButton() removes the variables button and appends its replacement.
+        // SugarLogicDialog.installSugarButtons(): funclib + discard appended, then a replacement
+        // variables button removes the vanilla one and is appended at the end of the row.
         row.add(new Button(new Button.ButtonStyle())).name("funclib");
         row.add(new Button(new Button.ButtonStyle())).name("funclib-discard");
         row.find("variables").remove();
