@@ -25,6 +25,7 @@ public final class MdtRecommendationTest{
 
     public static void main(String[] args) throws IOException{
         releaseIdentity();
+        versionComparator();
         mirrorChain();
         assetResolution();
         countryVerdict();
@@ -150,7 +151,45 @@ public final class MdtRecommendationTest{
         check(!MdtRecommendation.looksLikeZipHead(null, 4), "null head");
     }
 
-    /** Every literal key the dialog uses must exist in all three bundles. */
+    /**
+     * The minimum-version gate. MDT 0.12.2 and older crash the LogicSugar editor on resize, so the
+     * comparator must be exact about the boundary and must never treat unknown text as new enough.
+     */
+    private static void versionComparator(){
+        check("0.12.3".equals(MdtRecommendation.minMdtVersion),
+            "the minimum must be the MDT fix release (PR #11), got " + MdtRecommendation.minMdtVersion);
+
+        check(MdtRecommendation.versionAtLeast("0.12.3", "0.12.3"), "equal versions are at least");
+        check(MdtRecommendation.versionAtLeast("0.12.3", "0.12.2"),
+            "0.12.3 must pass a 0.12.2 requirement");
+        check(!MdtRecommendation.versionAtLeast("0.12.2", "0.12.3"),
+            "0.12.2 must fail the 0.12.3 requirement");
+        check(!MdtRecommendation.versionAtLeast("0.12.1", "0.12.2"),
+            "0.12.1 is older than 0.12.2");
+        check(MdtRecommendation.versionAtLeast("0.13", "0.12.3"), "a newer minor wins");
+        check(MdtRecommendation.versionAtLeast("1", "0.99.99"), "a newer major wins");
+        check(MdtRecommendation.versionAtLeast("0.12.3.1", "0.12.3"),
+            "missing required segments count as 0, extra actual segments count");
+        check(!MdtRecommendation.versionAtLeast("0.12", "0.12.3"),
+            "missing actual segments count as 0");
+        check(MdtRecommendation.versionAtLeast("0.12.3-dev", "0.12.3"),
+            "a pre-release suffix after '-' is ignored");
+        check(MdtRecommendation.versionAtLeast("0.12.3+build7", "0.12.3"),
+            "a build suffix after '+' is ignored");
+        check(MdtRecommendation.versionAtLeast("v0.12.3", "0.12.3"), "a v prefix is tolerated");
+        check(MdtRecommendation.versionAtLeast(" 0.12.3 ", "0.12.3"), "whitespace is trimmed");
+
+        for(String garbage : new String[]{null, "", " ", "latest", "0.12.x", "0..3", "0.12.3.4.5a",
+            "v", "-0.12.3"}){
+            check(!MdtRecommendation.versionAtLeast(garbage, "0.12.3"),
+                "garbage must never count as new enough: " + garbage);
+        }
+        check(!MdtRecommendation.versionAtLeast("0.12.3", null),
+            "a null requirement has no comparison and must fail");
+    }
+
+    /**
+     * Every literal key the dialog uses must exist in all three bundles. */
     private static void bundleContract() throws IOException{
         File root = SourceNails.root();
         String[] keys = {
@@ -158,13 +197,22 @@ public final class MdtRecommendationTest{
             "logicsugar.mdt.github", "logicsugar.mdt.browser", "logicsugar.mdt.download",
             "logicsugar.mdt.detecting", "logicsugar.mdt.downloading", "logicsugar.mdt.downloaded",
             "logicsugar.mdt.invalid", "logicsugar.mdt.incompatible", "logicsugar.mdt.failed",
-            "logicsugar.mdt.opened", "logicsugar.mdt.browserfailed"
+            "logicsugar.mdt.opened", "logicsugar.mdt.browserfailed",
+            "logicsugar.mdt.update", "logicsugar.mdt.tooold"
         };
         for(String name : new String[]{"bundle.properties", "bundle_zh_CN.properties", "bundle_zh_TW.properties"}){
             Properties bundle = load(root, name);
             for(String key : keys){
                 check(bundle.getProperty(key) != null, name + " is missing " + key);
             }
+            // The old "running both together stays bug-free" claim is exactly what 0.12.2 broke:
+            // the prompt must state the minimum version instead of promising compatibility.
+            String recommend = bundle.getProperty("logicsugar.mdt.recommend");
+            check(!recommend.toLowerCase(java.util.Locale.ROOT).contains("bug-free")
+                    && !recommend.contains("不会有 Bug") && !recommend.contains("不會有 Bug"),
+                name + ": the prompt must not claim the combination is bug-free");
+            check(recommend.contains("0.12.3"),
+                name + ": the prompt must state the MDT minimum version");
             // The button labels are literal (no format args); the failure texts are formatted.
             for(String key : new String[]{"logicsugar.mdt.no", "logicsugar.mdt.github",
                 "logicsugar.mdt.browser", "logicsugar.mdt.download"}){
@@ -173,6 +221,12 @@ public final class MdtRecommendationTest{
             String incompatible = bundle.getProperty("logicsugar.mdt.incompatible");
             check(incompatible.contains("{0}") && incompatible.contains("{1}"),
                 name + ": the incompatible text must name both versions");
+            check(bundle.getProperty("logicsugar.mdt.update").contains("{0}")
+                    && bundle.getProperty("logicsugar.mdt.update").contains("{1}"),
+                name + ": the update notice must name the required and installed versions");
+            check(bundle.getProperty("logicsugar.mdt.tooold").contains("{0}")
+                    && bundle.getProperty("logicsugar.mdt.tooold").contains("{1}"),
+                name + ": the too-old refusal must name the required and downloaded versions");
         }
     }
 
@@ -192,9 +246,36 @@ public final class MdtRecommendationTest{
         check(maybe.contains("Vars.headless"), "a headless server has no player to ask");
         check(maybe.contains("Core.settings.getBool(settingShown, false)"),
             "the prompt must be one-shot");
-        check(maybe.contains("if(installed())"), "an installed MDT must suppress the prompt");
-        check(maybe.contains("Core.scene.hasDialog()"),
+        check(maybe.contains("if(installed())"), "an installed MDT must suppress the download prompt");
+        check(maybe.contains("isInstalledOutdated()"),
+            "an installed but too-old MDT must be detected instead of being silently accepted");
+        check(maybe.contains("settingUpdateNoticeShown"),
+            "the update notice is one-shot, with its own key");
+        check(!maybe.contains("showPrompt();"),
+            "the download prompt must only run through the deferred helper; otherwise it can stack on the conflict prompt");
+        String deferred = SourceNails.methodBody(source, "private static void deferOrShow(Runnable action){");
+        check(deferred.contains("Core.scene.hasDialog()"),
             "two modals at once cover each other; defer while another dialog is open");
+        check(deferred.contains("MdtRecommendation::maybeShow"),
+            "the deferred retry must re-run the whole decision (download prompt vs update notice)");
+        check(deferred.contains("action.run()"), "when the screen is free the chosen action runs");
+
+        String notice = SourceNails.methodBody(source, "private static void showUpdateNotice(){");
+        check(notice.contains("Core.bundle.format(\"logicsugar.mdt.update\""),
+            "the update notice must tell the player both versions");
+        check(notice.contains("\"@logicsugar.mdt.github\"") && notice.contains("\"@logicsugar.mdt.browser\""),
+            "the update notice must offer both manual update routes");
+        check(notice.contains("Core.settings.put(settingUpdateNoticeShown, true)"),
+            "the update notice flag belongs to shown(), so Esc does not make it return next launch");
+        check(!notice.contains("@logicsugar.mdt.download"),
+            "the update notice must not offer Download: it would install a second copy next to the installed one");
+        check(!notice.contains("showPrompt"),
+            "the update notice must not fall back to the first-launch download prompt");
+
+        check(source.contains("static String installedVersion()"),
+            "the installed version must come from the loaded mod's metadata");
+        check(source.contains("static boolean isInstalledOutdated()"),
+            "the outdated check must exist as its own predicate");
 
         String prompt = SourceNails.methodBody(source, "private static void showPrompt(){");
         check(prompt.contains("dialog.shown(() -> Core.settings.put(settingShown, true))"),
@@ -220,6 +301,17 @@ public final class MdtRecommendationTest{
             "the newest MDT may need a newer game; installing it anyway would leave a broken mod");
         check(flow.contains("Core.bundle.format(\"logicsugar.mdt.incompatible\""),
             "the version refusal must tell the player which versions disagree");
+        // A lagging mirror can serve an MDT older than the fix release. It must be refused before
+        // importMod(), with the file deleted, exactly like the minGameVersion refusal.
+        int tooOld = flow.indexOf("!versionAtLeast(meta.version, minMdtVersion)");
+        check(tooOld >= 0, "the download flow must refuse an MDT older than minMdtVersion");
+        check(tooOld < flow.indexOf("Vars.mods.importMod(file, true)"),
+            "the minimum-version gate must run before the importer sees the jar");
+        String gate = flow.substring(tooOld, flow.indexOf("Vars.mods.importMod(file, true)"));
+        check(gate.contains("file.delete()"),
+            "a too-old download must be deleted instead of left in the mods folder");
+        check(gate.contains("Core.bundle.format(\"logicsugar.mdt.tooold\""),
+            "the too-old refusal needs its own message (the incompatible one names a game version)");
         check(flow.contains("Vars.mods.importMod(file, true)"),
             "the download must go through the game's importer, which handles zip naming and enabling");
         check(flow.contains("loaded.setRepo(repo)"),

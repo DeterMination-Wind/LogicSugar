@@ -908,6 +908,22 @@ public class ArraySugarTest{
             check(!ExprHook.isGeneratedBoundsLine(manual), "a user-authored message must not match the signature");
             check(!ExprHook.isChainLine(manual), "a user-authored assertBounds must break the chain");
 
+            // 安装 MDT 后这两个断言行由 MDT 自己的语句类解析，本模组看不到 SugarDebugLines.Line：
+            // 判定必须在“渲染文本”上成立，同理手写的同 opcode 行仍然不认领。
+            ForeignDebugStatement foreignGenerated = new ForeignDebugStatement(
+                "assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"array 'buf' index out of bounds (0..7)\"");
+            check(ExprHook.isGeneratedBoundsLine(foreignGenerated),
+                "a foreign statement carrying the generated bounds text must be recognized");
+            check(ExprHook.isChainLine(foreignGenerated),
+                "a foreign generated bounds line must be a chain element");
+
+            ForeignDebugStatement foreignManual = new ForeignDebugStatement(
+                "assertBounds integer ~ 0 lessThanEq i lessThanEq 7 \"my own check\"");
+            check(!ExprHook.isGeneratedBoundsLine(foreignManual),
+                "a user-authored foreign assertBounds must not match the signature");
+            check(!ExprHook.isChainLine(foreignManual),
+                "a user-authored foreign assertBounds must break the chain");
+
             List<LStatement> single = new ArrayList<>();
             single.add(generated);
             single.add(readLine("x", "cell1", "i"));

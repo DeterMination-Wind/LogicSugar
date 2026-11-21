@@ -65,6 +65,10 @@ public class SugarLogicDialog extends LogicDialog{
     private TextButton cachedCopyButton;
     private Table cachedCopyMenu;
     private Dialog cachedCopyDialog;
+    /** Set by the edit button's click (see {@link #installEditHook}): the export dialog instance
+     *  we may mount menus into was opened by <em>our</em> button. A reference rather than a flag:
+     *  a stale flag could latch onto a later foreign dialog, while an instance can be re-checked. */
+    private Dialog pendingExportDialog;
     private TextButton originalViewButton;
     private Table originalViewMenu;
     private Dialog originalViewDialog;
@@ -155,6 +159,12 @@ public class SugarLogicDialog extends LogicDialog{
         // (clearChildren) on EVERY show — wiping anything added outside it. Re-append the
         // Sugar-owned buttons after each rebuild; find() guards make it idempotent.
         shown(this::installSugarButtons);
+        // Vanilla's onResize re-runs setup() — which clears `buttons` — whenever LCanvas.isCompact()
+        // or the portrait flag flips (window resize, phone rotation). `shown` does not fire again,
+        // so without this hook the Sugar buttons stay gone until the editor is reopened. The
+        // installer is idempotent (find() guards) and ends in layoutBottomButtons(), so repeating
+        // it on a resize neither duplicates listeners nor double-adds a control.
+        onResize(this::installSugarButtons);
         update(() -> {
             installEditHook();
             // Device-independent on purpose: mobile and narrow desktop windows take the same
@@ -216,6 +226,9 @@ public class SugarLogicDialog extends LogicDialog{
         // 持续为真，不挡住的话按住不放会一直撤销、一直粘贴。
         if(heldEditorShortcut != null && !Core.input.keyDown(heldEditorShortcut)) heldEditorShortcut = null;
         if(heldEditorShortcut != null || Vars.mobile || !isShown()) return;
+        // 盖在上面的对话框（MDT 的 Vars / Log / Profiler、函数库编辑器等）拥有快捷键。本对话框
+        // 仍然 isShown()，但底下的画布不该再撤销/重做——那会和上面那张各做一次。
+        if(!SelectionClipboardUi.isFront(this)) return;
         // 输入框优先。Mindustry 在点击非输入框处就会清掉焦点，所以这一问等价于"用户此刻在打字"。
         if(Core.scene != null && Core.scene.hasField()) return;
         if(!Core.input.ctrl() || Core.input.alt()) return;
@@ -263,7 +276,14 @@ public class SugarLogicDialog extends LogicDialog{
      * 认按钮只按形状，不按位置。）</p>
      */
     private void installAddButton(){
-        if(BottomBarLayout.claimAddButton(buttons) != null) return;
+        Element claimed = BottomBarLayout.claimAddButton(buttons);
+        if(claimed instanceof Button button){
+            // Vanilla disables @add at LExecutor.maxInstructions, which another mod may raise
+            // (MDT's slider). The saved product is still capped at the vanilla limit, so replace
+            // the predicate with the pinned budget: the control stops where the save would.
+            button.setDisabled(() -> canvas.statements.getChildren().size >= InstructionBudget.vanillaLimit());
+            return;
+        }
         buttons.button("@add", Icon.add, this::showAddDialog).name("add")
             .disabled(t -> canvas.statements.getChildren().size >= InstructionBudget.vanillaLimit());
     }
@@ -560,7 +580,12 @@ public class SugarLogicDialog extends LogicDialog{
         Element candidate = buttons.find("edit");
         if(candidate == editButton || !(candidate instanceof Button button)) return;
         editButton = candidate;
-        button.clicked(() -> Core.app.post(this::installCompiledCopy));
+        button.clicked(() -> Core.app.post(() -> {
+            // Keep the dialog instance this click just opened. The scan may only use that exact
+            // window, and the instance can be re-validated (still shown / still front) on retry.
+            pendingExportDialog = SelectionClipboardUi.exportDialog();
+            installCompiledCopy();
+        }));
     }
 
     private static int compressedLimit(){
@@ -574,19 +599,44 @@ public class SugarLogicDialog extends LogicDialog{
         }
     }
 
+    /**
+     * Mounts the compiled-copy (and later the other menu) actions into the game's export dialog.
+     *
+     * <p>The scan is deliberately narrow: only the export dialog instance that our own edit
+     * button opened ({@link #pendingExportDialog}) is considered, and only while it is still
+     * shown and still the front dialog. Scanning the scene by the localized
+     * {@code copy.clipboard} text used to latch onto <em>any</em> dialog with such a button —
+     * MDT's LogDialog has one — and inject LS's menu into another mod's window.</p>
+     */
     private void installCompiledCopy(){
-        if(cachedCopyButton != null && !inSceneTree(cachedCopyButton)){
+        if(cachedCopyButton != null && (!inSceneTree(cachedCopyButton) || cachedCopyDialog == null
+            || !cachedCopyDialog.isShown())){
             // the menu (and its dialog) was closed and detached; rescan from scratch.
             // A bare parent check is not enough: an old edit dialog's menu object may
             // survive hidden in the scene tree, so the stale button keeps matching it.
             clearCompiledCopyCache();
         }
-        if(cachedCopyButton == null){
-            TextButton found = findCopyButton(Core.scene.root);
+        Dialog export = pendingExportDialog;
+        if(export != null && (!export.isShown() || Core.scene == null
+            || Core.scene.getDialog() != export)){
+            // The captured instance was closed or covered by another dialog; it is no longer
+            // ours to mount into.
+            pendingExportDialog = null;
+            export = null;
+        }
+        if(export == null && cachedCopyButton == null){
+            // Fallback when the click-time capture missed (the export dialog may not have had
+            // focus yet): only the game's own export dialog passes the title check, so this
+            // still cannot mount into another mod's window such as MDT's LogDialog.
+            export = SelectionClipboardUi.exportDialog();
+        }
+        if(export != null && cachedCopyButton == null){
+            TextButton found = findCopyButton(export);
             if(found != null){
                 cachedCopyButton = found;
                 cachedCopyMenu = found.parent instanceof Table table ? table : null;
                 cachedCopyDialog = parentDialog(found);
+                pendingExportDialog = null;
             }
         }
         if(cachedCopyButton == null || cachedCopyMenu == null || cachedCopyDialog == null) return;
@@ -758,8 +808,8 @@ public class SugarLogicDialog extends LogicDialog{
         return SelectionClipboardUi.inSceneTree(element);
     }
 
-    private TextButton findCopyButton(Element element){
-        return SelectionClipboardUi.findCopyButton(element);
+    private TextButton findCopyButton(Dialog dialog){
+        return SelectionClipboardUi.findCopyButton(dialog);
     }
 
     @Override
@@ -1095,6 +1145,7 @@ public class SugarLogicDialog extends LogicDialog{
         }
         clearCompiledCopyCache();
         clearOriginalViewCache();
+        pendingExportDialog = null;
         super.hide();
     }
 

@@ -1191,15 +1191,19 @@ public final class SugarCompiler{
         return AssertEmit.strip;
     }
 
-    private static boolean containsSugar(Seq<LStatement> statements){
+    /** Package-private rather than private so the headless self-test can pin the early-return
+     *  decision directly ({@code DebugPassthroughTest}); production only calls it in this file. */
+    static boolean containsSugar(Seq<LStatement> statements){
         // every LogicSugar-owned card (SugarStatements structures, data declarations, expression
         // cards) descends from SugarStatement; vanilla statements never do. Debug passthrough
-        // lines (SugarDebugLines) count too: they are not cards, but they do change the saved
-        // stream (strip drops them, emit keeps them), so the program must go through lowering
-        // instead of the plain-vanilla early return — otherwise a strip save would keep them.
+        // lines count too: they are not cards, but they do change the saved stream (strip drops
+        // them, emit keeps them), so the program must go through lowering instead of the
+        // plain-vanilla early return — otherwise a strip save would keep them. Recognised by the
+        // written text (SugarDebugLines.isDebugStatement), because with MDT installed the parsed
+        // statement is MDT's class rather than this mod's SugarDebugLines.Line.
         for(LStatement statement : statements){
             if(statement instanceof SugarStatements.SugarStatement
-                || statement instanceof SugarDebugLines.Line) return true;
+                || SugarDebugLines.isDebugStatement(statement)) return true;
         }
         return false;
     }

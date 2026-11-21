@@ -49,7 +49,14 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>The prompt is standalone-only ({@code !bekBundled}) and shows at most once, even if it is
  * dismissed with Esc: the flag is written when the dialog is actually shown, not when it is
- * answered. A host that already ships MDT is detected up front and never sees it.</p>
+ * answered. A host that already ships MDT never sees the download prompt.</p>
+ *
+ * <p><b>Minimum version.</b> MDT before 0.12.3 shipped an editor addon that crashed the logic
+ * editor on resize, so this mod requires {@link #minMdtVersion} or newer. An installed but older
+ * MDT gets a one-time update notice instead of the download prompt (one key,
+ * {@link #settingUpdateNoticeShown}), and the download flow refuses a jar below the minimum
+ * instead of importing it. The check is a plain dot-segment comparison:
+ * {@link #versionAtLeast(String, String)}.</p>
  */
 public final class MdtRecommendation{
     /** Repository that publishes MDT (renamed from MlogAssertions at v0.12.0). */
@@ -60,6 +67,13 @@ public final class MdtRecommendation{
     static final String internalName = "mlog-assertions-8";
     /** Search text typed into the mod browser when the player is outside mainland China. */
     static final String browserQuery = "Mlog Dev Tools";
+    /**
+     * First MDT release whose editor addon is subclass-safe (MDT PR #11). Older builds crash the
+     * LogicSugar editor the first time the window is resized/rotated, so this is a hard minimum,
+     * not an "update when convenient": the download flow refuses anything below it and an
+     * installed older copy gets a one-time update notice.
+     */
+    static final String minMdtVersion = "0.12.3";
 
     static final String releasePage = "https://github.com/" + repo + "/releases/latest";
     static final String latestJarUrl = "https://github.com/" + repo + "/releases/latest/download/MlogDevTools.jar";
@@ -67,6 +81,8 @@ public final class MdtRecommendation{
 
     /** Set once the prompt has been shown, so it never nags on later launches. */
     static final String settingShown = "logicsugar.mdt.recommendShown";
+    /** Set once the "your MDT is older than 0.12.3" notice has been shown; also one-shot. */
+    static final String settingUpdateNoticeShown = "logicsugar.mdt.updateNoticeShown";
 
     /**
      * GitHub proxy prefixes, in the order they are tried. Taken from Xenon's
@@ -128,32 +144,49 @@ public final class MdtRecommendation{
     static void maybeShow(){
         if(shownThisSession || Vars.headless || Vars.ui == null) return;
         if(LogicSugarMod.bekBundled) return;
-        if(Core.settings.getBool(settingShown, false)) return;
 
         // Installed but disabled still counts: downloading another copy would not help, and the
         // mods dialog is where that state is fixed.
         if(installed()){
             Core.settings.put(settingShown, true);
+            // An installed copy below the minimum is the crash case MDT 0.12.3 fixed; point at
+            // the update once. Never show the download prompt: it would install a second copy.
+            if(isInstalledOutdated() && !Core.settings.getBool(settingUpdateNoticeShown, false)){
+                deferOrShow(MdtRecommendation::showUpdateNotice);
+            }
             return;
         }
 
+        if(Core.settings.getBool(settingShown, false)) return;
+        deferOrShow(MdtRecommendation::showPrompt);
+    }
+
+    /**
+     * Runs {@code action} unless another dialog owns the screen, in which case this retries the
+     * whole decision (the editor-conflict prompt is shown from the same event).
+     */
+    private static void deferOrShow(Runnable action){
         if(Core.scene != null && Core.scene.hasDialog()){
             if(++deferrals <= maxDeferrals){
                 Time.run(120f, MdtRecommendation::maybeShow);
             }else{
                 // Give up for this launch without writing the flag: the next launch tries again at
                 // a point where the screen is more likely to be free.
-                Log.info(logTag + " another dialog stayed open; the recommendation waits for the next launch.");
+                Log.info(logTag + " another dialog stayed open; the MDT recommendation waits for the next launch.");
             }
             return;
         }
-
-        showPrompt();
+        action.run();
     }
 
     /** Whether MDT is present, enabled or not. */
     static boolean installed(){
-        if(Vars.mods == null) return false;
+        return installedMdt() != null;
+    }
+
+    /** The loaded MDT mod, or {@code null} when it is absent. */
+    private static Mods.LoadedMod installedMdt(){
+        if(Vars.mods == null) return null;
         for(Mods.LoadedMod mod : Vars.mods.list()){
             if(mod == null) continue;
             String name = mod.name;
@@ -164,9 +197,24 @@ public final class MdtRecommendation{
             }catch(Throwable ignored){
                 // A headless test host has no settings; identity by name is enough there.
             }
-            if(isMdtMod(name, display, repoName)) return true;
+            if(isMdtMod(name, display, repoName)) return mod;
         }
-        return false;
+        return null;
+    }
+
+    /** Version of the installed MDT, or {@code null} when MDT is absent / its meta has none. */
+    static String installedVersion(){
+        Mods.LoadedMod mod = installedMdt();
+        return mod == null || mod.meta == null ? null : mod.meta.version;
+    }
+
+    /**
+     * Whether an MDT is installed but older than {@link #minMdtVersion}. An unknown version
+     * counts as outdated: the crash this gate exists for is worse than one update notice, and
+     * {@link #versionAtLeast} is deliberately strict about garbage.
+     */
+    static boolean isInstalledOutdated(){
+        return installed() && !versionAtLeast(installedVersion(), minMdtVersion);
     }
 
     /** Pure identity check: MDT across its old and new names, its display name and its repo. */
@@ -177,6 +225,66 @@ public final class MdtRecommendation{
             if(name.startsWith("mlog-assertions") || name.startsWith("mlogdevtools")) return true;
         }
         return display != null && display.trim().equalsIgnoreCase(displayName);
+    }
+
+    // ===== version gate =====
+
+    /**
+     * Whether {@code actual} is at least {@code required}, comparing dot-separated numeric
+     * segments (missing trailing segments count as 0).
+     *
+     * <p>A pre-release/build suffix after {@code -} or {@code +} is ignored
+     * ({@code 0.12.3-dev} equals {@code 0.12.3}); a leading {@code v} is tolerated. Anything else
+     * that is not pure numbers — null, empty, {@code "latest"}, a non-numeric segment — returns
+     * {@code false}: an unknown version must never be treated as new enough.</p>
+     */
+    static boolean versionAtLeast(String actual, String required){
+        int[] have = parseVersion(actual);
+        int[] need = parseVersion(required);
+        if(have == null || need == null) return false;
+
+        int length = Math.max(have.length, need.length);
+        for(int i = 0; i < length; i++){
+            int a = i < have.length ? have[i] : 0;
+            int b = i < need.length ? need[i] : 0;
+            if(a != b) return a > b;
+        }
+        return true;
+    }
+
+    /** Numeric dot segments, or {@code null} when the value is not a version this gate trusts. */
+    private static int[] parseVersion(String version){
+        if(version == null) return null;
+        String text = version.trim();
+        if(!text.isEmpty() && (text.charAt(0) == 'v' || text.charAt(0) == 'V')) text = text.substring(1);
+
+        int cut = text.length();
+        for(int i = 0; i < text.length(); i++){
+            char c = text.charAt(i);
+            // Both separators introduce a pre-release/build suffix, not more numeric segments.
+            if(c == '-' || c == '+' || Character.isWhitespace(c)){
+                cut = i;
+                break;
+            }
+        }
+        text = text.substring(0, cut);
+        if(text.isEmpty()) return null;
+
+        String[] parts = text.split("\\.", -1);
+        int[] numbers = new int[parts.length];
+        for(int i = 0; i < parts.length; i++){
+            String part = parts[i];
+            if(part.isEmpty()) return null;
+            for(int k = 0; k < part.length(); k++){
+                if(!Character.isDigit(part.charAt(k))) return null;
+            }
+            try{
+                numbers[i] = Integer.parseInt(part);
+            }catch(NumberFormatException e){
+                return null; // overflow: not a version number
+            }
+        }
+        return numbers;
     }
 
     // ===== prompt =====
@@ -202,6 +310,31 @@ public final class MdtRecommendation{
         dialog.buttons.button("@logicsugar.mdt.download", Icon.download, () -> beginDownload(dialog));
 
         dialog.shown(() -> Core.settings.put(settingShown, true));
+        dialog.show();
+    }
+
+    /**
+     * One-time notice for an installed MDT below {@link #minMdtVersion}. It offers only the
+     * manual update routes (GitHub / mod browser): downloading would install a second copy next
+     * to the one the player already has.
+     */
+    private static void showUpdateNotice(){
+        shownThisSession = true;
+
+        BaseDialog dialog = new BaseDialog(Core.bundle.get("logicsugar.mdt.title", "Note"));
+        float textWidth = Math.min(560f, Core.graphics.getWidth() / 1.25f / Scl.scl(1f));
+        dialog.cont.pane(p -> p.add(Core.bundle.format("logicsugar.mdt.update",
+                    minMdtVersion, String.valueOf(installedVersion())))
+                .width(textWidth).wrap().labelAlign(Align.left).pad(8f))
+            .growX().maxHeight(Core.graphics.getHeight() / 2.1f / Scl.scl(1f)).scrollX(false);
+
+        float buttonWidth = Math.min(240f, Core.graphics.getWidth() / 2.4f / Scl.scl(1f));
+        dialog.buttons.defaults().size(buttonWidth, 58f).pad(3f);
+        dialog.buttons.button("@logicsugar.mdt.github", Icon.github, MdtRecommendation::openReleasePage);
+        dialog.buttons.button("@logicsugar.mdt.browser", Icon.menu, MdtRecommendation::openBrowserSearch);
+        dialog.buttons.button("@ok", Icon.left, dialog::hide);
+
+        dialog.shown(() -> Core.settings.put(settingUpdateNoticeShown, true));
         dialog.show();
     }
 
@@ -342,6 +475,21 @@ public final class MdtRecommendation{
                     if(cancelled.get()) return;
                     hideLoading();
                     showFailure("logicsugar.mdt.invalid");
+                });
+                return;
+            }
+
+            // A mirror can lag behind the latest release and serve an older MDT. Everything below
+            // minMdtVersion crashes this editor on resize, so it must never be imported.
+            if(!versionAtLeast(meta.version, minMdtVersion)){
+                Log.warn(logTag + " downloaded MDT @ is older than the required @; not importing it.",
+                    meta.version, minMdtVersion);
+                String downloaded = String.valueOf(meta.version);
+                file.delete();
+                Core.app.post(() -> {
+                    if(cancelled.get()) return;
+                    hideLoading();
+                    showFailure(Core.bundle.format("logicsugar.mdt.tooold", minMdtVersion, downloaded));
                 });
                 return;
             }

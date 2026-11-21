@@ -390,6 +390,9 @@ public class BoxSelect{
                     if(Core.scene != null && Core.scene.hasField()) return false;
                     LogicDialog dialog = Vars.ui.logic;
                     if(dialog == null || !dialog.isShown()) return false;
+                    // 只让最上面的逻辑编辑器响应：MDT 的 Vars / Log / Profiler 对话框盖在上面时，
+                    // 底下的编辑器仍然 isShown()，少了这道门 Delete 会把下面画布的选区一起删掉。
+                    if(!SelectionClipboardUi.isFront(dialog)) return false;
                     if(state != State.SELECTED || selected.isEmpty()) return false;
                     LCanvas canvas = getCanvas();
                     if(canvas != null){

@@ -1,6 +1,7 @@
 package mindustry.logic;
 
 import arc.scene.ui.layout.Table;
+import arc.util.Log;
 import logicsugar.assist.expr.ExprCompiler;
 import mindustry.logic.LExecutor.LInstruction;
 import mindustry.logic.LExecutor.NoopI;
@@ -38,11 +39,16 @@ import java.util.regex.Pattern;
  * <p><b>Saved programs stay parseable.</b> An {@code assert}/{@code log}/… line written by a
  * debug build is ordinary text to this layer, so an emitted program still opens, round-trips
  * and re-saves; the compiler's strip/emit branch decides whether the line survives into the
- * saved mlog (see {@code SugarFunctions.lower}). Nothing here changes the multiplayer rule:
- * {@code AssertEmit} still forces {@code strip} while a network session is active.</p>
+ * saved mlog (see {@code SugarFunctions.lower}). That branch keys on the <em>written text</em>
+ * ({@link #isDebugStatement}), not on our {@link Line} class: when MDT is installed it owns the
+ * opcodes and parses those lines into its own statement classes, and strip must still remove
+ * them. Nothing here changes the multiplayer rule: {@code AssertEmit} still forces
+ * {@code strip} while a network session is active.</p>
  */
 public final class SugarDebugLines{
     private SugarDebugLines(){}
+
+    private static final String logTag = "[LogicSugar/debug]";
 
     /** The opcode family this layer keeps readable. Order is the registration order. */
     public static final String[] opcodes = {
@@ -75,10 +81,75 @@ public final class SugarDebugLines{
     public static boolean containsDebugLine(String text){
         if(text == null) return false;
         for(String line : text.replace("\r\n", "\n").split("\n", -1)){
-            String bare = line.trim();
-            for(String opcode : opcodes){
-                if(bare.startsWith(opcode + " ") || bare.equals(opcode)) return true;
-            }
+            if(startsWithDebugOpcode(line)) return true;
+        }
+        return false;
+    }
+
+    /** Whether one written line (not a whole program) begins with one of {@link #opcodes}.
+     *  The single-line half of {@link #containsDebugLine}, shared by the text pre-scan and the
+     *  statement-level check below so the two can never disagree about which spelling counts. */
+    public static boolean startsWithDebugOpcode(String line){
+        if(line == null) return false;
+        String bare = line.trim();
+        for(String opcode : opcodes){
+            if(bare.startsWith(opcode + " ") || bare.equals(opcode)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The wire text of one statement, or {@code null} when its {@code write()} throws.
+     *
+     * <p>This is the only handle on a debug statement MDT owns: when MDT is installed it removes
+     * our parsers for every opcode it knows, so the statement in the program is <em>MDT's</em>
+     * class, not {@link Line}. Rendering it is the same text contract the wire format already
+     * relies on.</p>
+     */
+    public static String statementText(LStatement statement){
+        if(statement == null) return null;
+        if(statement instanceof Line line) return line.text();
+        StringBuilder text = new StringBuilder();
+        try{
+            statement.write(text);
+        }catch(Throwable t){
+            // Not our class: a third-party write() may need editor state. The callers fall back
+            // to their old behaviour (normal write path / do not claim the line), never to a
+            // silently dropped instruction.
+            Log.warn(logTag + " could not render a foreign statement for the debug-line check", t);
+            return null;
+        }
+        return text.toString();
+    }
+
+    /**
+     * Whether {@code statement} is a debug line, whether it is our own {@link Line} (MDT absent,
+     * so this layer parsed it) or MDT's statement class (MDT present, so it owns the opcode).
+     *
+     * <p>Used by the compiler's {@code containsSugar} pre-check and by the strip/emit branch in
+     * {@code SugarFunctions.lower}. Pure text identity: no card type, no MDT dependency.</p>
+     */
+    public static boolean isDebugStatement(mindustry.logic.LStatement statement){
+        return statement instanceof Line || startsWithDebugOpcode(statementText(statement));
+    }
+
+    /**
+     * Writes one debug statement's wire text into {@code out}; {@code false} when the statement
+     * is not a debug line or cannot be rendered.
+     *
+     * <p>LS's own {@link Line} writes its stored text; a foreign (MDT) statement writes through
+     * its own {@code write()}, so the saved bytes stay whatever that mod defines. A render
+     * failure is reported by {@link #statementText} and left to the caller: {@code lower} then
+     * falls through to the normal write path, preserving the pre-existing exception behaviour
+     * instead of dropping the instruction.</p>
+     */
+    public static boolean writeDebugStatement(LStatement statement, StringBuilder out){
+        if(statement == null || out == null) return false;
+        String text = statementText(statement);
+        if(text == null) return false;
+        if(statement instanceof Line || startsWithDebugOpcode(text)){
+            out.append(text);
+            return true;
         }
         return false;
     }

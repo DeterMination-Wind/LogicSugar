@@ -1933,14 +1933,19 @@ public final class SugarFunctions{
                 SpanAccess.appendRead(out, read.output, read.target, read.address);
             }else if(statement instanceof WriteStatement write && SpanAccess.isSpan(write.target)){
                 SpanAccess.appendWrite(out, write.input, write.target, write.address);
-            }else if(statement instanceof SugarDebugLines.Line line){
+            }else if(SugarDebugLines.isDebugStatement(statement)){
                 // Debug builds (emit) pass MDT's assert/log/… lines through as text; the
                 // default (strip) compiles them away so the saved mlog stays vanilla-parseable
-                // — the sugar lives in the persistence carrier. Nothing runs here: the lines
-                // are pure wire-format compatibility (SugarDebugLines), runtime behaviour is
-                // Mlog Dev Tools' job.
+                // — the sugar lives in the persistence carrier. The test is the written text,
+                // so it also catches MDT's own statement classes (MDT removes our parsers and
+                // owns the opcodes whenever it is installed). Nothing runs here: runtime
+                // behaviour is Mlog Dev Tools' job.
                 if(assertEmit == SugarCompiler.AssertEmit.emit){
-                    line.write(out);
+                    if(!SugarDebugLines.writeDebugStatement(statement, out)){
+                        // write() failed (it already logged); keep the old failure direction:
+                        // the normal write path runs and reports it exactly as before.
+                        statement.write(out);
+                    }
                     out.append('\n');
                 }
             }else{

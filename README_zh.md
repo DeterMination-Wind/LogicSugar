@@ -111,7 +111,7 @@ Logic Sugar 支持多人游戏，这意味着您也可以高效理解其他同�
 | **跨逻辑复制粘贴** | 编辑菜单里的「复制选区 / 粘贴选区」，电脑上也可直接 `Ctrl+C` / `Ctrl+V`。剪贴板里存的是**糖码本身**，粘到别的处理器上仍然是一张张可继续编辑的积木；含跳转到选区之外的积木会被拒绝（数字下标换个程序就没有意义）。 |
 | **调试行直通** | 含 Mlog Dev Tools 调试行（`assert`、`log`、`snapshot`、`profile`、`restart` …）的程序仍能在这里打开、往返与再保存：每一行按纯文本保留、各占一个指令槽，跳转目标不会偏移。它**与 [Mlog Dev Tools](https://github.com/cardillan/MlogDevTools) 配合工作**，运行时与调试界面归 MDT；LogicSugar 本身不再捆绑断言积木、变量/内存/属性界面、快照或性能分析器。 |
 | **单位 flag 显示** | 设置中可选：在单位正上方显示其逻辑 flag，不同 flag 使用不同的鲜明颜色；默认值 0 不显示。 |
-| **首次启动推荐 MDT** | 独立安装时首次启动弹一次提示，推荐配合 [Mlog Dev Tools](https://github.com/cardillan/MlogDevTools) 获得完整调试能力：中国网络点「下载」即经镜像池下载 MDT 并重启生效，其它地区则直接打开模组浏览器并自动搜索 MDT；也可跳转 GitHub Release 手动安装。只弹一次，Neon 聚合形态不弹。 |
+| **首次启动推荐 MDT** | 独立安装时首次启动弹一次提示，推荐配合 [Mlog Dev Tools](https://github.com/cardillan/MlogDevTools) 获得完整调试能力：中国网络点「下载」即经镜像池下载 MDT 并重启生效，其它地区则直接打开模组浏览器并自动搜索 MDT；也可跳转 GitHub Release 手动安装。**要求 MDT 0.12.3 或更新**（旧版在窗口尺寸变化时会让逻辑编辑器崩溃）；已安装的旧版只弹一次更新提示，下载到的版本低于要求则拒绝导入。只弹一次，Neon 聚合形态不弹。 |
 | **复制变量与打印缓冲** | 在**编辑菜单**里：把当前处理器的全部变量按名称整理成保留完整精度的表格复制到剪贴板（可直接粘贴进电子表格），或复制 Mlog 的输出缓冲区。这两个按钮原先占着底部栏的固定宽度，已移到编辑菜单，窄窗口下的底栏因此不再被顶出屏幕。 |
 | **逻辑编辑器冲突** | 设置项。其它模组（例如「逻辑工具」）同样会替换 `Vars.ui.logic` 来接管逻辑编辑器，而两个模组只能有一个生效，可在四档中选择：**每次启动询问**（默认，启动时弹一次选择框；选完后本次会话按该答案执行，设置仍停在「询问」所以下次启动还会问）、**接管**（保留 LogicSugar 编辑器、替换对方界面）、**让位**（保留对方编辑器，同时停用 LogicSugar 的编辑器与语法）、**共存**（保留对方整套编辑器界面，LogicSugar 的画布运行在其中，双方功能同时可用）。不回答、直接点掉选择框等于「让位」，不会误选破坏性的接管。切换后立即生效。 |
 
@@ -147,7 +147,7 @@ Logic Sugar 支持多人游戏，这意味着您也可以高效理解其他同�
 
 Logic Sugar 的部分设计与实现受益于以下项目，感谢这些作者的付出：
 
-- [Mlog Dev Tools](https://github.com/cardillan/MlogDevTools)（MIT，原名 MlogAssertions）—— 调试子系统**不再捆绑**：LogicSugar 只为它的调试 opcode 保留文本直通，使已有程序仍可解析，并与 Mlog Dev Tools 配合工作（断言积木、运行时与调试界面由它提供）。线格式保持兼容。
+- [Mlog Dev Tools](https://github.com/cardillan/MlogDevTools)（MIT，原名 MlogAssertions）—— 调试子系统**不再捆绑**：LogicSugar 只为它的调试 opcode 保留文本直通，使已有程序仍可解析，并与 Mlog Dev Tools **0.12.3 或更新版本**配合工作（断言积木、运行时与调试界面由它提供；0.12.2 及更早版本在窗口尺寸变化时会让编辑器崩溃）。线格式保持兼容。
 - [Mindcode](https://github.com/cardillan/mindcode)（MIT）—— 表达式子系统（Expr）的部分思路来源于此。
 - [mindustry_logic_bang_lang](https://github.com/A4-Tacks/mindustry_logic_bang_lang)（GPL-3.0）—— 反编译系统与静态检查的思路参考（跳转链穿线、logic_lint 风格检查）。
 - [logic-assist](https://github.com/nosbhghggg/logic-assist)（GPL-3.0）—— 跳转线按目标着色的思路来源，本项目最初基于此 Mod 开发

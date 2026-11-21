@@ -717,9 +717,16 @@ public class ExprHook{
 
     /** 展开产物里的生成式越界检查：emit 构建编译链里的调试行，展开成一条文本行
      *  （{@link SugarDebugLines.Line}，没有卡片类型）。折叠时（{@link #collectChain}）作为
-     *  链内透明元素跳过并随链移除。 */
+     *  链内透明元素跳过并随链移除。
+     *
+     *  <p>安装 MDT 后同一行由 MDT 的语句类解析，本模组看不到 {@link SugarDebugLines.Line}：
+     *  所以先走快速 {@code instanceof} 分支，再把外来语句渲染成文本，复用
+     *  {@link SugarDebugLines#isGeneratedBoundsLine(String)} 的消息签名判定（渲染失败一律不认领，
+     *  失败方向仍是“多显示原版”）。*/
     public static boolean isGeneratedBoundsLine(LStatement statement){
-        return statement instanceof SugarDebugLines.Line line && line.isGeneratedBoundsCheck();
+        if(statement instanceof SugarDebugLines.Line line) return line.isGeneratedBoundsCheck();
+        String text = SugarDebugLines.statementText(statement);
+        return text != null && SugarDebugLines.isGeneratedBoundsLine(text);
     }
 
     /**
@@ -786,10 +793,13 @@ public class ExprHook{
         return new ArrayList<>(statements.subList(from, statements.size()));
     }
 
-    /** 画布上已有的生成行与链首断言行是否等价：文本逐字节比较（生成行没有字段可比）。 */
+    /** 画布上已有的生成行与链首断言行是否等价：文本逐字节比较（生成行没有字段可比）。
+     *  走 {@link SugarDebugLines#statementText} 是为了同时覆盖本模组的 {@code Line} 与
+     *  MDT 自己的语句类——后者不能转型成本模组的 {@code Line}。 */
     private static boolean equivalentAssert(LStatement statement, ExprCompiler.AssertBoundsLine line){
-        return isGeneratedBoundsLine(statement)
-            && ((SugarDebugLines.Line)statement).text().equals(line.toText());
+        if(!isGeneratedBoundsLine(statement)) return false;
+        String text = SugarDebugLines.statementText(statement);
+        return text != null && text.equals(line.toText());
     }
 
     /** 一条指令行 → 原版画布语句；未知 RawLine 返回 null（编辑期防御，不崩溃）。

@@ -57,17 +57,24 @@ public final class SelectionClipboardUi{
     }
 
     private void install(LCanvas canvas){
-        if(cachedCopyButton != null && !inSceneTree(cachedCopyButton)){
+        if(cachedCopyButton != null && (!inSceneTree(cachedCopyButton) || cachedCopyDialog == null
+            || !cachedCopyDialog.isShown())){
             cachedCopyButton = null;
             cachedCopyMenu = null;
             cachedCopyDialog = null;
         }
-        if(cachedCopyButton == null && Core.scene != null){
-            TextButton found = findCopyButton(Core.scene.root);
-            if(found != null){
-                cachedCopyButton = found;
-                cachedCopyMenu = found.parent instanceof Table table ? table : null;
-                cachedCopyDialog = parentDialog(found);
+        if(cachedCopyButton == null){
+            // Only the game's export dialog is scanned, and only while it is the front dialog.
+            // A scene-wide scan by the localized "copy.clipboard" text is what used to mount LS's
+            // menu into MDT's LogDialog, which happens to have a button with the same label.
+            Dialog export = exportDialog();
+            if(export != null){
+                TextButton found = findCopyButton(export);
+                if(found != null){
+                    cachedCopyButton = found;
+                    cachedCopyMenu = found.parent instanceof Table table ? table : null;
+                    cachedCopyDialog = parentDialog(found);
+                }
             }
         }
         if(cachedCopyMenu == null || cachedCopyDialog == null) return;
@@ -128,8 +135,11 @@ public final class SelectionClipboardUi{
     /**
      * 后打开的对话框画在上面（scene root 里更靠后的子元素）。编辑菜单、函数库编辑器都是这样
      * 盖上来的；快捷键只交给最上面那张，菜单扫描则两边都做，按钮按名字去重。
+     *
+     * <p>也用于画布级快捷键的最后一道门：MDT 的 Vars / Log / Profiler 对话框打开时，底下的
+     * 逻辑编辑器仍然 {@code isShown()}，但绝不能再响应 Ctrl+Z / Delete（两张画布会各做一次）。</p>
      */
-    private static boolean isFront(LogicDialog editor){
+    public static boolean isFront(LogicDialog editor){
         if(Core.scene == null || Core.scene.root == null) return true;
         Seq<Element> children = Core.scene.root.getChildren();
         int index = children.indexOf(editor, true);
@@ -166,14 +176,45 @@ public final class SelectionClipboardUi{
         return false;
     }
 
-    public static TextButton findCopyButton(Element element){
-        if(element instanceof TextButton button
-            && button.getText().toString().equals(Core.bundle.get("copy.clipboard"))){
+    /**
+     * The game's own export dialog ({@code @editor.export}) while it is the front dialog, else
+     * {@code null}.
+     *
+     * <p>This is the only dialog LS may mount menu entries into. It is opened by the editor's
+     * edit button, so it is on top when our post-click scan runs; a stacked dialog (MDT's Vars,
+     * Log, Profiler) makes this return null instead of handing us a foreign window.</p>
+     */
+    public static Dialog exportDialog(){
+        if(Core.scene == null) return null;
+        Dialog front = Core.scene.getDialog();
+        return isExportDialog(front) ? front : null;
+    }
+
+    /** Whether {@code dialog} is shown and titled like the game's export dialog. */
+    public static boolean isExportDialog(Dialog dialog){
+        if(dialog == null || !dialog.isShown() || !dialog.visible) return false;
+        if(Core.bundle == null) return false;
+        CharSequence title = dialog.title == null ? null : dialog.title.getText();
+        return title != null && title.toString().equals(Core.bundle.get("editor.export"));
+    }
+
+    /**
+     * The copy button inside one dialog subtree.
+     *
+     * <p>Scoped to a dialog on purpose: the label {@code copy.clipboard} is shared with MDT's
+     * LogDialog, so a scene-wide search can pick the wrong window and inject LS's menu there.</p>
+     */
+    public static TextButton findCopyButton(Dialog dialog){
+        return dialog == null ? null : findCopyButton(dialog, Core.bundle.get("copy.clipboard"));
+    }
+
+    private static TextButton findCopyButton(Element element, String label){
+        if(element instanceof TextButton button && button.getText().toString().equals(label)){
             return button;
         }
         if(element instanceof Group group){
             for(Element child : group.getChildren()){
-                TextButton found = findCopyButton(child);
+                TextButton found = findCopyButton(child, label);
                 if(found != null) return found;
             }
         }

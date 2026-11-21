@@ -44,7 +44,10 @@ Vars / Memory / Properties 界面、快照、Profiler、处理器状态指示、
   （`src/logicsugar/LogicSugarMod.java:233`，位于 `installEditor` 内）。反编译的安全门在用户动作时也会确保解析器存在
   （`SugarDecompiler.installSugarParsers`），同样遵循先到先得。
 - **保存产物**：`AssertEmit=emit`（调试构建）把糖源码里的调试行原样写进产物；`strip`（默认、也是联机强制
-  口径）编掉它们。糖源码本身始终在载体里，所以两种口径下重开都能拿回同一行。
+  口径）编掉它们。判据是**写出的文本**（`SugarDebugLines.isDebugStatement` / `writeDebugStatement`），
+  不是本模组的 `Line` 类型：装了 MDT 时这些 opcode 归 MDT 的解析器，程序里拿到的是 MDT 自己的语句类，
+  strip 仍按 opcode 文本把它编掉，emit 则逐字节调用它自己的 `write()`。糖源码本身始终在载体里，所以
+  两种口径下重开都能拿回同一行。
 
 ## 明确不随移植带走的部分
 
@@ -73,8 +76,15 @@ Vars / Memory / Properties 界面、快照、Profiler、处理器状态指示、
 - **只弹一次**：`ClientLoadEvent` 后延后约 1 秒，标志 `logicsugar.mdt.recommendShown` 在对话框
   `shown()` 时写入——按 Esc 关掉也算看过，不会下次启动再弹。检测到 MDT 已安装（旧名
   `mlog-assertions*`、新名 `mlogdevtools`、显示名、或 `mod-<name>-repo` 指向
-  `cardillan/MlogDevTools` 任一命中）时直接写标志、不弹窗；装在但禁用也算已安装，因为再下一份副本
+  `cardillan/MlogDevTools` 任一命中）时直接写标志、不弹下载窗；装在但禁用也算已安装，因为再下一份副本
   并不能解决问题。
+- **最低版本 0.12.3**（`minMdtVersion`）：0.12.3 之前的 MDT 加载项在窗口尺寸变化时会击穿 LS 编辑器
+  （MDT PR #11 修的就是这个）。所以「已安装但版本过低」走另一条**一次性**提示
+  （`logicsugar.mdt.updateNoticeShown`，文案 `logicsugar.mdt.update`）：只给 GitHub / 模组浏览器两个手动
+  更新入口，**不提供下载**（那会并排再装一份）。版本比较是 `MdtRecommendation.versionAtLeast` 的纯
+  数字点段比较：`-` / `+` 后缀忽略，缺段按 0，null / 乱码一律判 false（未知版本不算够新）。
+- **下载也过版本门**：镜像可能落后于最新 release，所以 `readMeta` 之后、`importMod` 之前用同一比较器
+  拒绝低于 0.12.3 的 jar，删掉文件并弹 `logicsugar.mdt.tooold`。
 - **不打断别的弹窗**：同一事件里编辑器冲突询问也会弹窗，所以本弹窗延后并在
   `Core.scene.hasDialog()` 时重试（最多 20 次、每次约 2 秒）；重试耗尽则本次启动放弃且**不写标志**。
 - **不在聚合形态出现**：`bekBundled`（Neon）自带模组选择，不该再指路去装一个聚合包外的 mod；headless

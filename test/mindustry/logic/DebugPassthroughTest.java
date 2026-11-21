@@ -62,6 +62,7 @@ public final class DebugPassthroughTest{
         legacyWireShapes();
         oneInstructionPerLineAndJumpTargets();
         assertEmitShapes();
+        foreignDebugStatements();
         generatedBoundsCheckStaysInRecoveredSugar();
         budgetPin();
 
@@ -142,6 +143,61 @@ public final class DebugPassthroughTest{
         // Still one instruction per line in the product: the stored program assembles.
         check(LAssembler.assemble(emit, true).instructions.length > 0,
             "the emitted program did not assemble");
+    }
+
+    /**
+     * With MDT installed the debug opcode belongs to MDT's parser, so the statement handed to the
+     * compiler is MDT's class, not {@link SugarDebugLines.Line}. Nothing about that class is
+     * known here except its written text — which is exactly what strip/emit and the compiler's
+     * early return must key on. A stand-in class proves it without depending on MDT.
+     */
+    private static void foreignDebugStatements(){
+        for(String text : samples){
+            ForeignDebugStatement foreign = new ForeignDebugStatement(text);
+            check(SugarDebugLines.isDebugStatement(foreign),
+                "a foreign statement with debug text must be recognised: " + text);
+            StringBuilder written = new StringBuilder();
+            check(SugarDebugLines.writeDebugStatement(foreign, written) && written.toString().equals(text),
+                "a foreign debug statement must write through its own write(): " + written);
+
+            check(lowerOne(foreign, SugarCompiler.AssertEmit.strip).isEmpty(),
+                "strip must drop a foreign debug statement: " + text);
+            check(lowerOne(foreign, SugarCompiler.AssertEmit.emit).equals(text + "\n"),
+                "emit must keep a foreign debug statement verbatim: " + text);
+        }
+
+        // A normal foreign statement is not claimed (it keeps the ordinary write path).
+        ForeignDebugStatement ordinary = new ForeignDebugStatement("set x 1");
+        check(!SugarDebugLines.isDebugStatement(ordinary), "a plain foreign statement is not a debug line");
+        check(!SugarDebugLines.writeDebugStatement(ordinary, new StringBuilder()),
+            "a plain foreign statement must not be written by the debug helper");
+        check(!SugarCompiler.containsSugar(seq(ordinary)),
+            "a plain vanilla program must keep the no-lowering early return");
+
+        // containsSugar sees the text, so pure vanilla + one MDT line goes through lowering.
+        ForeignDebugStatement line = new ForeignDebugStatement(samples[0]);
+        check(SugarCompiler.containsSugar(seq(line)),
+            "a foreign debug statement must count as sugar so strip removes it");
+        check(SugarCompiler.containsSugar(seq(new SugarDebugLines.Line(new String[]{samples[0]}))),
+            "LS's own Line still counts as sugar");
+    }
+
+    /**
+     * Lowers one statement through the real {@link SugarFunctions#lower} entry point (empty
+     * function set), i.e. the branch that decides strip vs emit.
+     */
+    private static String lowerOne(LStatement statement, SugarCompiler.AssertEmit emit){
+        StringBuilder out = new StringBuilder();
+        SugarFunctions.lower(seq(statement), "", new SugarFunctions.FunctionSet(null),
+            SugarCompiler.FuncMode.normal, out, new SugarFunctions.CallIds(), null,
+            SugarCompiler.SwitchStrategy.auto, emit);
+        return out.toString();
+    }
+
+    private static <T> Seq<T> seq(T item){
+        Seq<T> result = new Seq<>();
+        result.add(item);
+        return result;
     }
 
     /**
