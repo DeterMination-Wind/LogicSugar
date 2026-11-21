@@ -79,7 +79,8 @@ Vars / Memory / Properties 界面、快照、Profiler、处理器状态指示、
   `cardillan/MlogDevTools` 任一命中）时直接写标志、不弹下载窗；装在但禁用也算已安装，因为再下一份副本
   并不能解决问题。
 - **最低版本 0.12.3**（`minMdtVersion`）：0.12.3 之前的 MDT 加载项在窗口尺寸变化时会击穿 LS 编辑器
-  （MDT PR #11 修的就是这个）。所以「已安装但版本过低」走另一条**一次性**提示
+  （MDT PR #11 修的就是这个）。MDT 0.12.3 自身要求 **Mindustry 160.5+**，低于该版本的玩家只能安装更旧的
+  兼容 MDT。所以「已安装但版本过低」走另一条**一次性**提示
   （`logicsugar.mdt.updateNoticeShown`，文案 `logicsugar.mdt.update`）：只给 GitHub / 模组浏览器两个手动
   更新入口，**不提供下载**（那会并排再装一份）。版本比较是 `MdtRecommendation.versionAtLeast` 的纯
   数字点段比较：`-` / `+` 后缀忽略，缺段按 0，null / 乱码一律判 false（未知版本不算够新）。
