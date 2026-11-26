@@ -17,6 +17,8 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -28,8 +30,9 @@ import java.util.UUID;
  *
  * <p>The mod reports one {@code logicsugar_session_end} event after enough in-game minutes have
  * accumulated, and a {@code logicsugar_feedback} event when the player submits the feedback
- * dialog. Country is not sent by the mod: PostHog derives {@code $geoip_country_name} from the
- * request IP on ingestion.</p>
+ * dialog. Player UUIDs never leave the machine: {@link #hashId(String)} turns them into an
+ * unsalted {@code sha256:<hex>} distinct id before any payload is built. Country is not sent by
+ * the mod: PostHog derives {@code $geoip_country_name} from the request IP on ingestion.</p>
  *
  * <p>Nothing here touches the saved processor program: reporting is local-only bookkeeping plus
  * one HTTP POST at shutdown (session) or on demand (feedback), so it cannot change multiplayer
@@ -46,6 +49,8 @@ public final class PostHogReporter{
     private static final String endpoint = "https://us.i.posthog.com/i/v0/e/";
     private static final String keyPendingMinutes = "logicsugar.posthog.pendingMinutes";
     private static final String keyStablePlayerId = "logicsugar.posthog.playerId";
+    /** Prefix marking a distinct id that is already a local SHA-256 digest. */
+    static final String hashedIdPrefix = "sha256:";
 
     private static final PostHogReporter instance = new PostHogReporter();
 
@@ -239,14 +244,17 @@ public final class PostHogReporter{
     private PlayerId resolvePlayerId(){
         String cached = normalizeRaw(Core.settings.getString(keyStablePlayerId, ""));
         if(isUsableId(cached)){
-            return new PlayerId(cached, "stable-cache");
+            // Older builds cached the raw UUID; rewrite it as the local hash on first use.
+            String hashed = hashId(cached);
+            persistStablePlayerId(hashed);
+            return new PlayerId(hashed, "stable-cache");
         }
 
         if(Vars.player != null){
             String rawPlayerUuid = normalizeRaw(Vars.player.uuid());
             if(isUsableId(rawPlayerUuid)){
                 persistStablePlayerId(rawPlayerUuid);
-                return new PlayerId(rawPlayerUuid, "player.uuid");
+                return new PlayerId(hashId(rawPlayerUuid), "player.uuid");
             }
         }
 
@@ -254,7 +262,7 @@ public final class PostHogReporter{
             String platformUuid = normalizeRaw(Vars.platform.getUUID());
             if(isUsableId(platformUuid)){
                 persistStablePlayerId(platformUuid);
-                return new PlayerId(platformUuid, "platform.uuid");
+                return new PlayerId(hashId(platformUuid), "platform.uuid");
             }
         }
 
@@ -262,7 +270,29 @@ public final class PostHogReporter{
         // DAU usable without merging every offline player into one "unknown" person.
         String generated = "ls-" + UUID.randomUUID();
         persistStablePlayerId(generated);
-        return new PlayerId(generated, "generated");
+        return new PlayerId(hashId(generated), "generated");
+    }
+
+    /**
+     * Hashes a raw player identifier locally so PostHog only ever receives a pseudonymous id.
+     * Idempotent: a value already carrying {@link #hashedIdPrefix} passes through unchanged.
+     */
+    static String hashId(String value){
+        String normalized = normalizeRaw(value);
+        if(normalized.isEmpty() || normalized.startsWith(hashedIdPrefix)) return normalized;
+        byte[] digest;
+        try{
+            digest = MessageDigest.getInstance("SHA-256").digest(normalized.getBytes(StandardCharsets.UTF_8));
+        }catch(NoSuchAlgorithmException e){
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
+        StringBuilder out = new StringBuilder(hashedIdPrefix.length() + digest.length * 2);
+        out.append(hashedIdPrefix);
+        for(byte b : digest){
+            int v = b & 0xFF;
+            out.append(Character.forDigit(v >>> 4, 16)).append(Character.forDigit(v & 0x0F, 16));
+        }
+        return out.toString();
     }
 
     private static ModMeta resolveModMeta(){
@@ -401,7 +431,7 @@ public final class PostHogReporter{
 
     private static void persistStablePlayerId(String value){
         if(!isUsableId(value)) return;
-        String normalized = normalizeRaw(value);
+        String normalized = hashId(value);
         if(normalized.equals(normalizeRaw(Core.settings.getString(keyStablePlayerId, "")))) return;
         Core.settings.put(keyStablePlayerId, normalized);
         try{

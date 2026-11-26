@@ -22,6 +22,7 @@ public final class PostHogReporterTest{
 
     public static void main(String[] args) throws IOException{
         escaping();
+        idHashing();
         sessionPayloadContract();
         feedbackPayloadContract();
         minuteAccumulator();
@@ -41,6 +42,23 @@ public final class PostHogReporterTest{
         check("中文反馈".equals(PostHogReporter.escapeJson("中文反馈")),
             "non-ASCII text must stay readable UTF-8, not be escaped");
         check("".equals(PostHogReporter.escapeJson(null)), "null must become an empty string");
+    }
+
+    /** Telemetry only receives the local SHA-256 digest; hashing must be stable and idempotent. */
+    private static void idHashing(){
+        String expected = "sha256:b28f21b0bdbd3fab882a57f606ca6cc3a3d066f66cecc31af2c65c96748e7bad";
+        check(expected.equals(PostHogReporter.hashId("fz1DETuNXJI=")),
+            "known Mindustry UUID must map to its lowercase SHA-256 digest");
+        check(expected.equals(PostHogReporter.hashId("  fz1DETuNXJI=  ")),
+            "surrounding whitespace must not change the digest");
+        check(expected.equals(PostHogReporter.hashId(expected)),
+            "an already hashed id must pass through unchanged");
+        check("".equals(PostHogReporter.hashId("")), "empty ids stay empty");
+        check("".equals(PostHogReporter.hashId(null)), "null ids stay empty");
+        check(PostHogReporter.hashId("A").startsWith(PostHogReporter.hashedIdPrefix),
+            "hashed ids must carry the sha256: prefix so they are never hashed twice");
+        check(!PostHogReporter.hashId("A").contains("A"),
+            "the raw identifier must not survive inside the digest");
     }
 
     private static void sessionPayloadContract(){

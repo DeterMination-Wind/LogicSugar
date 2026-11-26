@@ -35,7 +35,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 
 - **会话事件**：`logicsugar_session_end`，属性 `usage_minutes`、`game_version`、`mod_version`、`player_id`、`player_name`、`bundled`、`locale`、`platform`。`usage_minutes` 是真实分钟数：`Time.delta` 本身是秒，`sessionMinutes()` 只除一次 60（Neon 当前的 `Time.delta / 60` 再 `/60` 是双重换算，不要照抄）。累计不足 `minFlushMinutes`（2 分钟）时不发请求，分钟数先持久化到 `logicsugar.posthog.pendingMinutes`，下次启动继续累计；上传成功才清零。
 - **触发点**：`EventType.Trigger.update` 里只在 `Vars.state.isGame()` 时累计；`DisposeEvent` 与 JVM shutdown hook 各尝试 flush 一次（`flushed` 守卫保证只发一次）。`Vars.headless` 直接跳过。
-- **distinct_id**：优先 `Vars.player.uuid()`，其次 `Vars.platform.getUUID()`，两者都不可用（单机 `[LOCAL]`）时生成并持久化一个 `ls-<UUID>`；结果缓存到 `logicsugar.posthog.playerId`。这样离线单机用户不会被合并成同一个 `unknown` 人。
+- **distinct_id**：优先 `Vars.player.uuid()`，其次 `Vars.platform.getUUID()`，两者都不可用（单机 `[LOCAL]`）时生成一个 `ls-<UUID>`。原始标识只在本地参与 `sha256:<hex>` 哈希，上传的 `distinct_id` / `player_id` 永远是哈希值；结果缓存到 `logicsugar.posthog.playerId`，旧版本缓存的原始 UUID 会在首次读取时被改写为哈希（`hashId()` 幂等，已带 `sha256:` 前缀的值不再重复哈希）。这样离线单机用户不会被合并成同一个 `unknown` 人，遥测也不再持有原始 UUID。
 - **mod_version**：独立形态读 LogicSugar 自己的 `LoadedMod.meta.version`；聚合形态（`bekBundled`）读同一 class loader 下宿主 `LoadedMod.meta.version`，因此 Neon 发布号（如 `180003`）会作为宿主版本上报，现有仪表盘的 N/B 拆解规则正好处理它。
 - **国家**：模组不上报国家；PostHog 从请求 IP 自动补 `$geoip_country_name`（项目未开启 IP 匿名化）。
 - **反馈**：设置页最底部的 `FeedbackButtonSetting`（`LogicSugarSettings.build` 与 `LogicSugarMod.bekBuildSettings` 两处都注册）打开 `FeedbackDialog`，把自由文本作为特殊事件 `logicsugar_feedback` 的 `message` 属性发送；同时附带版本、玩家名、`bundled`、`locale`、`platform`。HTTP 在 daemon 线程执行，失败时保留对话框内容并提示重试。反馈与用量都不读取存档或处理器程序。
