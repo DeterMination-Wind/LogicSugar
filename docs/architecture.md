@@ -29,7 +29,7 @@ LogicSugar 是独立模组，同时也是 Neon 聚合模组的子模组之一（
 2. **接管编辑器**：`ClientLoadEvent` 后把 `Vars.ui.logic` 换成 `SugarLogicDialog`（构造函数内使用 `SugarCanvas`）。替换前把旧对话框上除 canvas/buttons 外的子元素（如 MindustryX 的逻辑辅助浮层）按 z 顺序迁移到新对话框。
 3. **挂辅助功能**：`BoxSelect.init()`（框选）、`ExprHook.init()`（表达式语句）、`VarDisplayFilter.init()`（隐藏 `__ls_*` 内部变量）、`UnitFlags.init()`（单位 flag 叠加），并注册关闭对话框时清空跳转线着色缓存。调试行解析器不在这里注册，见下面「MDT 调试行直通」。
 
-## 匿名使用统计与反馈（PostHog）
+## 使用统计（本地哈希标识）与反馈（PostHog）
 
 `logicsugar.PostHogReporter` 只做客户端观测，不触碰处理器产物、编辑器状态或联机逻辑；初始化失败被 `LogicSugarMod.init()` 的 `ClientLoadEvent` 回调吞掉，不能影响编辑器与编译。
 
